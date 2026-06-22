@@ -100,7 +100,7 @@ export default function HomePage() {
       <header className="border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-950/80 backdrop-blur sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
           <div className="flex items-center gap-2.5">
-            <span className="text-2xl">⚽</span>
+            <img src="/logo.svg" alt="BetIQ" className="w-9 h-9 rounded-full" />
             <div>
               <h1 className="text-lg font-bold text-slate-900 dark:text-white tracking-tight leading-none">BetIQ</h1>
               <p className="text-xs text-slate-500 dark:text-slate-500 leading-none mt-0.5">AI Football Predictions</p>
