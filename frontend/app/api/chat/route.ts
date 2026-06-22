@@ -1,19 +1,13 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextRequest, NextResponse } from "next/server";
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 
-export async function POST(req: NextRequest) {
-  try {
-    const { messages, predictions } = await req.json();
-
-    // Send up to 120 predictions as context (haiku has large context)
-    const ctx = (predictions ?? []).slice(0, 120);
-
-    const system = `You are BetIQ's AI betting assistant. Your job is to help users build football accumulators from our AI-predicted matches and generate SportyBet booking codes.
+const SYSTEM = (predictionsJson: string) => `
+You are BetIQ's AI betting assistant. Help users build football accumulators from AI-predicted matches and generate SportyBet booking codes.
 
 CURRENT PREDICTIONS (JSON):
-${JSON.stringify(ctx, null, 2)}
+${predictionsJson}
 
 Each prediction has:
 - home / away: team names
@@ -38,21 +32,37 @@ RULES:
 5. Be friendly, concise, and use football emojis occasionally.
 6. After showing picks, tell the user to click "Generate SportyBet Code" to get their booking code.
 7. If the user asks to remove or swap a game, update the selections JSON accordingly.
-8. If no suitable games are found for their criteria, say so clearly.`;
+8. If no suitable games match their criteria, say so clearly.
+`.trim();
 
-    const response = await client.messages.create({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 1500,
-      system,
-      messages,
+export async function POST(req: NextRequest) {
+  try {
+    const { messages, predictions } = await req.json();
+
+    const ctx = (predictions ?? []).slice(0, 120);
+    const system = SYSTEM(JSON.stringify(ctx, null, 2));
+
+    const model = genAI.getGenerativeModel({
+      model: "gemini-1.5-flash",
+      systemInstruction: system,
     });
 
-    const text =
-      response.content[0].type === "text" ? response.content[0].text : "";
+    // Convert our message history to Gemini format
+    // Gemini uses "user" / "model" roles (not "assistant")
+    const history = messages.slice(0, -1).map((m: { role: string; content: string }) => ({
+      role: m.role === "assistant" ? "model" : "user",
+      parts: [{ text: m.content }],
+    }));
+
+    const lastMessage = messages[messages.length - 1];
+
+    const chat = model.startChat({ history });
+    const result = await chat.sendMessage(lastMessage.content);
+    const text = result.response.text();
 
     return NextResponse.json({ message: text });
   } catch (err: unknown) {
-    console.error("[chat]", err);
+    console.error("[chat/gemini]", err);
     const msg = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json({ error: msg }, { status: 500 });
   }
