@@ -290,7 +290,7 @@ async def _run_pipeline():
                         continue
                     for _, r in recent.iterrows():
                         predictor._update(r["HomeTeam"], r["AwayTeam"], r["Result"], r["FTHG"], r["FTAG"])
-                    await asyncio.sleep(6)
+                    await asyncio.sleep(10)
                 except Exception as e:
                     print(f"[Pipeline] Recent results error for {code}: {e}")
 
@@ -344,7 +344,7 @@ async def _fetch_and_save_results():
             if not df.empty:
                 df["league"] = code
                 all_rows.append(df)
-            await asyncio.sleep(6)
+            await asyncio.sleep(10)
         except Exception as e:
             print(f"[Results] Error fetching {code}: {e}")
 
@@ -689,9 +689,9 @@ async def startup():
     asyncio.create_task(_run_pipeline())
     asyncio.create_task(_load_fbref_data())
     asyncio.create_task(_fetch_and_save_results())   # seed results CSV on first boot
-    scheduler.add_job(_run_pipeline, "interval", hours=6, id="refresh")
+    scheduler.add_job(_run_pipeline, "interval", hours=12, id="refresh")
     scheduler.add_job(_load_fbref_data, "interval", days=7, id="fbref_refresh")
-    scheduler.add_job(_fetch_and_save_results, "interval", hours=2, id="results_refresh")
+    scheduler.add_job(_fetch_and_save_results, "interval", hours=3, id="results_refresh")
     scheduler.start()
 
 
