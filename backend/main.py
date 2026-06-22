@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 
 from predictor import LeaguePredictor
 from data_fetcher import FootballDataClient, LEAGUES
-from scrapers.fbref import load_corners, load_cards, refresh as scrape_fbref, CORNERS_CSV, CARDS_CSV
+from scrapers.fbref import load_corners, load_cards, refresh as scrape_fbref, CORNERS_CSV, CARDS_CSV, DATA_DIR
 
 load_dotenv()
 
@@ -94,6 +94,15 @@ def _load_epl_csv() -> pd.DataFrame:
         h["Date"] = pd.to_datetime(h["MatchDate"], errors="coerce")
         h = h.dropna(subset=["Date", "FullTimeResult", "FullTimeHomeGoals", "FullTimeAwayGoals"])
         h = h[h["FullTimeResult"].isin(["H", "D", "A"])]
+        extra = {}
+        for src, dst in [
+            ("HomeCorners", "HomeCorners"), ("AwayCorners", "AwayCorners"),
+            ("HomeYellowCards", "HomeYellowCards"), ("AwayYellowCards", "AwayYellowCards"),
+            ("HomeRedCards", "HomeRedCards"), ("AwayRedCards", "AwayRedCards"),
+        ]:
+            if src in h.columns:
+                extra[dst] = pd.to_numeric(h[src], errors="coerce")
+
         rows.append(pd.DataFrame({
             "Date": h["Date"],
             "HomeTeam": h["HomeTeam"],
@@ -101,6 +110,7 @@ def _load_epl_csv() -> pd.DataFrame:
             "Result": h["FullTimeResult"],
             "FTHG": h["FullTimeHomeGoals"].astype(float),
             "FTAG": h["FullTimeAwayGoals"].astype(float),
+            **extra,
         }))
 
     if not rows:
@@ -513,11 +523,11 @@ async def _load_fbref_data():
             needs_scrape = False
 
     if needs_scrape:
-        print("[fbref] Data stale or missing — scraping fbref.com...")
+        print("[fbref] Data stale or missing — building from EPL CSV...")
         try:
-            await scrape_fbref()
+            await scrape_fbref(epl_csv_path=EPL_HISTORY)
         except Exception as e:
-            print(f"[fbref] Scrape failed: {e}")
+            print(f"[fbref] Build failed: {e}")
 
     _corners_df = load_corners()
     _cards_df   = load_cards()

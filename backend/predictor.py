@@ -55,8 +55,10 @@ FEATURE_COLS = [
     "Home_GA_Avg", "Away_GA_Avg",
     "Home_Form", "Away_Form",
     "Home_G_Var", "Away_G_Var",
-    "Atk_vs_Def",   # home attack - away defence
-    "Def_vs_Atk",   # away attack - home defence
+    "Atk_vs_Def",
+    "Def_vs_Atk",
+    "Home_Corners_Avg", "Away_Corners_Avg",   # corner dominance
+    "Home_Cards_Avg",   "Away_Cards_Avg",     # disciplinary pressure
 ]
 
 
@@ -78,7 +80,11 @@ class LeaguePredictor:
 
     def _init(self, team: str):
         if team not in self.team_stats:
-            self.team_stats[team] = {"gf": [], "ga": [], "pts": []}
+            self.team_stats[team] = {
+                "gf": [], "ga": [], "pts": [],
+                "cf": [], "ca": [],   # corners for/against
+                "yc": [], "rc": [],   # yellow/red cards received
+            }
 
     def _feats(self, home: str, away: str) -> Dict:
         self._init(home)
@@ -96,6 +102,12 @@ class LeaguePredictor:
         h_elo = self.elo.get(home)
         a_elo = self.elo.get(away)
 
+        # Corners and cards (with sensible defaults for teams with no history)
+        h_cf = _ewm(hs["cf"]) if hs["cf"] else 5.0
+        a_cf = _ewm(as_["cf"]) if as_["cf"] else 4.5
+        h_yc = _ewm(hs["yc"]) if hs["yc"] else 1.5
+        a_yc = _ewm(as_["yc"]) if as_["yc"] else 1.5
+
         return {
             "HomeElo": h_elo, "AwayElo": a_elo, "EloDiff": h_elo - a_elo,
             "Home_G_Avg": h_gf, "Away_G_Avg": a_gf,
@@ -104,9 +116,19 @@ class LeaguePredictor:
             "Home_G_Var": h_var, "Away_G_Var": a_var,
             "Atk_vs_Def": h_gf - a_ga,
             "Def_vs_Atk": a_gf - h_ga,
+            "Home_Corners_Avg": h_cf,
+            "Away_Corners_Avg": a_cf,
+            "Home_Cards_Avg": h_yc,
+            "Away_Cards_Avg": a_yc,
         }
 
-    def _update(self, home: str, away: str, result: str, fthg: float, ftag: float):
+    def _update(
+        self, home: str, away: str, result: str,
+        fthg: float, ftag: float,
+        hc: float = None, ac: float = None,
+        hyc: float = None, ayc: float = None,
+        hrc: float = None, arc: float = None,
+    ):
         self._init(home)
         self._init(away)
         self.team_stats[home]["gf"].append(fthg)
@@ -116,6 +138,22 @@ class LeaguePredictor:
         pts = {"H": (3, 0), "D": (1, 1), "A": (0, 3)}[result]
         self.team_stats[home]["pts"].append(pts[0])
         self.team_stats[away]["pts"].append(pts[1])
+
+        # Corners
+        if hc is not None and not np.isnan(hc):
+            self.team_stats[home]["cf"].append(hc)
+            self.team_stats[home]["ca"].append(ac if ac is not None else 0)
+        if ac is not None and not np.isnan(ac):
+            self.team_stats[away]["cf"].append(ac)
+            self.team_stats[away]["ca"].append(hc if hc is not None else 0)
+
+        # Cards (yellow + 2*red = total card weight)
+        h_cards = (hyc or 0) + (hrc or 0) * 2
+        a_cards = (ayc or 0) + (arc or 0) * 2
+        if hyc is not None:
+            self.team_stats[home]["yc"].append(h_cards)
+            self.team_stats[away]["yc"].append(a_cards)
+
         self.elo.update(home, away, result)
 
     # ------------------------------------------------------------------ #
@@ -136,7 +174,12 @@ class LeaguePredictor:
             f["Result"] = r["Result"]
             f["TotalGoals"] = r["FTHG"] + r["FTAG"]
             rows.append(f)
-            self._update(r["HomeTeam"], r["AwayTeam"], r["Result"], r["FTHG"], r["FTAG"])
+            self._update(
+                r["HomeTeam"], r["AwayTeam"], r["Result"], r["FTHG"], r["FTAG"],
+                hc=r.get("HomeCorners"), ac=r.get("AwayCorners"),
+                hyc=r.get("HomeYellowCards"), ayc=r.get("AwayYellowCards"),
+                hrc=r.get("HomeRedCards"), arc=r.get("AwayRedCards"),
+            )
 
         df = pd.DataFrame(rows).dropna(subset=FEATURE_COLS)
         X = df[FEATURE_COLS]
