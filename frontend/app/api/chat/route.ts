@@ -1,7 +1,7 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import Groq from "groq-sdk";
 import { NextRequest, NextResponse } from "next/server";
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 const SYSTEM = `You are BetIQ's AI betting assistant. Help users build football accumulators from AI-predicted matches and generate SportyBet booking codes.
 
@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
   try {
     const { messages, predictions } = await req.json();
 
-    // Slim each prediction to only the fields the model needs
+    // Slim predictions to only bookable tips and essential fields
     const slim = ((predictions ?? []) as Record<string, unknown>[])
       .slice(0, 100)
       .filter((p) => p.tip_code && !["?", "Skip"].includes(p.tip_code as string))
@@ -42,44 +42,38 @@ export async function POST(req: NextRequest) {
         flag: p.flag,
       }));
 
-    const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash",
-      systemInstruction: SYSTEM,
+    // Build message list: system → context injection → conversation history
+    const groqMessages: Groq.Chat.ChatCompletionMessageParam[] = [
+      { role: "system", content: SYSTEM },
+      {
+        role: "user",
+        content: `Here are today's available predictions:\n${JSON.stringify(slim)}`,
+      },
+      {
+        role: "assistant",
+        content: "Got it — predictions loaded. What kind of accumulator would you like?",
+      },
+      // Real conversation (skip any leading assistant greeting)
+      ...(() => {
+        const firstUserIdx = messages.findIndex((m: { role: string }) => m.role === "user");
+        return firstUserIdx === -1 ? [] : messages.slice(firstUserIdx);
+      })().map((m: { role: string; content: string }) => ({
+        role: m.role as "user" | "assistant",
+        content: m.content,
+      })),
+    ];
+
+    const completion = await groq.chat.completions.create({
+      model: "llama-3.3-70b-versatile",
+      messages: groqMessages,
+      max_tokens: 1500,
+      temperature: 0.4,
     });
 
-    // Build Gemini history from prior messages.
-    // Gemini requires history to start with a "user" turn, so we:
-    // 1. Prepend a user turn containing today's predictions as context
-    // 2. Add a short model acknowledgement
-    // 3. Then append the real conversation (skipping any leading assistant turns)
-    const contextTurn = {
-      role: "user" as const,
-      parts: [{ text: `Here are today's available predictions:\n${JSON.stringify(slim)}` }],
-    };
-    const ackTurn = {
-      role: "model" as const,
-      parts: [{ text: "Got it — I have today's predictions loaded. What kind of accumulator would you like?" }],
-    };
-
-    const prior = messages.slice(0, -1);
-    const firstUserIdx = prior.findIndex((m: { role: string }) => m.role === "user");
-    const realHistory = firstUserIdx === -1 ? [] : prior.slice(firstUserIdx).map(
-      (m: { role: string; content: string }) => ({
-        role: m.role === "assistant" ? ("model" as const) : ("user" as const),
-        parts: [{ text: m.content }],
-      })
-    );
-
-    const history = [contextTurn, ackTurn, ...realHistory];
-    const lastMessage = messages[messages.length - 1];
-
-    const chat = model.startChat({ history });
-    const result = await chat.sendMessage(lastMessage.content);
-    const text = result.response.text();
-
+    const text = completion.choices[0]?.message?.content ?? "";
     return NextResponse.json({ message: text });
   } catch (err: unknown) {
-    console.error("[chat/gemini]", err);
+    console.error("[chat/groq]", err);
     return NextResponse.json({ error: "assistant_unavailable" }, { status: 500 });
   }
 }
