@@ -1,0 +1,126 @@
+Match Number,Round Number,Date,Location,Home Team,Away Team,Group,Result
+1,1,19/09/2023 18:45,Stadio San Siro,Milan,Newcastle,Group F,0 - 0
+2,1,19/09/2023 18:45,Stadion Wankdorf,Young Boys,Leipzig,Group G,1 - 3
+3,1,19/09/2023 21:00,Stadion Feijenoord 'De Kuip',Feyenoord,Celtic,Group E,2 - 0
+4,1,19/09/2023 21:00,Stadio Olimpico,Lazio,Atlético de Madrid,Group E,1 - 1
+5,1,19/09/2023 21:00,Parc des Princes,Paris,Dortmund,Group F,2 - 0
+6,1,19/09/2023 21:00,City of Manchester Stadium,Man City,Crvena zvezda,Group G,3 - 1
+7,1,19/09/2023 21:00,Estadi Olímpic Lluís Companys,Barcelona,Antwerp,Group H,5 - 0
+8,1,19/09/2023 21:00,Volksparkstadion,Shakhtar Donetsk,FC Porto,Group H,1 - 3
+9,1,20/09/2023 18:45,Ali Sami Yen Spor Kompleksi,Galatasaray,Copenhagen,Group A,2 - 2
+10,1,20/09/2023 18:45,Estadio Santiago Bernabéu,Real Madrid,Union Berlin,Group C,1 - 0
+11,1,20/09/2023 21:00,Fußball Arena München,Bayern,Man United,Group A,4 - 3
+12,1,20/09/2023 21:00,Estadio Ramón Sánchez-Pizjuán,Sevilla,Lens,Group B,1 - 1
+13,1,20/09/2023 21:00,Arsenal Stadium,Arsenal,PSV,Group B,4 - 0
+14,1,20/09/2023 21:00,Estádio Municipal de Braga,Braga,Napoli,Group C,1 - 2
+15,1,20/09/2023 21:00,Reale Arena,Real Sociedad,Inter,Group D,1 - 1
+16,1,20/09/2023 21:00,Estádio do SL Benfica,Benfica,Salzburg,Group D,0 - 2
+17,2,03/10/2023 18:45,Olympiastadion,Union Berlin,Braga,Group C,2 - 3
+18,2,03/10/2023 18:45,Stadion Salzburg,Salzburg,Real Sociedad,Group D,0 - 2
+19,2,03/10/2023 21:00,Old Trafford,Man United,Galatasaray,Group A,2 - 3
+20,2,03/10/2023 21:00,Parken,Copenhagen,Bayern,Group A,1 - 2
+21,2,03/10/2023 21:00,Stade Bollaert-Delelis,Lens,Arsenal,Group B,2 - 1
+22,2,03/10/2023 21:00,PSV Stadion,PSV,Sevilla,Group B,2 - 2
+23,2,03/10/2023 21:00,Stadio Diego Armando Maradona,Napoli,Real Madrid,Group C,2 - 3
+24,2,03/10/2023 21:00,Stadio San Siro,Inter,Benfica,Group D,1 - 0
+25,2,04/10/2023 18:45,Estadio Metropolitano,Atlético de Madrid,Feyenoord,Group E,3 - 2
+26,2,04/10/2023 18:45,Bosuil,Antwerp,Shakhtar Donetsk,Group H,2 - 3
+27,2,04/10/2023 21:00,Celtic Park,Celtic,Lazio,Group E,1 - 2
+28,2,04/10/2023 21:00,BVB Stadion Dortmund,Dortmund,Milan,Group F,0 - 0
+29,2,04/10/2023 21:00,St James' Park,Newcastle,Paris,Group F,4 - 1
+30,2,04/10/2023 21:00,RB Arena,Leipzig,Man City,Group G,1 - 3
+31,2,04/10/2023 21:00,Stadion Rajko Mitic,Crvena zvezda,Young Boys,Group G,2 - 2
+32,2,04/10/2023 21:00,Estádio do Dragão,FC Porto,Barcelona,Group H,0 - 1
+33,3,24/10/2023 18:45,Ali Sami Yen Spor Kompleksi,Galatasaray,Bayern,Group A,1 - 3
+34,3,24/10/2023 18:45,Stadio San Siro,Inter,Salzburg,Group D,2 - 1
+35,3,24/10/2023 21:00,Old Trafford,Man United,Copenhagen,Group A,1 - 0
+36,3,24/10/2023 21:00,Estadio Ramón Sánchez-Pizjuán,Sevilla,Arsenal,Group B,1 - 2
+37,3,24/10/2023 21:00,Stade Bollaert-Delelis,Lens,PSV,Group B,1 - 1
+38,3,24/10/2023 21:00,Estádio Municipal de Braga,Braga,Real Madrid,Group C,1 - 2
+39,3,24/10/2023 21:00,Olympiastadion,Union Berlin,Napoli,Group C,0 - 1
+40,3,24/10/2023 21:00,Estádio do SL Benfica,Benfica,Real Sociedad,Group D,0 - 1
+41,3,25/10/2023 18:45,Stadion Feijenoord 'De Kuip',Feyenoord,Lazio,Group E,3 - 1
+42,3,25/10/2023 18:45,Estadi Olímpic Lluís Companys,Barcelona,Shakhtar Donetsk,Group H,2 - 1
+43,3,25/10/2023 21:00,Celtic Park,Celtic,Atlético de Madrid,Group E,2 - 2
+44,3,25/10/2023 21:00,Parc des Princes,Paris,Milan,Group F,3 - 0
+45,3,25/10/2023 21:00,St James' Park,Newcastle,Dortmund,Group F,0 - 1
+46,3,25/10/2023 21:00,RB Arena,Leipzig,Crvena zvezda,Group G,3 - 1
+47,3,25/10/2023 21:00,Stadion Wankdorf,Young Boys,Man City,Group G,1 - 3
+48,3,25/10/2023 21:00,Bosuil,Antwerp,FC Porto,Group H,1 - 4
+49,4,07/11/2023 18:45,BVB Stadion Dortmund,Dortmund,Newcastle,Group F,2 - 0
+50,4,07/11/2023 18:45,Volksparkstadion,Shakhtar Donetsk,Barcelona,Group H,1 - 0
+51,4,07/11/2023 21:00,Estadio Metropolitano,Atlético de Madrid,Celtic,Group E,6 - 0
+52,4,07/11/2023 21:00,Stadio Olimpico,Lazio,Feyenoord,Group E,1 - 0
+53,4,07/11/2023 21:00,Stadio San Siro,Milan,Paris,Group F,2 - 1
+54,4,07/11/2023 21:00,City of Manchester Stadium,Man City,Young Boys,Group G,3 - 0
+55,4,07/11/2023 21:00,Stadion Rajko Mitic,Crvena zvezda,Leipzig,Group G,1 - 2
+56,4,07/11/2023 21:00,Estádio do Dragão,FC Porto,Antwerp,Group H,2 - 0
+57,4,08/11/2023 18:45,Stadio Diego Armando Maradona,Napoli,Union Berlin,Group C,1 - 1
+58,4,08/11/2023 18:45,Reale Arena,Real Sociedad,Benfica,Group D,3 - 1
+59,4,08/11/2023 21:00,Fußball Arena München,Bayern,Galatasaray,Group A,2 - 1
+60,4,08/11/2023 21:00,Parken,Copenhagen,Man United,Group A,4 - 3
+61,4,08/11/2023 21:00,Arsenal Stadium,Arsenal,Sevilla,Group B,2 - 0
+62,4,08/11/2023 21:00,PSV Stadion,PSV,Lens,Group B,1 - 0
+63,4,08/11/2023 21:00,Estadio Santiago Bernabéu,Real Madrid,Braga,Group C,3 - 0
+64,4,08/11/2023 21:00,Stadion Salzburg,Salzburg,Inter,Group D,0 - 1
+65,5,28/11/2023 18:45,Stadio Olimpico,Lazio,Celtic,Group E,2 - 0
+66,5,28/11/2023 18:45,Volksparkstadion,Shakhtar Donetsk,Antwerp,Group H,1 - 0
+67,5,28/11/2023 21:00,Stadion Feijenoord 'De Kuip',Feyenoord,Atlético de Madrid,Group E,1 - 3
+68,5,28/11/2023 21:00,Parc des Princes,Paris,Newcastle,Group F,1 - 1
+69,5,28/11/2023 21:00,Stadio San Siro,Milan,Dortmund,Group F,1 - 3
+70,5,28/11/2023 21:00,City of Manchester Stadium,Man City,Leipzig,Group G,3 - 2
+71,5,28/11/2023 21:00,Stadion Wankdorf,Young Boys,Crvena zvezda,Group G,2 - 0
+72,5,28/11/2023 21:00,Estadi Olímpic Lluís Companys,Barcelona,FC Porto,Group H,2 - 1
+73,5,29/11/2023 18:45,Ali Sami Yen Spor Kompleksi,Galatasaray,Man United,Group A,3 - 3
+74,5,29/11/2023 18:45,Estadio Ramón Sánchez-Pizjuán,Sevilla,PSV,Group B,2 - 3
+75,5,29/11/2023 21:00,Fußball Arena München,Bayern,Copenhagen,Group A,0 - 0
+76,5,29/11/2023 21:00,Arsenal Stadium,Arsenal,Lens,Group B,6 - 0
+77,5,29/11/2023 21:00,Estadio Santiago Bernabéu,Real Madrid,Napoli,Group C,4 - 2
+78,5,29/11/2023 21:00,Estádio Municipal de Braga,Braga,Union Berlin,Group C,1 - 1
+79,5,29/11/2023 21:00,Estádio do SL Benfica,Benfica,Inter,Group D,3 - 3
+80,5,29/11/2023 21:00,Reale Arena,Real Sociedad,Salzburg,Group D,0 - 0
+81,6,12/12/2023 18:45,Stade Bollaert-Delelis,Lens,Sevilla,Group B,2 - 1
+82,6,12/12/2023 18:45,PSV Stadion,PSV,Arsenal,Group B,1 - 1
+83,6,12/12/2023 21:00,Old Trafford,Man United,Bayern,Group A,0 - 1
+84,6,12/12/2023 21:00,Parken,Copenhagen,Galatasaray,Group A,1 - 0
+85,6,12/12/2023 21:00,Stadio Diego Armando Maradona,Napoli,Braga,Group C,2 - 0
+86,6,12/12/2023 21:00,Olympiastadion,Union Berlin,Real Madrid,Group C,2 - 3
+87,6,12/12/2023 21:00,Stadio San Siro,Inter,Real Sociedad,Group D,0 - 0
+88,6,12/12/2023 21:00,Stadion Salzburg,Salzburg,Benfica,Group D,1 - 3
+89,6,13/12/2023 18:45,RB Arena,Leipzig,Young Boys,Group G,2 - 1
+90,6,13/12/2023 18:45,Stadion Rajko Mitic,Crvena zvezda,Man City,Group G,2 - 3
+91,6,13/12/2023 21:00,Estadio Metropolitano,Atlético de Madrid,Lazio,Group E,2 - 0
+92,6,13/12/2023 21:00,Celtic Park,Celtic,Feyenoord,Group E,2 - 1
+93,6,13/12/2023 21:00,BVB Stadion Dortmund,Dortmund,Paris,Group F,1 - 1
+94,6,13/12/2023 21:00,St James' Park,Newcastle,Milan,Group F,1 - 2
+95,6,13/12/2023 21:00,Estádio do Dragão,FC Porto,Shakhtar Donetsk,Group H,5 - 3
+96,6,13/12/2023 21:00,Bosuil,Antwerp,Barcelona,Group H,3 - 2
+97,R16 Game 1,13/02/2024 21:00,RB Arena,Leipzig,Real Madrid,,0 - 1
+98,R16 Game 1,13/02/2024 21:00,Parken,Copenhagen,Man City,,1 - 3
+99,R16 Game 1,14/02/2024 21:00,Stadio Olimpico,Lazio,Bayern,,1 - 0
+100,R16 Game 1,14/02/2024 21:00,Parc des Princes,Paris,Real Sociedad,,2 - 0
+101,R16 Game 1,20/02/2024 21:00,Stadio San Siro,Inter,Atlético de Madrid,,1 - 0
+102,R16 Game 1,20/02/2024 21:00,PSV Stadion,PSV,Dortmund,,1 - 1
+103,R16 Game 1,21/02/2024 21:00,Estádio do Dragão,FC Porto,Arsenal,,1 - 0
+104,R16 Game 1,21/02/2024 21:00,Stadio Diego Armando Maradona,Napoli,Barcelona,,1 - 1
+105,R16 Game 2,05/03/2024 21:00,Fußball Arena München,Bayern,Lazio,,3 - 0
+106,R16 Game 2,05/03/2024 21:00,Reale Arena,Real Sociedad,Paris,,1 - 2
+107,R16 Game 2,06/03/2024 21:00,Estadio Santiago Bernabéu,Real Madrid,Leipzig,,1 - 1
+108,R16 Game 2,06/03/2024 21:00,City of Manchester Stadium,Man City,Copenhagen,,3 - 1
+109,R16 Game 2,12/03/2024 21:00,Arsenal Stadium,Arsenal,FC Porto,,1 - 0
+110,R16 Game 2,12/03/2024 21:00,Estadi Olímpic Lluís Companys,Barcelona,Napoli,,3 - 1
+111,R16 Game 2,13/03/2024 21:00,Estadio Metropolitano,Atlético de Madrid,Inter,,2 - 1
+112,R16 Game 2,13/03/2024 21:00,BVB Stadion Dortmund,Dortmund,PSV,,2 - 0
+113,QF Game 1,09/04/2024 21:00,Arsenal Stadium,Arsenal,Bayern,,2 - 2
+114,QF Game 1,09/04/2024 21:00,Estadio Santiago Bernabéu,Real Madrid,Man City,,3 - 3
+115,QF Game 1,10/04/2024 21:00,Estadio Metropolitano,Atlético de Madrid,Dortmund,,2 - 1
+116,QF Game 1,10/04/2024 21:00,Parc des Princes,Paris,Barcelona,,2 - 3
+117,QF Game 2,16/04/2024 21:00,Estadi Olímpic Lluís Companys,Barcelona,Paris,,1 - 4
+118,QF Game 2,16/04/2024 21:00,BVB Stadion Dortmund,Dortmund,Atlético de Madrid,,4 - 2
+119,QF Game 2,17/04/2024 21:00,City of Manchester Stadium,Man City,Real Madrid,,1 - 1
+120,QF Game 2,17/04/2024 21:00,Fußball Arena München,Bayern,Arsenal,,1 - 0
+121,SF Game 1,30/04/2024 21:00,Fußball Arena München,Bayern,Real Madrid,,2 - 2
+122,SF Game 1,01/05/2024 21:00,BVB Stadion Dortmund,Dortmund,Paris,,1 - 0
+123,SF Game 2,07/05/2024 21:00,Parc des Princes,Paris,Dortmund,,0 - 1
+124,SF Game 2,08/05/2024 21:00,Estadio Santiago Bernabéu,Real Madrid,Bayern,,2 - 1
+125,Final,01/06/2024 21:00,Wembley Stadium,Dortmund,Real Madrid,,0 - 2

@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: sport-bet-predictions-api
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: FOOTBALL_DATA_API_KEY
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+    disk:
+      name: csv-data
+      mountPath: /data
+      sizeGB: 1

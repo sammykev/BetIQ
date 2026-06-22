@@ -1,0 +1,190 @@
+Match Number,Round Number,Date,Location,Home Team,Away Team,Result
+1,1,17/09/2024 18:45,Juventus Stadium,Juventus,PSV,3 - 1
+2,1,17/09/2024 18:45,Stadion Wankdorf,Young Boys,Aston Villa,0 - 3
+3,1,17/09/2024 21:00,Fußball Arena München,Bayern München,GNK Dinamo,9 - 2
+4,1,17/09/2024 21:00,Stadio San Siro,Milan,Liverpool,1 - 3
+5,1,17/09/2024 21:00,Estadio Santiago Bernabéu,Real Madrid,Stuttgart,3 - 1
+6,1,17/09/2024 21:00,Estádio José Alvalade,Sporting CP,Lille,2 - 0
+7,1,18/09/2024 18:45,Stadio Renato Dall'Ara,Bologna,Shakhtar,0 - 0
+8,1,18/09/2024 18:45,Stadion Letná,Sparta Praha,Salzburg,3 - 0
+9,1,18/09/2024 21:00,Jan Breydelstadion,Club Brugge,B. Dortmund,0 - 3
+10,1,18/09/2024 21:00,Celtic Park,Celtic,S. Bratislava,5 - 1
+11,1,18/09/2024 21:00,City of Manchester Stadium,Man City,Inter,0 - 0
+12,1,18/09/2024 21:00,Parc des Princes,Paris,Girona,1 - 0
+13,1,19/09/2024 18:45,Stadion Rajko Mitic,Crvena Zvezda,Benfica,1 - 2
+14,1,19/09/2024 18:45,Stadion Feijenoord 'De Kuip',Feyenoord,Leverkusen,0 - 4
+15,1,19/09/2024 21:00,Stadio di Bergamo,Atalanta,Arsenal,0 - 0
+16,1,19/09/2024 21:00,Estadio Metropolitano,Atleti,Leipzig,2 - 1
+17,1,19/09/2024 21:00,Stade Louis II,Monaco,Barcelona,2 - 1
+18,1,19/09/2024 21:00,Stade de Roudourou,Brest,Sturm Graz,2 - 1
+19,2,01/10/2024 18:45,Stadion Salzburg,Salzburg,Brest,0 - 4
+20,2,01/10/2024 18:45,Arena Stuttgart,Stuttgart,Sparta Praha,1 - 1
+21,2,01/10/2024 21:00,Stadio San Siro,Inter,Crvena Zvezda,4 - 0
+22,2,01/10/2024 21:00,BVB Stadion Dortmund,B. Dortmund,Celtic,7 - 1
+23,2,01/10/2024 21:00,Estadi Olímpic Lluís Companys,Barcelona,Young Boys,5 - 0
+24,2,01/10/2024 21:00,BayArena,Leverkusen,Milan,1 - 0
+25,2,01/10/2024 21:00,Arsenal Stadium,Arsenal,Paris,2 - 0
+26,2,01/10/2024 21:00,PSV Stadion,PSV,Sporting CP,1 - 1
+27,2,01/10/2024 21:00,Národný futbalový štadión,S. Bratislava,Man City,0 - 4
+28,2,02/10/2024 18:45,Arena AufSchalke,Shakhtar,Atalanta,0 - 3
+29,2,02/10/2024 18:45,Estadi Montilivi,Girona,Feyenoord,2 - 3
+30,2,02/10/2024 21:00,Anfield,Liverpool,Bologna,2 - 0
+31,2,02/10/2024 21:00,RB Arena,Leipzig,Juventus,2 - 3
+32,2,02/10/2024 21:00,Estádio do SL Benfica,Benfica,Atleti,4 - 0
+33,2,02/10/2024 21:00,Stadion Maksimir,GNK Dinamo,Monaco,2 - 2
+34,2,02/10/2024 21:00,Stade Pierre Mauroy,Lille,Real Madrid,1 - 0
+35,2,02/10/2024 21:00,Villa Park,Aston Villa,Bayern München,1 - 0
+36,2,02/10/2024 21:00,Wörthersee Stadion,Sturm Graz,Club Brugge,0 - 1
+37,3,22/10/2024 18:45,Stadio San Siro,Milan,Club Brugge,3 - 1
+38,3,22/10/2024 18:45,Stade Louis II,Monaco,Crvena Zvezda,5 - 1
+39,3,22/10/2024 21:00,Parc des Princes,Paris,PSV,1 - 1
+40,3,22/10/2024 21:00,Juventus Stadium,Juventus,Stuttgart,0 - 1
+41,3,22/10/2024 21:00,Arsenal Stadium,Arsenal,Shakhtar,1 - 0
+42,3,22/10/2024 21:00,Villa Park,Aston Villa,Bologna,2 - 0
+43,3,22/10/2024 21:00,Estadi Montilivi,Girona,S. Bratislava,2 - 0
+44,3,22/10/2024 21:00,Wörthersee Stadion,Sturm Graz,Sporting CP,0 - 2
+45,3,22/10/2024 21:00,Estadio Santiago Bernabéu,Real Madrid,B. Dortmund,5 - 2
+46,3,23/10/2024 18:45,Stadio di Bergamo,Atalanta,Celtic,0 - 0
+47,3,23/10/2024 18:45,Stade de Roudourou,Brest,Leverkusen,1 - 1
+48,3,23/10/2024 21:00,City of Manchester Stadium,Man City,Sparta Praha,5 - 0
+49,3,23/10/2024 21:00,RB Arena,Leipzig,Liverpool,0 - 1
+50,3,23/10/2024 21:00,Estadi Olímpic Lluís Companys,Barcelona,Bayern München,4 - 1
+51,3,23/10/2024 21:00,Estadio Metropolitano,Atleti,Lille,1 - 3
+52,3,23/10/2024 21:00,Estádio do SL Benfica,Benfica,Feyenoord,1 - 3
+53,3,23/10/2024 21:00,Stadion Salzburg,Salzburg,GNK Dinamo,0 - 2
+54,3,23/10/2024 21:00,Stadion Wankdorf,Young Boys,Inter,0 - 1
+55,4,05/11/2024 18:45,PSV Stadion,PSV,Girona,4 - 0
+56,4,05/11/2024 18:45,Národný futbalový štadión,S. Bratislava,GNK Dinamo,1 - 4
+57,4,05/11/2024 21:00,Estadio Santiago Bernabéu,Real Madrid,Milan,1 - 3
+58,4,05/11/2024 21:00,Anfield,Liverpool,Leverkusen,4 - 0
+59,4,05/11/2024 21:00,BVB Stadion Dortmund,B. Dortmund,Sturm Graz,1 - 0
+60,4,05/11/2024 21:00,Estádio José Alvalade,Sporting CP,Man City,4 - 1
+61,4,05/11/2024 21:00,Stade Pierre Mauroy,Lille,Juventus,1 - 1
+62,4,05/11/2024 21:00,Celtic Park,Celtic,Leipzig,3 - 1
+63,4,05/11/2024 21:00,Stadio Renato Dall'Ara,Bologna,Monaco,0 - 1
+64,4,06/11/2024 18:45,Jan Breydelstadion,Club Brugge,Aston Villa,1 - 0
+65,4,06/11/2024 18:45,Arena AufSchalke,Shakhtar,Young Boys,2 - 1
+67,4,06/11/2024 21:00,Parc des Princes,Paris,Atleti,1 - 2
+68,4,06/11/2024 21:00,Stadio San Siro,Inter,Arsenal,1 - 0
+69,4,06/11/2024 21:00,Stadion Feijenoord 'De Kuip',Feyenoord,Salzburg,1 - 3
+70,4,06/11/2024 21:00,Stadion Rajko Mitic,Crvena Zvezda,Barcelona,2 - 5
+71,4,06/11/2024 21:00,Stadion Letná,Sparta Praha,Brest,1 - 2
+72,4,06/11/2024 21:00,Arena Stuttgart,Stuttgart,Atalanta,0 - 2
+66,4,06/11/2024 21:15,Fußball Arena München,Bayern München,Benfica,1 - 0
+73,5,26/11/2024 18:45,Národný futbalový štadión,S. Bratislava,Milan,2 - 3
+74,5,26/11/2024 18:45,Stadion Letná,Sparta Praha,Atleti,0 - 6
+75,5,26/11/2024 21:00,City of Manchester Stadium,Man City,Feyenoord,3 - 3
+76,5,26/11/2024 21:00,Fußball Arena München,Bayern München,Paris,1 - 0
+77,5,26/11/2024 21:00,Stadio San Siro,Inter,Leipzig,1 - 0
+78,5,26/11/2024 21:00,Estadi Olímpic Lluís Companys,Barcelona,Brest,3 - 0
+79,5,26/11/2024 21:00,BayArena,Leverkusen,Salzburg,5 - 0
+80,5,26/11/2024 21:00,Estádio José Alvalade,Sporting CP,Arsenal,1 - 5
+81,5,26/11/2024 21:00,Stadion Wankdorf,Young Boys,Atalanta,1 - 6
+82,5,27/11/2024 18:45,Stadion Rajko Mitic,Crvena Zvezda,Stuttgart,5 - 1
+83,5,27/11/2024 18:45,Wörthersee Stadion,Sturm Graz,Girona,1 - 0
+84,5,27/11/2024 21:00,Anfield,Liverpool,Real Madrid,2 - 0
+85,5,27/11/2024 21:00,PSV Stadion,PSV,Shakhtar,3 - 2
+86,5,27/11/2024 21:00,Stadion Maksimir,GNK Dinamo,B. Dortmund,0 - 3
+87,5,27/11/2024 21:00,Celtic Park,Celtic,Club Brugge,1 - 1
+88,5,27/11/2024 21:00,Stade Louis II,Monaco,Benfica,2 - 3
+89,5,27/11/2024 21:00,Villa Park,Aston Villa,Juventus,0 - 0
+90,5,27/11/2024 21:00,Stadio Renato Dall'Ara,Bologna,Lille,1 - 2
+91,6,10/12/2024 18:45,Stadion Maksimir,GNK Dinamo,Celtic,0 - 0
+92,6,10/12/2024 18:45,Estadi Montilivi,Girona,Liverpool,0 - 1
+93,6,10/12/2024 21:00,RB Arena,Leipzig,Aston Villa,2 - 3
+94,6,10/12/2024 21:00,BayArena,Leverkusen,Inter,1 - 0
+95,6,10/12/2024 21:00,Stadio di Bergamo,Atalanta,Real Madrid,2 - 3
+96,6,10/12/2024 21:00,Jan Breydelstadion,Club Brugge,Sporting CP,2 - 1
+97,6,10/12/2024 21:00,Arena AufSchalke,Shakhtar,Bayern München,1 - 5
+98,6,10/12/2024 21:00,Stadion Salzburg,Salzburg,Paris,0 - 3
+99,6,10/12/2024 21:00,Stade de Roudourou,Brest,PSV,1 - 0
+100,6,11/12/2024 18:45,Estadio Metropolitano,Atleti,S. Bratislava,3 - 1
+101,6,11/12/2024 18:45,Stade Pierre Mauroy,Lille,Sturm Graz,3 - 2
+102,6,11/12/2024 21:00,BVB Stadion Dortmund,B. Dortmund,Barcelona,2 - 3
+103,6,11/12/2024 21:00,Juventus Stadium,Juventus,Man City,2 - 0
+104,6,11/12/2024 21:00,Estádio do SL Benfica,Benfica,Bologna,0 - 0
+105,6,11/12/2024 21:00,Arsenal Stadium,Arsenal,Monaco,3 - 0
+106,6,11/12/2024 21:00,Stadio San Siro,Milan,Crvena Zvezda,2 - 1
+107,6,11/12/2024 21:00,Stadion Feijenoord 'De Kuip',Feyenoord,Sparta Praha,4 - 2
+108,6,11/12/2024 21:00,Arena Stuttgart,Stuttgart,Young Boys,5 - 1
+109,7,21/01/2025 18:45,Stadio di Bergamo,Atalanta,Sturm Graz,5 - 0
+110,7,21/01/2025 18:45,Stade Louis II,Monaco,Aston Villa,1 - 0
+111,7,21/01/2025 21:00,Národný futbalový štadión,S. Bratislava,Stuttgart,1 - 3
+112,7,21/01/2025 21:00,Jan Breydelstadion,Club Brugge,Juventus,0 - 0
+113,7,21/01/2025 21:00,Estadio Metropolitano,Atleti,Leverkusen,2 - 1
+114,7,21/01/2025 21:00,Estádio do SL Benfica,Benfica,Barcelona,4 - 5
+115,7,21/01/2025 21:00,Anfield,Liverpool,Lille,2 - 1
+116,7,21/01/2025 21:00,Stadio Renato Dall'Ara,Bologna,B. Dortmund,2 - 1
+117,7,21/01/2025 21:00,Stadion Rajko Mitic,Crvena Zvezda,PSV,2 - 3
+118,7,22/01/2025 18:45,RB Arena,Leipzig,Sporting CP,2 - 1
+119,7,22/01/2025 18:45,Arena AufSchalke,Shakhtar,Brest,2 - 0
+120,7,22/01/2025 21:00,Estadio Santiago Bernabéu,Real Madrid,Salzburg,5 - 1
+121,7,22/01/2025 21:00,Parc des Princes,Paris,Man City,4 - 2
+122,7,22/01/2025 21:00,Stadion Letná,Sparta Praha,Inter,0 - 1
+123,7,22/01/2025 21:00,Arsenal Stadium,Arsenal,GNK Dinamo,3 - 0
+124,7,22/01/2025 21:00,Celtic Park,Celtic,Young Boys,1 - 0
+125,7,22/01/2025 21:00,Stadion Feijenoord 'De Kuip',Feyenoord,Bayern München,3 - 0
+126,7,22/01/2025 21:00,Stadio San Siro,Milan,Girona,1 - 0
+127,8,29/01/2025 21:00,Estádio José Alvalade,Sporting CP,Bologna,1 - 1
+128,8,29/01/2025 21:00,PSV Stadion,PSV,Liverpool,3 - 2
+129,8,29/01/2025 21:00,Stadion Wankdorf,Young Boys,Crvena Zvezda,0 - 1
+130,8,29/01/2025 21:00,Arena Stuttgart,Stuttgart,Paris,1 - 4
+131,8,29/01/2025 21:00,Wörthersee Stadion,Sturm Graz,Leipzig,1 - 0
+132,8,29/01/2025 21:00,City of Manchester Stadium,Man City,Club Brugge,3 - 1
+133,8,29/01/2025 21:00,Fußball Arena München,Bayern München,S. Bratislava,3 - 1
+134,8,29/01/2025 21:00,Stadio San Siro,Inter,Monaco,3 - 0
+135,8,29/01/2025 21:00,BVB Stadion Dortmund,B. Dortmund,Shakhtar,3 - 1
+136,8,29/01/2025 21:00,Estadi Olímpic Lluís Companys,Barcelona,Atalanta,2 - 2
+137,8,29/01/2025 21:00,BayArena,Leverkusen,Sparta Praha,2 - 0
+138,8,29/01/2025 21:00,Juventus Stadium,Juventus,Benfica,0 - 2
+139,8,29/01/2025 21:00,Stadion Maksimir,GNK Dinamo,Milan,2 - 1
+140,8,29/01/2025 21:00,Stadion Salzburg,Salzburg,Atleti,1 - 4
+141,8,29/01/2025 21:00,Stade Pierre Mauroy,Lille,Feyenoord,6 - 1
+142,8,29/01/2025 21:00,Villa Park,Aston Villa,Celtic,4 - 2
+143,8,29/01/2025 21:00,Estadi Montilivi,Girona,Arsenal,1 - 2
+144,8,29/01/2025 21:00,Stade de Roudourou,Brest,Real Madrid,0 - 3
+145,Play-off Game 1,11/02/2025 18:45,Stade de Roudourou,Brest,Paris,0 - 3
+146,Play-off Game 1,11/02/2025 21:00,City of Manchester Stadium,Man City,Real Madrid,2 - 3
+147,Play-off Game 1,11/02/2025 21:00,Juventus Stadium,Juventus,PSV,2 - 1
+148,Play-off Game 1,11/02/2025 21:00,Estádio José Alvalade,Sporting CP,B. Dortmund,0 - 3
+149,Play-off Game 1,12/02/2025 18:45,Jan Breydelstadion,Club Brugge,Atalanta,2 - 1
+150,Play-off Game 1,12/02/2025 21:00,Stadion Feijenoord 'De Kuip',Feyenoord,Milan,1 - 0
+151,Play-off Game 1,12/02/2025 21:00,Celtic Park,Celtic,Bayern München,1 - 2
+152,Play-off Game 1,12/02/2025 21:00,Stade Louis II,Monaco,Benfica,0 - 1
+153,Play-off Game 2,18/02/2025 18:45,Stadio San Siro,Milan,Feyenoord,1 - 1
+154,Play-off Game 2,18/02/2025 21:00,Stadio di Bergamo,Atalanta,Club Brugge,1 - 3
+155,Play-off Game 2,18/02/2025 21:00,Fußball Arena München,Bayern München,Celtic,1 - 1
+156,Play-off Game 2,18/02/2025 21:00,Estádio do SL Benfica,Benfica,Monaco,3 - 3
+157,Play-off Game 2,19/02/2025 18:45,BVB Stadion Dortmund,B. Dortmund,Sporting CP,0 - 0
+158,Play-off Game 2,19/02/2025 21:00,Parc des Princes,Paris,Brest,7 - 0
+159,Play-off Game 2,19/02/2025 21:00,Estadio Santiago Bernabéu,Real Madrid,Man City,3 - 1
+160,Play-off Game 2,19/02/2025 21:00,PSV Stadion,PSV,Juventus,3 - 1
+161,R16 Game 1,04/03/2025 18:45,Jan Breydelstadion,Club Brugge,Aston Villa,1 - 3
+162,R16 Game 1,04/03/2025 21:00,Estadio Santiago Bernabéu,Real Madrid,Atleti,2 - 1
+163,R16 Game 1,04/03/2025 21:00,PSV Stadion,PSV,Arsenal,1 - 7
+164,R16 Game 1,04/03/2025 21:00,BVB Stadion Dortmund,B. Dortmund,Lille,1 - 1
+165,R16 Game 1,05/03/2025 18:45,Stadion Feijenoord 'De Kuip',Feyenoord,Inter,0 - 2
+166,R16 Game 1,05/03/2025 21:00,Parc des Princes,Paris,Liverpool,0 - 1
+167,R16 Game 1,05/03/2025 21:00,Fußball Arena München,Bayern München,Leverkusen,3 - 0
+168,R16 Game 1,05/03/2025 21:00,Estádio do SL Benfica,Benfica,Barcelona,0 - 1
+169,R16 Game 2,11/03/2025 18:45,Estadi Olímpic Lluís Companys,Barcelona,Benfica,3 - 1
+170,R16 Game 2,11/03/2025 21:00,Anfield,Liverpool,Paris,0 - 1
+171,R16 Game 2,11/03/2025 21:00,Stadio San Siro,Inter,Feyenoord,2 - 1
+172,R16 Game 2,11/03/2025 21:00,BayArena,Leverkusen,Bayern München,0 - 2
+173,R16 Game 2,12/03/2025 18:45,Stade Pierre Mauroy,Lille,B. Dortmund,1 - 2
+174,R16 Game 2,12/03/2025 21:00,Villa Park,Aston Villa,Club Brugge,3 - 0
+175,R16 Game 2,12/03/2025 21:00,Estadio Metropolitano,Atleti,Real Madrid,1 - 0
+176,R16 Game 2,12/03/2025 21:00,Arsenal Stadium,Arsenal,PSV,2 - 2
+177,QF Game 1,08/04/2025 21:00,Arsenal Stadium,Arsenal,Real Madrid,3 - 0
+178,QF Game 1,08/04/2025 21:00,Fußball Arena München,Bayern München,Inter,1 - 2
+179,QF Game 1,09/04/2025 21:00,Parc des Princes,Paris,Aston Villa,3 - 1
+180,QF Game 1,09/04/2025 21:00,Estadi Olímpic Lluís Companys,Barcelona,B. Dortmund,4 - 0
+181,QF Game 2,15/04/2025 21:00,BVB Stadion Dortmund,B. Dortmund,Barcelona,3 - 1
+182,QF Game 2,15/04/2025 21:00,Villa Park,Aston Villa,Paris,3 - 2
+183,QF Game 2,16/04/2025 21:00,Stadio San Siro,Inter,Bayern München,2 - 2
+184,QF Game 2,16/04/2025 21:00,Estadio Santiago Bernabéu,Real Madrid,Arsenal,1 - 2
+185,SF Game 1,29/04/2025 21:00,Arsenal Stadium,Arsenal,Paris,0 - 1
+186,SF Game 1,30/04/2025 21:00,Estadi Olímpic Lluís Companys,Barcelona,Inter,3 - 3
+187,SF Game 2,06/05/2025 21:00,Stadio San Siro,Inter,Barcelona,4 - 3
+188,SF Game 2,07/05/2025 21:00,Parc des Princes,Paris,Arsenal,2 - 1
+189,Final,31/05/2025 21:00,Fußball Arena München,Paris,Inter,5 - 0
