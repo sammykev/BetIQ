@@ -20,7 +20,6 @@ const MARKET_ICONS: Record<string, string> = {
   asian_handicap: "⚖️",
   half_time: "⏱️",
   correct_score: "🔢",
-  corners: "🚩",
   cards: "🟨",
 };
 

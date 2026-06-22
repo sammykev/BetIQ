@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 
 from predictor import LeaguePredictor
 from data_fetcher import FootballDataClient, LEAGUES
-from scrapers.fbref import load_corners, load_cards, refresh as scrape_fbref, CORNERS_CSV, CARDS_CSV, DATA_DIR
+from scrapers.fbref import load_cards, refresh as scrape_fbref, CORNERS_CSV, CARDS_CSV
 
 load_dotenv()
 
@@ -48,7 +48,6 @@ _predictions_cache: List[Dict] = []
 _last_updated: Optional[str] = None
 _is_training = False
 _history_df: Optional[pd.DataFrame] = None
-_corners_df: pd.DataFrame = pd.DataFrame()
 _cards_df: pd.DataFrame = pd.DataFrame()
 
 # --- H2H cache (in-memory + file-backed) ---
@@ -423,10 +422,8 @@ async def get_match_analysis(home: str, away: str):
     if result is None:
         raise HTTPException(status_code=404, detail="Could not generate analysis")
 
-    # Inject corners + cards markets if fbref data is available
-    extra = _predictor.predict_corners_cards(home, away, _corners_df, _cards_df)
-    if "corners" in extra:
-        result["markets"].append(extra["corners"])
+    # Inject cards market if data is available
+    extra = _predictor.predict_cards(home, away, _cards_df)
     if "cards" in extra:
         result["markets"].append(extra["cards"])
 
@@ -529,9 +526,8 @@ async def _load_fbref_data():
         except Exception as e:
             print(f"[fbref] Build failed: {e}")
 
-    _corners_df = load_corners()
-    _cards_df   = load_cards()
-    print(f"[fbref] Loaded corners ({len(_corners_df)} teams), cards ({len(_cards_df)} teams)")
+    _cards_df = load_cards()
+    print(f"[fbref] Loaded cards data ({len(_cards_df)} teams)")
 
 
 @app.on_event("startup")
