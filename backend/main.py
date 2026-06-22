@@ -30,10 +30,29 @@ API_KEY = os.getenv("FOOTBALL_DATA_API_KEY", "")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 EPL_HISTORY = os.getenv("EPL_HISTORY_CSV", "../epl-final.csv")
 UCL_CSV_PATTERN = os.getenv("UCL_CSV", "../champions-league-*.csv")
+REDIS_URL = os.getenv("UPSTASH_REDIS_URL", "")
 H2H_CACHE_FILE = "h2h_cache.json"
 H2H_TTL_DAYS = 7
 PREDICTIONS_CACHE_FILE = os.path.join("data", "predictions_cache.json")
 RESULTS_CSV = os.path.join("data", "recent_results.csv")
+
+# Redis client — only active when UPSTASH_REDIS_URL is set
+_redis = None
+def _get_redis():
+    global _redis
+    if _redis is not None:
+        return _redis
+    if not REDIS_URL:
+        return None
+    try:
+        import redis as redis_lib
+        _redis = redis_lib.from_url(REDIS_URL, decode_responses=True)
+        _redis.ping()
+        print("[Redis] Connected to Upstash Redis.")
+        return _redis
+    except Exception as e:
+        print(f"[Redis] Could not connect: {e}")
+        return None
 
 app = FastAPI(title="Sport Bet Predictions API", version="2.0.0")
 
@@ -77,6 +96,20 @@ def _h2h_cache_key(home: str, away: str) -> str:
 
 def _load_predictions_cache():
     global _predictions_cache, _last_updated
+    # 1. Try Redis (survives Render deploys)
+    r = _get_redis()
+    if r:
+        try:
+            raw = r.get("betiq:predictions")
+            if raw:
+                saved = json.loads(raw)
+                _predictions_cache = saved.get("predictions", [])
+                _last_updated = saved.get("last_updated")
+                print(f"[Cache] Restored {len(_predictions_cache)} predictions from Redis.")
+                return
+        except Exception as e:
+            print(f"[Cache] Redis load error: {e}")
+    # 2. Fall back to local disk (works on localhost)
     if os.path.exists(PREDICTIONS_CACHE_FILE):
         try:
             with open(PREDICTIONS_CACHE_FILE) as f:
@@ -85,16 +118,25 @@ def _load_predictions_cache():
             _last_updated = saved.get("last_updated")
             print(f"[Cache] Restored {len(_predictions_cache)} predictions from disk.")
         except Exception as e:
-            print(f"[Cache] Load error: {e}")
+            print(f"[Cache] Disk load error: {e}")
 
 def _save_predictions_cache():
+    payload = json.dumps({"predictions": _predictions_cache, "last_updated": _last_updated})
+    # 1. Try Redis (TTL: 8 hours)
+    r = _get_redis()
+    if r:
+        try:
+            r.set("betiq:predictions", payload, ex=8 * 3600)
+            print(f"[Cache] Saved {len(_predictions_cache)} predictions to Redis.")
+        except Exception as e:
+            print(f"[Cache] Redis save error: {e}")
+    # 2. Also save to disk as fallback
     try:
         os.makedirs("data", exist_ok=True)
         with open(PREDICTIONS_CACHE_FILE, "w") as f:
-            json.dump({"predictions": _predictions_cache, "last_updated": _last_updated}, f)
-        print(f"[Cache] Saved {len(_predictions_cache)} predictions to disk.")
+            f.write(payload)
     except Exception as e:
-        print(f"[Cache] Save error: {e}")
+        print(f"[Cache] Disk save error: {e}")
 
 def _h2h_is_fresh(entry: Dict) -> bool:
     try:

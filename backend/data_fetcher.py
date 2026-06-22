@@ -30,17 +30,27 @@ class FootballDataClient:
         self.headers = {"X-Auth-Token": api_key}
         self._semaphore = asyncio.Semaphore(1)  # 1 at a time to respect rate limit
 
-    async def _get(self, client: httpx.AsyncClient, url: str) -> Optional[Dict]:
+    async def _get(self, client: httpx.AsyncClient, url: str, _attempt: int = 0) -> Optional[Dict]:
         async with self._semaphore:
             try:
-                r = await client.get(url, headers=self.headers, timeout=15)
+                r = await client.get(url, headers=self.headers, timeout=20)
                 if r.status_code == 429:
-                    await asyncio.sleep(61)
-                    r = await client.get(url, headers=self.headers, timeout=15)
+                    wait = 65 if _attempt == 0 else 120
+                    print(f"[API] 429 rate-limited — waiting {wait}s (attempt {_attempt+1})")
+                    await asyncio.sleep(wait)
+                    return await self._get(client, url, _attempt + 1)
+                if r.status_code in (500, 502, 503, 504) and _attempt < 2:
+                    print(f"[API] {r.status_code} server error — retrying in 10s")
+                    await asyncio.sleep(10)
+                    return await self._get(client, url, _attempt + 1)
                 r.raise_for_status()
                 return r.json()
             except Exception as e:
-                print(f"[API] Error fetching {url}: {e}")
+                if _attempt < 2:
+                    print(f"[API] Error (attempt {_attempt+1}), retrying: {e}")
+                    await asyncio.sleep(10)
+                    return await self._get(client, url, _attempt + 1)
+                print(f"[API] Failed after 3 attempts: {url} — {e}")
                 return None
 
     async def fetch_upcoming(
