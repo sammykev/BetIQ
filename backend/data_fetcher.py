@@ -131,10 +131,10 @@ class FootballDataClient:
         return df
 
     async def fetch_all_upcoming(self, days_ahead: int = 7) -> List[Dict]:
-        """Fetch upcoming fixtures for all leagues (with small delays for rate limit)."""
+        """Fetch upcoming fixtures for all leagues (with larger delays for rate limit)."""
         all_fixtures = []
         for code in LEAGUES:
             fixtures = await self.fetch_upcoming(code, days_ahead)
             all_fixtures.extend(fixtures)
-            await asyncio.sleep(6)  # 10 req/min = 6s between calls
+            await asyncio.sleep(10)  # 10 req/min = 6s, using 10s for safety margin
         return all_fixtures
