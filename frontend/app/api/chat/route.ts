@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
     const system = SYSTEM(JSON.stringify(ctx, null, 2));
 
     const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash",
+      model: "gemini-1.5-flash-latest",
       systemInstruction: system,
     });
 
