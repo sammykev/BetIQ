@@ -57,8 +57,7 @@ FEATURE_COLS = [
     "Home_G_Var", "Away_G_Var",
     "Atk_vs_Def",
     "Def_vs_Atk",
-    "Home_Corners_Avg", "Away_Corners_Avg",   # corner dominance
-    "Home_Cards_Avg",   "Away_Cards_Avg",     # disciplinary pressure
+    "Home_Cards_Avg", "Away_Cards_Avg",   # disciplinary pressure
 ]
 
 
@@ -82,8 +81,7 @@ class LeaguePredictor:
         if team not in self.team_stats:
             self.team_stats[team] = {
                 "gf": [], "ga": [], "pts": [],
-                "cf": [], "ca": [],   # corners for/against
-                "yc": [], "rc": [],   # yellow/red cards received
+                "yc": [],   # card weight (yellow + 2*red)
             }
 
     def _feats(self, home: str, away: str) -> Dict:
@@ -102,9 +100,6 @@ class LeaguePredictor:
         h_elo = self.elo.get(home)
         a_elo = self.elo.get(away)
 
-        # Corners and cards (with sensible defaults for teams with no history)
-        h_cf = _ewm(hs["cf"]) if hs["cf"] else 5.0
-        a_cf = _ewm(as_["cf"]) if as_["cf"] else 4.5
         h_yc = _ewm(hs["yc"]) if hs["yc"] else 1.5
         a_yc = _ewm(as_["yc"]) if as_["yc"] else 1.5
 
@@ -116,8 +111,6 @@ class LeaguePredictor:
             "Home_G_Var": h_var, "Away_G_Var": a_var,
             "Atk_vs_Def": h_gf - a_ga,
             "Def_vs_Atk": a_gf - h_ga,
-            "Home_Corners_Avg": h_cf,
-            "Away_Corners_Avg": a_cf,
             "Home_Cards_Avg": h_yc,
             "Away_Cards_Avg": a_yc,
         }
@@ -125,7 +118,6 @@ class LeaguePredictor:
     def _update(
         self, home: str, away: str, result: str,
         fthg: float, ftag: float,
-        hc: float = None, ac: float = None,
         hyc: float = None, ayc: float = None,
         hrc: float = None, arc: float = None,
     ):
@@ -138,14 +130,6 @@ class LeaguePredictor:
         pts = {"H": (3, 0), "D": (1, 1), "A": (0, 3)}[result]
         self.team_stats[home]["pts"].append(pts[0])
         self.team_stats[away]["pts"].append(pts[1])
-
-        # Corners
-        if hc is not None and not np.isnan(hc):
-            self.team_stats[home]["cf"].append(hc)
-            self.team_stats[home]["ca"].append(ac if ac is not None else 0)
-        if ac is not None and not np.isnan(ac):
-            self.team_stats[away]["cf"].append(ac)
-            self.team_stats[away]["ca"].append(hc if hc is not None else 0)
 
         # Cards (yellow + 2*red = total card weight)
         h_cards = (hyc or 0) + (hrc or 0) * 2
@@ -176,7 +160,6 @@ class LeaguePredictor:
             rows.append(f)
             self._update(
                 r["HomeTeam"], r["AwayTeam"], r["Result"], r["FTHG"], r["FTAG"],
-                hc=r.get("HomeCorners"), ac=r.get("AwayCorners"),
                 hyc=r.get("HomeYellowCards"), ayc=r.get("AwayYellowCards"),
                 hrc=r.get("HomeRedCards"), arc=r.get("AwayRedCards"),
             )
@@ -476,11 +459,10 @@ class LeaguePredictor:
             "elo": elo_context,
         }
 
-    def predict_corners_cards(
+    def predict_cards(
         self,
         home: str,
         away: str,
-        corners_df: pd.DataFrame,
         cards_df: pd.DataFrame,
     ) -> Dict:
         """
@@ -501,45 +483,6 @@ class LeaguePredictor:
             return round(max(0.0, min(1.0, 1.0 - total)), 3)
 
         result = {}
-
-        # ── Corners ────────────────────────────────────────────────────────
-        if not corners_df.empty:
-            def get_corners(team, is_home):
-                row = corners_df[corners_df["team"].str.lower() == team.lower()]
-                if row.empty:
-                    return (5.0, 4.5)  # league avg defaults
-                r = row.iloc[0]
-                if is_home:
-                    return (
-                        float(r.get("home_corners_for", 5.0)),
-                        float(r.get("home_corners_against", 4.5)),
-                    )
-                return (
-                    float(r.get("away_corners_for", 4.5)),
-                    float(r.get("away_corners_against", 5.0)),
-                )
-
-            h_cf, h_ca = get_corners(home, is_home=True)
-            a_cf, a_ca = get_corners(away, is_home=False)
-
-            # Expected total corners: blend team for/against
-            exp_h = (h_cf + a_ca) / 2
-            exp_a = (a_cf + h_ca) / 2
-            exp_total = exp_h + exp_a
-
-            corners_market = {
-                "id": "corners",
-                "name": "Total Corners",
-                "options": [
-                    {"label": "Over 7.5",  "code": "CRN-O75",  "prob": p_over_poisson(exp_total, 7)},
-                    {"label": "Over 8.5",  "code": "CRN-O85",  "prob": p_over_poisson(exp_total, 8)},
-                    {"label": "Over 9.5",  "code": "CRN-O95",  "prob": p_over_poisson(exp_total, 9)},
-                    {"label": "Over 10.5", "code": "CRN-O105", "prob": p_over_poisson(exp_total, 10)},
-                    {"label": "Under 8.5", "code": "CRN-U85",  "prob": round(1 - p_over_poisson(exp_total, 8), 3)},
-                    {"label": "Under 9.5", "code": "CRN-U95",  "prob": round(1 - p_over_poisson(exp_total, 9), 3)},
-                ],
-            }
-            result["corners"] = corners_market
 
         # ── Cards ──────────────────────────────────────────────────────────
         if not cards_df.empty:

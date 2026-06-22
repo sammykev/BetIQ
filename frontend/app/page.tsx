@@ -50,6 +50,14 @@ export default function HomePage() {
     load();
   }, [load]);
 
+  // Keep Render backend alive — ping every 10 minutes
+  useEffect(() => {
+    const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
+    const ping = () => fetch(`${API}/api/health`).catch(() => {});
+    const id = setInterval(ping, 10 * 60 * 1000);
+    return () => clearInterval(id);
+  }, []);
+
   async function handleRefresh() {
     setRefreshing(true);
     try {
