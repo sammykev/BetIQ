@@ -59,12 +59,17 @@ class FootballDataClient:
         if not data or "matches" not in data:
             return []
 
+        _SKIP = {"tbd", "tba", "to be announced", "", "none"}
         fixtures = []
         for m in data["matches"]:
+            home_name = (m["homeTeam"].get("name") or "").strip()
+            away_name = (m["awayTeam"].get("name") or "").strip()
+            if home_name.lower() in _SKIP or away_name.lower() in _SKIP:
+                continue
             fixtures.append({
-                "match_id": m["id"],          # needed for H2H endpoint
-                "home": m["homeTeam"]["name"],
-                "away": m["awayTeam"]["name"],
+                "match_id": m["id"],
+                "home": home_name,
+                "away": away_name,
                 "date": m["utcDate"][:10],
                 "time": m["utcDate"][11:16],
                 "league": league_code,
