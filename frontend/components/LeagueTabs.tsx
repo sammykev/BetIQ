@@ -30,7 +30,7 @@ export function LeagueTabs({ leagues, selected, onSelect, counts }: Props) {
                 "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all whitespace-nowrap",
                 active
                   ? "bg-green-500/20 text-green-300 border border-green-500/40"
-                  : "bg-slate-800 text-slate-400 border border-slate-700 hover:text-slate-200 hover:border-slate-600"
+                  : "bg-slate-200 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-300 dark:border-slate-700 hover:text-slate-800 dark:hover:text-slate-200 hover:border-slate-400 dark:hover:border-slate-600"
               )}
             >
               <span>{l.flag}</span>
@@ -39,7 +39,7 @@ export function LeagueTabs({ leagues, selected, onSelect, counts }: Props) {
                 <span
                   className={clsx(
                     "text-xs px-1.5 py-0.5 rounded-full",
-                    active ? "bg-green-500/30 text-green-200" : "bg-slate-700 text-slate-400"
+                    active ? "bg-green-500/30 text-green-200" : "bg-slate-300 dark:bg-slate-700 text-slate-500 dark:text-slate-400"
                   )}
                 >
                   {count}

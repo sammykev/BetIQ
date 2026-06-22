@@ -22,6 +22,7 @@ from dotenv import load_dotenv
 
 from predictor import LeaguePredictor
 from data_fetcher import FootballDataClient, LEAGUES
+from scrapers.fbref import load_corners, load_cards, refresh as scrape_fbref, CORNERS_CSV, CARDS_CSV
 
 load_dotenv()
 
@@ -47,6 +48,8 @@ _predictions_cache: List[Dict] = []
 _last_updated: Optional[str] = None
 _is_training = False
 _history_df: Optional[pd.DataFrame] = None
+_corners_df: pd.DataFrame = pd.DataFrame()
+_cards_df: pd.DataFrame = pd.DataFrame()
 
 # --- H2H cache (in-memory + file-backed) ---
 _h2h_cache: Dict[str, Dict] = {}
@@ -410,6 +413,13 @@ async def get_match_analysis(home: str, away: str):
     if result is None:
         raise HTTPException(status_code=404, detail="Could not generate analysis")
 
+    # Inject corners + cards markets if fbref data is available
+    extra = _predictor.predict_corners_cards(home, away, _corners_df, _cards_df)
+    if "corners" in extra:
+        result["markets"].append(extra["corners"])
+    if "cards" in extra:
+        result["markets"].append(extra["cards"])
+
     # Blend H2H win rates into model probabilities if cached data exists
     key = _h2h_cache_key(home, away)
     cached = _h2h_cache.get(key)
@@ -491,11 +501,36 @@ async def refresh_predictions(background_tasks: BackgroundTasks):
 scheduler = AsyncIOScheduler()
 
 
+async def _load_fbref_data():
+    """Load corners/cards CSVs, scraping fbref if files are missing or >7 days old."""
+    global _corners_df, _cards_df
+    import time as _time
+
+    needs_scrape = True
+    if os.path.exists(CORNERS_CSV):
+        age_days = (_time.time() - os.path.getmtime(CORNERS_CSV)) / 86400
+        if age_days < 7:
+            needs_scrape = False
+
+    if needs_scrape:
+        print("[fbref] Data stale or missing — scraping fbref.com...")
+        try:
+            await scrape_fbref()
+        except Exception as e:
+            print(f"[fbref] Scrape failed: {e}")
+
+    _corners_df = load_corners()
+    _cards_df   = load_cards()
+    print(f"[fbref] Loaded corners ({len(_corners_df)} teams), cards ({len(_cards_df)} teams)")
+
+
 @app.on_event("startup")
 async def startup():
     _load_h2h_cache()
     asyncio.create_task(_run_pipeline())
+    asyncio.create_task(_load_fbref_data())
     scheduler.add_job(_run_pipeline, "interval", hours=6, id="refresh")
+    scheduler.add_job(_load_fbref_data, "interval", days=7, id="fbref_refresh")
     scheduler.start()
 
 

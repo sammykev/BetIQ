@@ -20,6 +20,8 @@ const MARKET_ICONS: Record<string, string> = {
   asian_handicap: "⚖️",
   half_time: "⏱️",
   correct_score: "🔢",
+  corners: "🚩",
+  cards: "🟨",
 };
 
 // ------------------------------------------------------------------ //
@@ -32,17 +34,17 @@ function EloGauge({ elo, home, away }: { elo: MatchAnalysis["elo"]; home: string
   const homeLeads = elo.gap >= 0;
 
   const labelColor =
-    absGap < 30 ? "text-slate-300" :
+    absGap < 30 ? "text-slate-700 dark:text-slate-300" :
     absGap < 80 ? "text-blue-300" :
     absGap < 150 ? "text-yellow-300" :
     absGap < 250 ? "text-orange-300" : "text-red-400";
 
   return (
-    <div className="bg-slate-800/60 border border-slate-700/50 rounded-xl p-4 space-y-3">
+    <div className="bg-slate-100/80 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/50 rounded-xl p-4 space-y-3">
       <div className="flex items-center gap-2">
         <span className="text-base">🏆</span>
-        <h3 className="text-sm font-semibold text-slate-200">Elo Rating</h3>
-        <span className={clsx("ml-auto text-xs font-bold px-2 py-0.5 rounded-full bg-slate-700", labelColor)}>
+        <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-200">Elo Rating</h3>
+        <span className={clsx("ml-auto text-xs font-bold px-2 py-0.5 rounded-full bg-slate-300 dark:bg-slate-700", labelColor)}>
           {elo.label}
         </span>
       </div>
@@ -51,29 +53,29 @@ function EloGauge({ elo, home, away }: { elo: MatchAnalysis["elo"]; home: string
       <div className="grid grid-cols-3 gap-2 text-center">
         <div>
           <p className="text-xs text-slate-500 truncate">{home}</p>
-          <p className="text-lg font-black text-slate-100">{elo.home}</p>
+          <p className="text-lg font-black text-slate-900 dark:text-slate-100">{elo.home}</p>
         </div>
         <div className="flex flex-col items-center justify-center">
           <p className="text-[10px] text-slate-500 uppercase tracking-wide">Gap</p>
           <p className={clsx("text-base font-black", labelColor)}>
             {absGap > 0 ? (homeLeads ? "+" : "−") : ""}{absGap}
           </p>
-          <p className="text-[10px] text-slate-600">/ {elo.gap_out_of} pts</p>
+          <p className="text-[10px] text-slate-400 dark:text-slate-600">/ {elo.gap_out_of} pts</p>
         </div>
         <div>
           <p className="text-xs text-slate-500 truncate">{away}</p>
-          <p className="text-lg font-black text-slate-100">{elo.away}</p>
+          <p className="text-lg font-black text-slate-900 dark:text-slate-100">{elo.away}</p>
         </div>
       </div>
 
       {/* Gap bar */}
       <div>
-        <div className="flex justify-between text-[10px] text-slate-600 mb-1">
+        <div className="flex justify-between text-[10px] text-slate-400 dark:text-slate-600 mb-1">
           <span>0</span>
           <span className="text-slate-500">Elo gap scale (max {elo.gap_out_of} pts = ~91% win prob)</span>
           <span>{elo.gap_out_of}</span>
         </div>
-        <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
+        <div className="h-2 bg-slate-300 dark:bg-slate-700 rounded-full overflow-hidden">
           <div
             className={clsx("h-full rounded-full transition-all duration-700",
               absGap < 30 ? "bg-slate-400" :
@@ -87,13 +89,13 @@ function EloGauge({ elo, home, away }: { elo: MatchAnalysis["elo"]; home: string
       </div>
 
       {/* Implied prob */}
-      <div className="flex items-start gap-2 bg-slate-700/30 rounded-lg px-3 py-2">
+      <div className="flex items-start gap-2 bg-slate-200/40 dark:bg-slate-700/30 rounded-lg px-3 py-2">
         <span className="text-yellow-400 mt-0.5 shrink-0">💡</span>
-        <p className="text-xs text-slate-300">
-          <span className="font-semibold text-white">{elo.leading}</span> have a{" "}
+        <p className="text-xs text-slate-700 dark:text-slate-300">
+          <span className="font-semibold text-slate-900 dark:text-white">{elo.leading}</span> have a{" "}
           <span className={clsx("font-bold", labelColor)}>{Math.round(elo.implied_win_prob * 100)}%</span>{" "}
           implied win probability from Elo ratings alone.{" "}
-          <span className="text-slate-400">{elo.description}</span>
+          <span className="text-slate-500 dark:text-slate-400">{elo.description}</span>
         </p>
       </div>
     </div>
@@ -106,7 +108,7 @@ function EloGauge({ elo, home, away }: { elo: MatchAnalysis["elo"]; home: string
 function ProbBar({ prob, highlight }: { prob: number; highlight: boolean }) {
   return (
     <div className="flex items-center gap-2">
-      <div className="flex-1 h-1.5 bg-slate-700 rounded-full overflow-hidden">
+      <div className="flex-1 h-1.5 bg-slate-300 dark:bg-slate-700 rounded-full overflow-hidden">
         <div
           className={clsx("h-full rounded-full transition-all duration-500",
             highlight ? "bg-green-400" : "bg-slate-500")}
@@ -114,7 +116,7 @@ function ProbBar({ prob, highlight }: { prob: number; highlight: boolean }) {
         />
       </div>
       <span className={clsx("text-xs font-semibold w-9 text-right",
-        highlight ? "text-green-300" : "text-slate-400")}>
+        highlight ? "text-green-300" : "text-slate-500 dark:text-slate-400")}>
         {Math.round(prob * 100)}%
       </span>
     </div>
@@ -124,16 +126,16 @@ function ProbBar({ prob, highlight }: { prob: number; highlight: boolean }) {
 function MarketBlock({ market, recommendedCode }: { market: Market; recommendedCode?: string }) {
   const best = [...market.options].sort((a, b) => b.prob - a.prob)[0];
   return (
-    <div className="bg-slate-800/60 border border-slate-700/50 rounded-xl p-4 space-y-3">
+    <div className="bg-slate-100/80 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/50 rounded-xl p-4 space-y-3">
       <div className="flex items-center gap-2">
         <span className="text-base">{MARKET_ICONS[market.id] || "📌"}</span>
-        <h3 className="text-sm font-semibold text-slate-200">{market.name}</h3>
+        <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-200">{market.name}</h3>
       </div>
       <div className="space-y-2">
         {market.options.map((opt) => (
           <div key={opt.code} className="space-y-1">
             <div className="flex items-center gap-1.5">
-              <span className="text-xs text-slate-300 truncate flex-1">{opt.label}</span>
+              <span className="text-xs text-slate-700 dark:text-slate-300 truncate flex-1">{opt.label}</span>
               {opt.code === recommendedCode && (
                 <span className="flex items-center gap-0.5 bg-green-500/20 text-green-300 text-[10px] font-bold px-1.5 py-0.5 rounded-full border border-green-500/30 shrink-0">
                   <Star size={8} /> TOP PICK
@@ -176,34 +178,34 @@ export function MatchModal({ prediction: p, onClose }: Props) {
       className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="w-full max-w-2xl my-8 bg-slate-900 border border-slate-700 rounded-2xl overflow-hidden shadow-2xl">
+      <div className="w-full max-w-2xl my-8 bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-2xl overflow-hidden shadow-2xl">
 
         {/* Header */}
-        <div className="bg-gradient-to-r from-slate-800 to-slate-900 border-b border-slate-700 p-5">
+        <div className="bg-gradient-to-r from-slate-200 dark:from-slate-800 to-slate-50 dark:to-slate-900 border-b border-slate-300 dark:border-slate-700 p-5">
           <div className="flex items-start justify-between gap-4">
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-3 flex-wrap">
                 <span>{p.flag}</span>
-                <span className="text-xs text-slate-400 font-medium">{p.league_name}</span>
-                <span className="text-slate-600">·</span>
+                <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">{p.league_name}</span>
+                <span className="text-slate-400 dark:text-slate-600">·</span>
                 <span className="text-xs text-slate-500 flex items-center gap-1">
                   <Clock size={10} /> {p.date}{p.time !== "TBD" ? ` · ${p.time}` : ""}
                 </span>
               </div>
               <div className="flex items-center gap-4">
                 <div className="flex-1 text-center">
-                  <p className="text-lg font-bold text-white leading-tight">{p.home}</p>
+                  <p className="text-lg font-bold text-slate-900 dark:text-white leading-tight">{p.home}</p>
                   <p className="text-xs text-slate-500 mt-0.5">Home</p>
                 </div>
                 <div className="text-slate-500 font-bold">vs</div>
                 <div className="flex-1 text-center">
-                  <p className="text-lg font-bold text-white leading-tight">{p.away}</p>
+                  <p className="text-lg font-bold text-slate-900 dark:text-white leading-tight">{p.away}</p>
                   <p className="text-xs text-slate-500 mt-0.5">Away</p>
                 </div>
               </div>
             </div>
-            <button onClick={onClose} className="p-2 hover:bg-slate-700 rounded-lg transition-colors shrink-0">
-              <X size={16} className="text-slate-400" />
+            <button onClick={onClose} className="p-2 hover:bg-slate-300 dark:hover:bg-slate-700 rounded-lg transition-colors shrink-0">
+              <X size={16} className="text-slate-500 dark:text-slate-400" />
             </button>
           </div>
 
@@ -211,10 +213,10 @@ export function MatchModal({ prediction: p, onClose }: Props) {
           <div className="grid grid-cols-3 gap-2 mt-4">
             {[
               { label: "Home Win", value: `${Math.round(p.p_home * 100)}%`, color: "text-blue-400" },
-              { label: "Draw",     value: `${Math.round(p.p_draw * 100)}%`, color: "text-slate-300" },
+              { label: "Draw",     value: `${Math.round(p.p_draw * 100)}%`, color: "text-slate-700 dark:text-slate-300" },
               { label: "Away Win", value: `${Math.round(p.p_away * 100)}%`, color: "text-purple-400" },
             ].map(({ label, value, color }) => (
-              <div key={label} className="bg-slate-700/40 rounded-lg px-3 py-2 text-center">
+              <div key={label} className="bg-slate-200/60 dark:bg-slate-700/40 rounded-lg px-3 py-2 text-center">
                 <p className="text-xs text-slate-500">{label}</p>
                 <p className={clsx("text-sm font-bold", color)}>{value}</p>
               </div>
@@ -222,8 +224,8 @@ export function MatchModal({ prediction: p, onClose }: Props) {
           </div>
         </div>
 
-        {/* Tabs — H2H temporarily hidden while being improved */}
-        <div className="flex border-b border-slate-800">
+        {/* Tabs */}
+        <div className="flex border-b border-slate-200 dark:border-slate-800">
           <div className="flex-1 flex items-center justify-center gap-1.5 py-3 text-xs font-medium text-green-400 border-b-2 border-green-500 bg-green-500/5">
             <BarChart2 size={13} /> Analysis &amp; Markets
           </div>
@@ -234,7 +236,7 @@ export function MatchModal({ prediction: p, onClose }: Props) {
           {loadingAnalysis && (
             <div className="space-y-3">
               {Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className="bg-slate-800 rounded-xl h-28 animate-pulse" />
+                <div key={i} className="bg-slate-200 dark:bg-slate-800 rounded-xl h-28 animate-pulse" />
               ))}
             </div>
           )}
@@ -251,8 +253,8 @@ export function MatchModal({ prediction: p, onClose }: Props) {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-xs text-green-400 font-semibold uppercase tracking-wide mb-0.5">Best Pick</p>
-                    <p className="text-white font-bold text-base truncate">{rec.label}</p>
-                    <p className="text-xs text-slate-400">{rec.market} · {Math.round(rec.prob * 100)}% confidence</p>
+                    <p className="text-slate-900 dark:text-white font-bold text-base truncate">{rec.label}</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">{rec.market} · {Math.round(rec.prob * 100)}% confidence</p>
                   </div>
                   <p className="text-2xl font-black text-green-400 shrink-0">{Math.round(rec.prob * 100)}%</p>
                 </div>
@@ -264,10 +266,10 @@ export function MatchModal({ prediction: p, onClose }: Props) {
                   { label: `${p.home} xG`, value: analysis.xg_home },
                   { label: `${p.away} xG`, value: analysis.xg_away },
                 ].map(({ label, value }) => (
-                  <div key={label} className="bg-slate-800/60 border border-slate-700/50 rounded-xl px-4 py-3">
+                  <div key={label} className="bg-slate-100/80 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/50 rounded-xl px-4 py-3">
                     <p className="text-xs text-slate-500">{label}</p>
-                    <p className="text-lg font-bold text-slate-100">{value.toFixed(2)}</p>
-                    <p className="text-xs text-slate-600">Expected goals</p>
+                    <p className="text-lg font-bold text-slate-900 dark:text-slate-100">{value.toFixed(2)}</p>
+                    <p className="text-xs text-slate-400 dark:text-slate-600">Expected goals</p>
                   </div>
                 ))}
               </div>
