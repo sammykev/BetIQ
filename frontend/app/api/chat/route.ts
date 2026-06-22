@@ -47,9 +47,13 @@ export async function POST(req: NextRequest) {
       systemInstruction: system,
     });
 
-    // Convert our message history to Gemini format
-    // Gemini uses "user" / "model" roles (not "assistant")
-    const history = messages.slice(0, -1).map((m: { role: string; content: string }) => ({
+    // Convert our message history to Gemini format.
+    // Gemini requires history to start with a "user" turn — drop any leading
+    // assistant greeting before the first real user message.
+    const prior = messages.slice(0, -1);
+    const firstUserIdx = prior.findIndex((m: { role: string }) => m.role === "user");
+    const trimmed = firstUserIdx === -1 ? [] : prior.slice(firstUserIdx);
+    const history = trimmed.map((m: { role: string; content: string }) => ({
       role: m.role === "assistant" ? "model" : "user",
       parts: [{ text: m.content }],
     }));
