@@ -137,14 +137,21 @@ function AssistantBubble({
         body: JSON.stringify({ predictions: selections }),
       });
       const data = await res.json();
-      setBooking(data);
+      // Sanitise: only pass through fields we explicitly trust
+      setBooking({
+        code: data.code ?? null,
+        matched: Array.isArray(data.matched) ? data.matched : [],
+        unmatched: Array.isArray(data.unmatched) ? data.unmatched : [],
+        total_odds: typeof data.total_odds === "number" ? data.total_odds : null,
+        error: data.code ? null : "Booking code unavailable — try again shortly.",
+      });
     } catch {
       setBooking({
         code: null,
         matched: [],
         unmatched: [],
         total_odds: null,
-        error: "Could not reach the backend. Make sure it is running.",
+        error: "Could not generate booking code. Please try again.",
       });
     } finally {
       setLoading(false);
@@ -230,14 +237,20 @@ export function ChatBot({ predictions }: Props) {
         }),
       });
       const data = await res.json();
-      if (data.error) throw new Error(data.error);
+      if (!res.ok || data.error) {
+        setMessages([...newMessages, {
+          role: "assistant",
+          content: "Sorry, I'm having trouble right now. Please try again in a moment.",
+        }]);
+        return;
+      }
       setMessages([...newMessages, { role: "assistant", content: data.message }]);
-    } catch (err) {
+    } catch {
       setMessages([
         ...newMessages,
         {
           role: "assistant",
-          content: `⚠️ Error: ${err instanceof Error ? err.message : "Something went wrong."}`,
+          content: "Couldn't reach the assistant. Check your connection and try again.",
         },
       ]);
     } finally {
