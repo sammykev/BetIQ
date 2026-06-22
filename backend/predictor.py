@@ -13,6 +13,7 @@ import pandas as pd
 from typing import Dict, List, Optional
 import xgboost as xgb
 import warnings
+import os
 
 warnings.filterwarnings("ignore")
 
@@ -431,3 +432,107 @@ class LeaguePredictor:
             "recommended": best_pick,
             "elo": elo_context,
         }
+
+    def predict_corners_cards(
+        self,
+        home: str,
+        away: str,
+        corners_df: pd.DataFrame,
+        cards_df: pd.DataFrame,
+    ) -> Dict:
+        """
+        Predict corners and cards markets using team averages from fbref data.
+        Returns two market dicts ready to append to the markets list.
+        """
+        from math import exp, factorial
+
+        def pmf(k, lam):
+            try:
+                return (lam ** k * exp(-lam)) / factorial(k)
+            except Exception:
+                return 0.0
+
+        def p_over_poisson(lam, threshold):
+            total = sum(pmf(k, lam) for k in range(int(threshold) + 1))
+            # handle .5 lines
+            return round(max(0.0, min(1.0, 1.0 - total)), 3)
+
+        result = {}
+
+        # ── Corners ────────────────────────────────────────────────────────
+        if not corners_df.empty:
+            def get_corners(team, is_home):
+                row = corners_df[corners_df["team"].str.lower() == team.lower()]
+                if row.empty:
+                    return (5.0, 4.5)  # league avg defaults
+                r = row.iloc[0]
+                if is_home:
+                    return (
+                        float(r.get("home_corners_for", 5.0)),
+                        float(r.get("home_corners_against", 4.5)),
+                    )
+                return (
+                    float(r.get("away_corners_for", 4.5)),
+                    float(r.get("away_corners_against", 5.0)),
+                )
+
+            h_cf, h_ca = get_corners(home, is_home=True)
+            a_cf, a_ca = get_corners(away, is_home=False)
+
+            # Expected total corners: blend team for/against
+            exp_h = (h_cf + a_ca) / 2
+            exp_a = (a_cf + h_ca) / 2
+            exp_total = exp_h + exp_a
+
+            corners_market = {
+                "id": "corners",
+                "name": "Total Corners",
+                "options": [
+                    {"label": "Over 7.5",  "code": "CRN-O75",  "prob": p_over_poisson(exp_total, 7)},
+                    {"label": "Over 8.5",  "code": "CRN-O85",  "prob": p_over_poisson(exp_total, 8)},
+                    {"label": "Over 9.5",  "code": "CRN-O95",  "prob": p_over_poisson(exp_total, 9)},
+                    {"label": "Over 10.5", "code": "CRN-O105", "prob": p_over_poisson(exp_total, 10)},
+                    {"label": "Under 8.5", "code": "CRN-U85",  "prob": round(1 - p_over_poisson(exp_total, 8), 3)},
+                    {"label": "Under 9.5", "code": "CRN-U95",  "prob": round(1 - p_over_poisson(exp_total, 9), 3)},
+                ],
+            }
+            result["corners"] = corners_market
+
+        # ── Cards ──────────────────────────────────────────────────────────
+        if not cards_df.empty:
+            def get_cards(team, is_home):
+                row = cards_df[cards_df["team"].str.lower() == team.lower()]
+                if row.empty:
+                    return (1.5, 1.5)
+                r = row.iloc[0]
+                if is_home:
+                    return (
+                        float(r.get("home_cards_for", 1.5)),
+                        float(r.get("home_cards_against", 1.5)),
+                    )
+                return (
+                    float(r.get("away_cards_for", 1.8)),
+                    float(r.get("away_cards_against", 1.8)),
+                )
+
+            h_cf, h_ca = get_cards(home, is_home=True)
+            a_cf, a_ca = get_cards(away, is_home=False)
+
+            exp_h = (h_cf + a_ca) / 2
+            exp_a = (a_cf + h_ca) / 2
+            exp_total = exp_h + exp_a
+
+            cards_market = {
+                "id": "cards",
+                "name": "Total Cards",
+                "options": [
+                    {"label": "Over 2.5 Cards", "code": "CRD-O25", "prob": p_over_poisson(exp_total, 2)},
+                    {"label": "Over 3.5 Cards", "code": "CRD-O35", "prob": p_over_poisson(exp_total, 3)},
+                    {"label": "Over 4.5 Cards", "code": "CRD-O45", "prob": p_over_poisson(exp_total, 4)},
+                    {"label": "Under 3.5 Cards", "code": "CRD-U35", "prob": round(1 - p_over_poisson(exp_total, 3), 3)},
+                    {"label": "Under 4.5 Cards", "code": "CRD-U45", "prob": round(1 - p_over_poisson(exp_total, 4), 3)},
+                ],
+            }
+            result["cards"] = cards_market
+
+        return result

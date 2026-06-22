@@ -16,10 +16,14 @@
 }
 
 body {
-  background: var(--bg);
-  color: var(--text-primary);
+  @apply bg-slate-950 text-slate-100;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   min-height: 100vh;
+}
+@media (prefers-color-scheme: light) {
+  body {
+    @apply bg-slate-50 text-slate-900;
+  }
 }
 
 /* Scrollbar */

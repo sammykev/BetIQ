@@ -87,15 +87,15 @@ export default function HomePage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950">
+    <div className="min-h-screen bg-white dark:bg-slate-950">
       {/* Header */}
-      <header className="border-b border-slate-800 bg-slate-950/80 backdrop-blur sticky top-0 z-10">
+      <header className="border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-950/80 backdrop-blur sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
           <div className="flex items-center gap-2.5">
             <span className="text-2xl">⚽</span>
             <div>
-              <h1 className="text-lg font-bold text-white tracking-tight leading-none">BetIQ</h1>
-              <p className="text-xs text-slate-500 leading-none mt-0.5">AI Football Predictions</p>
+              <h1 className="text-lg font-bold text-slate-900 dark:text-white tracking-tight leading-none">BetIQ</h1>
+              <p className="text-xs text-slate-500 dark:text-slate-500 leading-none mt-0.5">AI Football Predictions</p>
             </div>
           </div>
 
@@ -108,7 +108,7 @@ export default function HomePage() {
             <button
               onClick={handleRefresh}
               disabled={refreshing}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs text-slate-300 transition-all disabled:opacity-50"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-700 rounded-lg text-xs text-slate-700 dark:text-slate-300 transition-all disabled:opacity-50"
             >
               <RefreshCw size={12} className={clsx(refreshing && "animate-spin")} />
               Refresh
@@ -126,11 +126,11 @@ export default function HomePage() {
             { icon: <TrendingUp size={16} />, label: "High Confidence", value: highConf.length, color: "text-yellow-400" },
             { icon: <Info size={16} />, label: "Leagues", value: Object.keys(counts).length, color: "text-purple-400" },
           ].map(({ icon, label, value, color }) => (
-            <div key={label} className="bg-slate-900 border border-slate-800 rounded-xl px-4 py-3 flex items-center gap-3">
+            <div key={label} className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 flex items-center gap-3">
               <span className={color}>{icon}</span>
               <div>
                 <p className="text-xs text-slate-500">{label}</p>
-                <p className="text-xl font-bold text-slate-100">{value}</p>
+                <p className="text-xl font-bold text-slate-900 dark:text-slate-100">{value}</p>
               </div>
             </div>
           ))}
@@ -163,7 +163,7 @@ export default function HomePage() {
                     "px-3 py-1 rounded-lg text-xs font-medium border transition-all",
                     minConf === value
                       ? "bg-green-500/20 text-green-300 border-green-500/40"
-                      : "bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200"
+                      : "bg-slate-200 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-300 dark:border-slate-700 hover:text-slate-800 dark:hover:text-slate-200"
                   )}
                 >
                   {label}
@@ -171,14 +171,14 @@ export default function HomePage() {
               ))}
             </div>
 
-            <div className="flex items-center gap-1 bg-slate-800 border border-slate-700 rounded-lg p-0.5">
+            <div className="flex items-center gap-1 bg-slate-200 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg p-0.5">
               <button
                 onClick={() => setSortBy("date")}
                 className={clsx(
                   "flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-all",
                   sortBy === "date"
-                    ? "bg-slate-600 text-white"
-                    : "text-slate-400 hover:text-slate-200"
+                    ? "bg-slate-300 dark:bg-slate-600 text-slate-900 dark:text-white"
+                    : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
                 )}
               >
                 <CalendarDays size={11} />
@@ -189,8 +189,8 @@ export default function HomePage() {
                 className={clsx(
                   "flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-all",
                   sortBy === "confidence"
-                    ? "bg-slate-600 text-white"
-                    : "text-slate-400 hover:text-slate-200"
+                    ? "bg-slate-300 dark:bg-slate-600 text-slate-900 dark:text-white"
+                    : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
                 )}
               >
                 <Percent size={11} />
@@ -204,18 +204,18 @@ export default function HomePage() {
         {loading ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-4 animate-pulse">
-                <div className="h-3 bg-slate-800 rounded w-1/2" />
+              <div key={i} className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-4 animate-pulse">
+                <div className="h-3 bg-slate-200 dark:bg-slate-800 rounded w-1/2" />
                 <div className="space-y-2">
-                  <div className="h-5 bg-slate-800 rounded w-3/4 mx-auto" />
-                  <div className="h-3 bg-slate-800 rounded w-1/4 mx-auto" />
-                  <div className="h-5 bg-slate-800 rounded w-3/4 mx-auto" />
+                  <div className="h-5 bg-slate-200 dark:bg-slate-800 rounded w-3/4 mx-auto" />
+                  <div className="h-3 bg-slate-200 dark:bg-slate-800 rounded w-1/4 mx-auto" />
+                  <div className="h-5 bg-slate-200 dark:bg-slate-800 rounded w-3/4 mx-auto" />
                 </div>
                 <div className="grid grid-cols-3 gap-2">
-                  {[0, 1, 2].map((j) => <div key={j} className="h-10 bg-slate-800 rounded-lg" />)}
+                  {[0, 1, 2].map((j) => <div key={j} className="h-10 bg-slate-200 dark:bg-slate-800 rounded-lg" />)}
                 </div>
-                <div className="h-3 bg-slate-800 rounded" />
-                <div className="h-3 bg-slate-800 rounded w-3/4" />
+                <div className="h-3 bg-slate-200 dark:bg-slate-800 rounded" />
+                <div className="h-3 bg-slate-200 dark:bg-slate-800 rounded w-3/4" />
               </div>
             ))}
           </div>
@@ -223,13 +223,13 @@ export default function HomePage() {
           <div className="text-center py-20 space-y-3">
             <AlertTriangle size={40} className="text-red-400 mx-auto" />
             <p className="text-red-300 font-medium">{error}</p>
-            <p className="text-slate-500 text-sm">Check that the backend server is running and NEXT_PUBLIC_API_URL is set correctly.</p>
+            <p className="text-slate-500 dark:text-slate-500 text-sm">Check that the backend server is running and NEXT_PUBLIC_API_URL is set correctly.</p>
           </div>
         ) : predictions.length === 0 ? (
           <div className="text-center py-20 space-y-3">
             <span className="text-5xl">📭</span>
-            <p className="text-slate-400">No predictions available for the selected filters.</p>
-            <p className="text-slate-600 text-sm">Try widening your confidence filter or selecting All Leagues.</p>
+            <p className="text-slate-500 dark:text-slate-400">No predictions available for the selected filters.</p>
+            <p className="text-slate-400 dark:text-slate-600 text-sm">Try widening your confidence filter or selecting All Leagues.</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -253,7 +253,7 @@ export default function HomePage() {
       )}
 
       {/* Footer */}
-      <footer className="border-t border-slate-800 mt-12 py-6 text-center text-xs text-slate-600">
+      <footer className="border-t border-slate-200 dark:border-slate-800 mt-12 py-6 text-center text-xs text-slate-400 dark:text-slate-600">
         <p>BetIQ · Powered by XGBoost + Elo Ratings · football-data.org</p>
         <p className="mt-1">9 leagues · Updated every 6 hours · For educational use only</p>
       </footer>
