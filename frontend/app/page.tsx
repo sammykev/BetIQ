@@ -223,7 +223,7 @@ export default function HomePage() {
           <div className="text-center py-20 space-y-3">
             <AlertTriangle size={40} className="text-red-400 mx-auto" />
             <p className="text-red-300 font-medium">{error}</p>
-            <p className="text-slate-500 text-sm">Check that the backend server is running on port 8000</p>
+            <p className="text-slate-500 text-sm">Check that the backend server is running and NEXT_PUBLIC_API_URL is set correctly.</p>
           </div>
         ) : predictions.length === 0 ? (
           <div className="text-center py-20 space-y-3">
