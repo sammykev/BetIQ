@@ -31,7 +31,9 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 EPL_HISTORY = os.getenv("EPL_HISTORY_CSV", "../epl-final.csv")
 UCL_CSV_PATTERN = os.getenv("UCL_CSV", "../champions-league-*.csv")
 H2H_CACHE_FILE = "h2h_cache.json"
-H2H_TTL_DAYS = 7   # re-fetch H2H after 7 days
+H2H_TTL_DAYS = 7
+PREDICTIONS_CACHE_FILE = os.path.join("data", "predictions_cache.json")
+RESULTS_CSV = os.path.join("data", "recent_results.csv")
 
 app = FastAPI(title="Sport Bet Predictions API", version="2.0.0")
 
@@ -72,6 +74,27 @@ def _save_h2h_cache():
 
 def _h2h_cache_key(home: str, away: str) -> str:
     return f"{home.lower().strip()}__vs__{away.lower().strip()}"
+
+def _load_predictions_cache():
+    global _predictions_cache, _last_updated
+    if os.path.exists(PREDICTIONS_CACHE_FILE):
+        try:
+            with open(PREDICTIONS_CACHE_FILE) as f:
+                saved = json.load(f)
+            _predictions_cache = saved.get("predictions", [])
+            _last_updated = saved.get("last_updated")
+            print(f"[Cache] Restored {len(_predictions_cache)} predictions from disk.")
+        except Exception as e:
+            print(f"[Cache] Load error: {e}")
+
+def _save_predictions_cache():
+    try:
+        os.makedirs("data", exist_ok=True)
+        with open(PREDICTIONS_CACHE_FILE, "w") as f:
+            json.dump({"predictions": _predictions_cache, "last_updated": _last_updated}, f)
+        print(f"[Cache] Saved {len(_predictions_cache)} predictions to disk.")
+    except Exception as e:
+        print(f"[Cache] Save error: {e}")
 
 def _h2h_is_fresh(entry: Dict) -> bool:
     try:
@@ -196,6 +219,18 @@ async def _run_pipeline():
         global _history_df
         _history_df = combined  # keep for H2H lookups
 
+        # Augment training set with API results saved between runs
+        if os.path.exists(RESULTS_CSV):
+            try:
+                saved_results = pd.read_csv(RESULTS_CSV, parse_dates=["Date"])
+                saved_results = saved_results[["Date", "HomeTeam", "AwayTeam", "Result", "FTHG", "FTAG"]].dropna()
+                combined = pd.concat([combined, saved_results], ignore_index=True)
+                combined = combined.drop_duplicates(subset=["Date", "HomeTeam", "AwayTeam"])
+                combined = combined.sort_values("Date").reset_index(drop=True)
+                print(f"[Pipeline] +{len(saved_results)} saved API results → {len(combined)} total training rows.")
+            except Exception as e:
+                print(f"[Pipeline] Saved results load error: {e}")
+
         print(f"[Pipeline] Training on {len(combined)} matches...")
         predictor = LeaguePredictor()
         predictor.train(combined)
@@ -233,6 +268,7 @@ async def _run_pipeline():
         _predictor = predictor
         _predictions_cache = predictions
         _last_updated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        _save_predictions_cache()
         print(f"[Pipeline] Done — {len(predictions)} predictions cached.")
 
     except Exception as e:
@@ -241,6 +277,66 @@ async def _run_pipeline():
         traceback.print_exc()
     finally:
         _is_training = False
+
+
+# ------------------------------------------------------------------ #
+# Result fetcher — keeps model calibrated with real match outcomes
+# ------------------------------------------------------------------ #
+
+async def _fetch_and_save_results():
+    """
+    Fetch finished match results from football-data.org for the past 30 days,
+    append to results CSV, and apply to the live model's Elo/form state so
+    predictions stay fresh between full retrains.
+    """
+    if not API_KEY:
+        return
+
+    print("[Results] Fetching recent finished results...")
+    client = FootballDataClient(API_KEY)
+    all_rows: List[pd.DataFrame] = []
+
+    for code in LEAGUES:
+        try:
+            df = await client.fetch_recent_results(code, days_back=30)
+            if not df.empty:
+                df["league"] = code
+                all_rows.append(df)
+            await asyncio.sleep(6)
+        except Exception as e:
+            print(f"[Results] Error fetching {code}: {e}")
+
+    if not all_rows:
+        print("[Results] No results returned.")
+        return
+
+    new_df = pd.concat(all_rows, ignore_index=True)
+    os.makedirs("data", exist_ok=True)
+
+    if os.path.exists(RESULTS_CSV):
+        existing = pd.read_csv(RESULTS_CSV, parse_dates=["Date"])
+        combined = pd.concat([existing, new_df], ignore_index=True)
+        combined = combined.drop_duplicates(subset=["Date", "HomeTeam", "AwayTeam"])
+        combined = combined.sort_values("Date").reset_index(drop=True)
+    else:
+        combined = new_df
+
+    combined.to_csv(RESULTS_CSV, index=False)
+    print(f"[Results] {len(combined)} results saved to {RESULTS_CSV}")
+
+    # Push new results into the live predictor without a full retrain
+    if _predictor is not None:
+        updated = 0
+        for _, r in new_df.iterrows():
+            try:
+                _predictor._update(
+                    r["HomeTeam"], r["AwayTeam"], r["Result"],
+                    float(r["FTHG"]), float(r["FTAG"]),
+                )
+                updated += 1
+            except Exception:
+                pass
+        print(f"[Results] Applied {updated} results to live model.")
 
 
 # ------------------------------------------------------------------ #
@@ -509,8 +605,8 @@ scheduler = AsyncIOScheduler()
 
 
 async def _load_fbref_data():
-    """Load corners/cards CSVs, scraping fbref if files are missing or >7 days old."""
-    global _corners_df, _cards_df
+    """Load cards CSV, rebuilding from EPL CSV if missing or >7 days old."""
+    global _cards_df
     import time as _time
 
     needs_scrape = True
@@ -533,10 +629,13 @@ async def _load_fbref_data():
 @app.on_event("startup")
 async def startup():
     _load_h2h_cache()
+    _load_predictions_cache()   # serve cached predictions instantly while pipeline rebuilds
     asyncio.create_task(_run_pipeline())
     asyncio.create_task(_load_fbref_data())
+    asyncio.create_task(_fetch_and_save_results())   # seed results CSV on first boot
     scheduler.add_job(_run_pipeline, "interval", hours=6, id="refresh")
     scheduler.add_job(_load_fbref_data, "interval", days=7, id="fbref_refresh")
+    scheduler.add_job(_fetch_and_save_results, "interval", hours=2, id="results_refresh")
     scheduler.start()
 
 

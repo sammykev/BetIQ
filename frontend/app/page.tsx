@@ -69,14 +69,21 @@ export default function HomePage() {
     }
   }
 
+  const _SKIP = new Set(["tbd", "tba", "to be announced", "", "none"]);
+  const validPredictions = allPredictions.filter(
+    (p) => p.home?.trim() && p.away?.trim() &&
+           !_SKIP.has(p.home.trim().toLowerCase()) &&
+           !_SKIP.has(p.away.trim().toLowerCase())
+  );
+
   // Client-side filtering
-  const predictions = allPredictions
+  const predictions = validPredictions
     .filter((p) => selectedLeague === "ALL" || p.league === selectedLeague)
     .filter((p) => minConf === 0 || p.goals_confidence >= minConf);
 
-  // Counts per league for tab badges (always from full list)
+  // Counts per league for tab badges (valid predictions only)
   const counts: Record<string, number> = {};
-  for (const p of allPredictions) {
+  for (const p of validPredictions) {
     counts[p.league] = (counts[p.league] || 0) + 1;
   }
 
