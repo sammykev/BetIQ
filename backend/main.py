@@ -591,6 +591,20 @@ async def get_h2h(home: str, away: str):
     return csv_result
 
 
+@app.post("/api/booking")
+async def create_booking(body: Dict[str, Any]):
+    """
+    Generate a SportyBet booking code from a list of BetIQ predictions.
+    Body: { "predictions": [{home, away, date, tip_code, ...}, ...] }
+    """
+    from sportybet import generate_booking_code
+    predictions = body.get("predictions", [])
+    if not predictions:
+        raise HTTPException(status_code=400, detail="No predictions provided")
+    result = await generate_booking_code(predictions)
+    return result
+
+
 @app.post("/api/refresh")
 async def refresh_predictions(background_tasks: BackgroundTasks):
     background_tasks.add_task(_run_pipeline)

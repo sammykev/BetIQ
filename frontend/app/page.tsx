@@ -7,6 +7,7 @@ import { LeagueTabs } from "@/components/LeagueTabs";
 import { fetchPredictions, fetchLeagues, triggerRefresh } from "@/lib/api";
 import type { Prediction, League } from "@/lib/api";
 import { RefreshCw, TrendingUp, Shield, Info, AlertTriangle, CalendarDays, Percent } from "lucide-react";
+import { ChatBot } from "@/components/ChatBot";
 import clsx from "clsx";
 
 const CONFIDENCE_FILTERS = [
@@ -258,6 +259,9 @@ export default function HomePage() {
           </div>
         )}
       </main>
+
+      {/* AI Betting Assistant */}
+      <ChatBot predictions={allPredictions} />
 
       {/* Match Analysis Modal */}
       {selectedMatch && (
