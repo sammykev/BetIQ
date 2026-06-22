@@ -1,0 +1,120 @@
+Match Number,Round Number,Date,Location,Home Team,Away Team,Group,Result
+1,1,17/09/2019 18:55,Stadio San Siro,Internazionale,Slavia Praha,Group F,1 - 1
+2,1,17/09/2019 18:55,OL Stadium,Lyon,Zenit,Group G,1 - 1
+3,1,17/09/2019 21:00,Stadio San Paolo,Napoli,Liverpool,Group E,2 - 0
+4,1,17/09/2019 21:00,Stadion Salzburg,Salzburg,Genk,Group E,6 - 2
+5,1,17/09/2019 21:00,BVB Stadion Dortmund,Dortmund,Barcelona,Group F,0 - 0
+6,1,17/09/2019 21:00,Estádio do Sport Lisboa e Benfica,Benfica,Leipzig,Group G,1 - 2
+7,1,17/09/2019 21:00,Stamford Bridge,Chelsea,Valencia,Group H,0 - 1
+8,1,17/09/2019 21:00,Johan Cruijff ArenA,Ajax,LOSC,Group H,3 - 0
+9,1,18/09/2019 18:55,Jan Breydelstadion,Club Brugge,Galatasaray,Group A,0 - 0
+10,1,18/09/2019 18:55,Stadio Georgios Karaiskakis,Olympiacos,Tottenham,Group B,2 - 2
+11,1,18/09/2019 21:00,Parc des Princes,Paris,Real Madrid,Group A,3 - 0
+12,1,18/09/2019 21:00,Football Arena Munich,Bayern,Crvena zvezda,Group B,3 - 0
+13,1,18/09/2019 21:00,Stadion Maksimir,Dinamo Zagreb,Atalanta,Group C,4 - 0
+14,1,18/09/2019 21:00,OSK Metalist Stadion,Shakhtar Donetsk,Man. City,Group C,0 - 3
+15,1,18/09/2019 21:00,BayArena,Leverkusen,Lokomotiv Moskva,Group D,1 - 2
+16,1,18/09/2019 21:00,Estadio Metropolitano,Atlético,Juventus,Group D,2 - 2
+17,2,01/10/2019 18:55,Estadio Santiago Bernabéu,Real Madrid,Club Brugge,Group A,2 - 2
+18,2,01/10/2019 18:55,Stadio San Siro,Atalanta,Shakhtar Donetsk,Group C,1 - 2
+19,2,01/10/2019 21:00,Ali Sami Yen Spor Kompleksi,Galatasaray,Paris,Group A,0 - 1
+20,2,01/10/2019 21:00,Tottenham Hotspur Stadium,Tottenham,Bayern,Group B,2 - 7
+21,2,01/10/2019 21:00,Stadion Rajko Mitic,Crvena zvezda,Olympiacos,Group B,3 - 1
+22,2,01/10/2019 21:00,City of Manchester Stadium,Man. City,Dinamo Zagreb,Group C,2 - 0
+23,2,01/10/2019 21:00,Juventus Stadium,Juventus,Leverkusen,Group D,3 - 0
+24,2,01/10/2019 21:00,Stadion Lokomotiv,Lokomotiv Moskva,Atlético,Group D,0 - 2
+25,2,02/10/2019 18:55,KRC Genk Arena,Genk,Napoli,Group E,0 - 0
+26,2,02/10/2019 18:55,Eden Arena,Slavia Praha,Dortmund,Group F,0 - 2
+27,2,02/10/2019 21:00,Anfield,Liverpool,Salzburg,Group E,4 - 3
+28,2,02/10/2019 21:00,Camp Nou,Barcelona,Internazionale,Group F,2 - 1
+29,2,02/10/2019 21:00,RB Arena,Leipzig,Lyon,Group G,0 - 2
+30,2,02/10/2019 21:00,Saint Petersburg Stadium,Zenit,Benfica,Group G,3 - 1
+31,2,02/10/2019 21:00,Stade Pierre Mauroy,LOSC,Chelsea,Group H,1 - 2
+32,2,02/10/2019 21:00,Camp de Mestalla,Valencia,Ajax,Group H,0 - 3
+33,3,22/10/2019 18:55,OSK Metalist Stadion,Shakhtar Donetsk,Dinamo Zagreb,Group C,2 - 2
+34,3,22/10/2019 18:55,Estadio Metropolitano,Atlético,Leverkusen,Group D,1 - 0
+35,3,22/10/2019 21:00,Jan Breydelstadion,Club Brugge,Paris,Group A,0 - 5
+36,3,22/10/2019 21:00,Ali Sami Yen Spor Kompleksi,Galatasaray,Real Madrid,Group A,0 - 1
+37,3,22/10/2019 21:00,Stadio Georgios Karaiskakis,Olympiacos,Bayern,Group B,2 - 3
+38,3,22/10/2019 21:00,Tottenham Hotspur Stadium,Tottenham,Crvena zvezda,Group B,5 - 0
+39,3,22/10/2019 21:00,City of Manchester Stadium,Man. City,Atalanta,Group C,5 - 1
+40,3,22/10/2019 21:00,Juventus Stadium,Juventus,Lokomotiv Moskva,Group D,2 - 1
+41,3,23/10/2019 18:55,RB Arena,Leipzig,Zenit,Group G,2 - 1
+42,3,23/10/2019 18:55,Johan Cruijff ArenA,Ajax,Chelsea,Group H,0 - 1
+43,3,23/10/2019 21:00,Stadion Salzburg,Salzburg,Napoli,Group E,2 - 3
+44,3,23/10/2019 21:00,KRC Genk Arena,Genk,Liverpool,Group E,1 - 4
+45,3,23/10/2019 21:00,Stadio San Siro,Internazionale,Dortmund,Group F,2 - 0
+46,3,23/10/2019 21:00,Eden Arena,Slavia Praha,Barcelona,Group F,1 - 2
+47,3,23/10/2019 21:00,Estádio do Sport Lisboa e Benfica,Benfica,Lyon,Group G,2 - 1
+48,3,23/10/2019 21:00,Stade Pierre Mauroy,LOSC,Valencia,Group H,1 - 1
+49,4,05/11/2019 18:55,Camp Nou,Barcelona,Slavia Praha,Group F,0 - 0
+50,4,05/11/2019 18:55,Saint Petersburg Stadium,Zenit,Leipzig,Group G,0 - 2
+51,4,05/11/2019 21:00,Stadio San Paolo,Napoli,Salzburg,Group E,1 - 1
+52,4,05/11/2019 21:00,Anfield,Liverpool,Genk,Group E,2 - 1
+53,4,05/11/2019 21:00,BVB Stadion Dortmund,Dortmund,Internazionale,Group F,3 - 2
+54,4,05/11/2019 21:00,OL Stadium,Lyon,Benfica,Group G,3 - 1
+55,4,05/11/2019 21:00,Stamford Bridge,Chelsea,Ajax,Group H,4 - 4
+56,4,05/11/2019 21:00,Camp de Mestalla,Valencia,LOSC,Group H,4 - 1
+57,4,06/11/2019 18:55,Football Arena Munich,Bayern,Olympiacos,Group B,2 - 0
+58,4,06/11/2019 18:55,Stadion Lokomotiv,Lokomotiv Moskva,Juventus,Group D,1 - 2
+59,4,06/11/2019 21:00,Parc des Princes,Paris,Club Brugge,Group A,1 - 0
+60,4,06/11/2019 21:00,Estadio Santiago Bernabéu,Real Madrid,Galatasaray,Group A,6 - 0
+61,4,06/11/2019 21:00,Stadion Rajko Mitic,Crvena zvezda,Tottenham,Group B,0 - 4
+62,4,06/11/2019 21:00,Stadion Maksimir,Dinamo Zagreb,Shakhtar Donetsk,Group C,3 - 3
+63,4,06/11/2019 21:00,Stadio San Siro,Atalanta,Man. City,Group C,1 - 1
+64,4,06/11/2019 21:00,BayArena,Leverkusen,Atlético,Group D,2 - 1
+65,5,26/11/2019 18:55,Ali Sami Yen Spor Kompleksi,Galatasaray,Club Brugge,Group A,1 - 1
+66,5,26/11/2019 18:55,Stadion Lokomotiv,Lokomotiv Moskva,Leverkusen,Group D,0 - 2
+67,5,26/11/2019 21:00,Estadio Santiago Bernabéu,Real Madrid,Paris,Group A,2 - 2
+68,5,26/11/2019 21:00,Stadion Rajko Mitic,Crvena zvezda,Bayern,Group B,0 - 6
+69,5,26/11/2019 21:00,Tottenham Hotspur Stadium,Tottenham,Olympiacos,Group B,4 - 2
+70,5,26/11/2019 21:00,Stadio San Siro,Atalanta,Dinamo Zagreb,Group C,2 - 0
+71,5,26/11/2019 21:00,City of Manchester Stadium,Man. City,Shakhtar Donetsk,Group C,1 - 1
+72,5,26/11/2019 21:00,Juventus Stadium,Juventus,Atlético,Group D,1 - 0
+73,5,27/11/2019 18:55,Saint Petersburg Stadium,Zenit,Lyon,Group G,2 - 0
+74,5,27/11/2019 18:55,Camp de Mestalla,Valencia,Chelsea,Group H,2 - 2
+75,5,27/11/2019 21:00,Anfield,Liverpool,Napoli,Group E,1 - 1
+76,5,27/11/2019 21:00,KRC Genk Arena,Genk,Salzburg,Group E,1 - 4
+77,5,27/11/2019 21:00,Camp Nou,Barcelona,Dortmund,Group F,3 - 1
+78,5,27/11/2019 21:00,Eden Arena,Slavia Praha,Internazionale,Group F,1 - 3
+79,5,27/11/2019 21:00,RB Arena,Leipzig,Benfica,Group G,2 - 2
+80,5,27/11/2019 21:00,Stade Pierre Mauroy,LOSC,Ajax,Group H,0 - 2
+81,6,10/12/2019 18:55,Stadio San Paolo,Napoli,Genk,Group E,4 - 0
+82,6,10/12/2019 18:55,Stadion Salzburg,Salzburg,Liverpool,Group E,0 - 2
+83,6,10/12/2019 21:00,BVB Stadion Dortmund,Dortmund,Slavia Praha,Group F,2 - 1
+84,6,10/12/2019 21:00,Stadio San Siro,Internazionale,Barcelona,Group F,1 - 2
+85,6,10/12/2019 21:00,OL Stadium,Lyon,Leipzig,Group G,2 - 2
+86,6,10/12/2019 21:00,Estádio do Sport Lisboa e Benfica,Benfica,Zenit,Group G,3 - 0
+87,6,10/12/2019 21:00,Stamford Bridge,Chelsea,LOSC,Group H,2 - 1
+88,6,10/12/2019 21:00,Johan Cruijff ArenA,Ajax,Valencia,Group H,0 - 1
+89,6,11/12/2019 18:55,Stadion Maksimir,Dinamo Zagreb,Man. City,Group C,1 - 4
+90,6,11/12/2019 18:55,OSK Metalist Stadion,Shakhtar Donetsk,Atalanta,Group C,0 - 3
+91,6,11/12/2019 21:00,Parc des Princes,Paris,Galatasaray,Group A,5 - 0
+92,6,11/12/2019 21:00,Jan Breydelstadion,Club Brugge,Real Madrid,Group A,1 - 3
+93,6,11/12/2019 21:00,Football Arena Munich,Bayern,Tottenham,Group B,3 - 1
+94,6,11/12/2019 21:00,Stadio Georgios Karaiskakis,Olympiacos,Crvena zvezda,Group B,1 - 0
+95,6,11/12/2019 21:00,BayArena,Leverkusen,Juventus,Group D,0 - 2
+96,6,11/12/2019 21:00,Estadio Metropolitano,Atlético,Lokomotiv Moskva,Group D,2 - 0
+97,R16 Game 1,18/02/2020 21:00,Estadio Metropolitano,Atlético,Liverpool,,1 - 0
+98,R16 Game 1,18/02/2020 21:00,BVB Stadion Dortmund,Dortmund,Paris,,2 - 1
+99,R16 Game 1,19/02/2020 21:00,Stadio San Siro,Atalanta,Valencia,,4 - 1
+100,R16 Game 1,19/02/2020 21:00,Tottenham Hotspur Stadium,Tottenham,Leipzig,,0 - 1
+101,R16 Game 1,25/02/2020 21:00,Stamford Bridge,Chelsea,Bayern,,0 - 3
+102,R16 Game 1,25/02/2020 21:00,Stadio San Paolo,Napoli,Barcelona,,1 - 1
+103,R16 Game 1,26/02/2020 21:00,OL Stadium,Lyon,Juventus,,1 - 0
+104,R16 Game 1,26/02/2020 21:00,Estadio Santiago Bernabéu,Real Madrid,Man. City,,1 - 2
+105,R16 Game 2,10/03/2020 21:00,Camp de Mestalla,Valencia,Atalanta,,3 - 4
+106,R16 Game 2,10/03/2020 21:00,RB Arena,Leipzig,Tottenham,,3 - 0
+107,R16 Game 2,11/03/2020 21:00,Anfield,Liverpool,Atlético,,2 - 3
+108,R16 Game 2,11/03/2020 21:00,Parc des Princes,Paris,Dortmund,,2 - 0
+109,R16 Game 2,07/08/2020 21:00,Juventus Stadium,Juventus,Lyon,,2 - 1
+110,R16 Game 2,07/08/2020 21:00,City of Manchester Stadium,Man. City,Real Madrid,,2 - 1
+111,R16 Game 2,08/08/2020 21:00,Football Arena Munich,Bayern,Chelsea,,4 - 1
+112,R16 Game 2,08/08/2020 21:00,Camp Nou,Barcelona,Napoli,,3 - 1
+113,Quarter Finals,12/08/2020 21:00,Estádio do Sport Lisboa e Benfica,Atalanta,Paris,,1 - 2
+114,Quarter Finals,13/08/2020 21:00,Estádio José Alvalade,Leipzig,Atlético,,2 - 1
+115,Quarter Finals,14/08/2020 21:00,Estádio do Sport Lisboa e Benfica,Barcelona,Bayern,,2 - 8
+116,Quarter Finals,15/08/2020 21:00,Estádio José Alvalade,Man. City,Lyon,,1 - 3
+121,Semi Finals,18/08/2020 21:00,Estádio do Sport Lisboa e Benfica,Leipzig,Paris,,0 - 3
+122,Semi Finals,19/08/2020 21:00,Estádio José Alvalade,Lyon,Bayern,,0 - 3
+125,Final,23/08/2020 21:00,Estádio do Sport Lisboa e Benfica,Paris,Bayern,,0 - 1

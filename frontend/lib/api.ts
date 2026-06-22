@@ -1,0 +1,132 @@
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001";
+
+export interface Prediction {
+  home: string;
+  away: string;
+  date: string;
+  time: string;
+  league: string;
+  league_name: string;
+  flag: string;
+  p_home: number;
+  p_draw: number;
+  p_away: number;
+  p_over15: number;
+  p_over25: number;
+  tip_1x2: string;
+  tip_code: string;
+  tip_goals: string;
+  goals_type: string;
+  goals_confidence: number;
+}
+
+export interface League {
+  code: string;
+  name: string;
+  country: string;
+  flag: string;
+}
+
+export interface PredictionsResponse {
+  predictions: Prediction[];
+  total: number;
+  last_updated: string | null;
+}
+
+export async function fetchPredictions(
+  league?: string,
+  minConfidence?: number
+): Promise<PredictionsResponse> {
+  const params = new URLSearchParams();
+  if (league && league !== "ALL") params.set("league", league);
+  if (minConfidence) params.set("min_confidence", minConfidence.toString());
+  params.set("limit", "500");
+
+  const res = await fetch(`${API_URL}/api/predictions?${params}`, {
+    next: { revalidate: 300 }, // cache 5 min
+  });
+
+  if (!res.ok) throw new Error("Failed to fetch predictions");
+  return res.json();
+}
+
+export async function fetchLeagues(): Promise<League[]> {
+  const res = await fetch(`${API_URL}/api/leagues`, { next: { revalidate: 3600 } });
+  if (!res.ok) return [];
+  return res.json();
+}
+
+export async function triggerRefresh(): Promise<void> {
+  await fetch(`${API_URL}/api/refresh`, { method: "POST" });
+}
+
+export interface MarketOption {
+  label: string;
+  code: string;
+  prob: number;
+}
+
+export interface Market {
+  id: string;
+  name: string;
+  options: MarketOption[];
+}
+
+export interface EloContext {
+  home: number;
+  away: number;
+  gap: number;
+  gap_out_of: number;
+  leading: string;
+  label: string;
+  description: string;
+  implied_win_prob: number;
+}
+
+export interface MatchAnalysis {
+  xg_home: number;
+  xg_away: number;
+  elo: EloContext;
+  markets: Market[];
+  recommended: MarketOption & { market: string; market_id: string };
+}
+
+export interface H2HMeeting {
+  date: string;
+  home_team: string;
+  away_team: string;
+  score: string;
+  result: string;
+  winner: string | null;
+}
+
+export interface H2HSummary {
+  total: number;
+  home_wins: number;
+  draws: number;
+  away_wins: number;
+  home_goals: number;
+  away_goals: number;
+  avg_goals: number;
+  btts_count: number;
+}
+
+export interface H2HData {
+  meetings: H2HMeeting[];
+  summary: H2HSummary | null;
+  source?: "api" | "csv" | "none";
+}
+
+export async function fetchMatchAnalysis(home: string, away: string): Promise<MatchAnalysis> {
+  const params = new URLSearchParams({ home, away });
+  const res = await fetch(`${API_URL}/api/analysis?${params}`, { cache: "no-store" });
+  if (!res.ok) throw new Error("Analysis failed");
+  return res.json();
+}
+
+export async function fetchH2H(home: string, away: string): Promise<H2HData> {
+  const params = new URLSearchParams({ home, away });
+  const res = await fetch(`${API_URL}/api/h2h?${params}`, { cache: "no-store" });
+  if (!res.ok) throw new Error("H2H failed");
+  return res.json();
+}
