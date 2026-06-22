@@ -66,8 +66,11 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ message: text });
   } catch (err: unknown) {
+    // Log full details server-side only — never expose internals to the client
     console.error("[chat/gemini]", err);
-    const msg = err instanceof Error ? err.message : "Unknown error";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return NextResponse.json(
+      { error: "assistant_unavailable" },
+      { status: 500 }
+    );
   }
 }
