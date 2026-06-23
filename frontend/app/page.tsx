@@ -237,6 +237,7 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen bg-white dark:bg-slate-950">
+      {/* Announcement banner — sticky above header */}
       <AnnouncementBanner text={siteBanner} />
 
       {/* Header */}
