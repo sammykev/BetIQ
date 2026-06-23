@@ -141,6 +141,20 @@ export async function fetchHistory(date: string): Promise<HistoryPrediction[]> {
   return res.json();
 }
 
+export interface MatchExplanation {
+  explanation: string | null;
+  sources: string[];
+  model: string | null;
+  error: string | null;
+}
+
+export async function fetchExplanation(home: string, away: string): Promise<MatchExplanation> {
+  const params = new URLSearchParams({ home, away });
+  const res = await fetch(`${API_URL}/api/explain?${params}`, { cache: "no-store" });
+  if (!res.ok) return { explanation: null, sources: [], model: null, error: "fetch_failed" };
+  return res.json();
+}
+
 export async function fetchMatchAnalysis(home: string, away: string): Promise<MatchAnalysis> {
   const params = new URLSearchParams({ home, away });
   const res = await fetch(`${API_URL}/api/analysis?${params}`, { cache: "no-store" });
