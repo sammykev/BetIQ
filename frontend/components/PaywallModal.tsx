@@ -67,21 +67,17 @@ export function PaywallModal({ onClose, onSuccess }: Props) {
       currency: "NGN",
       ref: reference,
       metadata: { userId: user.id },
-      callback: async (response: { reference: string }) => {
+      callback: (response: { reference: string }) => {
         setLoading(true);
-        try {
-          const res = await fetch("/api/subscribe", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ reference: response.reference }),
-          });
-          if (!res.ok) throw new Error("Verification failed");
-          onSuccess();
-        } catch {
-          setError("Payment went through but verification failed. Contact support.");
-        } finally {
-          setLoading(false);
-        }
+        fetch("/api/subscribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reference: response.reference }),
+        })
+          .then(res => { if (!res.ok) throw new Error(); return res; })
+          .then(() => onSuccess())
+          .catch(() => setError("Payment received but verification failed. Contact support."))
+          .finally(() => setLoading(false));
       },
       onClose: () => {},
     });
