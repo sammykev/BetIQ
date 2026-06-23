@@ -165,7 +165,7 @@ export default function HomePage() {
         <div className="flex items-start gap-2.5 bg-yellow-500/5 border border-yellow-500/20 rounded-xl px-4 py-3">
           <AlertTriangle size={14} className="text-yellow-500 mt-0.5 shrink-0" />
           <p className="text-xs text-yellow-200/70">
-            Predictions are for educational purposes only. Gamble responsibly. Past performance does not guarantee future results.
+            Gamble responsibly. Past performance does not guarantee future results.
           </p>
         </div>
 
