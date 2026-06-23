@@ -30,6 +30,7 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
   const [selectedMatch, setSelectedMatch] = useState<Prediction | null>(null);
   const [showCalendar, setShowCalendar] = useState(false);
+  const [bankersOnly, setBankersOnly] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -82,7 +83,8 @@ export default function HomePage() {
   // Client-side filtering
   const predictions = validPredictions
     .filter((p) => selectedLeague === "ALL" || p.league === selectedLeague)
-    .filter((p) => minConf === 0 || p.goals_confidence >= minConf);
+    .filter((p) => minConf === 0 || p.goals_confidence >= minConf)
+    .filter((p) => !bankersOnly || p.goals_type === "Banker");
 
   // Counts per league for tab badges (valid predictions only)
   const counts: Record<string, number> = {};
@@ -146,15 +148,25 @@ export default function HomePage() {
         {/* Stats bar */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
-            { icon: <TrendingUp size={16} />, label: "Total Picks", value: predictions.length, color: "text-blue-400" },
-            { icon: <Shield size={16} />, label: "Bankers", value: bankers.length, color: "text-green-400" },
-            { icon: <TrendingUp size={16} />, label: "High Confidence", value: highConf.length, color: "text-yellow-400" },
-            { icon: <Info size={16} />, label: "Leagues", value: Object.keys(counts).length, color: "text-purple-400" },
-          ].map(({ icon, label, value, color }) => (
-            <div key={label} className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 flex items-center gap-3">
+            { icon: <TrendingUp size={16} />, label: "Total Picks", value: predictions.length, color: "text-blue-400", onClick: undefined, active: false },
+            { icon: <Shield size={16} />, label: "Bankers", value: bankers.length, color: "text-green-400", onClick: () => setBankersOnly(b => !b), active: bankersOnly },
+            { icon: <TrendingUp size={16} />, label: "High Confidence", value: highConf.length, color: "text-yellow-400", onClick: undefined, active: false },
+            { icon: <Info size={16} />, label: "Leagues", value: Object.keys(counts).length, color: "text-purple-400", onClick: undefined, active: false },
+          ].map(({ icon, label, value, color, onClick, active }) => (
+            <div
+              key={label}
+              onClick={onClick}
+              className={clsx(
+                "bg-slate-50 dark:bg-slate-900 border rounded-xl px-4 py-3 flex items-center gap-3 transition-all",
+                onClick ? "cursor-pointer hover:scale-[1.02]" : "",
+                active
+                  ? "border-green-500/60 bg-green-500/10 dark:bg-green-500/10 ring-1 ring-green-500/40"
+                  : "border-slate-200 dark:border-slate-800"
+              )}
+            >
               <span className={color}>{icon}</span>
               <div>
-                <p className="text-xs text-slate-500">{label}</p>
+                <p className="text-xs text-slate-500">{label}{active ? " — active" : ""}</p>
                 <p className="text-xl font-bold text-slate-900 dark:text-slate-100">{value}</p>
               </div>
             </div>
