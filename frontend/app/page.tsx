@@ -9,6 +9,9 @@ import type { Prediction, League } from "@/lib/api";
 import { RefreshCw, TrendingUp, Shield, Info, AlertTriangle, CalendarDays, Percent } from "lucide-react";
 import { ChatBot } from "@/components/ChatBot";
 import { CalendarView } from "@/components/CalendarView";
+import { UserMenu } from "@/components/UserMenu";
+import { PaywallModal } from "@/components/PaywallModal";
+import { useUser } from "@clerk/nextjs";
 import clsx from "clsx";
 
 const CONFIDENCE_FILTERS = [
@@ -31,6 +34,15 @@ export default function HomePage() {
   const [selectedMatch, setSelectedMatch] = useState<Prediction | null>(null);
   const [showCalendar, setShowCalendar] = useState(false);
   const [bankersOnly, setBankersOnly] = useState(false);
+  const [showPaywall, setShowPaywall] = useState(false);
+
+  const { user } = useUser();
+  const isPremium =
+    (user?.publicMetadata as { subscription?: string; subscription_expires?: string })
+      ?.subscription === "premium" &&
+    new Date(
+      (user?.publicMetadata as { subscription_expires?: string })?.subscription_expires ?? 0
+    ) > new Date();
 
   const load = useCallback(async () => {
     try {
@@ -126,12 +138,13 @@ export default function HomePage() {
               </span>
             )}
             <button
-              onClick={() => setShowCalendar(true)}
+              onClick={() => isPremium ? setShowCalendar(true) : setShowPaywall(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-700 rounded-lg text-xs text-slate-700 dark:text-slate-300 transition-all"
             >
               <CalendarDays size={12} />
               History
             </button>
+            <UserMenu onUpgrade={() => setShowPaywall(true)} />
             <button
               onClick={handleRefresh}
               disabled={refreshing}
@@ -274,18 +287,26 @@ export default function HomePage() {
               <PredictionCard
                 key={`${p.home}-${p.away}-${p.date}-${i}`}
                 prediction={p}
-                onClick={() => setSelectedMatch(p)}
+                onClick={() => isPremium ? setSelectedMatch(p) : setShowPaywall(true)}
               />
             ))}
           </div>
         )}
       </main>
 
-      {/* AI Betting Assistant */}
-      <ChatBot predictions={allPredictions} />
+      {/* AI Betting Assistant — premium only */}
+      {isPremium && <ChatBot predictions={allPredictions} />}
 
       {/* Calendar / History */}
       {showCalendar && <CalendarView onClose={() => setShowCalendar(false)} />}
+
+      {/* Paywall */}
+      {showPaywall && (
+        <PaywallModal
+          onClose={() => setShowPaywall(false)}
+          onSuccess={() => { setShowPaywall(false); window.location.reload(); }}
+        />
+      )}
 
       {/* Match Analysis Modal */}
       {selectedMatch && (
