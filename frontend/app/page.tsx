@@ -8,6 +8,7 @@ import { fetchPredictions, fetchLeagues, triggerRefresh } from "@/lib/api";
 import type { Prediction, League } from "@/lib/api";
 import { RefreshCw, TrendingUp, Shield, Info, AlertTriangle, CalendarDays, Percent } from "lucide-react";
 import { ChatBot } from "@/components/ChatBot";
+import { CalendarView } from "@/components/CalendarView";
 import clsx from "clsx";
 
 const CONFIDENCE_FILTERS = [
@@ -28,6 +29,7 @@ export default function HomePage() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedMatch, setSelectedMatch] = useState<Prediction | null>(null);
+  const [showCalendar, setShowCalendar] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -121,6 +123,13 @@ export default function HomePage() {
                 Updated {fmt(lastUpdated)}
               </span>
             )}
+            <button
+              onClick={() => setShowCalendar(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-700 rounded-lg text-xs text-slate-700 dark:text-slate-300 transition-all"
+            >
+              <CalendarDays size={12} />
+              History
+            </button>
             <button
               onClick={handleRefresh}
               disabled={refreshing}
@@ -262,6 +271,9 @@ export default function HomePage() {
 
       {/* AI Betting Assistant */}
       <ChatBot predictions={allPredictions} />
+
+      {/* Calendar / History */}
+      {showCalendar && <CalendarView onClose={() => setShowCalendar(false)} />}
 
       {/* Match Analysis Modal */}
       {selectedMatch && (
