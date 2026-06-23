@@ -37,6 +37,8 @@ export default function HomePage() {
   const [showPaywall, setShowPaywall] = useState(false);
 
   const { user } = useUser();
+  const [paywallActive, setPaywallActive] = useState(true);
+
   const hasSubscription =
     (user?.publicMetadata as { subscription?: string; subscription_expires?: string })
       ?.subscription === "premium" &&
@@ -46,8 +48,6 @@ export default function HomePage() {
 
   // If admin has disabled the paywall, everyone gets full access
   const isPremium = !paywallActive || hasSubscription;
-
-  const [paywallActive, setPaywallActive] = useState(true);
 
   const load = useCallback(async () => {
     try {
