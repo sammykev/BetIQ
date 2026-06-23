@@ -173,11 +173,10 @@ function AIExplanation({ explanation }: { explanation: MatchExplanation | null }
       <div className="flex items-center gap-2">
         <Sparkles size={14} className="text-purple-400 shrink-0" />
         <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">AI Analysis</span>
-        {hasWebSearch && (
-          <span className="ml-auto text-[10px] bg-blue-500/15 text-blue-400 border border-blue-500/25 px-2 py-0.5 rounded-full font-medium">
-            🌐 Live web search
-          </span>
-        )}
+        <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full font-medium border
+          border-blue-500/25 bg-blue-500/15 text-blue-400">
+          {hasWebSearch ? "🌐 Live web search" : "📊 Stats only"}
+        </span>
       </div>
       <p className="text-sm text-slate-700 dark:text-slate-300 leading-relaxed">
         {explanation.explanation}

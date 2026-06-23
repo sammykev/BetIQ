@@ -85,16 +85,29 @@ async def explain_match(
         f"Best pick: {rec.get('label','?')} @ {round(rec.get('prob',0)*100)}%."
     )
 
-    news_block = f"Latest news: {news_text}" if news_text else "No recent team news found."
+    if news_text:
+        news_block = f"Live team news (from web search today): {news_text}"
+        news_instruction = (
+            "Reference the live news above when relevant — flag injuries or absences "
+            "that contradict the model's pick."
+        )
+    else:
+        news_block = ""
+        news_instruction = (
+            "IMPORTANT: You do NOT have access to current team news for this match. "
+            "Do NOT mention injuries, suspensions, or lineup changes — your training data "
+            "is outdated and any such claims would be wrong. "
+            "Focus only on the statistical data provided."
+        )
 
     prompt = (
         f"You are a sharp football analyst. Write a 4-sentence match preview for "
         f"{home} vs {away}.\n\n"
         f"Stats: {stats_block}\n"
         f"{news_block}\n\n"
-        f"Explain why the model favours one side, mention any injury concerns, "
-        f"flag contradictions if key players are out, end with a confidence verdict. "
-        f"No bullet points — flowing prose only."
+        f"{news_instruction} "
+        f"Explain why the model favours one side using only the numbers given, "
+        f"end with a confidence verdict. No bullet points — flowing prose only."
     )
 
     try:
