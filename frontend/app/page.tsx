@@ -116,7 +116,7 @@ export default function HomePage() {
   const [bankersOnly, setBankersOnly] = useState(false);
   const [showPaywall, setShowPaywall] = useState(false);
 
-  const { user } = useUser();
+  const { user, isLoaded } = useUser();
   const [paywallActive, setPaywallActive] = useState(true);
   const [maintenanceMode, setMaintenanceMode] = useState(false);
   const [siteBanner, setSiteBanner] = useState("");
