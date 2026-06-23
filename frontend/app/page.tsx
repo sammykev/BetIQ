@@ -115,6 +115,7 @@ export default function HomePage() {
   const [showCalendar, setShowCalendar] = useState(false);
   const [bankersOnly, setBankersOnly] = useState(false);
   const [showPaywall, setShowPaywall] = useState(false);
+  const [savedKeys, setSavedKeys] = useState<Set<string>>(new Set());
 
   const { user, isLoaded } = useUser();
   const [paywallActive, setPaywallActive] = useState(true);
@@ -148,6 +149,15 @@ export default function HomePage() {
       setPaywallActive(pw.enabled);
       setMaintenanceMode(maint.enabled);
       setSiteBanner(ban.banner || "");
+
+      // Load saved picks once — passed to every card (avoids 200 API calls)
+      if (user?.id) {
+        const API_B = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
+        fetch(`${API_B}/api/user/saves?uid=${encodeURIComponent(user.id)}`)
+          .then(r => r.json())
+          .then((saves: any[]) => setSavedKeys(new Set(saves.map((s: any) => `${s.home}:${s.away}:${s.date}`))))
+          .catch(() => {});
+      }
     } catch (e) {
       setError("Could not reach the prediction server. Make sure the backend is running.");
     } finally {
@@ -407,6 +417,7 @@ export default function HomePage() {
               <PredictionCard
                 key={`${p.home}-${p.away}-${p.date}-${i}`}
                 prediction={p}
+                savedKeys={savedKeys}
                 onClick={() => {
                   const API_B = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
                   fetch(`${API_B}/api/track/match`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ home: p.home, away: p.away }) }).catch(() => {});

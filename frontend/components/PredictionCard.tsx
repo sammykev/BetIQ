@@ -6,6 +6,7 @@ import type { Prediction } from "@/lib/api";
 import { Clock, TrendingUp, Share2 } from "lucide-react";
 import clsx from "clsx";
 
+
 const BASE = "https://predict-withbetiq.vercel.app";
 
 function shareMatch(p: Prediction) {
@@ -20,6 +21,7 @@ function shareMatch(p: Prediction) {
 
 interface Props {
   prediction: Prediction;
+  savedKeys?: Set<string>;
   onClick?: () => void;
 }
 
@@ -38,7 +40,8 @@ const GOALS_TYPE_COLORS: Record<string, string> = {
   Skip: "bg-slate-200/40 dark:bg-slate-700/30 text-slate-500 border-slate-600/20",
 };
 
-export function PredictionCard({ prediction: p, onClick }: Props) {
+export function PredictionCard({ prediction: p, savedKeys, onClick }: Props) {
+  const emptySet = new Set<string>();
   const gconf = Math.round(p.goals_confidence * 100);
   const isSkip = p.tip_goals === "Skip";
 
@@ -60,7 +63,7 @@ export function PredictionCard({ prediction: p, onClick }: Props) {
             <Clock size={11} />
             <span>{p.date}{p.time !== "TBD" ? ` · ${p.time}` : ""}</span>
           </div>
-          <SaveButton prediction={p} size={13} />
+          <SaveButton prediction={p} savedKeys={savedKeys ?? emptySet} size={13} />
           <button
             onClick={e => { e.stopPropagation(); shareMatch(p); }}
             className="text-slate-400 hover:text-blue-400 transition-colors"
