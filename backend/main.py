@@ -808,6 +808,44 @@ async def create_booking(body: Dict[str, Any]):
     return result
 
 
+ADMIN_SECRET = os.getenv("ADMIN_SECRET", "")
+PAYWALL_KEY  = "betiq:config:paywall_enabled"
+
+
+@app.get("/api/config/paywall")
+async def get_paywall_state():
+    """Public endpoint — returns current paywall on/off state."""
+    r = _get_redis()
+    if r:
+        try:
+            val = r.get(PAYWALL_KEY)
+            if val is not None:
+                return {"enabled": val == "true"}
+        except Exception:
+            pass
+    return {"enabled": True}   # default: paywall on
+
+
+@app.post("/api/config/paywall")
+async def set_paywall_state(body: Dict[str, Any], request: Any = None):
+    """Admin-only endpoint — toggle paywall on or off."""
+    from fastapi import Request
+    admin_secret = (body.get("secret") or "").strip()
+    if not ADMIN_SECRET or admin_secret != ADMIN_SECRET:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    enabled = bool(body.get("enabled", True))
+    r = _get_redis()
+    if r:
+        try:
+            r.set(PAYWALL_KEY, "true" if enabled else "false")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Redis error: {e}")
+
+    print(f"[Admin] Paywall {'enabled' if enabled else 'DISABLED'}")
+    return {"enabled": enabled}
+
+
 @app.post("/api/refresh")
 async def refresh_predictions(background_tasks: BackgroundTasks):
     background_tasks.add_task(_run_pipeline)

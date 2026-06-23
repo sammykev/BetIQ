@@ -37,23 +37,31 @@ export default function HomePage() {
   const [showPaywall, setShowPaywall] = useState(false);
 
   const { user } = useUser();
-  const isPremium =
+  const hasSubscription =
     (user?.publicMetadata as { subscription?: string; subscription_expires?: string })
       ?.subscription === "premium" &&
     new Date(
       (user?.publicMetadata as { subscription_expires?: string })?.subscription_expires ?? 0
     ) > new Date();
 
+  // If admin has disabled the paywall, everyone gets full access
+  const isPremium = !paywallActive || hasSubscription;
+
+  const [paywallActive, setPaywallActive] = useState(true);
+
   const load = useCallback(async () => {
     try {
       setError(null);
-      const [data, lgs] = await Promise.all([
+      const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
+      const [data, lgs, pw] = await Promise.all([
         fetchPredictions(undefined, undefined),
         fetchLeagues(),
+        fetch(`${API}/api/config/paywall`).then(r => r.json()).catch(() => ({ enabled: true })),
       ]);
       setAllPredictions(data.predictions);
       setLastUpdated(data.last_updated);
       setLeagues(lgs);
+      setPaywallActive(pw.enabled);
     } catch (e) {
       setError("Could not reach the prediction server. Make sure the backend is running.");
     } finally {
