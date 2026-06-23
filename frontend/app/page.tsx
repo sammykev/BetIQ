@@ -31,6 +31,29 @@ const FEATURES = [
   { icon: "🌐", title: "Live Team News", desc: "Real-time injury & lineup context" },
 ];
 
+function WakingUp({ onRetry }: { onRetry: () => void }) {
+  const [dots, setDots] = useState(".");
+  useEffect(() => {
+    const id = setInterval(() => setDots(d => d.length >= 3 ? "." : d + "."), 600);
+    // Auto-retry after 20 s
+    const retry = setTimeout(onRetry, 20000);
+    return () => { clearInterval(id); clearTimeout(retry); };
+  }, [onRetry]);
+  return (
+    <div className="text-center py-20 space-y-4">
+      <div className="text-5xl animate-bounce">⚽</div>
+      <p className="text-slate-300 font-semibold text-lg">Waking up the server{dots}</p>
+      <p className="text-slate-500 text-sm max-w-xs mx-auto">
+        The backend spins down when idle. It'll be ready in about 30 seconds.
+      </p>
+      <button onClick={onRetry}
+        className="px-5 py-2 bg-green-500 hover:bg-green-400 text-black font-bold rounded-xl text-sm transition-all">
+        Try now
+      </button>
+    </div>
+  );
+}
+
 function AuthGate() {
   return (
     <div className="min-h-screen bg-slate-950 flex flex-col">
@@ -133,33 +156,35 @@ export default function HomePage() {
   const isPremium = !paywallActive || hasSubscription;
 
   const load = useCallback(async () => {
+    const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
+
+    // Abort after 15 s so the page never hangs indefinitely
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 15000);
+
     try {
       setError(null);
-      const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
       const [data, lgs, pw, maint, ban] = await Promise.all([
-        fetchPredictions(undefined, undefined),
-        fetchLeagues(),
+        fetch(`${API}/api/predictions?limit=500`, { signal: ctrl.signal }).then(r => r.json()),
+        fetch(`${API}/api/leagues`,               { signal: ctrl.signal }).then(r => r.json()).catch(() => []),
         fetch(`${API}/api/config/paywall`).then(r => r.json()).catch(() => ({ enabled: true })),
         fetch(`${API}/api/config/maintenance`).then(r => r.json()).catch(() => ({ enabled: false })),
         fetch(`${API}/api/admin/banner`).then(r => r.json()).catch(() => ({ banner: null })),
       ]);
-      setAllPredictions(data.predictions);
-      setLastUpdated(data.last_updated);
+      clearTimeout(timer);
+      setAllPredictions(data.predictions ?? []);
+      setLastUpdated(data.last_updated ?? null);
       setLeagues(lgs);
       setPaywallActive(pw.enabled);
       setMaintenanceMode(maint.enabled);
       setSiteBanner(ban.banner || "");
-
-      // Load saved picks once — passed to every card (avoids 200 API calls)
-      if (user?.id) {
-        const API_B = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
-        fetch(`${API_B}/api/user/saves?uid=${encodeURIComponent(user.id)}`)
-          .then(r => r.json())
-          .then((saves: any[]) => setSavedKeys(new Set(saves.map((s: any) => `${s.home}:${s.away}:${s.date}`))))
-          .catch(() => {});
+    } catch (e: any) {
+      clearTimeout(timer);
+      if (e?.name === "AbortError") {
+        setError("__waking__");   // special code — show friendly waking-up message
+      } else {
+        setError("Could not reach the prediction server.");
       }
-    } catch (e) {
-      setError("Could not reach the prediction server. Make sure the backend is running.");
     } finally {
       setLoading(false);
     }
@@ -399,11 +424,16 @@ export default function HomePage() {
               </div>
             ))}
           </div>
+        ) : error === "__waking__" ? (
+          <WakingUp onRetry={() => { setLoading(true); load(); }} />
         ) : error ? (
           <div className="text-center py-20 space-y-3">
             <AlertTriangle size={40} className="text-red-400 mx-auto" />
-            <p className="text-red-300 font-medium">{error}</p>
-            <p className="text-slate-500 dark:text-slate-500 text-sm">Check that the backend server is running and NEXT_PUBLIC_API_URL is set correctly.</p>
+            <p className="text-red-300 font-medium">Could not reach the prediction server.</p>
+            <button onClick={() => { setLoading(true); load(); }}
+              className="px-4 py-2 bg-slate-800 text-slate-300 rounded-lg text-sm hover:bg-slate-700 transition-all">
+              Retry
+            </button>
           </div>
         ) : predictions.length === 0 ? (
           <div className="text-center py-20 space-y-3">
