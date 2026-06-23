@@ -1028,6 +1028,227 @@ async def log_query(body: Dict[str, Any]):
     return {"ok": True}
 
 
+# ------------------------------------------------------------------ #
+# User data (saves, bets, accumulators, stats)
+# ------------------------------------------------------------------ #
+
+def _ukey(uid: str, suffix: str) -> str:
+    return f"betiq:user:{uid}:{suffix}"
+
+
+@app.get("/api/user/saves")
+async def get_saves(uid: str):
+    r = _get_redis()
+    if not r: return []
+    raw = r.get(_ukey(uid, "saves"))
+    return json.loads(raw) if raw else []
+
+
+@app.post("/api/user/saves")
+async def toggle_save(body: Dict[str, Any]):
+    uid = body.get("uid", "")
+    pred = body.get("prediction", {})
+    if not uid or not pred: raise HTTPException(status_code=400, detail="Missing uid or prediction")
+    r = _get_redis()
+    if not r: raise HTTPException(status_code=503, detail="No Redis")
+    key = _ukey(uid, "saves")
+    raw = r.get(key)
+    saves: List[Dict] = json.loads(raw) if raw else []
+    match_key = f"{pred.get('home')}:{pred.get('away')}:{pred.get('date')}"
+    existing = next((i for i, s in enumerate(saves) if f"{s.get('home')}:{s.get('away')}:{s.get('date')}" == match_key), None)
+    if existing is not None:
+        saves.pop(existing)
+        saved = False
+    else:
+        saves.insert(0, pred)
+        saves = saves[:50]
+        saved = True
+    r.set(key, json.dumps(saves), ex=365 * 86400)
+    return {"saved": saved, "count": len(saves)}
+
+
+@app.get("/api/user/bets")
+async def get_bets(uid: str):
+    r = _get_redis()
+    if not r: return []
+    raw = r.get(_ukey(uid, "bets"))
+    return json.loads(raw) if raw else []
+
+
+@app.post("/api/user/bets")
+async def log_bet(body: Dict[str, Any]):
+    uid = body.get("uid", "")
+    bet = body.get("bet", {})
+    if not uid or not bet: raise HTTPException(status_code=400, detail="Missing uid or bet")
+    r = _get_redis()
+    if not r: raise HTTPException(status_code=503, detail="No Redis")
+    key = _ukey(uid, "bets")
+    raw = r.get(key)
+    bets: List[Dict] = json.loads(raw) if raw else []
+    bet["logged_at"] = datetime.utcnow().isoformat()
+    bets.insert(0, bet)
+    bets = bets[:200]
+    r.set(key, json.dumps(bets), ex=365 * 86400)
+    # Update leaderboard if won
+    if bet.get("result") == "won":
+        r.zincrby("betiq:leaderboard", 1, uid)
+    return {"ok": True, "total_bets": len(bets)}
+
+
+@app.get("/api/user/codes")
+async def get_codes(uid: str):
+    r = _get_redis()
+    if not r: return []
+    raw = r.get(_ukey(uid, "codes"))
+    return json.loads(raw) if raw else []
+
+
+@app.post("/api/user/codes")
+async def save_code(body: Dict[str, Any]):
+    uid = body.get("uid", "")
+    entry = body.get("entry", {})
+    if not uid or not entry: raise HTTPException(status_code=400, detail="Missing uid or entry")
+    r = _get_redis()
+    if not r: raise HTTPException(status_code=503, detail="No Redis")
+    key = _ukey(uid, "codes")
+    raw = r.get(key)
+    codes: List[Dict] = json.loads(raw) if raw else []
+    entry["saved_at"] = datetime.utcnow().isoformat()
+    codes.insert(0, entry)
+    codes = codes[:100]
+    r.set(key, json.dumps(codes), ex=365 * 86400)
+    return {"ok": True}
+
+
+@app.get("/api/user/stats")
+async def get_user_stats(uid: str):
+    r = _get_redis()
+    if not r: return {}
+    bets_raw  = r.get(_ukey(uid, "bets"))
+    saves_raw = r.get(_ukey(uid, "saves"))
+    codes_raw = r.get(_ukey(uid, "codes"))
+    bets:  List[Dict] = json.loads(bets_raw)  if bets_raw  else []
+    saves: List[Dict] = json.loads(saves_raw) if saves_raw else []
+    codes: List[Dict] = json.loads(codes_raw) if codes_raw else []
+
+    won   = sum(1 for b in bets if b.get("result") == "won")
+    lost  = sum(1 for b in bets if b.get("result") == "lost")
+    void  = sum(1 for b in bets if b.get("result") == "void")
+    total_stake   = sum(float(b.get("stake", 0))  for b in bets)
+    total_return  = sum(float(b.get("payout", 0)) for b in bets)
+    roi = round((total_return - total_stake) / total_stake * 100, 1) if total_stake > 0 else 0
+
+    # Current streak
+    streak, streak_type = 0, None
+    for b in bets:
+        res = b.get("result")
+        if res not in ("won", "lost"): continue
+        if streak_type is None: streak_type = res
+        if res == streak_type: streak += 1
+        else: break
+
+    return {
+        "won": won, "lost": lost, "void": void,
+        "total_stake": round(total_stake, 2),
+        "total_return": round(total_return, 2),
+        "roi": roi,
+        "accuracy": round(won / (won + lost) * 100, 1) if (won + lost) > 0 else 0,
+        "streak": streak, "streak_type": streak_type,
+        "saved_count": len(saves),
+        "codes_count": len(codes),
+    }
+
+
+@app.get("/api/user/prefs")
+async def get_prefs(uid: str):
+    r = _get_redis()
+    if not r: return {}
+    raw = r.get(_ukey(uid, "prefs"))
+    return json.loads(raw) if raw else {"followed_leagues": [], "digest": False}
+
+
+@app.post("/api/user/prefs")
+async def set_prefs(body: Dict[str, Any]):
+    uid = body.get("uid", "")
+    if not uid: raise HTTPException(status_code=400, detail="Missing uid")
+    r = _get_redis()
+    if not r: raise HTTPException(status_code=503, detail="No Redis")
+    prefs = {k: v for k, v in body.items() if k != "uid"}
+    r.set(_ukey(uid, "prefs"), json.dumps(prefs), ex=365 * 86400)
+    return {"ok": True}
+
+
+@app.get("/api/leaderboard")
+async def get_leaderboard():
+    r = _get_redis()
+    if not r: return []
+    try:
+        entries = r.zrevrange("betiq:leaderboard", 0, 19, withscores=True)
+        return [{"uid": uid, "wins": int(score)} for uid, score in entries]
+    except Exception:
+        return []
+
+
+@app.post("/api/track/match")
+async def track_match(body: Dict[str, Any]):
+    home = body.get("home", "")
+    away = body.get("away", "")
+    if not home or not away: return {"ok": True}
+    r = _get_redis()
+    if r:
+        try: r.zincrby("betiq:stats:matches", 1, f"{home} vs {away}")
+        except Exception: pass
+    return {"ok": True}
+
+
+@app.post("/api/track/league")
+async def track_league(body: Dict[str, Any]):
+    league = body.get("league", "")
+    if not league: return {"ok": True}
+    r = _get_redis()
+    if r:
+        try: r.zincrby("betiq:stats:leagues", 1, league)
+        except Exception: pass
+    return {"ok": True}
+
+
+@app.get("/api/admin/popular")
+async def get_popular(secret: str = ""):
+    _check_admin(secret)
+    r = _get_redis()
+    if not r: return {"matches": [], "leagues": []}
+    try:
+        matches = r.zrevrange("betiq:stats:matches", 0, 9, withscores=True)
+        leagues = r.zrevrange("betiq:stats:leagues", 0, 9, withscores=True)
+        return {
+            "matches": [{"name": n, "clicks": int(s)} for n, s in matches],
+            "leagues": [{"code": c, "clicks": int(s)} for c, s in leagues],
+        }
+    except Exception:
+        return {"matches": [], "leagues": []}
+
+
+@app.get("/api/referral/stats")
+async def get_referral_stats(uid: str):
+    r = _get_redis()
+    if not r: return {"count": 0}
+    code = f"ref_{uid[-8:]}"
+    count = int(r.get(f"betiq:referral:{code}:count") or 0)
+    return {"code": code, "count": count, "link": f"https://predict-withbetiq.vercel.app?ref={code}"}
+
+
+@app.post("/api/referral/use")
+async def use_referral(body: Dict[str, Any]):
+    """Called when a new user signs up with a referral code."""
+    code = body.get("code", "").strip()
+    if not code: return {"ok": False}
+    r = _get_redis()
+    if r:
+        try: r.incr(f"betiq:referral:{code}:count")
+        except Exception: pass
+    return {"ok": True}
+
+
 @app.post("/api/booking")
 async def create_booking(body: Dict[str, Any]):
     """

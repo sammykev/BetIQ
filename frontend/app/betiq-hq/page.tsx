@@ -3,9 +3,10 @@
 import { useEffect, useState, useCallback } from "react";
 import {
   Shield, ToggleLeft, ToggleRight, Loader2, RefreshCw,
-  Unlock, Lock, Trash2, Download, Megaphone, Star,
+  Unlock, Lock, Trash2, Download, Megaphone,
   TrendingUp, Users, DollarSign, Zap, MessageSquare,
-  AlertTriangle, CheckCircle2, XCircle, BarChart2,
+  AlertTriangle, CheckCircle2, BarChart2, Mail, Crown,
+  UserPlus, UserMinus, MousePointerClick,
 } from "lucide-react";
 import clsx from "clsx";
 
@@ -59,6 +60,18 @@ export default function AdminPage() {
   const [revenue, setRevenue]   = useState<any>(null);
   const [subs, setSubs]         = useState<{ total: number; premium: number } | null>(null);
   const [health, setHealth]     = useState<any>(null);
+  const [users, setUsers]       = useState<any>(null);
+  const [popular, setPopular]   = useState<any>(null);
+  // Grant/Revoke
+  const [grantEmail, setGrantEmail]   = useState("");
+  const [grantAction, setGrantAction] = useState<"grant"|"revoke">("grant");
+  const [grantMsg, setGrantMsg]       = useState<string | null>(null);
+  const [grantLoading, setGrantLoading] = useState(false);
+  // Email blast
+  const [blastSubject, setBlastSubject] = useState("");
+  const [blastMsg,     setBlastMsg]     = useState("");
+  const [blastResult,  setBlastResult]  = useState<string | null>(null);
+  const [blastLoading, setBlastLoading] = useState(false);
 
   // Action state
   const [toggling, setToggling] = useState<string | null>(null);
@@ -97,7 +110,9 @@ export default function AdminPage() {
     // Load heavy data in background
     fetch(`${API}/api/admin/stats?secret=${encodeURIComponent(secret)}`).then(r => r.json()).then(setStats).catch(() => {});
     fetch(`${API}/api/admin/revenue?secret=${encodeURIComponent(secret)}`).then(r => r.json()).then(setRevenue).catch(() => {});
+    fetch(`${API}/api/admin/popular?secret=${encodeURIComponent(secret)}`).then(r => r.json()).then(setPopular).catch(() => {});
     fetch("/api/admin/subscribers").then(r => r.json()).then(setSubs).catch(() => {});
+    fetch(`/api/admin/users?secret=${encodeURIComponent(secret)}`).then(r => r.json()).then(setUsers).catch(() => {});
   }, [secret]);
 
   useEffect(() => { if (authed) loadAll(); }, [authed, loadAll]);
@@ -156,6 +171,37 @@ export default function AdminPage() {
       setBanner(d.banner || "");
       flash("ok", d.banner ? "Banner published" : "Banner cleared");
     } catch { flash("err", "Banner update failed"); }
+  };
+
+  const handleGrant = async () => {
+    if (!grantEmail) return;
+    setGrantLoading(true); setGrantMsg(null);
+    try {
+      const res = await fetch("/api/admin/grant", {
+        method: grantAction === "grant" ? "POST" : "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ secret, email: grantEmail }),
+      });
+      const d = await res.json();
+      setGrantMsg(d.ok ? `✅ ${d.action} for ${d.email}` : `❌ ${d.error}`);
+      if (d.ok) setGrantEmail("");
+    } catch { setGrantMsg("❌ Request failed"); }
+    finally { setGrantLoading(false); }
+  };
+
+  const handleBlast = async () => {
+    if (!blastSubject || !blastMsg) return;
+    setBlastLoading(true); setBlastResult(null);
+    try {
+      const res = await fetch("/api/admin/blast", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ secret, subject: blastSubject, message: blastMsg }),
+      });
+      const d = await res.json();
+      setBlastResult(d.error ? `❌ ${d.error}` : `✅ Sent to ${d.sent} users (${d.total_premium} premium total)`);
+    } catch { setBlastResult("❌ Send failed"); }
+    finally { setBlastLoading(false); }
   };
 
   const downloadCSV = () => {
@@ -525,6 +571,124 @@ export default function AdminPage() {
           </div>
         </section>
       )}
+
+      {/* ── Grant / Revoke Premium ── */}
+      <section className="bg-slate-900 border border-slate-700 rounded-xl p-5 space-y-4">
+        <div className="flex items-center gap-2">
+          <Crown size={15} className="text-yellow-400" />
+          <h2 className="text-white font-semibold text-sm">Grant / Revoke Premium</h2>
+        </div>
+        <div className="flex gap-2">
+          {(["grant","revoke"] as const).map(a => (
+            <button key={a} onClick={() => setGrantAction(a)}
+              className={clsx("flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all",
+                grantAction === a
+                  ? a === "grant" ? "bg-green-500/20 text-green-400 border border-green-500/30" : "bg-red-500/20 text-red-400 border border-red-500/30"
+                  : "bg-slate-800 text-slate-400 border border-slate-700")}>
+              {a === "grant" ? <UserPlus size={12}/> : <UserMinus size={12}/>} {a}
+            </button>
+          ))}
+        </div>
+        <div className="flex gap-2">
+          <input value={grantEmail} onChange={e => setGrantEmail(e.target.value)} placeholder="user@email.com"
+            className="flex-1 bg-slate-800 border border-slate-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:border-yellow-500 transition-colors" />
+          <button onClick={handleGrant} disabled={grantLoading || !grantEmail}
+            className="bg-yellow-500 hover:bg-yellow-400 disabled:opacity-50 text-black font-bold px-4 py-2 rounded-lg text-sm transition-all flex items-center gap-1">
+            {grantLoading ? <Loader2 size={13} className="animate-spin"/> : <CheckCircle2 size={13}/>} Apply
+          </button>
+        </div>
+        {grantMsg && <p className="text-sm">{grantMsg}</p>}
+      </section>
+
+      {/* ── Email Blast ── */}
+      <section className="bg-slate-900 border border-slate-700 rounded-xl p-5 space-y-3">
+        <div className="flex items-center gap-2">
+          <Mail size={15} className="text-blue-400" />
+          <h2 className="text-white font-semibold text-sm">Email Blast</h2>
+          <span className="text-[10px] text-slate-500 ml-auto">All active premium users</span>
+        </div>
+        <input value={blastSubject} onChange={e => setBlastSubject(e.target.value)} placeholder="Subject line"
+          className="w-full bg-slate-800 border border-slate-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 transition-colors" />
+        <textarea value={blastMsg} onChange={e => setBlastMsg(e.target.value)} placeholder="Message body…" rows={3}
+          className="w-full bg-slate-800 border border-slate-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 transition-colors resize-none" />
+        {blastResult && <p className="text-sm">{blastResult}</p>}
+        <button onClick={handleBlast} disabled={blastLoading || !blastSubject || !blastMsg}
+          className="w-full bg-blue-500 hover:bg-blue-400 disabled:opacity-50 text-white font-bold py-2.5 rounded-lg text-sm transition-all flex items-center justify-center gap-2">
+          {blastLoading ? <Loader2 size={14} className="animate-spin"/> : <Mail size={14}/>}
+          {blastLoading ? "Sending…" : "Send Email Blast"}
+        </button>
+        <p className="text-slate-600 text-[10px]">Requires RESEND_API_KEY in Vercel · Free tier: 100 emails/day</p>
+      </section>
+
+      {/* ── Expiring Subscriptions ── */}
+      {users?.expiring?.length > 0 && (
+        <section className="bg-slate-900 border border-yellow-500/20 rounded-xl p-5 space-y-3">
+          <div className="flex items-center gap-2">
+            <AlertTriangle size={15} className="text-yellow-400" />
+            <h2 className="text-white font-semibold text-sm">Expiring in 7 Days ({users.expiring.length})</h2>
+          </div>
+          {users.expiring.map((u: any) => (
+            <div key={u.id} className="flex items-center justify-between text-xs">
+              <span className="text-slate-300 truncate flex-1">{u.email}</span>
+              <span className="text-yellow-400 font-semibold ml-2">{u.days_left}d left</span>
+            </div>
+          ))}
+        </section>
+      )}
+
+      {/* ── User Growth + Popular ── */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {users?.growth && (
+          <section className="bg-slate-900 border border-slate-700 rounded-xl p-5 space-y-3">
+            <div className="flex items-center gap-2">
+              <Users size={15} className="text-purple-400" />
+              <h2 className="text-white font-semibold text-sm">Sign-up Trend</h2>
+            </div>
+            {Object.entries(users.growth as Record<string,number>)
+              .sort(([a],[b]) => b.localeCompare(a)).slice(0,7)
+              .map(([date, count]) => (
+                <div key={date} className="flex items-center gap-3 text-xs">
+                  <span className="text-slate-500 w-24">{date}</span>
+                  <div className="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                    <div className="h-full bg-purple-500 rounded-full" style={{ width: `${Math.min(100, (count as number)*10)}%` }}/>
+                  </div>
+                  <span className="text-slate-300 w-4 text-right">{count as number}</span>
+                </div>
+              ))}
+          </section>
+        )}
+
+        {popular && (
+          <section className="bg-slate-900 border border-slate-700 rounded-xl p-5 space-y-3">
+            <div className="flex items-center gap-2">
+              <MousePointerClick size={15} className="text-blue-400" />
+              <h2 className="text-white font-semibold text-sm">Most Clicked</h2>
+            </div>
+            {popular.matches?.length > 0 && (
+              <div className="space-y-1">
+                <p className="text-slate-500 text-[10px] uppercase tracking-wide">Matches</p>
+                {popular.matches.slice(0,5).map((m: any) => (
+                  <div key={m.name} className="flex justify-between text-xs">
+                    <span className="text-slate-300 truncate flex-1">{m.name}</span>
+                    <span className="text-blue-400 font-semibold ml-2">{m.clicks}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {popular.leagues?.length > 0 && (
+              <div className="space-y-1 pt-2 border-t border-slate-800">
+                <p className="text-slate-500 text-[10px] uppercase tracking-wide">Leagues</p>
+                {popular.leagues.slice(0,5).map((l: any) => (
+                  <div key={l.code} className="flex justify-between text-xs">
+                    <span className="text-slate-300">{l.code}</span>
+                    <span className="text-blue-400 font-semibold">{l.clicks}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+      </div>
 
       <p className="text-center text-slate-700 text-xs pb-4">
         BetIQ Control Centre · Changes apply instantly via Redis

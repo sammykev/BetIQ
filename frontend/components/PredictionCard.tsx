@@ -1,9 +1,22 @@
 "use client";
 
 import { ConfidenceBar } from "./ConfidenceBar";
+import { SaveButton } from "./SaveButton";
 import type { Prediction } from "@/lib/api";
-import { Clock, TrendingUp } from "lucide-react";
+import { Clock, TrendingUp, Share2 } from "lucide-react";
 import clsx from "clsx";
+
+const BASE = "https://predict-withbetiq.vercel.app";
+
+function shareMatch(p: Prediction) {
+  const url = `${BASE}/api/og/match?home=${encodeURIComponent(p.home)}&away=${encodeURIComponent(p.away)}&tip=${encodeURIComponent(p.tip_1x2)}&conf=${p.goals_confidence}&league=${encodeURIComponent(p.league_name)}&flag=${encodeURIComponent(p.flag)}`;
+  const text = `⚽ ${p.home} vs ${p.away}\n🎯 Tip: ${p.tip_1x2} (${Math.round(p.goals_confidence * 100)}% confidence)\n\nvia BetIQ — AI Football Predictions\n${BASE}`;
+  if (navigator.share) {
+    navigator.share({ title: "BetIQ Pick", text, url: BASE }).catch(() => {});
+  } else {
+    navigator.clipboard.writeText(text).then(() => alert("Pick copied to clipboard!")).catch(() => {});
+  }
+}
 
 interface Props {
   prediction: Prediction;
@@ -39,12 +52,22 @@ export function PredictionCard({ prediction: p, onClick }: Props) {
     >
       {/* Header */}
       <div className="flex items-center justify-between">
-        <span className="text-sm font-medium text-slate-500 dark:text-slate-400 truncate max-w-[60%]">
+        <span className="text-sm font-medium text-slate-500 dark:text-slate-400 truncate max-w-[55%]">
           {p.flag} {p.league_name}
         </span>
-        <div className="flex items-center gap-1.5 text-xs text-slate-500 shrink-0">
-          <Clock size={12} />
-          <span>{p.date}{p.time !== "TBD" ? ` · ${p.time}` : ""}</span>
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-1 text-xs text-slate-500">
+            <Clock size={11} />
+            <span>{p.date}{p.time !== "TBD" ? ` · ${p.time}` : ""}</span>
+          </div>
+          <SaveButton prediction={p} size={13} />
+          <button
+            onClick={e => { e.stopPropagation(); shareMatch(p); }}
+            className="text-slate-400 hover:text-blue-400 transition-colors"
+            title="Share this pick"
+          >
+            <Share2 size={13} />
+          </button>
         </div>
       </div>
 

@@ -407,7 +407,11 @@ export default function HomePage() {
               <PredictionCard
                 key={`${p.home}-${p.away}-${p.date}-${i}`}
                 prediction={p}
-                onClick={() => isPremium ? setSelectedMatch(p) : setShowPaywall(true)}
+                onClick={() => {
+                  const API_B = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
+                  fetch(`${API_B}/api/track/match`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ home: p.home, away: p.away }) }).catch(() => {});
+                  isPremium ? setSelectedMatch(p) : setShowPaywall(true);
+                }}
               />
             ))}
           </div>

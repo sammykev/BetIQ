@@ -1,7 +1,8 @@
 "use client";
 
 import { useUser, useClerk, SignInButton } from "@clerk/nextjs";
-import { Crown, LogOut, User } from "lucide-react";
+import { Crown, LogOut, User, LayoutDashboard } from "lucide-react";
+import Link from "next/link";
 import { useState, useRef, useEffect } from "react";
 import clsx from "clsx";
 
@@ -86,6 +87,11 @@ export function UserMenu({ onUpgrade }: Props) {
               )}
             </div>
           </div>
+
+          <Link href="/dashboard" onClick={() => setOpen(false)}
+            className="w-full flex items-center gap-2 px-4 py-3 text-sm text-slate-300 hover:bg-slate-800 transition-colors border-b border-slate-700">
+            <LayoutDashboard size={14} /> My Dashboard
+          </Link>
 
           {!active && (
             <button
