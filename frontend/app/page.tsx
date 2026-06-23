@@ -12,7 +12,7 @@ import { CalendarView } from "@/components/CalendarView";
 import { UserMenu } from "@/components/UserMenu";
 import { PaywallModal } from "@/components/PaywallModal";
 import { AnnouncementBanner } from "@/components/AnnouncementBanner";
-import { useUser } from "@clerk/nextjs";
+import { useUser, SignInButton, SignUpButton } from "@clerk/nextjs";
 import clsx from "clsx";
 
 const CONFIDENCE_FILTERS = [
@@ -21,6 +21,85 @@ const CONFIDENCE_FILTERS = [
   { label: "≥ 70%", value: 0.7 },
   { label: "≥ 80%", value: 0.8 },
 ];
+
+const FEATURES = [
+  { icon: "⚽", title: "AI Predictions", desc: "XGBoost + Elo ratings across 9 leagues" },
+  { icon: "🎯", title: "Match Analysis", desc: "xG, markets, Elo gauge, correct score odds" },
+  { icon: "🤖", title: "AI Assistant", desc: "Chat to build accumulators instantly" },
+  { icon: "🎟️", title: "SportyBet Codes", desc: "One-click booking code generation" },
+  { icon: "📅", title: "History Calendar", desc: "Track past predictions & accuracy" },
+  { icon: "🌐", title: "Live Team News", desc: "Real-time injury & lineup context" },
+];
+
+function AuthGate() {
+  return (
+    <div className="min-h-screen bg-slate-950 flex flex-col">
+      {/* Header */}
+      <header className="border-b border-slate-800 px-6 py-4 flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <img src="/logo.svg" alt="BetIQ" className="w-9 h-9 rounded-full" />
+          <div>
+            <h1 className="text-lg font-bold text-white leading-none">BetIQ</h1>
+            <p className="text-xs text-slate-500 leading-none mt-0.5">AI Football Predictions</p>
+          </div>
+        </div>
+        <SignInButton mode="modal">
+          <button className="text-xs text-slate-400 hover:text-white transition-colors">
+            Sign in
+          </button>
+        </SignInButton>
+      </header>
+
+      {/* Hero */}
+      <main className="flex-1 flex flex-col items-center justify-center px-4 py-16 text-center space-y-8">
+        <div className="space-y-4 max-w-lg">
+          <div className="text-6xl">⚽</div>
+          <h2 className="text-4xl font-black text-white leading-tight">
+            Bet smarter with <span className="text-green-400">AI predictions</span>
+          </h2>
+          <p className="text-slate-400 text-lg leading-relaxed">
+            XGBoost models + Elo ratings across 9 leagues. Chat to pick games,
+            get SportyBet booking codes in one tap.
+          </p>
+        </div>
+
+        {/* CTA buttons */}
+        <div className="flex flex-col sm:flex-row gap-3 w-full max-w-xs">
+          <SignUpButton mode="modal">
+            <button className="flex-1 bg-green-500 hover:bg-green-400 text-black font-bold py-3 px-6 rounded-xl text-sm transition-all hover:scale-105 active:scale-95">
+              Create free account
+            </button>
+          </SignUpButton>
+          <SignInButton mode="modal">
+            <button className="flex-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white font-semibold py-3 px-6 rounded-xl text-sm transition-all">
+              Sign in
+            </button>
+          </SignInButton>
+        </div>
+
+        <p className="text-slate-600 text-xs">
+          Free to sign up · No credit card required
+        </p>
+
+        {/* Feature grid */}
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 w-full max-w-2xl pt-4">
+          {FEATURES.map(({ icon, title, desc }) => (
+            <div key={title} className="bg-slate-900 border border-slate-800 rounded-xl p-4 text-left space-y-1.5">
+              <span className="text-2xl">{icon}</span>
+              <p className="text-white text-sm font-semibold">{title}</p>
+              <p className="text-slate-500 text-xs leading-relaxed">{desc}</p>
+            </div>
+          ))}
+        </div>
+      </main>
+
+      {/* Footer */}
+      <footer className="border-t border-slate-800 py-4 text-center text-xs text-slate-700">
+        BetIQ · AI Football Predictions · For educational use only
+      </footer>
+    </div>
+  );
+}
 
 export default function HomePage() {
   const [allPredictions, setAllPredictions] = useState<Prediction[]>([]);
@@ -133,6 +212,17 @@ export default function HomePage() {
     if (!iso) return "Never";
     return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   };
+
+  // Auth gate — all hooks above must run first (React rules)
+  if (!isLoaded) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-green-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (!user) return <AuthGate />;
 
   if (maintenanceMode) {
     return (
