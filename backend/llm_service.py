@@ -1,7 +1,9 @@
 """
 Groq-powered match explanation service.
-Uses compound-beta (web-search enabled) to combine statistical data
-with live qualitative context (injuries, lineups, team news).
+
+Two-step approach to avoid compound-beta's request size limits:
+1. compound-beta (small prompt) → fetch live injury/team news
+2. llama-3.3-70b-versatile → combine news + stats into a full explanation
 """
 
 import os
@@ -11,15 +13,44 @@ from typing import Dict, Any, List
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-SYSTEM = """You are a sharp, concise football analyst for BetIQ.
 
-Given a match prediction with statistical data, write a 4-5 sentence analysis:
-1. Explain WHY the model favours one side — reference Elo gap, xG, and form.
-2. Search the web for the LATEST injury news, suspensions, and lineup updates for BOTH teams.
-3. If key players are missing for the favoured side, flag it clearly as a risk.
-4. End with a one-sentence confidence verdict.
+async def _call(model: str, messages: list, max_tokens: int = 400) -> Dict:
+    """Raw Groq API call. Returns parsed JSON or raises."""
+    async with httpx.AsyncClient(timeout=25) as client:
+        r = await client.post(
+            GROQ_URL,
+            headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
+            json={"model": model, "messages": messages, "max_tokens": max_tokens, "temperature": 0.3},
+        )
+    if r.status_code != 200:
+        raise RuntimeError(f"{model} {r.status_code}: {r.text[:120]}")
+    return r.json()
 
-Style: punchy and direct — no bullet points, no headers, just flowing analyst prose."""
+
+async def _fetch_news(home: str, away: str) -> tuple[str, List[str]]:
+    """
+    Step 1 — use compound-beta with a tiny prompt to search for team news.
+    Returns (news_text, source_urls).
+    """
+    try:
+        data = await _call("compound-beta", [
+            {"role": "user", "content":
+                f"Search for the latest injury news, suspensions, and lineup updates for "
+                f"{home} and {away} ahead of their upcoming match. "
+                f"Return 2-3 sentences of key facts only."}
+        ], max_tokens=200)
+
+        text = data["choices"][0]["message"]["content"].strip()
+        sources: List[str] = []
+        for tool in data["choices"][0]["message"].get("executed_tools", []):
+            for res in tool.get("results", [])[:3]:
+                url = res.get("url") or res.get("link")
+                if url:
+                    sources.append(url)
+        return text, sources
+    except Exception as e:
+        print(f"[LLM] compound-beta news fetch failed: {e}")
+        return "", []
 
 
 async def explain_match(
@@ -35,66 +66,53 @@ async def explain_match(
     if not GROQ_API_KEY:
         return {"explanation": None, "sources": [], "model": None, "error": "no_key"}
 
+    # Step 1 — fetch live news (small compound-beta call)
+    news_text, sources = await _fetch_news(home, away)
+
+    # Step 2 — generate the full explanation with llama
     elo  = analysis.get("elo", {})
     rec  = analysis.get("recommended", {})
     xg_h = analysis.get("xg_home", 0)
     xg_a = analysis.get("xg_away", 0)
 
-    user_msg = (
-        f"Match: **{home} vs {away}**\n\n"
-        f"Statistical snapshot:\n"
-        f"- Elo: {home} {elo.get('home','?')} · {away} {elo.get('away','?')} "
-        f"(gap {elo.get('gap',0):+.0f} pts — {elo.get('label','?')})\n"
-        f"- xG: {home} {xg_h:.2f} vs {away} {xg_a:.2f}\n"
-        f"- Win probs: {home} {round(prediction.get('p_home',0)*100)}% / "
+    stats_block = (
+        f"Elo: {home} {elo.get('home','?')} vs {away} {elo.get('away','?')} "
+        f"(gap {elo.get('gap',0):+.0f} — {elo.get('label','?')}). "
+        f"xG: {home} {xg_h:.2f} vs {away} {xg_a:.2f}. "
+        f"Win probs: {home} {round(prediction.get('p_home',0)*100)}% / "
         f"Draw {round(prediction.get('p_draw',0)*100)}% / "
-        f"{away} {round(prediction.get('p_away',0)*100)}%\n"
-        f"- Best pick: {rec.get('label','?')} @ {round(rec.get('prob',0)*100)}% confidence\n"
-        f"- Tip: {prediction.get('tip_1x2','?')} | Goals: {prediction.get('tip_goals','?')}\n\n"
-        f"Search the web for the latest team news, injuries, and lineup updates for "
-        f"**{home}** and **{away}**, then write your analysis."
+        f"{away} {round(prediction.get('p_away',0)*100)}%. "
+        f"Best pick: {rec.get('label','?')} @ {round(rec.get('prob',0)*100)}%."
     )
 
-    for model in ("compound-beta", "llama-3.3-70b-versatile"):
-        try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                r = await client.post(
-                    GROQ_URL,
-                    headers={
-                        "Authorization": f"Bearer {GROQ_API_KEY}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": model,
-                        "messages": [
-                            {"role": "system", "content": SYSTEM},
-                            {"role": "user",   "content": user_msg},
-                        ],
-                        "max_tokens": 450,
-                        "temperature": 0.3,
-                    },
-                )
+    news_block = f"Latest news: {news_text}" if news_text else "No recent team news found."
 
-            if r.status_code != 200:
-                print(f"[LLM] {model} → {r.status_code}: {r.text[:200]}")
-                continue
+    prompt = (
+        f"You are a sharp football analyst. Write a 4-sentence match preview for "
+        f"{home} vs {away}.\n\n"
+        f"Stats: {stats_block}\n"
+        f"{news_block}\n\n"
+        f"Explain why the model favours one side, mention any injury concerns, "
+        f"flag contradictions if key players are out, end with a confidence verdict. "
+        f"No bullet points — flowing prose only."
+    )
 
-            data   = r.json()
-            text   = data["choices"][0]["message"]["content"].strip()
-            sources: List[str] = []
+    try:
+        data = await _call("llama-3.3-70b-versatile", [
+            {"role": "user", "content": prompt}
+        ], max_tokens=350)
 
-            # Extract web search sources from compound-beta tool calls
-            for tool in data["choices"][0]["message"].get("executed_tools", []):
-                for result in tool.get("results", [])[:3]:
-                    url = result.get("url") or result.get("link")
-                    if url:
-                        sources.append(url)
+        text = data["choices"][0]["message"]["content"].strip()
+        used_web = bool(sources)
+        print(f"[LLM] Explained {home} vs {away} "
+              f"({'compound-beta+llama' if used_web else 'llama-only'}, {len(sources)} sources)")
+        return {
+            "explanation": text,
+            "sources": sources,
+            "model": "compound-beta+llama" if used_web else "llama-3.3-70b-versatile",
+            "error": None,
+        }
 
-            print(f"[LLM] Explained {home} vs {away} via {model} ({len(sources)} sources)")
-            return {"explanation": text, "sources": sources, "model": model, "error": None}
-
-        except Exception as e:
-            print(f"[LLM] {model} error: {e}")
-            continue
-
-    return {"explanation": None, "sources": [], "model": None, "error": "all_models_failed"}
+    except Exception as e:
+        print(f"[LLM] llama explanation failed: {e}")
+        return {"explanation": None, "sources": [], "model": None, "error": "all_models_failed"}
