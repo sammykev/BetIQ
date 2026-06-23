@@ -11,6 +11,7 @@ import { ChatBot } from "@/components/ChatBot";
 import { CalendarView } from "@/components/CalendarView";
 import { UserMenu } from "@/components/UserMenu";
 import { PaywallModal } from "@/components/PaywallModal";
+import { AnnouncementBanner } from "@/components/AnnouncementBanner";
 import { useUser } from "@clerk/nextjs";
 import clsx from "clsx";
 
@@ -38,6 +39,8 @@ export default function HomePage() {
 
   const { user } = useUser();
   const [paywallActive, setPaywallActive] = useState(true);
+  const [maintenanceMode, setMaintenanceMode] = useState(false);
+  const [siteBanner, setSiteBanner] = useState("");
 
   const hasSubscription =
     (user?.publicMetadata as { subscription?: string; subscription_expires?: string })
@@ -53,15 +56,19 @@ export default function HomePage() {
     try {
       setError(null);
       const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
-      const [data, lgs, pw] = await Promise.all([
+      const [data, lgs, pw, maint, ban] = await Promise.all([
         fetchPredictions(undefined, undefined),
         fetchLeagues(),
         fetch(`${API}/api/config/paywall`).then(r => r.json()).catch(() => ({ enabled: true })),
+        fetch(`${API}/api/config/maintenance`).then(r => r.json()).catch(() => ({ enabled: false })),
+        fetch(`${API}/api/admin/banner`).then(r => r.json()).catch(() => ({ banner: null })),
       ]);
       setAllPredictions(data.predictions);
       setLastUpdated(data.last_updated);
       setLeagues(lgs);
       setPaywallActive(pw.enabled);
+      setMaintenanceMode(maint.enabled);
+      setSiteBanner(ban.banner || "");
     } catch (e) {
       setError("Could not reach the prediction server. Make sure the backend is running.");
     } finally {
@@ -127,8 +134,21 @@ export default function HomePage() {
     return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   };
 
+  if (maintenanceMode) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center gap-4 text-center p-6">
+        <img src="/logo.svg" alt="BetIQ" className="w-16 h-16 rounded-full opacity-60" />
+        <h1 className="text-2xl font-black text-white">Back soon</h1>
+        <p className="text-slate-400 max-w-sm">BetIQ is undergoing scheduled maintenance. We'll be back shortly with fresh predictions.</p>
+        <p className="text-slate-600 text-sm">⚽ Thanks for your patience</p>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-white dark:bg-slate-950">
+      <AnnouncementBanner text={siteBanner} />
+
       {/* Header */}
       <header className="border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-950/80 backdrop-blur sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
