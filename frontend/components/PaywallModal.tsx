@@ -3,8 +3,6 @@
 import { useUser, SignInButton } from "@clerk/nextjs";
 import { X, Crown, Check, Loader2 } from "lucide-react";
 import { useState } from "react";
-// @ts-ignore — no types for this package
-import PaystackPop from "@paystack/inline-js";
 
 interface Props {
   onClose: () => void;
@@ -28,7 +26,7 @@ export function PaywallModal({ onClose, onSuccess }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState<string | null>(null);
 
-  const handlePay = () => {
+  const handlePay = async () => {
     if (!user) { setError("Please sign in first."); return; }
     setError(null);
 
@@ -40,6 +38,9 @@ export function PaywallModal({ onClose, onSuccess }: Props) {
 
     const reference = `betiq_${user.id}_${Date.now()}`;
 
+    // Dynamic import so it never runs during SSR (window would be undefined)
+    // @ts-ignore
+    const { default: PaystackPop } = await import("@paystack/inline-js");
     const popup = new PaystackPop();
     popup.newTransaction({
       key: paystackKey,
