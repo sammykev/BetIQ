@@ -277,6 +277,11 @@ async def _run_pipeline():
         predictor = LeaguePredictor()
         predictor.train(combined)
 
+        # Make predictor available immediately so card analysis works during API calibration
+        global _predictor
+        _predictor = predictor
+        print("[Pipeline] Predictor ready — card analysis now available.")
+
         # Fetch recent results from API to update Elo with current season data
         predictions = []
         if API_KEY:
