@@ -78,6 +78,7 @@ export default function HomePage() {
   useEffect(() => {
     const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
     const ping = () => fetch(`${API}/api/health`).catch(() => {});
+    ping(); // immediate ping on load
     const id = setInterval(ping, 10 * 60 * 1000);
     return () => clearInterval(id);
   }, []);
