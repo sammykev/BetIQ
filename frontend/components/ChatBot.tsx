@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useUser } from "@clerk/nextjs";
 import clsx from "clsx";
-import { X, Send, MessageCircle, Loader2, Copy, Check, Ticket, ChevronDown } from "lucide-react";
+import { X, Send, MessageCircle, Loader2, Copy, Check, Ticket, ChevronDown, ClipboardList } from "lucide-react";
 import type { Prediction } from "@/lib/api";
 
 interface Props {
@@ -17,10 +17,12 @@ interface Message {
 
 interface BookingResult {
   code: string | null;
+  bookie: string | null;
   matched: { game: string; tip: string; odds: string }[];
   unmatched: string[];
   total_odds: number | null;
   error: string | null;
+  picks?: { home: string; away: string; tip: string; tip_code: string; date: string; league: string }[];
 }
 
 const API_URL =
@@ -41,75 +43,128 @@ function stripSelections(text: string): string {
 }
 
 function BookingCard({ result, onDismiss }: { result: BookingResult; onDismiss: () => void }) {
-  const [copied, setCopied] = useState(false);
+  const [copiedCode, setCopiedCode] = useState(false);
+  const [copiedPicks, setCopiedPicks] = useState(false);
 
-  const copy = () => {
+  const copyCode = () => {
     if (result.code) {
       navigator.clipboard.writeText(result.code);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      setCopiedCode(true);
+      setTimeout(() => setCopiedCode(false), 2000);
     }
   };
 
+  const copyPicks = () => {
+    const picks = result.picks || [];
+    const text = picks.map(p =>
+      `${p.home} vs ${p.away} · ${p.date}\nTip: ${p.tip} (${p.tip_code})\n`
+    ).join("\n");
+    navigator.clipboard.writeText(text.trim());
+    setCopiedPicks(true);
+    setTimeout(() => setCopiedPicks(false), 2000);
+  };
+
+  const bookerLabel: Record<string, string> = { sportybet: "SportyBet", "1xbet": "1xBet" };
+
   return (
-    <div className="rounded-xl border border-green-500/40 bg-green-500/10 p-4 space-y-3 text-sm">
-      {result.code ? (
-        <>
+    <div className="rounded-xl border border-slate-600 bg-slate-800/80 p-4 space-y-3 text-sm">
+
+      {/* ── Booking code (if generated) ── */}
+      {result.code && (
+        <div className="space-y-2">
           <p className="text-green-400 font-semibold text-xs uppercase tracking-wide">
-            ✅ SportyBet Booking Code
+            ✅ {bookerLabel[result.bookie || ""] || "Booking"} Code
           </p>
-          <div className="flex items-center gap-2">
-            <span className="text-2xl font-black text-white tracking-widest flex-1">
+          <div className="flex items-center gap-2 bg-black/30 rounded-lg px-3 py-2">
+            <span className="text-xl font-black text-white tracking-widest flex-1 font-mono">
               {result.code}
             </span>
             <button
-              onClick={copy}
-              className="flex items-center gap-1 bg-green-500 hover:bg-green-400 text-black text-xs font-bold px-3 py-1.5 rounded-lg transition-colors"
+              onClick={copyCode}
+              className="flex items-center gap-1 bg-green-500 hover:bg-green-400 text-black text-xs font-bold px-3 py-1.5 rounded-lg transition-colors shrink-0"
             >
-              {copied ? <Check size={12} /> : <Copy size={12} />}
-              {copied ? "Copied!" : "Copy"}
+              {copiedCode ? <Check size={12} /> : <Copy size={12} />}
+              {copiedCode ? "Copied!" : "Copy"}
             </button>
           </div>
-          <p className="text-slate-400 text-xs">
-            Paste this code on the SportyBet app or website to load your bet slip.
-          </p>
           {result.total_odds && (
             <p className="text-yellow-400 font-semibold text-xs">
               Combined odds: ~{result.total_odds}x
             </p>
           )}
-        </>
-      ) : (
-        <p className="text-red-400 text-xs">
-          ⚠️ {result.error || "Could not generate booking code."}
-        </p>
-      )}
-
-      {result.matched.length > 0 && (
-        <div className="space-y-1 pt-1 border-t border-slate-700">
-          <p className="text-slate-400 text-xs font-medium">Booked games:</p>
-          {result.matched.map((m, i) => (
-            <div key={i} className="flex justify-between text-xs text-slate-300">
-              <span>{m.game}</span>
-              <span className="text-green-400 font-semibold">{m.tip} @ {m.odds}</span>
+          {result.matched.length > 0 && (
+            <div className="space-y-1 pt-1 border-t border-slate-700">
+              {result.matched.map((m, i) => (
+                <div key={i} className="flex justify-between text-xs text-slate-300">
+                  <span className="truncate">{m.game}</span>
+                  <span className="text-green-400 font-semibold ml-2 shrink-0">{m.tip} @ {m.odds}</span>
+                </div>
+              ))}
             </div>
-          ))}
+          )}
         </div>
       )}
 
-      {result.unmatched.length > 0 && (
-        <div className="pt-1 border-t border-slate-700 space-y-0.5">
-          <p className="text-slate-500 text-xs font-medium">Not found on SportyBet:</p>
-          {result.unmatched.map((u, i) => (
-            <p key={i} className="text-slate-600 text-xs">• {u}</p>
-          ))}
+      {/* ── Copy card (always shown when picks available) ── */}
+      {!result.code && result.picks && result.picks.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5 text-blue-400">
+              <ClipboardList size={13} />
+              <p className="font-semibold text-xs uppercase tracking-wide">Your Picks</p>
+            </div>
+            <button
+              onClick={copyPicks}
+              className="flex items-center gap-1 bg-blue-500 hover:bg-blue-400 text-white text-xs font-bold px-2.5 py-1 rounded-lg transition-colors"
+            >
+              {copiedPicks ? <Check size={11} /> : <Copy size={11} />}
+              {copiedPicks ? "Copied!" : "Copy all"}
+            </button>
+          </div>
+
+          <div className="space-y-1.5">
+            {result.picks.map((p, i) => (
+              <div key={i} className="bg-black/30 rounded-lg px-3 py-2 flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-white text-xs font-semibold truncate">{p.home} vs {p.away}</p>
+                  <p className="text-slate-400 text-[10px]">{p.league} · {p.date}</p>
+                </div>
+                <span className="shrink-0 text-xs font-bold bg-green-500/20 text-green-300 border border-green-500/30 px-2 py-0.5 rounded-full">
+                  {p.tip}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          <p className="text-slate-500 text-[10px] pt-1">
+            Copy these picks and add them manually on any betting site.
+          </p>
+
+          <div className="flex gap-2 flex-wrap">
+            {[
+              { name: "SportyBet", url: "https://www.sportybet.com/ng/" },
+              { name: "Bet9ja",    url: "https://web.bet9ja.com/"        },
+              { name: "1xBet",     url: "https://1xbet.ng/en/"           },
+            ].map(b => (
+              <a key={b.name} href={b.url} target="_blank" rel="noopener noreferrer"
+                className="text-[10px] font-semibold px-2.5 py-1 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 transition-colors">
+                {b.name} ↗
+              </a>
+            ))}
+          </div>
+
+          {result.error && (
+            <p className="text-slate-500 text-[10px] italic">{result.error}</p>
+          )}
         </div>
       )}
 
-      <button
-        onClick={onDismiss}
-        className="text-slate-500 text-xs hover:text-slate-300 transition-colors"
-      >
+      {/* ── Error only (no code, no picks) ── */}
+      {!result.code && (!result.picks || result.picks.length === 0) && (
+        <p className="text-red-400 text-xs">⚠️ {result.error || "Could not generate booking code."}</p>
+      )}
+
+      <button onClick={onDismiss} className="text-slate-500 text-xs hover:text-slate-300 transition-colors pt-1">
         Dismiss
       </button>
     </div>
@@ -142,10 +197,12 @@ function AssistantBubble({
       const data = await res.json();
       const sanitised = {
         code: data.code ?? null,
+        bookie: data.bookie ?? null,
         matched: Array.isArray(data.matched) ? data.matched : [],
         unmatched: Array.isArray(data.unmatched) ? data.unmatched : [],
         total_odds: typeof data.total_odds === "number" ? data.total_odds : null,
-        error: data.code ? null : "Booking code unavailable — try again shortly.",
+        picks: Array.isArray(data.picks) ? data.picks : [],
+        error: data.code ? null : (data.error || "Booking code unavailable — use the copy card to add picks manually."),
       };
       setBooking(sanitised);
       // Auto-save to user's accumulator history
