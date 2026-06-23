@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { fetchMatchAnalysis } from "@/lib/api";
-import type { MatchAnalysis, Market } from "@/lib/api";
+import { fetchMatchAnalysis, fetchExplanation } from "@/lib/api";
+import type { MatchAnalysis, Market, MatchExplanation } from "@/lib/api";
 import type { Prediction } from "@/lib/api";
-import { X, Star, BarChart2, Clock } from "lucide-react";
+import { X, Star, BarChart2, Clock, Sparkles, ExternalLink } from "lucide-react";
 import clsx from "clsx";
 
 interface Props {
@@ -150,18 +150,74 @@ function MarketBlock({ market, recommendedCode }: { market: Market; recommendedC
 }
 
 // ------------------------------------------------------------------ //
+// AI Explanation block
+// ------------------------------------------------------------------ //
+function AIExplanation({ explanation }: { explanation: MatchExplanation | null }) {
+  if (!explanation) {
+    return (
+      <div className="bg-slate-100/60 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/50 rounded-xl p-4 space-y-2 animate-pulse">
+        <div className="h-3 bg-slate-200 dark:bg-slate-700 rounded w-1/3" />
+        <div className="h-3 bg-slate-200 dark:bg-slate-700 rounded w-full" />
+        <div className="h-3 bg-slate-200 dark:bg-slate-700 rounded w-5/6" />
+        <div className="h-3 bg-slate-200 dark:bg-slate-700 rounded w-4/6" />
+      </div>
+    );
+  }
+
+  if (!explanation.explanation) return null;
+
+  const hasWebSearch = explanation.model === "compound-beta" && explanation.sources.length > 0;
+
+  return (
+    <div className="bg-slate-100/60 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/50 rounded-xl p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <Sparkles size={14} className="text-purple-400 shrink-0" />
+        <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">AI Analysis</span>
+        {hasWebSearch && (
+          <span className="ml-auto text-[10px] bg-blue-500/15 text-blue-400 border border-blue-500/25 px-2 py-0.5 rounded-full font-medium">
+            🌐 Live web search
+          </span>
+        )}
+      </div>
+      <p className="text-sm text-slate-700 dark:text-slate-300 leading-relaxed">
+        {explanation.explanation}
+      </p>
+      {explanation.sources.length > 0 && (
+        <div className="pt-1 border-t border-slate-200 dark:border-slate-700/50 flex flex-wrap gap-2">
+          {explanation.sources.slice(0, 3).map((src, i) => {
+            const domain = (() => { try { return new URL(src).hostname.replace("www.", ""); } catch { return src; } })();
+            return (
+              <a key={i} href={src} target="_blank" rel="noopener noreferrer"
+                className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-blue-400 transition-colors">
+                <ExternalLink size={9} />{domain}
+              </a>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ //
 // Main Modal
 // ------------------------------------------------------------------ //
 export function MatchModal({ prediction: p, onClose }: Props) {
   const [analysis, setAnalysis] = useState<MatchAnalysis | null>(null);
   const [loadingAnalysis, setLoadingAnalysis] = useState(true);
   const [error, setError] = useState(false);
+  const [explanation, setExplanation] = useState<MatchExplanation | null>(null);
 
   useEffect(() => {
     fetchMatchAnalysis(p.home, p.away)
       .then(setAnalysis)
       .catch(() => setError(true))
       .finally(() => setLoadingAnalysis(false));
+
+    // Fetch AI explanation + qualitative context in parallel
+    fetchExplanation(p.home, p.away)
+      .then(setExplanation)
+      .catch(() => setExplanation({ explanation: null, sources: [], model: null, error: "failed" }));
   }, [p.home, p.away]);
 
   useEffect(() => {
@@ -258,6 +314,9 @@ export function MatchModal({ prediction: p, onClose }: Props) {
                   <p className="text-2xl font-black text-green-400 shrink-0">{Math.round(rec.prob * 100)}%</p>
                 </div>
               )}
+
+              {/* AI Explanation */}
+              <AIExplanation explanation={explanation} />
 
               {/* xG row */}
               <div className="grid grid-cols-2 gap-3">

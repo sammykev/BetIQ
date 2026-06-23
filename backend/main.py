@@ -752,6 +752,48 @@ async def get_calendar(month: str = ""):
     return summary
 
 
+@app.get("/api/explain")
+async def explain_match(home: str, away: str):
+    """
+    Generate a plain-language AI explanation for a match prediction.
+    Combines XGBoost/Elo stats with live web search for injuries & lineups.
+    Results are cached in Redis for 1 hour to avoid redundant API calls.
+    """
+    from llm_service import explain_match as _explain
+
+    cache_key = f"betiq:explain:{home.lower()}:{away.lower()}"
+
+    # Return cached explanation if available
+    r = _get_redis()
+    if r:
+        try:
+            cached = r.get(cache_key)
+            if cached:
+                return json.loads(cached)
+        except Exception:
+            pass
+
+    if _predictor is None:
+        raise HTTPException(status_code=503, detail="Model not ready")
+
+    analysis   = _predictor.predict_match_full(home, away)
+    prediction = _predictor.predict_match(home, away)
+
+    if not analysis or not prediction:
+        raise HTTPException(status_code=404, detail="Could not generate prediction")
+
+    result = await _explain(home, away, analysis, prediction)
+
+    # Cache for 1 hour
+    if r and result.get("explanation"):
+        try:
+            r.set(cache_key, json.dumps(result), ex=3600)
+        except Exception:
+            pass
+
+    return result
+
+
 @app.post("/api/booking")
 async def create_booking(body: Dict[str, Any]):
     """
