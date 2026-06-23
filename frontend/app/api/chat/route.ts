@@ -64,6 +64,15 @@ export async function POST(req: NextRequest) {
       })),
     ];
 
+    // Log query for admin analytics (fire-and-forget)
+    const userQuery = lastMessage.content?.slice(0, 200) || "";
+    const API_BACKEND = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
+    fetch(`${API_BACKEND}/api/log/query`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: userQuery }),
+    }).catch(() => {});
+
     const completion = await groq.chat.completions.create({
       model: "llama-3.3-70b-versatile",
       messages: groqMessages,

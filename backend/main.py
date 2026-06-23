@@ -791,7 +791,241 @@ async def explain_match(home: str, away: str):
         except Exception:
             pass
 
+    # Track usage count in Redis
+    r = _get_redis()
+    if r:
+        try:
+            today = date.today().isoformat()
+            r.incr(f"betiq:stats:explain:{today}")
+            r.expire(f"betiq:stats:explain:{today}", 86400 * 7)
+            r.incr("betiq:stats:explain:total")
+        except Exception:
+            pass
+
     return result
+
+
+def _check_admin(secret: str):
+    if not ADMIN_SECRET or secret.strip() != ADMIN_SECRET:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
+@app.get("/api/admin/stats")
+async def admin_stats(secret: str = ""):
+    _check_admin(secret)
+    r = _get_redis()
+    if not r:
+        return {"error": "no_redis"}
+
+    from datetime import timedelta
+    today = date.today()
+    daily = []
+    overall = {"won": 0, "lost": 0, "pending": 0}
+    league_stats: Dict[str, Any] = {}
+    tip_stats: Dict[str, Any] = {}
+    all_preds: List[Dict] = []
+
+    for i in range(30):
+        d = (today - timedelta(days=i)).isoformat()
+        try:
+            raw = r.get(f"betiq:history:{d}")
+            if not raw:
+                continue
+            preds = json.loads(raw)
+            won     = sum(1 for p in preds if p.get("outcome") == "won")
+            lost    = sum(1 for p in preds if p.get("outcome") == "lost")
+            pending = sum(1 for p in preds if p.get("outcome") == "pending")
+            daily.append({
+                "date": d, "won": won, "lost": lost, "pending": pending,
+                "accuracy": round(won / (won + lost) * 100, 1) if (won + lost) > 0 else None
+            })
+            overall["won"]     += won
+            overall["lost"]    += lost
+            overall["pending"] += pending
+            all_preds.extend(preds)
+        except Exception:
+            pass
+
+    daily.reverse()
+
+    for p in all_preds:
+        if p.get("outcome") not in ("won", "lost"):
+            continue
+        lg = p.get("league", "?")
+        league_stats.setdefault(lg, {"won": 0, "lost": 0, "name": p.get("league_name", lg), "flag": p.get("flag", "")})
+        league_stats[lg]["won" if p["outcome"] == "won" else "lost"] += 1
+        tip = p.get("tip_1x2", "?")
+        tip_stats.setdefault(tip, {"won": 0, "lost": 0})
+        tip_stats[tip]["won" if p["outcome"] == "won" else "lost"] += 1
+
+    for lg in league_stats:
+        t = league_stats[lg]["won"] + league_stats[lg]["lost"]
+        league_stats[lg]["accuracy"] = round(league_stats[lg]["won"] / t * 100, 1) if t else 0
+        league_stats[lg]["total"] = t
+    for tip in tip_stats:
+        t = tip_stats[tip]["won"] + tip_stats[tip]["lost"]
+        tip_stats[tip]["accuracy"] = round(tip_stats[tip]["won"] / t * 100, 1) if t else 0
+        tip_stats[tip]["total"] = t
+
+    settled = overall["won"] + overall["lost"]
+    overall["accuracy"] = round(overall["won"] / settled * 100, 1) if settled else 0
+
+    # AI usage
+    today_str = today.isoformat()
+    explain_today = int(r.get(f"betiq:stats:explain:{today_str}") or 0)
+    explain_total = int(r.get("betiq:stats:explain:total") or 0)
+    chat_queries  = r.lrange("betiq:stats:chat_queries", 0, 19) if hasattr(r, "lrange") else []
+
+    return {
+        "overall": overall,
+        "daily": daily,
+        "by_league": league_stats,
+        "by_tip": tip_stats,
+        "ai": {"explain_today": explain_today, "explain_total": explain_total, "recent_queries": chat_queries},
+    }
+
+
+@app.get("/api/admin/revenue")
+async def admin_revenue(secret: str = ""):
+    _check_admin(secret)
+    paystack_key = os.getenv("PAYSTACK_SECRET_KEY", "")
+    if not paystack_key:
+        return {"error": "no_paystack_key"}
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.get(
+                "https://api.paystack.co/transaction?status=success&perPage=100",
+                headers={"Authorization": f"Bearer {paystack_key}"},
+            )
+        if r.status_code != 200:
+            return {"error": f"paystack_{r.status_code}"}
+        data = r.json().get("data", [])
+        total = sum(t.get("amount", 0) for t in data) / 100
+        return {
+            "total_revenue": round(total, 2),
+            "transaction_count": len(data),
+            "recent": [
+                {
+                    "email": t.get("customer", {}).get("email", ""),
+                    "amount": t.get("amount", 0) / 100,
+                    "date": (t.get("paid_at") or "")[:10],
+                    "reference": t.get("reference", ""),
+                }
+                for t in data[:10]
+            ],
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/admin/banner")
+async def get_banner():
+    r = _get_redis()
+    if r:
+        try:
+            val = r.get("betiq:config:banner")
+            if val:
+                return {"banner": val}
+        except Exception:
+            pass
+    return {"banner": None}
+
+
+@app.post("/api/admin/banner")
+async def set_banner(body: Dict[str, Any]):
+    _check_admin(body.get("secret", ""))
+    r = _get_redis()
+    if not r:
+        raise HTTPException(status_code=503, detail="No Redis")
+    text = (body.get("text") or "").strip()
+    if text:
+        r.set("betiq:config:banner", text)
+    else:
+        r.delete("betiq:config:banner")
+    return {"banner": text or None}
+
+
+@app.get("/api/config/maintenance")
+async def get_maintenance():
+    r = _get_redis()
+    if r:
+        try:
+            val = r.get("betiq:config:maintenance")
+            if val is not None:
+                return {"enabled": val == "true"}
+        except Exception:
+            pass
+    return {"enabled": False}
+
+
+@app.post("/api/config/maintenance")
+async def set_maintenance(body: Dict[str, Any]):
+    _check_admin(body.get("secret", ""))
+    r = _get_redis()
+    if not r:
+        raise HTTPException(status_code=503, detail="No Redis")
+    enabled = bool(body.get("enabled", False))
+    r.set("betiq:config:maintenance", "true" if enabled else "false")
+    return {"enabled": enabled}
+
+
+@app.post("/api/admin/clear-cache")
+async def clear_cache(body: Dict[str, Any]):
+    _check_admin(body.get("secret", ""))
+    r = _get_redis()
+    if not r:
+        raise HTTPException(status_code=503, detail="No Redis")
+    try:
+        r.delete("betiq:predictions")
+        # Clear all explanation caches
+        for key in r.scan_iter("betiq:explain:*"):
+            r.delete(key)
+        return {"cleared": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/admin/featured")
+async def get_featured():
+    r = _get_redis()
+    if r:
+        try:
+            val = r.get("betiq:config:featured")
+            if val:
+                return {"featured": json.loads(val)}
+        except Exception:
+            pass
+    return {"featured": []}
+
+
+@app.post("/api/admin/featured")
+async def set_featured(body: Dict[str, Any]):
+    _check_admin(body.get("secret", ""))
+    r = _get_redis()
+    if not r:
+        raise HTTPException(status_code=503, detail="No Redis")
+    picks = body.get("picks", [])[:3]
+    if picks:
+        r.set("betiq:config:featured", json.dumps(picks))
+    else:
+        r.delete("betiq:config:featured")
+    return {"featured": picks}
+
+
+@app.post("/api/log/query")
+async def log_query(body: Dict[str, Any]):
+    """Log a chat query for admin analytics (called from Next.js chat route)."""
+    query = (body.get("query") or "").strip()[:200]
+    if not query:
+        return {"ok": True}
+    r = _get_redis()
+    if r:
+        try:
+            r.lpush("betiq:stats:chat_queries", query)
+            r.ltrim("betiq:stats:chat_queries", 0, 99)
+        except Exception:
+            pass
+    return {"ok": True}
 
 
 @app.post("/api/booking")
