@@ -251,10 +251,30 @@ export function PredictionCard({ prediction: p, savedKeys, onClick }: Props) {
         </div>
 
         {/* Teams */}
-        <div className="text-center py-1">
-          <p className="text-base font-black text-white drop-shadow-lg tracking-tight leading-snug">{p.home}</p>
-          <p className="text-[10px] text-white/50 my-1 uppercase tracking-widest font-medium">vs</p>
-          <p className="text-base font-black text-white drop-shadow-lg tracking-tight leading-snug">{p.away}</p>
+        <div className="text-center py-1 space-y-1.5">
+          <div className="flex items-center justify-center gap-2">
+            {home.imageUrl && (
+              <img
+                src={home.imageUrl}
+                alt={p.home}
+                className={clsx("object-contain drop-shadow-md shrink-0", home.isFlag ? "w-7 h-5 rounded-sm" : "w-6 h-6 rounded-full bg-white/10 p-0.5")}
+                onError={e => { (e.target as HTMLImageElement).style.display = "none"; }}
+              />
+            )}
+            <p className="text-base font-black text-white drop-shadow-lg tracking-tight leading-snug">{p.home}</p>
+          </div>
+          <p className="text-[10px] text-white/50 uppercase tracking-widest font-medium">vs</p>
+          <div className="flex items-center justify-center gap-2">
+            {away.imageUrl && (
+              <img
+                src={away.imageUrl}
+                alt={p.away}
+                className={clsx("object-contain drop-shadow-md shrink-0", away.isFlag ? "w-7 h-5 rounded-sm" : "w-6 h-6 rounded-full bg-white/10 p-0.5")}
+                onError={e => { (e.target as HTMLImageElement).style.display = "none"; }}
+              />
+            )}
+            <p className="text-base font-black text-white drop-shadow-lg tracking-tight leading-snug">{p.away}</p>
+          </div>
         </div>
 
         {/* 1X2 probability row */}
