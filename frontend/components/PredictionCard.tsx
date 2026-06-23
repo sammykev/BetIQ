@@ -8,103 +8,131 @@ import clsx from "clsx";
 
 const BASE = "https://predict-withbetiq.vercel.app";
 
-// Team brand colors — national teams + major clubs
-const TEAM_COLORS: Record<string, string> = {
-  // ── National teams ──
-  "Algeria": "#006233", "Angola": "#CC0000", "Argentina": "#74ACDF",
-  "Australia": "#FFCD00", "Austria": "#ED2939", "Belgium": "#000000",
-  "Bolivia": "#D52B1E", "Brazil": "#009C3B", "Bulgaria": "#009B77",
-  "Cameroon": "#007A5E", "Canada": "#FF0000", "Chile": "#D52B1E",
-  "China": "#DE2910", "Colombia": "#FCD116", "Costa Rica": "#002B7F",
-  "Croatia": "#FF0000", "Czech Republic": "#D7141A", "Denmark": "#C60C30",
-  "Ecuador": "#FFD100", "Egypt": "#CE1126", "England": "#CF081F",
-  "Ethiopia": "#078930", "Finland": "#003580", "France": "#0055A4",
-  "Germany": "#000000", "Ghana": "#FCD116", "Greece": "#0D5EAF",
-  "Hungary": "#CE2939", "Iceland": "#003897", "India": "#FF9933",
-  "Iran": "#239F40", "Ireland": "#009A44", "Israel": "#0038B8",
-  "Italy": "#009246", "Ivory Coast": "#F77F00", "Jamaica": "#000000",
-  "Japan": "#BC002D", "Kenya": "#006600", "Mali": "#009A00",
-  "Mexico": "#006847", "Morocco": "#C1272D", "Netherlands": "#FF6600",
-  "New Zealand": "#00247D", "Nigeria": "#008751", "Norway": "#EF2B2D",
-  "Paraguay": "#D52B1E", "Peru": "#D91023", "Poland": "#DC143C",
-  "Portugal": "#006600", "Qatar": "#8D1B3D", "Romania": "#002B7F",
-  "Russia": "#D52B1E", "Saudi Arabia": "#006C35", "Scotland": "#003087",
-  "Senegal": "#00853F", "Serbia": "#C6363C", "Slovakia": "#0B4EA2",
-  "South Africa": "#007A4D", "South Korea": "#CD2E3A", "Spain": "#AA151B",
-  "Sweden": "#006AA7", "Switzerland": "#FF0000", "Tunisia": "#E70013",
-  "Turkey": "#E30A17", "Ukraine": "#005BBB", "United States": "#002868",
-  "Uruguay": "#5EB6E4", "Venezuela": "#CF142B", "Wales": "#C8102E",
-  "Uzbekistan": "#1EB53A", "Zimbabwe": "#006400", "Zambia": "#198A00",
-  "Tanzania": "#1EB53A", "Uganda": "#000000", "Sudan": "#D21034",
-
-  // ── Premier League ──
-  "Arsenal": "#EF0107", "Aston Villa": "#95BFE5", "Brentford": "#E30613",
-  "Brighton": "#0057B8", "Burnley": "#6C1D45", "Chelsea": "#034694",
-  "Crystal Palace": "#1B458F", "Everton": "#003399", "Fulham": "#000000",
-  "Ipswich": "#0044A9", "Leicester": "#003090", "Liverpool": "#C8102E",
-  "Luton": "#F78F1E", "Manchester City": "#6CABDD", "Manchester United": "#DA291C",
-  "Newcastle": "#241F20", "Nottm Forest": "#DD0000", "Sheffield Utd": "#EE2737",
-  "Tottenham": "#132257", "West Ham": "#7A263A", "Wolves": "#FDB913",
-  "Bournemouth": "#DA291C", "Southampton": "#D71920", "Sunderland": "#EB172B",
-
-  // ── Serie A ──
-  "AC Milan": "#FB090B", "Atalanta": "#1E6BB0", "Bologna": "#1A1A75",
-  "Cagliari": "#990000", "Empoli": "#1B50A0", "Fiorentina": "#4F2683",
-  "Frosinone": "#FDB827", "Genoa": "#8B0000", "Inter Milan": "#010E80",
-  "Internazionale": "#010E80", "Juventus": "#000000", "Lazio": "#87CEEB",
-  "Lecce": "#D4AF37", "Milan": "#FB090B", "Monza": "#E30613",
-  "Napoli": "#087AC2", "Roma": "#8B0000", "Salernitana": "#8B1A1A",
-  "Sassuolo": "#00843D", "Torino": "#8B0000", "Udinese": "#000000",
-  "Verona": "#002D62", "Venezia": "#000000", "Parma": "#FFDD00",
-
-  // ── Bundesliga ──
-  "Augsburg": "#BA3733", "Bayer Leverkusen": "#E32221", "Bayern Munich": "#DC052D",
-  "Bochum": "#004F9E", "Borussia Dortmund": "#FDE100", "Darmstadt": "#0075BF",
-  "Eintracht Frankfurt": "#E1000F", "Freiburg": "#D00027", "Gladbach": "#000000",
-  "Hamburg": "#002147", "Hoffenheim": "#1763A6", "Köln": "#FF0000",
-  "Mainz": "#C3121C", "RB Leipzig": "#DD0741", "Schalke": "#00408A",
-  "Stuttgart": "#E32219", "Union Berlin": "#EB1923", "Wolfsburg": "#65B32E",
-  "Werder Bremen": "#009C4A", "Heidenheim": "#DD0000",
-
-  // ── La Liga ──
-  "Athletic Club": "#EE2523", "Atletico Madrid": "#CB3524", "Barcelona": "#A50044",
-  "Betis": "#00954C", "Cadiz": "#FFCD00", "Celta Vigo": "#95C5E3",
-  "Getafe": "#005998", "Girona": "#CD1515", "Granada": "#E02020",
-  "Las Palmas": "#FFD700", "Mallorca": "#DC052D", "Osasuna": "#C8102E",
-  "Rayo Vallecano": "#CE1126", "Real Madrid": "#FEBE10", "Real Sociedad": "#005AA0",
-  "Sevilla": "#D40511", "Valencia": "#FF7F00", "Villarreal": "#FFC800",
-  "Alaves": "#005BAC", "Espanyol": "#0070B8",
-
-  // ── Ligue 1 ──
-  "Brest": "#E30613", "Clermont": "#D40000", "Le Havre": "#0054A6",
-  "Lens": "#FFCD00", "Lille": "#DA291C", "Lorient": "#F7941D",
-  "Lyon": "#1D3785", "Marseille": "#009FE3", "Metz": "#7B1FA2",
-  "Monaco": "#E4312B", "Montpellier": "#F05A22", "Nantes": "#FFCD00",
-  "Nice": "#C8102E", "PSG": "#004170", "Reims": "#CF081F",
-  "Rennes": "#CC0000", "Strasbourg": "#003189", "Toulouse": "#702F8A",
-
-  // ── Primeira Liga ──
-  "Benfica": "#E20E17", "Braga": "#CC0000", "Porto": "#1C5FA8",
-  "Sporting CP": "#006839", "Vitoria": "#006633",
+// ── Country name → ISO 3166-1 alpha-2 code (flagcdn.com) ─────────────────
+const COUNTRY_CODES: Record<string, string> = {
+  "Algeria": "dz", "Angola": "ao", "Argentina": "ar", "Australia": "au",
+  "Austria": "at", "Belgium": "be", "Bolivia": "bo", "Brazil": "br",
+  "Bulgaria": "bg", "Cameroon": "cm", "Canada": "ca", "Chile": "cl",
+  "China": "cn", "Colombia": "co", "Costa Rica": "cr", "Croatia": "hr",
+  "Czech Republic": "cz", "Denmark": "dk", "Ecuador": "ec", "Egypt": "eg",
+  "England": "gb-eng", "Ethiopia": "et", "Finland": "fi", "France": "fr",
+  "Germany": "de", "Ghana": "gh", "Greece": "gr", "Hungary": "hu",
+  "Iceland": "is", "India": "in", "Iran": "ir", "Ireland": "ie",
+  "Israel": "il", "Italy": "it", "Ivory Coast": "ci", "Jamaica": "jm",
+  "Japan": "jp", "Kenya": "ke", "Mali": "ml", "Mexico": "mx",
+  "Morocco": "ma", "Netherlands": "nl", "New Zealand": "nz", "Nigeria": "ng",
+  "Northern Ireland": "gb-nir", "Norway": "no", "Paraguay": "py",
+  "Peru": "pe", "Poland": "pl", "Portugal": "pt", "Qatar": "qa",
+  "Romania": "ro", "Russia": "ru", "Saudi Arabia": "sa", "Scotland": "gb-sct",
+  "Senegal": "sn", "Serbia": "rs", "Slovakia": "sk", "Slovenia": "si",
+  "South Africa": "za", "South Korea": "kr", "Spain": "es", "Sweden": "se",
+  "Switzerland": "ch", "Tunisia": "tn", "Turkey": "tr", "Ukraine": "ua",
+  "United States": "us", "Uruguay": "uy", "Uzbekistan": "uz",
+  "Venezuela": "ve", "Wales": "gb-wls", "Zimbabwe": "zw", "Zambia": "zm",
+  "Tanzania": "tz", "Uganda": "ug", "Sudan": "sd", "Libya": "ly",
+  "Guinea": "gn", "Mozambique": "mz", "Rwanda": "rw", "Togo": "tg",
+  "Benin": "bj", "Burkina Faso": "bf", "Niger": "ne", "Chad": "td",
+  "DR Congo": "cd", "Congo": "cg", "Gabon": "ga", "Equatorial Guinea": "gq",
+  "Cape Verde": "cv", "Mauritania": "mr", "Gambia": "gm", "Sierra Leone": "sl",
+  "Liberia": "lr", "Côte d'Ivoire": "ci",
 };
 
-// Deterministic color from team name for unknown teams
+// ── Club name → football-data.org team ID ─────────────────────────────────
+const CLUB_IDS: Record<string, number> = {
+  // Premier League
+  "Arsenal": 57, "Aston Villa": 58, "Brentford": 402, "Brighton": 397,
+  "Burnley": 328, "Chelsea": 61, "Crystal Palace": 354, "Everton": 62,
+  "Fulham": 63, "Ipswich": 349, "Leicester": 338, "Liverpool": 64,
+  "Luton": 389, "Manchester City": 65, "Manchester United": 66,
+  "Newcastle": 67, "Nottm Forest": 351, "Sheffield Utd": 356,
+  "Southampton": 340, "Tottenham": 73, "West Ham": 563, "Wolves": 76,
+  "Bournemouth": 1044, "Sunderland": 356,
+  // Serie A
+  "AC Milan": 98, "Atalanta": 102, "Bologna": 103, "Cagliari": 488,
+  "Empoli": 445, "Fiorentina": 99, "Frosinone": 7398, "Genoa": 107,
+  "Inter Milan": 108, "Internazionale": 108, "Juventus": 109, "Lazio": 110,
+  "Lecce": 5890, "Milan": 98, "Monza": 5911, "Napoli": 113,
+  "Roma": 100, "Salernitana": 5915, "Sassuolo": 471, "Torino": 586,
+  "Udinese": 115, "Verona": 450, "Venezia": 454, "Parma": 112,
+  // Bundesliga
+  "Augsburg": 16, "Bayer Leverkusen": 3, "Bayern Munich": 5,
+  "Bochum": 29, "Borussia Dortmund": 4, "Darmstadt": 6,
+  "Eintracht Frankfurt": 9, "Freiburg": 8, "Gladbach": 18,
+  "Hamburg": 20, "Heidenheim": 10267, "Hoffenheim": 720,
+  "Köln": 1, "Mainz": 15, "RB Leipzig": 721,
+  "Stuttgart": 10, "Union Berlin": 28, "Wolfsburg": 11,
+  "Werder Bremen": 13,
+  // La Liga
+  "Athletic Club": 77, "Atletico Madrid": 78, "Barcelona": 81,
+  "Betis": 90, "Cadiz": 8634, "Celta Vigo": 558, "Espanyol": 80,
+  "Getafe": 82, "Girona": 298, "Granada": 83, "Las Palmas": 275,
+  "Mallorca": 89, "Osasuna": 79, "Rayo Vallecano": 87, "Real Madrid": 86,
+  "Real Sociedad": 92, "Sevilla": 559, "Valencia": 95, "Villarreal": 94,
+  "Alaves": 263,
+  // Ligue 1
+  "Brest": 532, "Clermont": 528, "Le Havre": 539, "Lens": 6911,
+  "Lille": 521, "Lorient": 537, "Lyon": 523, "Marseille": 516,
+  "Metz": 527, "Monaco": 548, "Montpellier": 527, "Nantes": 543,
+  "Nice": 522, "PSG": 524, "Paris Saint-Germain": 524,
+  "Reims": 547, "Rennes": 529, "Strasbourg": 576, "Toulouse": 576,
+  // Primeira Liga
+  "Benfica": 1903, "Braga": 5602, "Porto": 503, "Sporting CP": 498,
+};
+
+// Fallback brand colors for when no image is found
+const TEAM_COLORS: Record<string, string> = {
+  "Arsenal": "#EF0107", "Liverpool": "#C8102E", "Chelsea": "#034694",
+  "Manchester City": "#6CABDD", "Manchester United": "#DA291C", "Tottenham": "#132257",
+  "Bayern Munich": "#DC052D", "Borussia Dortmund": "#FDE100", "Real Madrid": "#FEBE10",
+  "Barcelona": "#A50044", "PSG": "#004170", "Juventus": "#000000",
+  "AC Milan": "#FB090B", "Inter Milan": "#010E80", "Napoli": "#087AC2",
+  "Brazil": "#009C3B", "Argentina": "#74ACDF", "France": "#0055A4",
+  "Germany": "#000000", "Spain": "#AA151B", "Italy": "#009246",
+  "Portugal": "#006600", "England": "#CF081F", "Nigeria": "#008751",
+};
+
 function hashColor(name: string): string {
-  const PALETTE = [
-    "#6366f1","#8b5cf6","#ec4899","#f97316","#eab308",
-    "#22c55e","#14b8a6","#3b82f6","#06b6d4","#ef4444",
-    "#a855f7","#f59e0b","#10b981","#0ea5e9","#e11d48",
-  ];
+  const P = ["#6366f1","#8b5cf6","#ec4899","#f97316","#eab308",
+             "#22c55e","#14b8a6","#3b82f6","#06b6d4","#ef4444"];
   let h = 0;
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
-  return PALETTE[h % PALETTE.length];
+  return P[h % P.length];
 }
 
-function teamColor(name: string): string {
-  // Try exact match first, then partial match
-  if (TEAM_COLORS[name]) return TEAM_COLORS[name];
-  const key = Object.keys(TEAM_COLORS).find(k => name.toLowerCase().includes(k.toLowerCase()) || k.toLowerCase().includes(name.toLowerCase()));
-  return key ? TEAM_COLORS[key] : hashColor(name);
+function getTeamAssets(name: string): { imageUrl: string; isFlag: boolean; color: string } {
+  const code = COUNTRY_CODES[name];
+  if (code) return {
+    imageUrl: `https://flagcdn.com/w320/${code}.png`,
+    isFlag: true,
+    color: TEAM_COLORS[name] || hashColor(name),
+  };
+  // try partial match for country
+  const countryKey = Object.keys(COUNTRY_CODES).find(k =>
+    name.toLowerCase().includes(k.toLowerCase()) || k.toLowerCase().includes(name.toLowerCase())
+  );
+  if (countryKey) return {
+    imageUrl: `https://flagcdn.com/w320/${COUNTRY_CODES[countryKey]}.png`,
+    isFlag: true,
+    color: TEAM_COLORS[name] || hashColor(name),
+  };
+
+  const id = CLUB_IDS[name];
+  if (id) return {
+    imageUrl: `https://crests.football-data.org/${id}.png`,
+    isFlag: false,
+    color: TEAM_COLORS[name] || hashColor(name),
+  };
+  // partial match for clubs
+  const clubKey = Object.keys(CLUB_IDS).find(k =>
+    name.toLowerCase().includes(k.toLowerCase()) || k.toLowerCase().includes(name.toLowerCase())
+  );
+  if (clubKey) return {
+    imageUrl: `https://crests.football-data.org/${CLUB_IDS[clubKey]}.png`,
+    isFlag: false,
+    color: TEAM_COLORS[name] || hashColor(name),
+  };
+
+  return { imageUrl: "", isFlag: false, color: TEAM_COLORS[name] || hashColor(name) };
 }
 
 function shareMatch(p: Prediction) {
@@ -142,118 +170,164 @@ export function PredictionCard({ prediction: p, savedKeys, onClick }: Props) {
   const gconf = Math.round(p.goals_confidence * 100);
   const isSkip = p.tip_goals === "Skip";
 
-  const hc = teamColor(p.home);
-  const ac = teamColor(p.away);
-  const gradient = `linear-gradient(135deg, ${hc}dd 0%, ${hc}88 35%, ${ac}88 65%, ${ac}dd 100%)`;
-  const borderColor = `${hc}60`;
+  const home = getTeamAssets(p.home);
+  const away = getTeamAssets(p.away);
+
+  // bg-size: flags fill their half, logos are contained with padding
+  const homeSize = home.isFlag ? "cover" : "65%";
+  const awaySize = away.isFlag ? "cover" : "65%";
 
   return (
     <div
       onClick={onClick}
-      style={{ background: gradient, borderColor }}
       className={clsx(
-        "border rounded-xl p-4 flex flex-col gap-4 card-glow transition-all duration-200",
+        "relative overflow-hidden rounded-xl border border-white/10 flex flex-col gap-4 card-glow transition-all duration-200",
         onClick && "cursor-pointer hover:brightness-110 active:scale-[0.98]"
       )}
     >
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-semibold text-white/80 truncate max-w-[55%] drop-shadow">
-          {p.flag} {p.league_name}
-        </span>
-        <div className="flex items-center gap-2 shrink-0">
-          <div className="flex items-center gap-1 text-[11px] text-white/60">
-            <Clock size={10} />
-            <span>{p.date}{p.time !== "TBD" ? ` · ${p.time}` : ""}</span>
-          </div>
-          <SaveButton prediction={p} savedKeys={savedKeys ?? emptySet} size={13} />
-          <button
-            onClick={e => { e.stopPropagation(); shareMatch(p); }}
-            className="text-white/50 hover:text-white transition-colors"
-            title="Share this pick"
-          >
-            <Share2 size={13} />
-          </button>
-        </div>
+      {/* ── Background layers ── */}
+
+      {/* Base solid split */}
+      <div className="absolute inset-0 flex">
+        <div className="flex-1" style={{ background: home.color }} />
+        <div className="flex-1" style={{ background: away.color }} />
       </div>
 
-      {/* Teams */}
-      <div className="text-center py-1">
-        <p className="text-base font-black text-white drop-shadow-md tracking-tight leading-snug">{p.home}</p>
-        <p className="text-[10px] text-white/50 my-1 uppercase tracking-widest font-medium">vs</p>
-        <p className="text-base font-black text-white drop-shadow-md tracking-tight leading-snug">{p.away}</p>
-      </div>
+      {/* Home image — fades right */}
+      {home.imageUrl && (
+        <div
+          className="absolute inset-0"
+          style={{
+            backgroundImage: `url(${home.imageUrl})`,
+            backgroundSize: homeSize,
+            backgroundPosition: home.isFlag ? "left center" : "35% center",
+            backgroundRepeat: "no-repeat",
+            maskImage: "linear-gradient(to right, black 0%, black 25%, transparent 70%)",
+            WebkitMaskImage: "linear-gradient(to right, black 0%, black 25%, transparent 70%)",
+          }}
+        />
+      )}
 
-      {/* 1X2 probability row */}
-      <div className="grid grid-cols-3 gap-2 text-center">
-        {[
-          { label: "Home", value: p.p_home },
-          { label: "Draw", value: p.p_draw },
-          { label: "Away", value: p.p_away },
-        ].map(({ label, value }) => (
-          <div key={label} className="bg-black/25 backdrop-blur-sm rounded-lg px-2 py-2 border border-white/10">
-            <p className="text-[10px] text-white/60 mb-1">{label}</p>
-            <p className="text-sm font-bold text-white">{Math.round(value * 100)}%</p>
-          </div>
-        ))}
-      </div>
+      {/* Away image — fades left */}
+      {away.imageUrl && (
+        <div
+          className="absolute inset-0"
+          style={{
+            backgroundImage: `url(${away.imageUrl})`,
+            backgroundSize: awaySize,
+            backgroundPosition: away.isFlag ? "right center" : "65% center",
+            backgroundRepeat: "no-repeat",
+            maskImage: "linear-gradient(to left, black 0%, black 25%, transparent 70%)",
+            WebkitMaskImage: "linear-gradient(to left, black 0%, black 25%, transparent 70%)",
+          }}
+        />
+      )}
 
-      {/* Tips + confidence */}
-      <div className="space-y-2.5 flex-1">
+      {/* Dark overlay for readability */}
+      <div className="absolute inset-0 bg-black/55" />
+
+      {/* ── Card content ── */}
+      <div className="relative z-10 p-4 flex flex-col gap-4">
+
+        {/* Header */}
         <div className="flex items-center justify-between">
-          <span className="text-xs text-white/60">1X2 Pick</span>
-          <span className={clsx("text-xs font-semibold px-2.5 py-0.5 rounded-full border", TIP_CODE_COLORS[p.tip_code] || TIP_CODE_COLORS["?"])}>
-            {p.tip_1x2}
+          <span className="text-xs font-semibold text-white/80 truncate max-w-[55%] drop-shadow">
+            {p.flag} {p.league_name}
           </span>
-        </div>
-
-        <div className="flex items-center justify-between">
-          <span className="text-xs text-white/60">Goals Pick</span>
-          <span className={clsx("text-xs font-semibold px-2.5 py-0.5 rounded-full border", GOALS_TYPE_COLORS[p.goals_type] || GOALS_TYPE_COLORS["Skip"])}>
-            {p.tip_goals}
-          </span>
-        </div>
-
-        <div className="pt-1">
-          {isSkip ? (
-            <div className="space-y-1">
-              <div className="flex justify-between text-xs">
-                <span className="text-white/40">Confidence</span>
-                <span className="text-white/40">—</span>
-              </div>
-              <div className="h-1.5 bg-white/10 rounded-full" />
+          <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-1 text-[11px] text-white/60">
+              <Clock size={10} />
+              <span>{p.date}{p.time !== "TBD" ? ` · ${p.time}` : ""}</span>
             </div>
-          ) : (
-            <div className="space-y-1">
-              <div className="flex justify-between text-xs">
-                <span className="text-white/60">Confidence</span>
-                <span className="text-white font-semibold">{gconf}%</span>
-              </div>
-              <div className="h-1.5 bg-black/30 rounded-full overflow-hidden">
-                <div className="h-full bg-white/80 rounded-full" style={{ width: `${gconf}%` }} />
-              </div>
-            </div>
-          )}
+            <SaveButton prediction={p} savedKeys={savedKeys ?? emptySet} size={13} />
+            <button
+              onClick={e => { e.stopPropagation(); shareMatch(p); }}
+              className="text-white/50 hover:text-white transition-colors"
+              title="Share this pick"
+            >
+              <Share2 size={13} />
+            </button>
+          </div>
         </div>
-      </div>
 
-      {/* Footer */}
-      <div className="flex gap-3 pt-2 border-t border-white/15">
-        <div className="flex-1 text-center">
-          <p className="text-[10px] text-white/50">Over 1.5</p>
-          <p className="text-sm font-semibold text-white">{Math.round(p.p_over15 * 100)}%</p>
+        {/* Teams */}
+        <div className="text-center py-1">
+          <p className="text-base font-black text-white drop-shadow-lg tracking-tight leading-snug">{p.home}</p>
+          <p className="text-[10px] text-white/50 my-1 uppercase tracking-widest font-medium">vs</p>
+          <p className="text-base font-black text-white drop-shadow-lg tracking-tight leading-snug">{p.away}</p>
         </div>
-        <div className="w-px bg-white/15" />
-        <div className="flex-1 text-center">
-          <p className="text-[10px] text-white/50">Over 2.5</p>
-          <p className="text-sm font-semibold text-white">{Math.round(p.p_over25 * 100)}%</p>
+
+        {/* 1X2 probability row */}
+        <div className="grid grid-cols-3 gap-2 text-center">
+          {[
+            { label: "Home", value: p.p_home },
+            { label: "Draw", value: p.p_draw },
+            { label: "Away", value: p.p_away },
+          ].map(({ label, value }) => (
+            <div key={label} className="bg-black/30 backdrop-blur-sm rounded-lg px-2 py-2 border border-white/10">
+              <p className="text-[10px] text-white/60 mb-1">{label}</p>
+              <p className="text-sm font-bold text-white">{Math.round(value * 100)}%</p>
+            </div>
+          ))}
         </div>
-        <div className="w-px bg-white/15" />
-        <div className="flex-1 text-center">
-          <TrendingUp size={12} className={clsx("mx-auto mb-0.5", isSkip ? "text-white/30" : "text-green-300")} />
-          <p className={clsx("text-sm font-semibold", isSkip ? "text-white/30" : "text-green-300")}>
-            {isSkip ? "—" : `${gconf}%`}
-          </p>
+
+        {/* Tips + confidence */}
+        <div className="space-y-2.5 flex-1">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-white/60">1X2 Pick</span>
+            <span className={clsx("text-xs font-semibold px-2.5 py-0.5 rounded-full border", TIP_CODE_COLORS[p.tip_code] || TIP_CODE_COLORS["?"])}>
+              {p.tip_1x2}
+            </span>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-white/60">Goals Pick</span>
+            <span className={clsx("text-xs font-semibold px-2.5 py-0.5 rounded-full border", GOALS_TYPE_COLORS[p.goals_type] || GOALS_TYPE_COLORS["Skip"])}>
+              {p.tip_goals}
+            </span>
+          </div>
+
+          <div className="pt-1">
+            {isSkip ? (
+              <div className="space-y-1">
+                <div className="flex justify-between text-xs">
+                  <span className="text-white/40">Confidence</span>
+                  <span className="text-white/40">—</span>
+                </div>
+                <div className="h-1.5 bg-white/10 rounded-full" />
+              </div>
+            ) : (
+              <div className="space-y-1">
+                <div className="flex justify-between text-xs">
+                  <span className="text-white/60">Confidence</span>
+                  <span className="text-white font-semibold">{gconf}%</span>
+                </div>
+                <div className="h-1.5 bg-black/30 rounded-full overflow-hidden">
+                  <div className="h-full bg-white/80 rounded-full transition-all" style={{ width: `${gconf}%` }} />
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex gap-3 pt-2 border-t border-white/15">
+          <div className="flex-1 text-center">
+            <p className="text-[10px] text-white/50">Over 1.5</p>
+            <p className="text-sm font-semibold text-white">{Math.round(p.p_over15 * 100)}%</p>
+          </div>
+          <div className="w-px bg-white/15" />
+          <div className="flex-1 text-center">
+            <p className="text-[10px] text-white/50">Over 2.5</p>
+            <p className="text-sm font-semibold text-white">{Math.round(p.p_over25 * 100)}%</p>
+          </div>
+          <div className="w-px bg-white/15" />
+          <div className="flex-1 text-center">
+            <TrendingUp size={12} className={clsx("mx-auto mb-0.5", isSkip ? "text-white/30" : "text-green-300")} />
+            <p className={clsx("text-sm font-semibold", isSkip ? "text-white/30" : "text-green-300")}>
+              {isSkip ? "—" : `${gconf}%`}
+            </p>
+          </div>
         </div>
       </div>
     </div>
