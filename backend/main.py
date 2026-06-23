@@ -1257,15 +1257,57 @@ async def use_referral(body: Dict[str, Any]):
 @app.post("/api/booking")
 async def create_booking(body: Dict[str, Any]):
     """
-    Generate a SportyBet booking code from a list of BetIQ predictions.
-    Body: { "predictions": [{home, away, date, tip_code, ...}, ...] }
+    Generate a booking code from BetIQ predictions.
+    Tries SportyBet first, then 1xBet, always returns picks for copy-card fallback.
+    Body: { "predictions": [{home, away, date, tip_code, tip_1x2, ...}, ...] }
     """
-    from sportybet import generate_booking_code
+    from sportybet import generate_booking_code as sportybet_code
+    from onexbet import generate_booking_code as onexbet_code
+
     predictions = body.get("predictions", [])
     if not predictions:
         raise HTTPException(status_code=400, detail="No predictions provided")
-    result = await generate_booking_code(predictions)
-    return result
+
+    # Always include raw picks so frontend can show copy card regardless of code result
+    picks = [
+        {
+            "home": p.get("home", ""),
+            "away": p.get("away", ""),
+            "tip": p.get("tip_1x2", p.get("tip_code", "?")),
+            "tip_code": p.get("tip_code", "?"),
+            "date": p.get("date", ""),
+            "league": p.get("league_name", ""),
+        }
+        for p in predictions
+        if p.get("tip_code") in ("1", "X", "2")
+    ]
+
+    # 1. Try SportyBet
+    try:
+        result = await sportybet_code(predictions)
+        if result.get("code"):
+            return {**result, "bookie": "sportybet", "picks": picks}
+    except Exception as e:
+        print(f"[Booking] SportyBet error: {e}")
+
+    # 2. Try 1xBet
+    try:
+        result = await onexbet_code(predictions)
+        if result.get("code"):
+            return {**result, "bookie": "1xbet", "picks": picks}
+    except Exception as e:
+        print(f"[Booking] 1xBet error: {e}")
+
+    # 3. No code from either — return picks for copy-card
+    return {
+        "code": None,
+        "bookie": None,
+        "matched": [],
+        "unmatched": [f"{p['home']} vs {p['away']}" for p in predictions],
+        "total_odds": None,
+        "picks": picks,
+        "error": "Booking APIs unavailable — use the copy card below to add picks manually.",
+    }
 
 
 ADMIN_SECRET = os.getenv("ADMIN_SECRET", "")
