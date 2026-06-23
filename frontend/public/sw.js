@@ -1,5 +1,5 @@
-const CACHE = "betiq-v1";
-const SHELL = ["/", "/manifest.json", "/logo.svg", "/favicon.svg"];
+const CACHE = "betiq-v2";
+const SHELL = ["/manifest.json", "/logo.svg", "/favicon.svg"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(
@@ -24,6 +24,9 @@ self.addEventListener("fetch", (e) => {
         headers: { "Content-Type": "application/json" },
       }))
     );
+  } else if (e.request.destination === "document") {
+    // Always network-first for HTML — prevents stale chunk 404s after deploys
+    e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));
   } else {
     e.respondWith(
       caches.match(e.request).then((cached) => cached || fetch(e.request))
