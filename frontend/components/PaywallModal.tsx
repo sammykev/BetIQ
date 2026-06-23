@@ -18,8 +18,8 @@ const FEATURES = [
   "All leagues, all confidence filters",
 ];
 
-const PRICE_KOBO = 150000;
-const PRICE_LABEL = "₦1,500 / month";
+const PRICE_KOBO = 500000;
+const PRICE_LABEL = "₦5,000 / month";
 
 export function PaywallModal({ onClose, onSuccess }: Props) {
   const { user } = useUser();
