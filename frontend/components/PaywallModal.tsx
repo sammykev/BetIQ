@@ -2,7 +2,9 @@
 
 import { useUser, SignInButton } from "@clerk/nextjs";
 import { X, Crown, Check, Loader2 } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState } from "react";
+// @ts-ignore — no types for this package
+import PaystackPop from "@paystack/inline-js";
 
 interface Props {
   onClose: () => void;
@@ -18,71 +20,48 @@ const FEATURES = [
   "All leagues, all confidence filters",
 ];
 
-const PRICE_KOBO = 150000; // ₦1,500 in kobo
+const PRICE_KOBO = 150000;
 const PRICE_LABEL = "₦1,500 / month";
-
-declare global {
-  interface Window {
-    PaystackPop: {
-      setup: (opts: Record<string, unknown>) => { openIframe: () => void };
-    };
-  }
-}
 
 export function PaywallModal({ onClose, onSuccess }: Props) {
   const { user } = useUser();
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [scriptReady, setScriptReady] = useState(false);
-
-  // Load Paystack popup script
-  useEffect(() => {
-    if (document.getElementById("paystack-script")) { setScriptReady(true); return; }
-    const s = document.createElement("script");
-    s.id = "paystack-script";
-    s.src = "https://js.paystack.co/v1/inline.js";
-    s.onload = () => setScriptReady(true);
-    document.body.appendChild(s);
-  }, []);
+  const [error, setError]     = useState<string | null>(null);
 
   const handlePay = () => {
-    if (!scriptReady) { setError("Payment script still loading — try again in a moment."); return; }
-    if (!user) { setError("Please sign in first before paying."); return; }
+    if (!user) { setError("Please sign in first."); return; }
     setError(null);
 
     const paystackKey = process.env.NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY || "";
-    if (!paystackKey) { setError("Payment not configured yet. Contact support."); return; }
+    if (!paystackKey) { setError("Payment not configured. Contact support."); return; }
 
     const email = user.emailAddresses[0]?.emailAddress;
-    if (!email) { setError("No email found on your account."); return; }
-
-    if (!window.PaystackPop) { setError("Paystack failed to load. Check your connection."); return; }
+    if (!email) { setError("No email on your account."); return; }
 
     const reference = `betiq_${user.id}_${Date.now()}`;
 
-    const handler = window.PaystackPop.setup({
+    const popup = new PaystackPop();
+    popup.newTransaction({
       key: paystackKey,
       email,
       amount: PRICE_KOBO,
       currency: "NGN",
       ref: reference,
       metadata: { userId: user.id },
-      callback: (response: { reference: string }) => {
+      onSuccess: (transaction: { reference: string }) => {
         setLoading(true);
         fetch("/api/subscribe", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ reference: response.reference }),
+          body: JSON.stringify({ reference: transaction.reference }),
         })
-          .then(res => { if (!res.ok) throw new Error(); return res; })
+          .then(r => { if (!r.ok) throw new Error(); })
           .then(() => onSuccess())
           .catch(() => setError("Payment received but verification failed. Contact support."))
           .finally(() => setLoading(false));
       },
-      onClose: () => {},
+      onCancel: () => {},
     });
-
-    handler.openIframe();
   };
 
   return (
@@ -128,7 +107,7 @@ export function PaywallModal({ onClose, onSuccess }: Props) {
           ) : (
             <button
               onClick={handlePay}
-              disabled={loading || !scriptReady}
+              disabled={loading}
               className="w-full py-3 bg-yellow-500 hover:bg-yellow-400 disabled:opacity-60 text-black font-bold rounded-xl transition-all text-sm flex items-center justify-center gap-2"
             >
               {loading ? <><Loader2 size={16} className="animate-spin" /> Verifying…</> : `Pay ${PRICE_LABEL}`}

@@ -64,13 +64,15 @@ export async function POST(req: NextRequest) {
       })),
     ];
 
+    // Last user message (used for logging + Groq call)
+    const lastMessage = messages[messages.length - 1];
+
     // Log query for admin analytics (fire-and-forget)
-    const userQuery = lastMessage.content?.slice(0, 200) || "";
     const API_BACKEND = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
     fetch(`${API_BACKEND}/api/log/query`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query: userQuery }),
+      body: JSON.stringify({ query: (lastMessage?.content ?? "").slice(0, 200) }),
     }).catch(() => {});
 
     const completion = await groq.chat.completions.create({
@@ -82,6 +84,7 @@ export async function POST(req: NextRequest) {
 
     const text = completion.choices[0]?.message?.content ?? "";
     return NextResponse.json({ message: text });
+
   } catch (err: unknown) {
     console.error("[chat/groq]", err);
     return NextResponse.json({ error: "assistant_unavailable" }, { status: 500 });
