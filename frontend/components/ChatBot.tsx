@@ -219,9 +219,11 @@ function AssistantBubble({
     } catch {
       setBooking({
         code: null,
+        bookie: null,
         matched: [],
         unmatched: [],
         total_odds: null,
+        picks: [],
         error: "Could not generate booking code. Please try again.",
       });
     } finally {
