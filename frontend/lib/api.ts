@@ -117,6 +117,30 @@ export interface H2HData {
   source?: "api" | "csv" | "none";
 }
 
+export interface HistoryPrediction extends Prediction {
+  outcome: "won" | "lost" | "pending";
+  actual_result: "H" | "D" | "A" | null;
+}
+
+export interface CalendarDay {
+  total: number;
+  won: number;
+  lost: number;
+  pending: number;
+}
+
+export async function fetchCalendar(month: string): Promise<Record<string, CalendarDay>> {
+  const res = await fetch(`${API_URL}/api/calendar?month=${month}`, { cache: "no-store" });
+  if (!res.ok) return {};
+  return res.json();
+}
+
+export async function fetchHistory(date: string): Promise<HistoryPrediction[]> {
+  const res = await fetch(`${API_URL}/api/history?date=${date}`, { cache: "no-store" });
+  if (!res.ok) return [];
+  return res.json();
+}
+
 export async function fetchMatchAnalysis(home: string, away: string): Promise<MatchAnalysis> {
   const params = new URLSearchParams({ home, away });
   const res = await fetch(`${API_URL}/api/analysis?${params}`, { cache: "no-store" });

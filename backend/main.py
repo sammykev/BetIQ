@@ -311,6 +311,7 @@ async def _run_pipeline():
         _predictions_cache = predictions
         _last_updated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
         _save_predictions_cache()
+        _archive_past_predictions()
         print(f"[Pipeline] Done — {len(predictions)} predictions cached.")
 
     except Exception as e:
@@ -631,6 +632,124 @@ async def get_h2h(home: str, away: str):
         _save_h2h_cache()
 
     return csv_result
+
+
+def _sim_name(a: str, b: str) -> bool:
+    from difflib import SequenceMatcher
+    def n(s): return s.lower().replace(" fc","").replace(" united"," utd").strip()
+    return SequenceMatcher(None, n(a), n(b)).ratio() >= 0.6
+
+
+def _archive_past_predictions():
+    """
+    Compare past predictions against real results and store outcomes in Redis.
+    Called at the end of each pipeline run.
+    """
+    if not _predictions_cache:
+        return
+    today = date.today().isoformat()
+    past = [p for p in _predictions_cache if p.get("date", "") < today]
+    if not past:
+        return
+
+    results_df = pd.DataFrame()
+    if os.path.exists(RESULTS_CSV):
+        try:
+            results_df = pd.read_csv(RESULTS_CSV, parse_dates=["Date"])
+        except Exception:
+            pass
+
+    TIP_TO_RESULT = {"1": "H", "X": "D", "2": "A"}
+    by_date: Dict[str, List] = {}
+
+    for pred in past:
+        d = pred.get("date", "")
+        outcome, actual_result = "pending", None
+        tip_code = pred.get("tip_code", "")
+
+        if not results_df.empty and tip_code in TIP_TO_RESULT:
+            day = results_df[results_df["Date"].dt.date.astype(str) == d]
+            for _, res in day.iterrows():
+                if (_sim_name(pred.get("home",""), str(res.get("HomeTeam",""))) and
+                        _sim_name(pred.get("away",""), str(res.get("AwayTeam","")))):
+                    actual_result = str(res.get("Result",""))
+                    expected = TIP_TO_RESULT[tip_code]
+                    outcome = "won" if actual_result == expected else "lost"
+                    break
+
+        entry = {**pred, "outcome": outcome, "actual_result": actual_result}
+        by_date.setdefault(d, []).append(entry)
+
+    r = _get_redis()
+    for d, preds in by_date.items():
+        if r:
+            try:
+                existing_raw = r.get(f"betiq:history:{d}")
+                if not existing_raw:           # don't overwrite already-settled outcomes
+                    r.set(f"betiq:history:{d}", json.dumps(preds), ex=60 * 86400)
+            except Exception as e:
+                print(f"[History] Redis error for {d}: {e}")
+    print(f"[History] Archived {len(past)} past predictions across {len(by_date)} dates.")
+
+
+@app.get("/api/history")
+async def get_history(date: str):
+    """Return predictions for a specific date with outcomes (won/lost/pending)."""
+    r = _get_redis()
+    if r:
+        try:
+            raw = r.get(f"betiq:history:{date}")
+            if raw:
+                return json.loads(raw)
+        except Exception:
+            pass
+    # Fall back to current cache for today/future
+    return [
+        {**p, "outcome": "pending", "actual_result": None}
+        for p in _predictions_cache
+        if p.get("date") == date
+    ]
+
+
+@app.get("/api/calendar")
+async def get_calendar(month: str = ""):
+    """Return per-date prediction summary for a given month (YYYY-MM)."""
+    import calendar as cal_lib
+    if not month:
+        month = datetime.utcnow().strftime("%Y-%m")
+    try:
+        year, m = map(int, month.split("-"))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="month must be YYYY-MM")
+
+    days_in_month = cal_lib.monthrange(year, m)[1]
+    summary: Dict[str, Any] = {}
+    r = _get_redis()
+
+    for day in range(1, days_in_month + 1):
+        d = f"{month}-{day:02d}"
+        data: List[Dict] = []
+
+        if r:
+            try:
+                raw = r.get(f"betiq:history:{d}")
+                if raw:
+                    data = json.loads(raw)
+            except Exception:
+                pass
+
+        if not data:
+            current = [p for p in _predictions_cache if p.get("date") == d]
+            if current:
+                data = [{**p, "outcome": "pending"} for p in current]
+
+        if data:
+            won     = sum(1 for p in data if p.get("outcome") == "won")
+            lost    = sum(1 for p in data if p.get("outcome") == "lost")
+            pending = sum(1 for p in data if p.get("outcome") == "pending")
+            summary[d] = {"total": len(data), "won": won, "lost": lost, "pending": pending}
+
+    return summary
 
 
 @app.post("/api/booking")
