@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useUser } from "@clerk/nextjs";
 import clsx from "clsx";
 import { X, Send, MessageCircle, Loader2, Copy, Check, Ticket, ChevronDown } from "lucide-react";
 import type { Prediction } from "@/lib/api";
@@ -118,9 +119,11 @@ function BookingCard({ result, onDismiss }: { result: BookingResult; onDismiss: 
 function AssistantBubble({
   content,
   predictions,
+  userId,
 }: {
   content: string;
   predictions: Prediction[];
+  userId?: string;
 }) {
   const selections = parseSelections(content);
   const displayText = stripSelections(content);
@@ -137,14 +140,25 @@ function AssistantBubble({
         body: JSON.stringify({ predictions: selections }),
       });
       const data = await res.json();
-      // Sanitise: only pass through fields we explicitly trust
-      setBooking({
+      const sanitised = {
         code: data.code ?? null,
         matched: Array.isArray(data.matched) ? data.matched : [],
         unmatched: Array.isArray(data.unmatched) ? data.unmatched : [],
         total_odds: typeof data.total_odds === "number" ? data.total_odds : null,
         error: data.code ? null : "Booking code unavailable — try again shortly.",
-      });
+      };
+      setBooking(sanitised);
+      // Auto-save to user's accumulator history
+      if (sanitised.code && userId) {
+        fetch(`${API_URL}/api/user/codes`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            uid: userId,
+            entry: { code: sanitised.code, games: sanitised.matched, total_odds: sanitised.total_odds, date: new Date().toISOString().slice(0, 10) },
+          }),
+        }).catch(() => {});
+      }
     } catch {
       setBooking({
         code: null,
@@ -194,6 +208,7 @@ const SUGGESTIONS = [
 ];
 
 export function ChatBot({ predictions }: Props) {
+  const { user } = useUser();
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -316,7 +331,7 @@ export function ChatBot({ predictions }: Props) {
                       </div>
                     </div>
                   ) : (
-                    <AssistantBubble key={i} content={m.content} predictions={predictions} />
+                    <AssistantBubble key={i} content={m.content} predictions={predictions} userId={user?.id} />
                   )
                 )}
 
