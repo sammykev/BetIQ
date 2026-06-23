@@ -688,7 +688,7 @@ async def startup():
     _load_predictions_cache()   # serve cached predictions instantly while pipeline rebuilds
     asyncio.create_task(_run_pipeline())
     asyncio.create_task(_load_fbref_data())
-    asyncio.create_task(_fetch_and_save_results())   # seed results CSV on first boot
+    # results fetcher runs via scheduler only — not on boot to avoid API contention with pipeline
     scheduler.add_job(_run_pipeline, "interval", hours=12, id="refresh")
     scheduler.add_job(_load_fbref_data, "interval", days=7, id="fbref_refresh")
     scheduler.add_job(_fetch_and_save_results, "interval", hours=3, id="results_refresh")
