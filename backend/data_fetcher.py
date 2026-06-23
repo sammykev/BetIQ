@@ -127,6 +127,8 @@ class FootballDataClient:
                 "FTAG": float(away_g),
             })
 
+        if not rows:
+            return pd.DataFrame()
         df = pd.DataFrame(rows).sort_values("Date").reset_index(drop=True)
         return df
 
