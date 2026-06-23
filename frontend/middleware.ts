@@ -1,19 +1,12 @@
-import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+import { clerkMiddleware } from "@clerk/nextjs/server";
 
-// Routes that must remain public (no Clerk session required)
-const isPublic = createRouteMatcher([
-  "/api/og",
-  "/api/og(.*)",
-]);
-
-export default clerkMiddleware(async (auth, req) => {
-  // Do nothing for public routes — let them pass through unauthenticated
-  if (isPublic(req)) return;
-});
+export default clerkMiddleware();
 
 export const config = {
+  // Only run Clerk on page routes and specific API routes — never on /api/og
   matcher: [
-    "/((?!_next|opengraph-image|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|webmanifest)).*)",
-    "/(api|trpc)(.*)",
+    "/((?!_next|api/og|opengraph-image|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|webmanifest)).*)",
+    "/api/subscribe(.*)",
+    "/api/chat(.*)",
   ],
 };

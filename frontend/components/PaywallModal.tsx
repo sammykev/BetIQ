@@ -46,16 +46,22 @@ export function PaywallModal({ onClose, onSuccess }: Props) {
   }, []);
 
   const handlePay = () => {
-    if (!user || !scriptReady) return;
+    if (!scriptReady) { setError("Payment script still loading — try again in a moment."); return; }
+    if (!user) { setError("Please sign in first before paying."); return; }
     setError(null);
 
+    const paystackKey = process.env.NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY || "";
+    if (!paystackKey) { setError("Payment not configured yet. Contact support."); return; }
+
     const email = user.emailAddresses[0]?.emailAddress;
-    if (!email) { setError("No email on your account."); return; }
+    if (!email) { setError("No email found on your account."); return; }
+
+    if (!window.PaystackPop) { setError("Paystack failed to load. Check your connection."); return; }
 
     const reference = `betiq_${user.id}_${Date.now()}`;
 
     const handler = window.PaystackPop.setup({
-      key: process.env.NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY || "",
+      key: paystackKey,
       email,
       amount: PRICE_KOBO,
       currency: "NGN",
