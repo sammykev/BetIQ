@@ -4,14 +4,27 @@ import { ClerkProvider } from "@clerk/nextjs";
 import Script from "next/script";
 
 export const metadata: Metadata = {
-  title: "BetIQ — Smart Football Predictions",
-  description: "AI-powered football predictions using XGBoost + Elo ratings across 9 major leagues.",
+  title: "BetIQ — AI Football Predictions",
+  description: "Get AI-powered football predictions with XGBoost + Elo ratings. Pick your games, generate a SportyBet booking code, and bet smarter across 9 major leagues.",
   icons: { icon: "/favicon.svg", apple: "/logo.svg" },
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
     title: "BetIQ",
+  },
+  openGraph: {
+    title: "BetIQ — AI Football Predictions",
+    description: "AI-powered predictions across 9 leagues. Chat to build accumulators, generate SportyBet booking codes instantly.",
+    url: "https://predict-withbetiq.vercel.app",
+    siteName: "BetIQ",
+    type: "website",
+    locale: "en_NG",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "BetIQ — AI Football Predictions",
+    description: "AI picks + SportyBet booking codes. Bet smarter.",
   },
 };
 
