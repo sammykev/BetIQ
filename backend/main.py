@@ -786,6 +786,10 @@ async def get_calendar(month: str = ""):
     summary: Dict[str, Any] = {}
     r = _get_redis()
 
+    # Debug: log what dates exist in cache
+    cache_dates = sorted({p.get("date","") for p in _predictions_cache if p.get("date","").startswith(month)})
+    print(f"[Calendar] {month}: {len(_predictions_cache)} in cache, dates in month: {cache_dates}")
+
     for day in range(1, days_in_month + 1):
         d = f"{month}-{day:02d}"
         data: List[Dict] = []
@@ -799,9 +803,11 @@ async def get_calendar(month: str = ""):
                 pass
 
         if not data:
-            current = [p for p in _predictions_cache if p.get("date") == d]
+            # Fall back to live predictions cache
+            current = [p for p in _predictions_cache
+                       if (p.get("date") or p.get("Date",""))[:10] == d]
             if current:
-                data = [{**p, "outcome": "pending"} for p in current]
+                data = [{**p, "outcome": "pending", "actual_result": None} for p in current]
 
         if data:
             won     = sum(1 for p in data if p.get("outcome") == "won")
@@ -809,7 +815,31 @@ async def get_calendar(month: str = ""):
             pending = sum(1 for p in data if p.get("outcome") == "pending")
             summary[d] = {"total": len(data), "won": won, "lost": lost, "pending": pending}
 
+    print(f"[Calendar] {month}: returning {len(summary)} days with data")
     return summary
+
+
+@app.get("/api/debug/calendar-status")
+async def debug_calendar_status():
+    """Quick diagnostic: shows what the calendar will return and what's in cache."""
+    from datetime import date as _date
+    month = _date.today().strftime("%Y-%m")
+    r = _get_redis()
+    cache_dates = sorted({p.get("date", p.get("Date",""))[:10] for p in _predictions_cache if p.get("date") or p.get("Date")})
+    redis_keys = []
+    if r:
+        try:
+            redis_keys = [k.decode() if isinstance(k, bytes) else k
+                          for k in r.keys("betiq:history:*")]
+        except Exception:
+            pass
+    return {
+        "current_month": month,
+        "predictions_in_cache": len(_predictions_cache),
+        "prediction_dates": cache_dates[:10],
+        "history_redis_keys": sorted(redis_keys)[:20],
+        "sample_prediction_keys": list(_predictions_cache[0].keys()) if _predictions_cache else [],
+    }
 
 
 @app.get("/api/explain")
