@@ -29,28 +29,34 @@ async def _call(model: str, messages: list, max_tokens: int = 400) -> Dict:
 
 async def _fetch_news(home: str, away: str) -> tuple[str, List[str]]:
     """
-    Step 1 — use compound-beta with a tiny prompt to search for team news.
-    Returns (news_text, source_urls).
+    Step 1 — use compound-beta to fetch live team news.
+    Tries compound-beta-mini first (smaller, fewer 413s), then compound-beta.
+    Returns (news_text, source_urls). Silent on failure.
     """
-    try:
-        data = await _call("compound-beta", [
-            {"role": "user", "content":
-                f"Search for the latest injury news, suspensions, and lineup updates for "
-                f"{home} and {away} ahead of their upcoming match. "
-                f"Return 2-3 sentences of key facts only."}
-        ], max_tokens=200)
+    prompt = f"{home} vs {away} team news?"  # absolute minimum to avoid 413
 
-        text = data["choices"][0]["message"]["content"].strip()
-        sources: List[str] = []
-        for tool in data["choices"][0]["message"].get("executed_tools", []):
-            for res in tool.get("results", [])[:3]:
-                url = res.get("url") or res.get("link")
-                if url:
-                    sources.append(url)
-        return text, sources
-    except Exception as e:
-        print(f"[LLM] compound-beta news fetch failed: {e}")
-        return "", []
+    for model in ("compound-beta-mini", "compound-beta"):
+        try:
+            data = await _call(model, [
+                {"role": "user", "content": prompt}
+            ], max_tokens=150)
+            text = data["choices"][0]["message"]["content"].strip()
+            sources: List[str] = []
+            for tool in data["choices"][0]["message"].get("executed_tools", []):
+                for res in tool.get("results", [])[:3]:
+                    url = res.get("url") or res.get("link")
+                    if url:
+                        sources.append(url)
+            if text:
+                return text, sources
+        except Exception as e:
+            err = str(e)
+            if "413" in err or "request_too_large" in err:
+                continue   # try next model silently
+            print(f"[LLM] {model} news fetch failed: {e}")
+            break
+
+    return "", []
 
 
 async def explain_match(
