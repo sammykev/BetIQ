@@ -1187,35 +1187,42 @@ async def set_prefs(body: Dict[str, Any]):
 async def get_value_bets():
     """
     Returns predictions where BetIQ's model probability beats SportyBet's
-    implied probability by ≥ 5 %. Results cached in Redis for 30 min.
+    implied probability by ≥ 3%. Results cached in Redis for 30 min (only when non-empty).
     """
     from odds_fetcher import fetch_odds_for_predictions, compute_value_bets
+    import json as _json
 
     CACHE_KEY = "betiq:value_bets"
     r = _get_redis()
 
-    # Serve from cache if fresh
+    # Serve from cache only if non-empty result was previously stored
     if r:
         try:
             cached = r.get(CACHE_KEY)
             if cached:
-                import json
-                return json.loads(cached)
+                data = _json.loads(cached)
+                if data:  # don't serve empty cache — always retry if previously empty
+                    return data
         except Exception:
             pass
 
-    if not _predictions_cache:
+    preds = _predictions_cache
+    print(f"[ValueBets] {len(preds)} predictions in cache")
+    if not preds:
         return []
 
+    # Log sample dates so we know what we're working with
+    dates = sorted({p.get("date", "") for p in preds if p.get("date")})
+    print(f"[ValueBets] Prediction dates: {dates[:5]}")
+
     try:
-        odds_index = await fetch_odds_for_predictions(_predictions_cache)
-        value_bets = compute_value_bets(_predictions_cache, odds_index)
+        odds_index = await fetch_odds_for_predictions(preds)
+        value_bets = compute_value_bets(preds, odds_index)
         print(f"[ValueBets] Found {len(value_bets)} value bets from {len(odds_index)} matched events")
 
-        if r:
+        if r and value_bets:  # only cache non-empty results
             try:
-                import json
-                r.setex(CACHE_KEY, 1800, json.dumps(value_bets))  # cache 30 min
+                r.setex(CACHE_KEY, 1800, _json.dumps(value_bets))
             except Exception:
                 pass
 

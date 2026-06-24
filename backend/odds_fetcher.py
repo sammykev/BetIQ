@@ -165,34 +165,41 @@ async def fetch_odds_for_predictions(predictions: List[Dict]) -> Dict[str, Dict]
     Returns dict keyed by "home:away:date" → {1, X, 2, source}.
     """
     if not predictions:
+        print("[Odds] No predictions provided")
         return {}
 
     target_dates = {p.get("date", "") for p in predictions if p.get("date")}
+    print(f"[Odds] Target dates: {sorted(target_dates)[:5]}, tournaments: {len(TOURNAMENTS)}")
+
     all_events: List[Dict] = []
 
     for tid in TOURNAMENTS:
         try:
             evs = await _fetch_pcevents(tid)
+            print(f"[Odds] {tid}: pcEvents returned {len(evs)} raw events")
             before = len(all_events)
             for ev in evs:
                 home, away = _event_teams(ev)
                 ev_date = _event_date(ev)
-                if not home or not away or ev_date not in target_dates:
+                if not home or not away:
+                    continue
+                # Accept if date matches OR if we have no date info on the event
+                if ev_date and ev_date not in target_dates:
                     continue
                 odds = _extract_1x2(ev)
                 if odds:
                     all_events.append({
-                        "home": home, "away": away, "date": ev_date,
+                        "home": home, "away": away,
+                        "date": ev_date or (sorted(target_dates)[0] if target_dates else ""),
                         "odds": odds, "source": "sportybet",
                     })
             added = len(all_events) - before
-            if added:
-                print(f"[Odds] {tid}: +{added} events with 1X2 odds")
+            print(f"[Odds] {tid}: {added} events with valid 1X2 odds after date filter")
         except Exception as e:
             print(f"[Odds] {tid} error: {e}")
         await asyncio.sleep(0.3)
 
-    print(f"[Odds] Total: {len(all_events)} events matched to target dates {target_dates}")
+    print(f"[Odds] Total collected: {len(all_events)} events across all tournaments")
 
     # Fuzzy-match to our predictions
     index: Dict[str, Dict] = {}
