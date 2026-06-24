@@ -13,6 +13,7 @@ from difflib import SequenceMatcher
 from typing import Dict, List, Optional, Any
 
 BASE = "https://www.sportybet.com/api/ng"
+HOME = "https://www.sportybet.com/ng/sport/football"
 
 _HEADERS = {
     "User-Agent": (
@@ -23,8 +24,29 @@ _HEADERS = {
     "Accept": "application/json, text/plain, */*",
     "Accept-Language": "en-US,en;q=0.9",
     "Origin": "https://www.sportybet.com",
-    "Referer": "https://www.sportybet.com/ng/sport/football",
+    "Referer": HOME,
 }
+
+_session_cookies: dict = {}
+
+async def _warm_session(client: httpx.AsyncClient) -> None:
+    """
+    Visit SportyBet homepage to pick up session cookies before API calls.
+    Without cookies the API returns 202 with empty body (cookie challenge).
+    """
+    global _session_cookies
+    if _session_cookies:
+        return
+    try:
+        r = await client.get(HOME, headers={
+            "User-Agent": _HEADERS["User-Agent"],
+            "Accept": "text/html,application/xhtml+xml,*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+        }, timeout=15, follow_redirects=True)
+        _session_cookies = dict(r.cookies)
+        print(f"[SportyBet] Session warmed — {len(_session_cookies)} cookies")
+    except Exception as e:
+        print(f"[SportyBet] Session warm error: {e}")
 
 MARKET_1X2 = "1_18"
 
@@ -52,14 +74,16 @@ def _sim(a: str, b: str) -> float:
 
 async def _get(client: httpx.AsyncClient, url: str) -> Optional[Any]:
     try:
-        r = await client.get(url, headers=_HEADERS, timeout=20, follow_redirects=True)
+        r = await client.get(url, headers=_HEADERS, cookies=_session_cookies,
+                             timeout=20, follow_redirects=True)
         body = r.text.strip()
-        print(f"[SportyBet] GET {r.status_code} len={len(body)} body={body[:200]!r}")
-        if r.status_code in (200, 202) and body:
-            try:
-                return r.json()
-            except Exception as je:
-                print(f"[SportyBet] JSON parse error: {je} — body={body[:200]!r}")
+        if r.status_code in (200, 202) and body and body.startswith("{"):
+            data = r.json()
+            if data.get("bizCode") == 10000:
+                return data
+            print(f"[SportyBet] bizCode={data.get('bizCode')} msg={data.get('message','')}")
+        else:
+            print(f"[SportyBet] GET {r.status_code} len={len(body)} body={body[:120]!r}")
     except Exception as e:
         print(f"[SportyBet] GET error: {e}")
     return None
@@ -102,6 +126,8 @@ async def fetch_events_for_date(date_str: str) -> List[Dict]:
     ts = start_ms
 
     async with httpx.AsyncClient(timeout=25, follow_redirects=True) as client:
+        # Warm session to get cookies — SportyBet returns 202 empty without them
+        await _warm_session(client)
 
         # ── Strategy 1: getScheduled GET — date-based, covers ALL tournaments ──
         # This is the best approach for value bets since it's not tournament-specific
@@ -274,12 +300,13 @@ async def post_booking(selections: List[Dict]) -> Optional[str]:
 
     try:
         async with httpx.AsyncClient(timeout=25, follow_redirects=True) as client:
-            r = await client.post(url, json=payload, headers={
+            await _warm_session(client)
+            r = await client.post(url, json=payload, cookies=_session_cookies, headers={
                 **_HEADERS,
                 "Content-Type": "application/json",
             })
             print(f"[SportyBet] POST /orders/share → {r.status_code}: {r.text[:300]}")
-            if r.status_code == 200:
+            if r.status_code in (200, 202):
                 data = r.json()
                 inner = data.get("data") or data
                 return (
