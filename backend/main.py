@@ -122,15 +122,41 @@ def _load_predictions_cache():
 
 def _save_predictions_cache():
     payload = json.dumps({"predictions": _predictions_cache, "last_updated": _last_updated})
-    # 1. Try Redis (TTL: 8 hours)
     r = _get_redis()
+
+    # 1. Save main predictions cache (TTL: 8 hours)
     if r:
         try:
             r.set("betiq:predictions", payload, ex=8 * 3600)
             print(f"[Cache] Saved {len(_predictions_cache)} predictions to Redis.")
         except Exception as e:
             print(f"[Cache] Redis save error: {e}")
-    # 2. Also save to disk as fallback
+
+    # 2. Persist each date's predictions to history keys NOW (as pending).
+    #    This ensures history survives even if the match rolls off the upcoming cache.
+    #    _archive_past_predictions() will later upgrade pending → won/lost via results CSV.
+    if r and _predictions_cache:
+        from collections import defaultdict
+        by_date: dict = defaultdict(list)
+        for p in _predictions_cache:
+            d = p.get("date", "")
+            if d:
+                by_date[d].append({**p, "outcome": "pending", "actual_result": None})
+        saved_dates = 0
+        for d, preds in by_date.items():
+            key = f"betiq:history:{d}"
+            try:
+                # Only write if no settled outcomes exist yet for this date
+                existing = r.get(key)
+                if not existing:
+                    r.set(key, json.dumps(preds), ex=90 * 86400)  # 90-day TTL
+                    saved_dates += 1
+            except Exception:
+                pass
+        if saved_dates:
+            print(f"[Cache] Persisted {saved_dates} new date(s) to prediction history.")
+
+    # 3. Disk fallback
     try:
         os.makedirs("data", exist_ok=True)
         with open(PREDICTIONS_CACHE_FILE, "w") as f:
@@ -711,12 +737,15 @@ async def get_history(date: str):
                 return json.loads(raw)
         except Exception:
             pass
-    # Fall back to current cache for today/future
-    return [
+    # Fall back to current predictions cache (works for today + upcoming)
+    from_cache = [
         {**p, "outcome": "pending", "actual_result": None}
         for p in _predictions_cache
         if p.get("date") == date
     ]
+    if from_cache:
+        return from_cache
+    return []
 
 
 @app.get("/api/calendar")
