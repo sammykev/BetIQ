@@ -179,10 +179,15 @@ export function ValueBets({ onMatchClick }: Props) {
           <button onClick={load} className="text-xs text-blue-400 hover:underline">Try again</button>
         </div>
       ) : bets.length === 0 ? (
-        <div className="text-center py-12 text-slate-500">
+        <div className="text-center py-12 text-slate-500 space-y-2">
           <TrendingUp size={28} className="mx-auto mb-3 opacity-30" />
           <p className="text-sm">No value bets found right now.</p>
-          <p className="text-xs mt-1 text-slate-600">The model's picks are in line with the market today.</p>
+          <p className="text-xs text-slate-600">
+            The model's picks are in line with the market, or live odds are unavailable.
+          </p>
+          <p className="text-xs text-blue-400/70 mt-2">
+            Powered by The Odds API · <a href="https://the-odds-api.com" target="_blank" rel="noopener noreferrer" className="underline hover:text-blue-300">the-odds-api.com</a>
+          </p>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">

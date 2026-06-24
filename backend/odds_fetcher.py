@@ -1,205 +1,194 @@
 """
-Live odds fetcher for value bet detection.
-Uses SportyBet's date-based getScheduled endpoint which returns ALL football
-events for a given date (leagues + internationals), not filtered by tournament.
+Live odds fetcher using The Odds API (the-odds-api.com).
+Free tier: 500 requests/month. We cache aggressively (4h) and only fetch
+sports present in current predictions to stay well within quota.
+
+Set ODDS_API_KEY in environment variables. Without it, value bets are disabled.
 """
 
 import asyncio
 import os
 import httpx
-from difflib import SequenceMatcher
 from datetime import datetime, timezone
+from difflib import SequenceMatcher
 from typing import Dict, List, Optional
 
-BASE = "https://www.sportybet.com/api/ng"
+ODDS_API_KEY  = os.getenv("ODDS_API_KEY", "")
+ODDS_API_BASE = "https://api.the-odds-api.com/v4"
 
-_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Origin": "https://www.sportybet.com",
-    "Referer": "https://www.sportybet.com/ng/sport/football",
+MIN_EDGE        = 0.03   # 3% edge
+MATCH_THRESHOLD = 0.50   # fuzzy team name match
+
+# Map our league names → The Odds API sport keys
+LEAGUE_TO_SPORT: Dict[str, str] = {
+    # Club leagues
+    "premier league":       "soccer_epl",
+    "epl":                  "soccer_epl",
+    "serie a":              "soccer_italy_serie_a",
+    "bundesliga":           "soccer_germany_bundesliga",
+    "la liga":              "soccer_spain_la_liga",
+    "ligue 1":              "soccer_france_ligue_one",
+    "champions league":     "soccer_uefa_champs_league",
+    "europa league":        "soccer_uefa_europa_league",
+    "primeira liga":        "soccer_portugal_primeira_liga",
+    "eredivisie":           "soccer_netherlands_eredivisie",
+    # International
+    "world cup":            "soccer_fifa_world_cup",
+    "fifa world cup":       "soccer_fifa_world_cup",
+    "afcon":                "soccer_africa_cup_of_nations",
+    "africa cup":           "soccer_africa_cup_of_nations",
+    "copa america":         "soccer_conmebol_copa_america",
+    "nations league":       "soccer_uefa_nations_league",
+    "uefa nations league":  "soccer_uefa_nations_league",
+    "world cup qualifying": "soccer_world_cup_quali_africa",
+    "wcq":                  "soccer_world_cup_quali_africa",
+    "international":        "soccer_fifa_world_cup",  # broad fallback
+    "friendly":             "soccer_fifa_world_cup",
 }
 
-MIN_EDGE = 0.03
-MATCH_THRESHOLD = 0.50
+# Fallback sports to try when no league match is found
+FALLBACK_SPORTS = [
+    "soccer_fifa_world_cup",
+    "soccer_africa_cup_of_nations",
+    "soccer_conmebol_copa_america",
+    "soccer_uefa_nations_league",
+    "soccer_epl",
+    "soccer_italy_serie_a",
+    "soccer_germany_bundesliga",
+    "soccer_spain_la_liga",
+]
 
 
 def _sim(a: str, b: str) -> float:
     return SequenceMatcher(None, a.lower().strip(), b.lower().strip()).ratio()
 
 
-def _extract_1x2(event: Dict) -> Optional[Dict]:
+def _sport_keys_for_predictions(predictions: List[Dict]) -> List[str]:
     """
-    Extract 1X2 odds from a SportyBet event.
-    Confirmed structure: market.id=="1", outcome.desc=="Home"/"Draw"/"Away"
+    Return the minimal set of The Odds API sport keys needed to cover
+    the predictions we have — avoids wasting API quota on irrelevant sports.
     """
-    for m in (event.get("markets") or []):
-        if not isinstance(m, dict):
-            continue
-        if str(m.get("id", "")) != "1":
-            continue
-        odds: Dict[str, float] = {}
-        for o in (m.get("outcomes") or []):
-            if not isinstance(o, dict) or not o.get("isActive", 1):
-                continue
-            label = (o.get("desc") or "").lower().strip()
-            try:
-                val = float(o.get("odds") or 0)
-            except Exception:
-                val = 0.0
-            if val <= 1.0:
-                continue
-            if label == "home":
-                odds["1"] = val
-            elif label == "draw":
-                odds["X"] = val
-            elif label == "away":
-                odds["2"] = val
-        if len(odds) == 3:
-            return odds
-    return None
+    keys = set()
+    for p in predictions:
+        league = (p.get("league_name") or p.get("league") or "").lower()
+        matched = False
+        for keyword, sport_key in LEAGUE_TO_SPORT.items():
+            if keyword in league:
+                keys.add(sport_key)
+                matched = True
+                break
+        if not matched:
+            # Unknown league — add common international sports
+            keys.update(["soccer_fifa_world_cup", "soccer_africa_cup_of_nations",
+                          "soccer_uefa_nations_league"])
+    # If still empty, try all fallbacks
+    return list(keys) if keys else FALLBACK_SPORTS[:4]
 
 
-def _event_teams(ev: Dict):
-    return (
-        str(ev.get("homeTeamName") or "").strip(),
-        str(ev.get("awayTeamName") or "").strip(),
-    )
-
-
-async def _fetch_by_date(date_str: str) -> List[Dict]:
-    """
-    Fetch ALL football events from SportyBet for a date using the
-    getScheduled date-range endpoint — covers leagues + internationals.
-    Falls back to the pcEvents per-popular-tournament approach.
-    """
-    dt = datetime.strptime(date_str, "%Y-%m-%d")
-    start_ms = int(dt.replace(hour=0, minute=0, second=0).timestamp() * 1000)
-    end_ms   = int(dt.replace(hour=23, minute=59, second=59).timestamp() * 1000)
-    ts = int(datetime.now().timestamp() * 1000)
-
-    urls = [
-        # getScheduled with market 1 (1X2)
-        f"{BASE}/factsCenter/getScheduled?sportId=sr%3Asport%3A1&startTime={start_ms}&endTime={end_ms}&marketId=1&page=1&pageSize=500&_t={ts}",
-        # getScheduled with market 1_18 (legacy ID)
-        f"{BASE}/factsCenter/getScheduled?sportId=sr%3Asport%3A1&startTime={start_ms}&endTime={end_ms}&marketId=1_18&page=1&pageSize=500&_t={ts}",
-        # getAllScheduled — broader endpoint some regions expose
-        f"{BASE}/factsCenter/getAllScheduled?sportId=sr%3Asport%3A1&startTime={start_ms}&endTime={end_ms}&marketId=1&pageSize=500&_t={ts}",
-    ]
-
-    async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
-        for url in urls:
-            try:
-                r = await client.get(url, headers=_HEADERS)
-                if r.status_code not in (200, 202) or not r.text.strip():
-                    print(f"[Odds] getScheduled {r.status_code} for {date_str}")
-                    continue
+async def _fetch_odds_for_sport(sport_key: str) -> List[Dict]:
+    """Fetch 1X2 (h2h) odds for a sport from The Odds API."""
+    if not ODDS_API_KEY:
+        return []
+    url = f"{ODDS_API_BASE}/sports/{sport_key}/odds/"
+    params = {
+        "apiKey": ODDS_API_KEY,
+        "regions": "eu",          # European bookmakers = tightest margins
+        "markets": "h2h",         # 1X2 / moneyline
+        "oddsFormat": "decimal",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.get(url, params=params)
+            remaining = r.headers.get("x-requests-remaining", "?")
+            used      = r.headers.get("x-requests-used", "?")
+            if r.status_code == 200:
                 data = r.json()
-                if data.get("bizCode") != 10000:
+                print(f"[Odds] {sport_key}: {len(data)} events "
+                      f"(quota used={used} remaining={remaining})")
+                return data
+            elif r.status_code == 422:
+                print(f"[Odds] {sport_key}: no current events (422)")
+                return []
+            else:
+                print(f"[Odds] {sport_key}: HTTP {r.status_code} — {r.text[:120]}")
+    except Exception as e:
+        print(f"[Odds] {sport_key} error: {e}")
+    return []
+
+
+def _parse_odds_event(event: Dict) -> Optional[Dict]:
+    """
+    Extract best available 1X2 odds from an Odds API event.
+    Uses the bookmaker with the highest home win price (most generous).
+    """
+    home_team = event.get("home_team", "")
+    away_team = event.get("away_team", "")
+    commence  = event.get("commence_time", "")
+
+    try:
+        dt = datetime.fromisoformat(commence.replace("Z", "+00:00"))
+        date_str = dt.astimezone(timezone.utc).strftime("%Y-%m-%d")
+    except Exception:
+        date_str = ""
+
+    # Aggregate odds across bookmakers — use best (highest) odds per outcome
+    best: Dict[str, float] = {}
+    for bookie in (event.get("bookmakers") or []):
+        for market in (bookie.get("markets") or []):
+            if market.get("key") != "h2h":
+                continue
+            for outcome in (market.get("outcomes") or []):
+                name  = outcome.get("name", "")
+                price = float(outcome.get("price") or 0)
+                if price <= 1:
                     continue
-                inner = data.get("data") or {}
-                events = (
-                    inner.get("events") or inner.get("matches") or
-                    inner.get("items") or
-                    (inner if isinstance(inner, list) else [])
-                )
-                if events:
-                    print(f"[Odds] getScheduled: {len(events)} events for {date_str}")
-                    return events
-            except Exception as e:
-                print(f"[Odds] getScheduled error for {date_str}: {e}")
+                if name == home_team:
+                    best["1"] = max(best.get("1", 0), price)
+                elif name == away_team:
+                    best["2"] = max(best.get("2", 0), price)
+                elif name.lower() in ("draw", "tie"):
+                    best["X"] = max(best.get("X", 0), price)
 
-    # ── Fallback: pcEvents POST for popular/active tournaments ──────────────
-    # Useful in off-season when only international tournaments are active
-    INTL_TOURNAMENTS = [
-        "sr:tournament:42",    # World Cup 2026
-        "sr:tournament:133",   # AFCON
-        "sr:tournament:29",    # Copa America
-        "sr:tournament:1091",  # UEFA Nations League A
-        "sr:tournament:1092",  # UEFA Nations League B
-        "sr:tournament:3",     # International Friendlies
-        "sr:tournament:203",   # Algeria Ligue Pro
-        "sr:tournament:205",   # Algerian Cup
-        "sr:tournament:271",   # World Cup Qualifying - Africa
-        "sr:tournament:272",   # World Cup Qualifying - Europe
-        "sr:tournament:273",   # World Cup Qualifying - S. America
-        "sr:tournament:17",    # EPL (keep for when in season)
-        "sr:tournament:23",    # Serie A
-        "sr:tournament:35",    # Bundesliga
-        "sr:tournament:8",     # La Liga
-        "sr:tournament:34",    # Ligue 1
-        "sr:tournament:7",     # Champions League
-    ]
-
-    collected = []
-    async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-        for tid in INTL_TOURNAMENTS[:8]:  # limit to avoid rate limiting
-            try:
-                r = await client.post(
-                    f"{BASE}/factsCenter/pcEvents",
-                    json={"tournamentId": tid, "sportId": "sr:sport:1", "marketId": "1",
-                          "startTime": start_ms, "endTime": end_ms},
-                    headers={**_HEADERS, "Content-Type": "application/json"},
-                )
-                if r.status_code == 200 and r.text.strip():
-                    d = r.json()
-                    if d.get("bizCode") == 10000:
-                        for t in (d.get("data") or []):
-                            collected.extend(t.get("events") or [])
-            except Exception:
-                pass
-            await asyncio.sleep(0.15)
-
-    if collected:
-        print(f"[Odds] pcEvents fallback: {len(collected)} events for {date_str}")
-    else:
-        print(f"[Odds] No events found for {date_str} — SportyBet may be blocking server requests")
-
-    return collected
+    if len(best) == 3:
+        return {"home": home_team, "away": away_team, "date": date_str,
+                "odds": best, "source": "the-odds-api"}
+    return None
 
 
 async def fetch_odds_for_predictions(predictions: List[Dict]) -> Dict[str, Dict]:
     """
-    Fetch live 1X2 odds from SportyBet for each unique prediction date.
+    Fetch live 1X2 odds from The Odds API for the sports present in our predictions.
     Returns dict keyed by "home:away:date" → {1, X, 2, source}.
     """
     if not predictions:
         return {}
 
+    if not ODDS_API_KEY:
+        print("[Odds] ODDS_API_KEY not set — value bets disabled. "
+              "Get a free key at the-odds-api.com and add it to Render env vars.")
+        return {}
+
+    sport_keys = _sport_keys_for_predictions(predictions)
     target_dates = {p.get("date", "") for p in predictions if p.get("date")}
-    print(f"[Odds] Fetching odds for {len(target_dates)} dates: {sorted(target_dates)[:5]}")
+    print(f"[Odds] Fetching {sport_keys} for dates {sorted(target_dates)[:5]}")
 
-    all_events: List[Dict] = []
-    for d in sorted(target_dates):
-        evs = await _fetch_by_date(d)
-        matched = 0
-        for ev in evs:
-            home, away = _event_teams(ev)
-            if not home or not away:
-                continue
-            odds = _extract_1x2(ev)
-            if odds:
-                all_events.append({
-                    "home": home, "away": away, "date": d,
-                    "odds": odds, "source": "sportybet",
-                })
-                matched += 1
-        print(f"[Odds] {d}: {matched}/{len(evs)} events have 1X2 odds")
-        await asyncio.sleep(0.5)
+    all_parsed: List[Dict] = []
+    for sport_key in sport_keys:
+        events = await _fetch_odds_for_sport(sport_key)
+        for ev in events:
+            parsed = _parse_odds_event(ev)
+            if parsed and parsed["date"] in target_dates:
+                all_parsed.append(parsed)
+        await asyncio.sleep(0.2)
 
-    print(f"[Odds] Total: {len(all_events)} events with 1X2 odds across {len(target_dates)} dates")
+    print(f"[Odds] {len(all_parsed)} events with odds across {len(sport_keys)} sports")
 
-    # Fuzzy match to our predictions
+    # Fuzzy-match to our predictions
     index: Dict[str, Dict] = {}
     for pred in predictions:
         pred_date = pred.get("date", "")
         best, best_score = None, 0.0
-        for ev in all_events:
+        for ev in all_parsed:
             if ev["date"] != pred_date:
                 continue
             score = (_sim(pred["home"], ev["home"]) + _sim(pred["away"], ev["away"])) / 2
@@ -215,9 +204,7 @@ async def fetch_odds_for_predictions(predictions: List[Dict]) -> Dict[str, Dict]
 
 
 def compute_value_bets(predictions: List[Dict], odds_index: Dict[str, Dict]) -> List[Dict]:
-    """
-    Flag predictions where model probability beats implied probability by ≥ MIN_EDGE.
-    """
+    """Flag predictions where model probability beats implied probability by ≥ MIN_EDGE."""
     value_bets = []
     for pred in predictions:
         key = f"{pred['home']}:{pred['away']}:{pred['date']}"
@@ -262,7 +249,7 @@ def compute_value_bets(predictions: List[Dict], odds_index: Dict[str, Dict]) -> 
             "implied_prob":  round(imp[best_code] * 100, 1),
             "edge":          round(best_edge * 100, 1),
             "overround":     round((overround - 1) * 100, 1),
-            "bookie":        odds.get("source", "sportybet"),
+            "bookie":        "Best available (eu bookmakers)",
         })
 
     return sorted(value_bets, key=lambda x: x["edge"], reverse=True)
