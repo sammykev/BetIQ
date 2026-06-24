@@ -56,10 +56,9 @@ function DayPanel({ date, onClose }: { date: string; onClose: () => void }) {
   const settled = won + lost;
   const accuracy = settled ? Math.round((won / settled) * 100) : null;
 
-  const fmt = (d: string) => {
-    const dt = new Date(d + "T12:00:00");
-    return dt.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
-  };
+  // Midday avoids DST/timezone flips shifting the date
+  const fmt = (d: string) => new Date(d + "T12:00:00")
+    .toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 
   return (
     <div className="flex flex-col h-full">
@@ -132,6 +131,11 @@ function DayPanel({ date, onClose }: { date: string; onClose: () => void }) {
   );
 }
 
+const _pad = (n: number) => String(n).padStart(2, "0");
+// Use local timezone (not UTC) so Nigerian users (UTC+1) see the correct date
+const _localDateStr = (d = new Date()) =>
+  `${d.getFullYear()}-${_pad(d.getMonth() + 1)}-${_pad(d.getDate())}`;
+
 export function CalendarView({ onClose }: Props) {
   const now = new Date();
   const [year,  setYear]  = useState(now.getFullYear());
@@ -140,7 +144,7 @@ export function CalendarView({ onClose }: Props) {
   const [loadingCal, setLoadingCal] = useState(true);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
-  const monthStr = `${year}-${String(month + 1).padStart(2, "0")}`;
+  const monthStr = `${year}-${_pad(month + 1)}`;
 
   useEffect(() => {
     setLoadingCal(true);
@@ -159,7 +163,7 @@ export function CalendarView({ onClose }: Props) {
   ];
   while (cells.length % 7 !== 0) cells.push(null);
 
-  const todayStr = now.toISOString().slice(0, 10);
+  const todayStr = _localDateStr(now);  // local timezone, not UTC
 
   return (
     <div

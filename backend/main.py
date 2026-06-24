@@ -312,11 +312,14 @@ async def _run_pipeline():
         else:
             print("[Pipeline] WARNING: No FOOTBALL_DATA_API_KEY set. Add your key to .env to get live fixtures.")
 
+        # Archive past predictions from the OLD cache BEFORE replacing it —
+        # new `predictions` only has upcoming fixtures so yesterday is already gone.
+        _archive_past_predictions()
+
         _predictor = predictor
         _predictions_cache = predictions
         _last_updated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
         _save_predictions_cache()
-        _archive_past_predictions()
         print(f"[Pipeline] Done — {len(predictions)} predictions cached.")
 
     except Exception as e:

@@ -8,6 +8,16 @@ import clsx from "clsx";
 
 const BASE = "https://predict-withbetiq.vercel.app";
 
+/** Convert a UTC "HH:MM" match time to the user's local timezone. */
+function localTime(date: string, utcTime: string): string {
+  try {
+    const dt = new Date(`${date}T${utcTime}:00Z`);
+    return dt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
+  } catch {
+    return utcTime;
+  }
+}
+
 // ── Country name → ISO 3166-1 alpha-2 code (flagcdn.com) ─────────────────
 const COUNTRY_CODES: Record<string, string> = {
   "Algeria": "dz", "Angola": "ao", "Argentina": "ar", "Australia": "au",
@@ -237,7 +247,7 @@ export function PredictionCard({ prediction: p, savedKeys, onClick }: Props) {
           <div className="flex items-center gap-2 shrink-0">
             <div className="flex items-center gap-1 text-[11px] text-white/60">
               <Clock size={10} />
-              <span>{p.date}{p.time !== "TBD" ? ` · ${p.time}` : ""}</span>
+              <span>{p.date}{p.time && p.time !== "TBD" ? ` · ${localTime(p.date, p.time)}` : ""}</span>
             </div>
             <SaveButton prediction={p} savedKeys={savedKeys ?? emptySet} size={13} />
             <button
