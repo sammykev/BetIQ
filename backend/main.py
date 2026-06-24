@@ -1296,6 +1296,28 @@ async def use_referral(body: Dict[str, Any]):
     return {"ok": True}
 
 
+@app.get("/api/debug/odds-sample")
+async def debug_odds_sample():
+    """
+    Returns raw SportyBet event structure for today so we can inspect
+    the exact JSON shape and fix odds extraction. Remove after debugging.
+    """
+    from sportybet import fetch_events_for_date
+    from datetime import date
+    today = date.today().isoformat()
+    events = await fetch_events_for_date(today)
+    if not events:
+        return {"error": "No events returned", "date": today}
+    first = events[0]
+    # Return first event with full structure
+    return {
+        "date": today,
+        "total_events": len(events),
+        "first_event_keys": list(first.keys()),
+        "first_event": first,   # full raw event
+    }
+
+
 @app.post("/api/booking")
 async def create_booking(body: Dict[str, Any]):
     """
