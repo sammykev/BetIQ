@@ -1183,6 +1183,48 @@ async def set_prefs(body: Dict[str, Any]):
     return {"ok": True}
 
 
+@app.get("/api/value-bets")
+async def get_value_bets():
+    """
+    Returns predictions where BetIQ's model probability beats SportyBet's
+    implied probability by ≥ 5 %. Results cached in Redis for 30 min.
+    """
+    from odds_fetcher import fetch_odds_for_predictions, compute_value_bets
+
+    CACHE_KEY = "betiq:value_bets"
+    r = _get_redis()
+
+    # Serve from cache if fresh
+    if r:
+        try:
+            cached = r.get(CACHE_KEY)
+            if cached:
+                import json
+                return json.loads(cached)
+        except Exception:
+            pass
+
+    if not _predictions_cache:
+        return []
+
+    try:
+        odds_index = await fetch_odds_for_predictions(_predictions_cache)
+        value_bets = compute_value_bets(_predictions_cache, odds_index)
+        print(f"[ValueBets] Found {len(value_bets)} value bets from {len(odds_index)} matched events")
+
+        if r:
+            try:
+                import json
+                r.setex(CACHE_KEY, 1800, json.dumps(value_bets))  # cache 30 min
+            except Exception:
+                pass
+
+        return value_bets
+    except Exception as e:
+        print(f"[ValueBets] Error: {e}")
+        return []
+
+
 @app.get("/api/leaderboard")
 async def get_leaderboard():
     r = _get_redis()
