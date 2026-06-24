@@ -5,6 +5,7 @@ import { X, ChevronLeft, ChevronRight, Loader2, CheckCircle2, XCircle, Clock } f
 import clsx from "clsx";
 import { fetchCalendar, fetchHistory } from "@/lib/api";
 import type { CalendarDay, HistoryPrediction } from "@/lib/api";
+import { MatchCard } from "./MatchCard";
 
 interface Props {
   onClose: () => void;
@@ -91,40 +92,28 @@ function DayPanel({ date, onClose }: { date: string; onClose: () => void }) {
           <p className="text-center text-slate-500 py-12">No predictions for this date.</p>
         )}
         {!loading && preds.map((p, i) => (
-          <div key={i}
+          <MatchCard
+            key={i}
+            home={p.home}
+            away={p.away}
+            league={p.league_name}
+            flag={p.flag}
             className={clsx(
-              "bg-slate-800 border rounded-xl px-4 py-3 space-y-1.5",
-              p.outcome === "won"  ? "border-green-500/30" :
-              p.outcome === "lost" ? "border-red-500/30"   : "border-slate-700"
+              p.outcome === "won"  ? "ring-1 ring-green-500/40" :
+              p.outcome === "lost" ? "ring-1 ring-red-500/40"   : ""
             )}
           >
-            <div className="flex items-start justify-between gap-2">
-              <div className="flex-1 min-w-0">
-                <p className="text-xs text-slate-400">{p.flag} {p.league_name}</p>
-                <p className="text-sm font-semibold text-white leading-snug">
-                  {p.home} <span className="text-slate-500 font-normal">vs</span> {p.away}
-                </p>
-              </div>
+            <div className="flex flex-col items-end gap-1.5">
               <OutcomeIcon outcome={p.outcome} />
-            </div>
-
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs bg-slate-700 text-slate-200 px-2 py-0.5 rounded font-medium">
+              <span className="text-[10px] font-bold bg-white/20 text-white px-2 py-0.5 rounded-full">
                 {p.tip_1x2}
               </span>
-              <span className="text-[10px] text-slate-500">
-                {Math.round(p.goals_confidence * 100)}% conf
+              <span className="text-[10px] text-white/50">
+                {Math.round(p.goals_confidence * 100)}%
               </span>
               {p.actual_result && <ResultBadge result={p.actual_result} />}
             </div>
-
-            {p.outcome === "won" && (
-              <p className="text-[11px] text-green-400 font-semibold">✅ Prediction correct</p>
-            )}
-            {p.outcome === "lost" && (
-              <p className="text-[11px] text-red-400 font-semibold">❌ Prediction incorrect</p>
-            )}
-          </div>
+          </MatchCard>
         ))}
       </div>
     </div>

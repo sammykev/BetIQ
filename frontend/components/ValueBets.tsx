@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { TrendingUp, Loader2, RefreshCw, AlertCircle } from "lucide-react";
+import { MatchCard } from "./MatchCard";
 import clsx from "clsx";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
@@ -40,62 +41,35 @@ function ValueBetCard({ v, onClick }: { v: ValueBet; onClick?: () => void }) {
   const barImplied = Math.round(v.implied_prob);
 
   return (
-    <div
-      onClick={onClick}
-      className={clsx(
-        "bg-slate-900 border border-slate-700 rounded-xl p-4 flex flex-col gap-3",
-        onClick && "cursor-pointer hover:border-green-500/40 hover:bg-slate-800/60 transition-all active:scale-[0.98]"
-      )}
-    >
-      {/* Header */}
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-xs text-slate-400 truncate">{v.flag} {v.league_name}</span>
-        <div className="flex items-center gap-2 shrink-0">
-          <span className="text-[10px] text-slate-500">{v.date}{v.time && v.time !== "TBD" ? ` · ${v.time}` : ""}</span>
-          <EdgeBadge edge={v.edge} />
+    <MatchCard home={v.home} away={v.away} league={v.league_name} flag={v.flag}
+      date={v.date} time={v.time} onClick={onClick} className="flex flex-col">
+      <EdgeBadge edge={v.edge} />
+      <div className="relative z-10 px-4 pb-3 space-y-2 mt-1">
+        {/* Value pick banner */}
+        <div className="bg-black/30 border border-green-500/30 rounded-lg px-3 py-2 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-[10px] text-green-400/80 uppercase tracking-wide font-semibold">Value Pick</p>
+            <p className="text-sm font-bold text-white">{v.value_label}</p>
+          </div>
+          <p className="text-2xl font-black text-green-400 shrink-0">{v.value_odds}</p>
+        </div>
+        {/* Probability bars */}
+        <div className="space-y-1">
+          <div className="flex justify-between text-[10px] text-white/50">
+            <span>Model</span><span className="text-white font-semibold">{barModel}%</span>
+          </div>
+          <div className="h-1.5 bg-black/30 rounded-full overflow-hidden">
+            <div className="h-full bg-green-400 rounded-full" style={{ width: `${barModel}%` }} />
+          </div>
+          <div className="flex justify-between text-[10px] text-white/50">
+            <span>Market implied</span><span className="text-white/70">{barImplied}%</span>
+          </div>
+          <div className="h-1.5 bg-black/30 rounded-full overflow-hidden">
+            <div className="h-full bg-white/40 rounded-full" style={{ width: `${barImplied}%` }} />
+          </div>
         </div>
       </div>
-
-      {/* Match */}
-      <div>
-        <p className="text-sm font-bold text-white leading-snug">{v.home} <span className="text-slate-500 font-normal">vs</span> {v.away}</p>
-      </div>
-
-      {/* Value pick */}
-      <div className="bg-green-500/10 border border-green-500/25 rounded-lg px-3 py-2.5 flex items-center justify-between gap-3">
-        <div>
-          <p className="text-[10px] text-green-400/70 uppercase tracking-wide font-semibold mb-0.5">Value Pick</p>
-          <p className="text-sm font-bold text-white">{v.value_label}</p>
-        </div>
-        <div className="text-right shrink-0">
-          <p className="text-[10px] text-slate-400 mb-0.5">Odds</p>
-          <p className="text-xl font-black text-green-400">{v.value_odds}</p>
-        </div>
-      </div>
-
-      {/* Probability comparison */}
-      <div className="space-y-1.5">
-        <div className="flex justify-between text-[10px] text-slate-400">
-          <span>BetIQ model</span>
-          <span className="text-white font-semibold">{barModel}%</span>
-        </div>
-        <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
-          <div className="h-full bg-green-500 rounded-full" style={{ width: `${barModel}%` }} />
-        </div>
-
-        <div className="flex justify-between text-[10px] text-slate-400">
-          <span>{v.bookie === "sportybet" ? "SportyBet" : "Bookie"} implied</span>
-          <span className="text-slate-300 font-semibold">{barImplied}%</span>
-        </div>
-        <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
-          <div className="h-full bg-slate-500 rounded-full" style={{ width: `${barImplied}%` }} />
-        </div>
-      </div>
-
-      <p className="text-[10px] text-slate-600">
-        Overround: {v.overround}% · Model sees {v.model_prob - v.implied_prob > 0 ? "+" : ""}{(v.model_prob - v.implied_prob).toFixed(1)}% above fair odds
-      </p>
-    </div>
+    </MatchCard>
   );
 }
 

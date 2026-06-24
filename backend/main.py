@@ -106,6 +106,7 @@ def _load_predictions_cache():
                 _predictions_cache = saved.get("predictions", [])
                 _last_updated = saved.get("last_updated")
                 print(f"[Cache] Restored {len(_predictions_cache)} predictions from Redis.")
+                _backfill_history_from_cache(r)
                 return
         except Exception as e:
             print(f"[Cache] Redis load error: {e}")
@@ -119,6 +120,28 @@ def _load_predictions_cache():
             print(f"[Cache] Restored {len(_predictions_cache)} predictions from disk.")
         except Exception as e:
             print(f"[Cache] Disk load error: {e}")
+
+
+def _backfill_history_from_cache(r):
+    """Write each date's predictions to betiq:history:{date} if missing — fills gaps from before the feature was deployed."""
+    if not _predictions_cache:
+        return
+    from collections import defaultdict
+    by_date: dict = defaultdict(list)
+    for p in _predictions_cache:
+        d = p.get("date", "")
+        if d:
+            by_date[d].append({**p, "outcome": "pending", "actual_result": None})
+    filled = 0
+    for d, preds in by_date.items():
+        try:
+            if not r.exists(f"betiq:history:{d}"):
+                r.set(f"betiq:history:{d}", json.dumps(preds), ex=90 * 86400)
+                filled += 1
+        except Exception:
+            pass
+    if filled:
+        print(f"[Cache] Backfilled {filled} date(s) into prediction history.")
 
 def _save_predictions_cache():
     payload = json.dumps({"predictions": _predictions_cache, "last_updated": _last_updated})

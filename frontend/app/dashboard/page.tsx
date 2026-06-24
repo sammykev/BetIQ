@@ -9,6 +9,7 @@ import {
   TrendingUp, TrendingDown, Minus, Plus, X, Check,
   Copy, Crown, RefreshCw, Loader2,
 } from "lucide-react";
+import { MatchCard } from "@/components/MatchCard";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
 const SITE = "https://predict-withbetiq.vercel.app";
@@ -222,16 +223,13 @@ export default function DashboardPage() {
                   <p className="text-xs">Tap the ⭐ on any prediction card to save it</p>
                 </div>
               : saves.map((p: any, i: number) => (
-                <div key={i} className="bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 flex items-center justify-between gap-4">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs text-slate-500">{p.flag} {p.league_name} · {p.date}</p>
-                    <p className="text-white font-semibold text-sm truncate">{p.home} vs {p.away}</p>
+                <MatchCard key={i} home={p.home} away={p.away}
+                  league={p.league_name} flag={p.flag} date={p.date}>
+                  <div className="flex flex-col items-end gap-1">
+                    <span className="text-green-400 text-xs font-black bg-white/10 px-2 py-0.5 rounded-full">{p.tip_1x2}</span>
+                    <span className="text-white/50 text-[10px]">{Math.round(p.goals_confidence * 100)}%</span>
                   </div>
-                  <span className="text-green-400 text-xs font-bold bg-green-500/10 px-2 py-1 rounded-lg border border-green-500/20 shrink-0">
-                    {p.tip_1x2}
-                  </span>
-                  <span className="text-slate-500 text-xs shrink-0">{Math.round(p.goals_confidence * 100)}%</span>
-                </div>
+                </MatchCard>
               ))}
           </div>
         )}
@@ -274,25 +272,20 @@ export default function DashboardPage() {
               : bets.map((b, i) => {
                 const profit = b.result === "won" ? b.payout - b.stake : b.result === "void" ? 0 : -b.stake;
                 return (
-                  <div key={i} className={clsx("bg-slate-900 border rounded-xl px-4 py-3 space-y-1.5",
-                    b.result === "won" ? "border-green-500/30" : b.result === "lost" ? "border-red-500/30" : "border-slate-700")}>
-                    <div className="flex items-center justify-between">
-                      <p className="text-white text-sm font-semibold">{b.home} vs {b.away}</p>
-                      <span className={clsx("text-xs font-bold",
-                        b.result === "won" ? "text-green-400" : b.result === "lost" ? "text-red-400" : "text-slate-400")}>
-                        {b.result === "won" ? <TrendingUp size={12} className="inline mr-1"/> : b.result === "lost" ? <TrendingDown size={12} className="inline mr-1"/> : <Minus size={12} className="inline mr-1"/>}
+                  <MatchCard key={i} home={b.home} away={b.away} date={b.date}
+                    className={b.result === "won" ? "ring-1 ring-green-500/40" : b.result === "lost" ? "ring-1 ring-red-500/40" : ""}>
+                    <div className="flex flex-col items-end gap-1 text-xs">
+                      <span className={clsx("font-bold flex items-center gap-1",
+                        b.result === "won" ? "text-green-400" : b.result === "lost" ? "text-red-400" : "text-white/50")}>
+                        {b.result === "won" ? <TrendingUp size={11}/> : b.result === "lost" ? <TrendingDown size={11}/> : <Minus size={11}/>}
                         {b.result}
                       </span>
-                    </div>
-                    <div className="flex items-center gap-4 text-xs text-slate-500">
-                      <span>Tip: {b.tip}</span>
-                      <span>Stake: ₦{b.stake?.toLocaleString()}</span>
-                      <span>Odds: {b.odds}x</span>
-                      <span className={clsx("font-semibold", profit > 0 ? "text-green-400" : profit < 0 ? "text-red-400" : "text-slate-400")}>
+                      <span className="text-white/60">{b.tip} @ {b.odds}x</span>
+                      <span className={clsx("font-semibold", profit > 0 ? "text-green-400" : profit < 0 ? "text-red-400" : "text-white/40")}>
                         {profit >= 0 ? "+" : ""}₦{Math.abs(profit).toLocaleString()}
                       </span>
                     </div>
-                  </div>
+                  </MatchCard>
                 );
               })}
           </div>
