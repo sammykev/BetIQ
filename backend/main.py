@@ -1337,15 +1337,109 @@ async def debug_odds_sample():
     }
 
 
+@app.get("/api/sportybet-event")
+async def get_sportybet_event(home: str, away: str, date: str):
+    """
+    Fetch the live SportyBet event for a specific match and return its full
+    market/outcome structure with real IDs — used by the in-modal bet picker.
+    """
+    from sportybet import fetch_events_for_date, find_event
+
+    CACHE_KEY = f"betiq:sb_event:{home}:{away}:{date}"
+    r = _get_redis()
+    if r:
+        try:
+            cached = r.get(CACHE_KEY)
+            if cached:
+                return json.loads(cached)
+        except Exception:
+            pass
+
+    try:
+        events = await fetch_events_for_date(date)
+        event = find_event(home, away, events)
+        if not event:
+            return {"found": False, "markets": []}
+
+        # Build a clean market list from the raw event
+        clean_markets = []
+        for m in (event.get("markets") or []):
+            mid = str(m.get("id") or "")
+            mname = m.get("name") or m.get("desc") or ""
+            specifier = m.get("specifier") or ""
+            outcomes = []
+            for o in (m.get("outcomes") or []):
+                if not o.get("isActive", 1):
+                    continue
+                outcomes.append({
+                    "id":    str(o.get("id") or ""),
+                    "desc":  o.get("desc") or o.get("name") or "",
+                    "odds":  str(o.get("odds") or o.get("value") or ""),
+                })
+            if outcomes:
+                clean_markets.append({
+                    "id":        mid,
+                    "name":      mname,
+                    "specifier": specifier,
+                    "outcomes":  outcomes,
+                })
+
+        result = {
+            "found":      True,
+            "eventId":    str(event.get("eventId") or event.get("id") or ""),
+            "gameId":     str(event.get("gameId") or ""),
+            "homeTeam":   event.get("homeTeamName") or home,
+            "awayTeam":   event.get("awayTeamName") or away,
+            "markets":    clean_markets,
+        }
+
+        if r and result["found"]:
+            try:
+                r.setex(CACHE_KEY, 1800, json.dumps(result))
+            except Exception:
+                pass
+
+        return result
+    except Exception as e:
+        print(f"[SportyBet Event] {home} vs {away}: {e}")
+        return {"found": False, "markets": [], "error": str(e)}
+
+
 @app.post("/api/booking")
 async def create_booking(body: Dict[str, Any]):
     """
-    Generate a booking code from BetIQ predictions.
-    Tries SportyBet first, then 1xBet, always returns picks for copy-card fallback.
-    Body: { "predictions": [{home, away, date, tip_code, tip_1x2, ...}, ...] }
+    Generate a SportyBet booking code.
+    Mode A (direct): body = { "selections": [{matchId, marketId, outcomeId, ...}] }
+               — uses real IDs from /api/sportybet-event, skips fuzzy matching
+    Mode B (predictions): body = { "predictions": [{home, away, date, tip_code, ...}] }
+               — does fuzzy matching via sportybet.py then falls back to 1xBet
     """
-    from sportybet import generate_booking_code as sportybet_code
+    from sportybet import post_booking, generate_booking_code as sportybet_code
     from onexbet import generate_booking_code as onexbet_code
+
+    # ── Mode A: direct selections with real SportyBet IDs ─────────────────
+    direct_selections = body.get("selections", [])
+    if direct_selections:
+        code = await post_booking(direct_selections)
+        matched = [
+            {"game": f"{s.get('homeTeamName','?')} vs {s.get('awayTeamName','?')}",
+             "tip":  s.get("outcomeName", ""),
+             "odds": s.get("odds", "")}
+            for s in direct_selections
+        ]
+        picks = [{"home": s.get("homeTeamName",""), "away": s.get("awayTeamName",""),
+                  "tip": s.get("outcomeName",""), "tip_code": "", "date": "", "league": ""}
+                 for s in direct_selections]
+        total_odds = None
+        try:
+            from functools import reduce
+            total_odds = round(reduce(lambda a, b: a * b,
+                [float(s.get("odds","1")) for s in direct_selections if s.get("odds")]), 2)
+        except Exception:
+            pass
+        return {"code": code, "bookie": "sportybet", "matched": matched,
+                "unmatched": [], "total_odds": total_odds, "picks": picks,
+                "error": None if code else "SportyBet did not return a code — paste the copy card instead."}
 
     predictions = body.get("predictions", [])
     if not predictions:

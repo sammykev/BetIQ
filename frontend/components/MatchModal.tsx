@@ -4,8 +4,27 @@ import { useEffect, useState } from "react";
 import { fetchMatchAnalysis, fetchExplanation } from "@/lib/api";
 import type { MatchAnalysis, Market, MatchExplanation } from "@/lib/api";
 import type { Prediction } from "@/lib/api";
-import { X, Star, BarChart2, Clock, Sparkles, ExternalLink } from "lucide-react";
+import { X, Star, BarChart2, Clock, Sparkles, ExternalLink, ShoppingCart, Loader2, Copy, Check, Ticket } from "lucide-react";
 import clsx from "clsx";
+
+const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
+
+interface SbOutcome { id: string; desc: string; odds: string; }
+interface SbMarket  { id: string; name: string; specifier: string; outcomes: SbOutcome[]; }
+interface SbEvent   { found: boolean; eventId: string; gameId: string; homeTeam: string; awayTeam: string; markets: SbMarket[]; }
+
+interface SlipItem {
+  matchId:      string;
+  marketId:     string;
+  marketName:   string;
+  specifier:    string;
+  outcomeId:    string;
+  outcomeName:  string;
+  homeTeamName: string;
+  awayTeamName: string;
+  odds:         string;
+  status:       number;
+}
 
 interface Props {
   prediction: Prediction;
@@ -122,28 +141,81 @@ function ProbBar({ prob, highlight }: { prob: number; highlight: boolean }) {
   );
 }
 
-function MarketBlock({ market, recommendedCode }: { market: Market; recommendedCode?: string }) {
+function MarketBlock({
+  market, recommendedCode, sbMarket, onSelect, selectedOutcomeId,
+}: {
+  market: Market;
+  recommendedCode?: string;
+  sbMarket?: SbMarket;
+  onSelect?: (item: Omit<SlipItem, "matchId" | "homeTeamName" | "awayTeamName">) => void;
+  selectedOutcomeId?: string;
+}) {
   const best = [...market.options].sort((a, b) => b.prob - a.prob)[0];
+
+  // Map our option labels to SportyBet outcome descs for odds lookup
+  const sbOddsFor = (optLabel: string): SbOutcome | undefined => {
+    if (!sbMarket) return undefined;
+    const label = optLabel.toLowerCase();
+    return sbMarket.outcomes.find(o => {
+      const d = o.desc.toLowerCase();
+      return d === label || d.startsWith(label.split(" ")[0]);
+    });
+  };
+
   return (
     <div className="bg-slate-100/80 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/50 rounded-xl p-4 space-y-3">
       <div className="flex items-center gap-2">
         <span className="text-base">{MARKET_ICONS[market.id] || "📌"}</span>
         <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-200">{market.name}</h3>
+        {sbMarket && <span className="ml-auto text-[10px] text-green-400 font-semibold">Live odds ✓</span>}
       </div>
+
       <div className="space-y-2">
-        {market.options.map((opt) => (
-          <div key={opt.code} className="space-y-1">
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs text-slate-700 dark:text-slate-300 truncate flex-1">{opt.label}</span>
-              {opt.code === recommendedCode && (
-                <span className="flex items-center gap-0.5 bg-green-500/20 text-green-300 text-[10px] font-bold px-1.5 py-0.5 rounded-full border border-green-500/30 shrink-0">
-                  <Star size={8} /> TOP PICK
-                </span>
+        {market.options.map((opt) => {
+          const sbOut = sbOddsFor(opt.label);
+          const isSelected = sbOut ? selectedOutcomeId === sbOut.id : false;
+          const canSelect = !!sbOut && !!onSelect;
+
+          return (
+            <div key={opt.code}
+              onClick={() => {
+                if (!canSelect || !sbMarket || !sbOut) return;
+                onSelect({ marketId: sbMarket.id, marketName: sbMarket.name,
+                           specifier: sbMarket.specifier, outcomeId: sbOut.id,
+                           outcomeName: sbOut.desc, odds: sbOut.odds, status: 0 });
+              }}
+              className={clsx(
+                "space-y-1 rounded-lg px-2 py-1.5 transition-all",
+                canSelect ? "cursor-pointer" : "",
+                isSelected
+                  ? "bg-green-500/15 border border-green-500/40 ring-1 ring-green-500/30"
+                  : canSelect ? "hover:bg-slate-200/60 dark:hover:bg-slate-700/40 border border-transparent" : ""
               )}
+            >
+              <div className="flex items-center gap-1.5">
+                <span className={clsx("text-xs truncate flex-1",
+                  isSelected ? "text-green-400 font-semibold" : "text-slate-700 dark:text-slate-300")}>
+                  {opt.label}
+                </span>
+                {sbOut && (
+                  <span className={clsx("text-xs font-black shrink-0 px-2 py-0.5 rounded-lg",
+                    isSelected
+                      ? "bg-green-500 text-black"
+                      : "bg-slate-300 dark:bg-slate-700 text-slate-800 dark:text-slate-200")}>
+                    {sbOut.odds}
+                  </span>
+                )}
+                {opt.code === recommendedCode && !isSelected && (
+                  <span className="flex items-center gap-0.5 bg-green-500/20 text-green-300 text-[10px] font-bold px-1.5 py-0.5 rounded-full border border-green-500/30 shrink-0">
+                    <Star size={8} /> TOP PICK
+                  </span>
+                )}
+                {isSelected && <span className="text-green-400 text-xs font-bold shrink-0">✓ Added</span>}
+              </div>
+              <ProbBar prob={opt.prob} highlight={opt.code === best.code} />
             </div>
-            <ProbBar prob={opt.prob} highlight={opt.code === best.code} />
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -206,6 +278,11 @@ export function MatchModal({ prediction: p, onClose }: Props) {
   const [loadingAnalysis, setLoadingAnalysis] = useState(true);
   const [error, setError] = useState(false);
   const [explanation, setExplanation] = useState<MatchExplanation | null>(null);
+  const [sbEvent, setSbEvent] = useState<SbEvent | null>(null);
+  const [slip, setSlip] = useState<SlipItem[]>([]);
+  const [generating, setGenerating] = useState(false);
+  const [bookingCode, setBookingCode] = useState<string | null>(null);
+  const [codeCopied, setCodeCopied] = useState(false);
 
   useEffect(() => {
     fetchMatchAnalysis(p.home, p.away)
@@ -213,11 +290,56 @@ export function MatchModal({ prediction: p, onClose }: Props) {
       .catch(() => setError(true))
       .finally(() => setLoadingAnalysis(false));
 
-    // Fetch AI explanation + qualitative context in parallel
     fetchExplanation(p.home, p.away)
       .then(setExplanation)
       .catch(() => setExplanation({ explanation: null, sources: [], model: null, error: "failed" }));
-  }, [p.home, p.away]);
+
+    // Fetch live SportyBet event for real odds + market IDs
+    fetch(`${API}/api/sportybet-event?home=${encodeURIComponent(p.home)}&away=${encodeURIComponent(p.away)}&date=${p.date}`)
+      .then(r => r.json())
+      .then(d => { if (d.found) setSbEvent(d); })
+      .catch(() => {});
+  }, [p.home, p.away, p.date]);
+
+  const addToSlip = (matchId: string, homeTeam: string, awayTeam: string) =>
+    (item: Omit<SlipItem, "matchId" | "homeTeamName" | "awayTeamName">) => {
+      setSlip(prev => {
+        // One selection per market — replace if same market already in slip
+        const filtered = prev.filter(s => !(s.matchId === matchId && s.marketId === item.marketId));
+        const existing = prev.find(s => s.matchId === matchId && s.marketId === item.marketId && s.outcomeId === item.outcomeId);
+        if (existing) return filtered; // deselect if same outcome clicked again
+        return [...filtered, { ...item, matchId, homeTeamName: homeTeam, awayTeamName: awayTeam }];
+      });
+      setBookingCode(null);
+    };
+
+  const generateCode = async () => {
+    if (!slip.length) return;
+    setGenerating(true);
+    setBookingCode(null);
+    try {
+      const res = await fetch(`${API}/api/booking`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ selections: slip }),
+      });
+      const data = await res.json();
+      setBookingCode(data.code || null);
+    } catch {
+      setBookingCode(null);
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const copyCode = () => {
+    if (!bookingCode) return;
+    navigator.clipboard.writeText(bookingCode);
+    setCodeCopied(true);
+    setTimeout(() => setCodeCopied(false), 2000);
+  };
+
+  const matchId = sbEvent?.eventId || "";
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -285,8 +407,8 @@ export function MatchModal({ prediction: p, onClose }: Props) {
           </div>
         </div>
 
-        {/* Body */}
-        <div className="p-5 space-y-4">
+        {/* Body — extra bottom padding when slip is open */}
+        <div className={clsx("p-5 space-y-4", slip.length > 0 && "pb-40")}>
           {loadingAnalysis && (
             <div className="space-y-3">
               {Array.from({ length: 4 }).map((_, i) => (
@@ -335,18 +457,103 @@ export function MatchModal({ prediction: p, onClose }: Props) {
               <EloGauge elo={analysis.elo} home={p.home} away={p.away} />
 
               {/* Market blocks grid */}
+              {sbEvent && (
+                <div className="flex items-center gap-2 bg-green-500/10 border border-green-500/25 rounded-xl px-3 py-2">
+                  <span className="text-green-400 text-sm">🎯</span>
+                  <p className="text-xs text-green-300 font-medium">
+                    Live SportyBet odds loaded — click any outcome to add to your bet slip
+                  </p>
+                </div>
+              )}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {analysis.markets.map((m) => (
-                  <MarketBlock
-                    key={m.id}
-                    market={m}
-                    recommendedCode={rec?.market_id === m.id ? rec.code : undefined}
-                  />
-                ))}
+                {analysis.markets.map((m) => {
+                  // Match our analysis market to SportyBet market
+                  const sbM = sbEvent?.markets.find(sb => {
+                    const sid = sb.id;
+                    const mn = sb.name.toLowerCase();
+                    if (m.id === "1x2" && sid === "1") return true;
+                    if (m.id === "btts" && sid === "29") return true;
+                    if (m.id === "double_chance" && sid === "10") return true;
+                    if (m.id === "goals_ou" && sid === "18" && sb.specifier === "total=2.5") return true;
+                    return false;
+                  });
+                  const selectedId = slip.find(s => s.marketId === sbM?.id && s.matchId === matchId)?.outcomeId;
+                  return (
+                    <MarketBlock
+                      key={m.id}
+                      market={m}
+                      recommendedCode={rec?.market_id === m.id ? rec.code : undefined}
+                      sbMarket={sbM}
+                      onSelect={sbEvent ? addToSlip(matchId, sbEvent.homeTeam, sbEvent.awayTeam) : undefined}
+                      selectedOutcomeId={selectedId}
+                    />
+                  );
+                })}
               </div>
             </>
           )}
         </div>
+
+        {/* ── Sticky Bet Slip ── */}
+        {slip.length > 0 && (
+          <div className="sticky bottom-0 bg-slate-900/95 border-t border-slate-700 backdrop-blur-md p-4 space-y-3">
+            {/* Selections */}
+            <div className="space-y-1.5 max-h-28 overflow-y-auto">
+              {slip.map((s, i) => (
+                <div key={i} className="flex items-center justify-between gap-2 text-xs">
+                  <span className="text-slate-400 truncate flex-1">
+                    {s.marketName}{s.specifier ? ` (${s.specifier})` : ""}
+                  </span>
+                  <span className="text-white font-semibold shrink-0">{s.outcomeName}</span>
+                  <span className="text-green-400 font-black shrink-0">{s.odds}</span>
+                  <button onClick={() => setSlip(prev => prev.filter((_, j) => j !== i))}
+                    className="text-slate-600 hover:text-red-400 transition-colors shrink-0 text-base leading-none ml-1">×</button>
+                </div>
+              ))}
+            </div>
+
+            {/* Combined odds + actions */}
+            <div className="flex items-center gap-3">
+              <div className="flex-1">
+                <p className="text-[10px] text-slate-500">Combined odds</p>
+                <p className="text-lg font-black text-green-400">
+                  {slip.reduce((acc, s) => {
+                    const o = parseFloat(s.odds);
+                    return isNaN(o) ? acc : +(acc * o).toFixed(2);
+                  }, 1)}x
+                </p>
+              </div>
+
+              <button onClick={() => { setSlip([]); setBookingCode(null); }}
+                className="text-xs text-slate-500 hover:text-slate-300 transition-colors px-2">
+                Clear
+              </button>
+
+              {bookingCode ? (
+                <div className="flex items-center gap-2 bg-green-500/15 border border-green-500/30 rounded-xl px-3 py-2">
+                  <span className="text-white font-black tracking-widest text-sm font-mono">{bookingCode}</span>
+                  <button onClick={copyCode}
+                    className="flex items-center gap-1 bg-green-500 hover:bg-green-400 text-black text-xs font-bold px-2.5 py-1.5 rounded-lg transition-colors">
+                    {codeCopied ? <Check size={11} /> : <Copy size={11} />}
+                    {codeCopied ? "Copied!" : "Copy"}
+                  </button>
+                </div>
+              ) : (
+                <button onClick={generateCode} disabled={generating}
+                  className="flex items-center gap-2 bg-green-500 hover:bg-green-400 disabled:opacity-60 text-black font-bold text-sm px-4 py-2.5 rounded-xl transition-colors">
+                  {generating ? <Loader2 size={14} className="animate-spin" /> : <Ticket size={14} />}
+                  {generating ? "Generating…" : `Get Code (${slip.length})`}
+                </button>
+              )}
+            </div>
+
+            <p className="text-[10px] text-slate-600 text-center">
+              {bookingCode
+                ? "Paste this code on SportyBet to load your bet slip"
+                : "Uses live SportyBet market IDs for accurate booking codes"}
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );
