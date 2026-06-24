@@ -61,47 +61,77 @@ async def _get(client: httpx.AsyncClient, url: str) -> Optional[Any]:
     return None
 
 
+TOURNAMENT_IDS = [
+    "sr:tournament:17",   # Premier League
+    "sr:tournament:23",   # Serie A
+    "sr:tournament:35",   # Bundesliga
+    "sr:tournament:8",    # La Liga
+    "sr:tournament:34",   # Ligue 1
+    "sr:tournament:7",    # Champions League
+    "sr:tournament:679",  # Europa League
+    "sr:tournament:238",  # Primeira Liga
+    "sr:tournament:37",   # Eredivisie
+    "sr:tournament:44",   # Bundesliga 2
+    "sr:tournament:18",   # FA Cup
+    "sr:tournament:203",  # Algerian Ligue Pro
+]
+
+
 async def fetch_events_for_date(date_str: str) -> List[Dict]:
     """
-    Fetch all football events listed on SportyBet for a given date (YYYY-MM-DD).
-    Tries two known endpoint patterns and returns the first successful result.
+    Fetch all football events from SportyBet for a given date (YYYY-MM-DD).
+    Uses pcEvents (POST) which is what their website actually calls, then falls
+    back to getScheduled GET endpoints.
     """
     dt = datetime.strptime(date_str, "%Y-%m-%d")
     start_ms = int(dt.replace(hour=0, minute=0, second=0).timestamp() * 1000)
     end_ms   = int(dt.replace(hour=23, minute=59, second=59).timestamp() * 1000)
     ts = start_ms
 
-    candidates = [
-        # Pattern 1 — scheduled endpoint
-        (
-            f"{BASE}/factsCenter/getScheduled"
-            f"?sportId=sr%3Asport%3A1&startTime={start_ms}&endTime={end_ms}"
-            f"&marketId={MARKET_1X2}&page=1&pageSize=200&_t={ts}"
-        ),
-        # Pattern 2 — tournament matches endpoint
-        (
-            f"{BASE}/factsCenter/getTournamentScheduled"
-            f"?sportId=sr%3Asport%3A1&startTime={start_ms}&endTime={end_ms}"
-            f"&marketId={MARKET_1X2}&pageSize=200&_t={ts}"
-        ),
-    ]
+    async with httpx.AsyncClient(timeout=25, follow_redirects=True) as client:
 
-    async with httpx.AsyncClient() as client:
-        for url in candidates:
+        # ── Strategy 1: pcEvents POST (what the website actually uses) ────────
+        for tid in TOURNAMENT_IDS:
+            try:
+                url = f"{BASE}/factsCenter/pcEvents"
+                r = await client.post(url, json={
+                    "tournamentId": tid,
+                    "sportId": "sr:sport:1",
+                    "marketId": "1",
+                    "startTime": start_ms,
+                    "endTime": end_ms,
+                }, headers={**_HEADERS, "Content-Type": "application/json"})
+                if r.status_code == 200:
+                    data = r.json()
+                    if data.get("bizCode") == 10000:
+                        raw = data.get("data") or []
+                        # pcEvents returns [{id: tournament_id, events: [...]}]
+                        all_evs = []
+                        for t in (raw if isinstance(raw, list) else []):
+                            all_evs.extend(t.get("events") or [])
+                        if all_evs:
+                            print(f"[SportyBet] pcEvents {tid}: {len(all_evs)} events")
+                            return all_evs
+            except Exception as e:
+                print(f"[SportyBet] pcEvents {tid} error: {e}")
+            await asyncio.sleep(0.2)
+
+        # ── Strategy 2: getScheduled GET (fallback) ────────────────────────────
+        for url in [
+            f"{BASE}/factsCenter/getScheduled?sportId=sr%3Asport%3A1&startTime={start_ms}&endTime={end_ms}&marketId=1&page=1&pageSize=300&_t={ts}",
+            f"{BASE}/factsCenter/getScheduled?sportId=sr%3Asport%3A1&startTime={start_ms}&endTime={end_ms}&marketId={MARKET_1X2}&page=1&pageSize=300&_t={ts}",
+        ]:
             data = await _get(client, url)
             if not data:
                 continue
-
-            # unwrap common response envelopes
             inner = data.get("data") or data
             events = (
-                inner.get("events") or
-                inner.get("matches") or
+                inner.get("events") or inner.get("matches") or
                 inner.get("items") or
                 (inner if isinstance(inner, list) else [])
             )
             if events:
-                print(f"[SportyBet] {len(events)} events for {date_str}")
+                print(f"[SportyBet] getScheduled: {len(events)} events for {date_str}")
                 return events
 
     print(f"[SportyBet] No events found for {date_str}")
