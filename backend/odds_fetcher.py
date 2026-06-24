@@ -96,7 +96,7 @@ async def _fetch_by_date(date_str: str) -> List[Dict]:
         for url in urls:
             try:
                 r = await client.get(url, headers=_HEADERS)
-                if r.status_code != 200 or not r.text.strip():
+                if r.status_code not in (200, 202) or not r.text.strip():
                     print(f"[Odds] getScheduled {r.status_code} for {date_str}")
                     continue
                 data = r.json()

@@ -53,9 +53,9 @@ def _sim(a: str, b: str) -> float:
 async def _get(client: httpx.AsyncClient, url: str) -> Optional[Any]:
     try:
         r = await client.get(url, headers=_HEADERS, timeout=20, follow_redirects=True)
-        if r.status_code == 200:
+        if r.status_code in (200, 202) and r.text.strip():
             return r.json()
-        print(f"[SportyBet] GET {r.status_code}: {url}")
+        print(f"[SportyBet] GET {r.status_code}: {url[:120]}")
     except Exception as e:
         print(f"[SportyBet] GET error: {e}")
     return None
