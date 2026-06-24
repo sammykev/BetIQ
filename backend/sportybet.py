@@ -62,6 +62,7 @@ async def _get(client: httpx.AsyncClient, url: str) -> Optional[Any]:
 
 
 TOURNAMENT_IDS = [
+    # Club leagues
     "sr:tournament:17",   # Premier League
     "sr:tournament:23",   # Serie A
     "sr:tournament:35",   # Bundesliga
@@ -72,8 +73,16 @@ TOURNAMENT_IDS = [
     "sr:tournament:238",  # Primeira Liga
     "sr:tournament:37",   # Eredivisie
     "sr:tournament:44",   # Bundesliga 2
-    "sr:tournament:18",   # FA Cup
+    # International competitions
+    "sr:tournament:1091", # UEFA Nations League A
+    "sr:tournament:1090", # UEFA Nations League B
+    "sr:tournament:133",  # Copa America
+    "sr:tournament:1049", # AFCON
+    "sr:tournament:42",   # FIFA World Cup Qualifiers Africa
+    "sr:tournament:143",  # FIFA World Cup Qualifiers Europe
     "sr:tournament:203",  # Algerian Ligue Pro
+    "sr:tournament:68",   # Africa Cup of Nations Qualifiers
+    "sr:tournament:191",  # International Friendlies
 ]
 
 
@@ -90,36 +99,12 @@ async def fetch_events_for_date(date_str: str) -> List[Dict]:
 
     async with httpx.AsyncClient(timeout=25, follow_redirects=True) as client:
 
-        # ── Strategy 1: pcEvents POST (what the website actually uses) ────────
-        for tid in TOURNAMENT_IDS:
-            try:
-                url = f"{BASE}/factsCenter/pcEvents"
-                r = await client.post(url, json={
-                    "tournamentId": tid,
-                    "sportId": "sr:sport:1",
-                    "marketId": "1",
-                    "startTime": start_ms,
-                    "endTime": end_ms,
-                }, headers={**_HEADERS, "Content-Type": "application/json"})
-                if r.status_code == 200:
-                    data = r.json()
-                    if data.get("bizCode") == 10000:
-                        raw = data.get("data") or []
-                        # pcEvents returns [{id: tournament_id, events: [...]}]
-                        all_evs = []
-                        for t in (raw if isinstance(raw, list) else []):
-                            all_evs.extend(t.get("events") or [])
-                        if all_evs:
-                            print(f"[SportyBet] pcEvents {tid}: {len(all_evs)} events")
-                            return all_evs
-            except Exception as e:
-                print(f"[SportyBet] pcEvents {tid} error: {e}")
-            await asyncio.sleep(0.2)
-
-        # ── Strategy 2: getScheduled GET (fallback) ────────────────────────────
+        # ── Strategy 1: getScheduled GET — date-based, covers ALL tournaments ──
+        # This is the best approach for value bets since it's not tournament-specific
         for url in [
-            f"{BASE}/factsCenter/getScheduled?sportId=sr%3Asport%3A1&startTime={start_ms}&endTime={end_ms}&marketId=1&page=1&pageSize=300&_t={ts}",
-            f"{BASE}/factsCenter/getScheduled?sportId=sr%3Asport%3A1&startTime={start_ms}&endTime={end_ms}&marketId={MARKET_1X2}&page=1&pageSize=300&_t={ts}",
+            f"{BASE}/factsCenter/getScheduled?sportId=sr%3Asport%3A1&startTime={start_ms}&endTime={end_ms}&marketId=1&page=1&pageSize=500&_t={ts}",
+            f"{BASE}/factsCenter/getScheduled?sportId=sr%3Asport%3A1&startTime={start_ms}&endTime={end_ms}&marketId={MARKET_1X2}&page=1&pageSize=500&_t={ts}",
+            f"{BASE}/factsCenter/getScheduled?sportId=sr%3Asport%3A1&startTime={start_ms}&endTime={end_ms}&page=1&pageSize=500&_t={ts}",
         ]:
             data = await _get(client, url)
             if not data:
@@ -133,6 +118,32 @@ async def fetch_events_for_date(date_str: str) -> List[Dict]:
             if events:
                 print(f"[SportyBet] getScheduled: {len(events)} events for {date_str}")
                 return events
+
+        # ── Strategy 2: pcEvents POST per tournament — server ignores date params,
+        # so collect ALL events then filter client-side by estimateStartTime
+        all_evs: List[Dict] = []
+        for tid in TOURNAMENT_IDS:
+            try:
+                r = await client.post(f"{BASE}/factsCenter/pcEvents", json={
+                    "tournamentId": tid,
+                    "sportId": "sr:sport:1",
+                    "marketId": "1",
+                }, headers={**_HEADERS, "Content-Type": "application/json"})
+                if r.status_code == 200:
+                    data = r.json()
+                    if data.get("bizCode") == 10000:
+                        for t in (data.get("data") or []):
+                            for ev in (t.get("events") or []):
+                                ev_ts = ev.get("estimateStartTime", 0)
+                                if start_ms <= int(ev_ts) <= end_ms:
+                                    all_evs.append(ev)
+            except Exception as e:
+                print(f"[SportyBet] pcEvents {tid}: {e}")
+            await asyncio.sleep(0.1)
+
+        if all_evs:
+            print(f"[SportyBet] pcEvents: {len(all_evs)} events for {date_str}")
+            return all_evs
 
     print(f"[SportyBet] No events found for {date_str}")
     return []

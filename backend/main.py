@@ -1299,22 +1299,31 @@ async def use_referral(body: Dict[str, Any]):
 @app.get("/api/debug/odds-sample")
 async def debug_odds_sample():
     """
-    Returns raw SportyBet event structure for today so we can inspect
-    the exact JSON shape and fix odds extraction. Remove after debugging.
+    Returns raw SportyBet events for the first prediction date we have cached,
+    so we can verify the odds extraction is working.
     """
     from sportybet import fetch_events_for_date
     from datetime import date
-    today = date.today().isoformat()
-    events = await fetch_events_for_date(today)
-    if not events:
-        return {"error": "No events returned", "date": today}
-    first = events[0]
-    # Return first event with full structure
+
+    # Use first prediction date if available, otherwise today
+    dates = sorted({p.get("date","") for p in (_predictions_cache or []) if p.get("date")})
+    target = dates[0] if dates else date.today().isoformat()
+
+    results = {}
+    for d in (dates[:5] if dates else [target]):
+        evs = await fetch_events_for_date(d)
+        results[d] = len(evs)
+
+    # Also clear value bets cache so next request recomputes
+    r = _get_redis()
+    if r:
+        try: r.delete("betiq:value_bets")
+        except: pass
+
     return {
-        "date": today,
-        "total_events": len(events),
-        "first_event_keys": list(first.keys()),
-        "first_event": first,   # full raw event
+        "all_prediction_dates": dates[:10],
+        "events_per_date": results,
+        "note": "Value bets Redis cache cleared — refresh /api/value-bets now",
     }
 
 
