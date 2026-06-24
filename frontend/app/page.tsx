@@ -9,6 +9,7 @@ import type { Prediction, League } from "@/lib/api";
 import { RefreshCw, TrendingUp, Shield, Info, AlertTriangle, CalendarDays, Percent } from "lucide-react";
 import { ChatBot } from "@/components/ChatBot";
 import { CalendarView } from "@/components/CalendarView";
+import { ValueBets } from "@/components/ValueBets";
 import { UserMenu } from "@/components/UserMenu";
 import { PaywallModal } from "@/components/PaywallModal";
 import { AnnouncementBanner } from "@/components/AnnouncementBanner";
@@ -137,6 +138,7 @@ export default function HomePage() {
   const [selectedMatch, setSelectedMatch] = useState<Prediction | null>(null);
   const [showCalendar, setShowCalendar] = useState(false);
   const [bankersOnly, setBankersOnly] = useState(false);
+  const [activeView, setActiveView] = useState<"picks" | "value">("picks");
   const [showPaywall, setShowPaywall] = useState(false);
   const [savedKeys, setSavedKeys] = useState<Set<string>>(new Set());
 
@@ -341,6 +343,32 @@ export default function HomePage() {
           ))}
         </div>
 
+        {/* View toggle: Picks / Value Bets */}
+        <div className="flex gap-2 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-1 w-fit">
+          <button
+            onClick={() => setActiveView("picks")}
+            className={clsx(
+              "flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-semibold transition-all",
+              activeView === "picks"
+                ? "bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm"
+                : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+            )}
+          >
+            <Shield size={13} /> Picks
+          </button>
+          <button
+            onClick={() => setActiveView("value")}
+            className={clsx(
+              "flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-semibold transition-all",
+              activeView === "value"
+                ? "bg-white dark:bg-slate-800 text-green-400 shadow-sm"
+                : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+            )}
+          >
+            <TrendingUp size={13} /> Value Bets
+          </button>
+        </div>
+
         {/* Disclaimer */}
         <div className="flex items-start gap-2.5 bg-yellow-500/5 border border-yellow-500/20 rounded-xl px-4 py-3">
           <AlertTriangle size={14} className="text-yellow-500 mt-0.5 shrink-0" />
@@ -405,8 +433,16 @@ export default function HomePage() {
           </div>
         </div>
 
-        {/* Content */}
-        {loading ? (
+        {/* Value Bets view */}
+        {activeView === "value" && (
+          <ValueBets onMatchClick={(home, away) => {
+            const found = allPredictions.find(p => p.home === home && p.away === away);
+            if (found) setSelectedMatch(found);
+          }} />
+        )}
+
+        {/* Picks view */}
+        {activeView === "picks" && (loading ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {Array.from({ length: 8 }).map((_, i) => (
               <div key={i} className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-4 animate-pulse">
@@ -456,7 +492,7 @@ export default function HomePage() {
               />
             ))}
           </div>
-        )}
+        ))}
       </main>
 
       {/* AI Betting Assistant — premium only */}
