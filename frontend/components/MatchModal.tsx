@@ -197,12 +197,12 @@ function MarketBlock({
                   isSelected ? "text-green-400 font-semibold" : "text-slate-700 dark:text-slate-300")}>
                   {opt.label}
                 </span>
-                {sbOut && (
+                {(sbOut?.odds || (opt as any).odds) && (
                   <span className={clsx("text-xs font-black shrink-0 px-2 py-0.5 rounded-lg",
                     isSelected
                       ? "bg-green-500 text-black"
                       : "bg-slate-300 dark:bg-slate-700 text-slate-800 dark:text-slate-200")}>
-                    {sbOut.odds}
+                    {sbOut?.odds || (opt as any).odds}
                   </span>
                 )}
                 {opt.code === recommendedCode && !isSelected && (

@@ -282,3 +282,185 @@ async def fetch_table_tennis_predictions() -> List[Dict]:
             results.append(p)
     print(f"[Sports] Table Tennis: {len(results)} predictions")
     return sorted(results, key=lambda x: x["date"] + x["time"])
+
+
+# ── Sport-specific market configs ─────────────────────────────────────────
+
+SPORT_MARKETS = {
+    "basketball": {
+        "markets":    "h2h,spreads,totals",
+        "market_defs": {
+            "h2h":     {"name": "Moneyline",        "icon": "🏀"},
+            "spreads":  {"name": "Point Spread",     "icon": "⚖️"},
+            "totals":   {"name": "Total Points",     "icon": "📊"},
+        },
+    },
+    "tennis": {
+        "markets":    "h2h,alternate_spreads",
+        "market_defs": {
+            "h2h":              {"name": "Match Winner",   "icon": "🎾"},
+            "alternate_spreads":{"name": "Game Handicap",  "icon": "⚖️"},
+            "totals":           {"name": "Total Games",    "icon": "📊"},
+        },
+    },
+    "table_tennis": {
+        "markets":    "h2h,totals",
+        "market_defs": {
+            "h2h":   {"name": "Match Winner",  "icon": "🏓"},
+            "totals":{"name": "Total Games",   "icon": "📊"},
+        },
+    },
+}
+
+
+async def fetch_event_detail(sport: str, home: str, away: str, date: str) -> Optional[Dict]:
+    """
+    Fetch full market detail for a specific match from The Odds API.
+    Returns structured market data for the sport modal.
+    """
+    if not ODDS_API_KEY:
+        return None
+
+    from difflib import SequenceMatcher
+
+    def sim(a: str, b: str) -> float:
+        return SequenceMatcher(None, a.lower().strip(), b.lower().strip()).ratio()
+
+    # Determine which sport keys to search
+    if sport == "basketball":
+        sport_keys = [k for k, _, _ in BASKETBALL_SPORTS]
+        market_str = "h2h,spreads,totals"
+    elif sport == "tennis":
+        active = await _get_active_sports()
+        sport_keys = [k for k in active if any(k.startswith(kw) for kw in TENNIS_KEYWORDS)]
+        market_str = "h2h,totals,alternate_spreads"
+    elif sport == "table_tennis":
+        sport_keys = [TABLE_TENNIS_KEY]
+        market_str = "h2h,totals"
+    else:
+        return None
+
+    for sport_key in sport_keys:
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                r = await client.get(
+                    f"{ODDS_BASE}/sports/{sport_key}/odds/",
+                    params={
+                        "apiKey": ODDS_API_KEY,
+                        "regions": "eu",
+                        "markets": market_str,
+                        "oddsFormat": "decimal",
+                    },
+                )
+                if r.status_code != 200:
+                    continue
+
+                events = r.json()
+                # Find matching event by team names + date
+                best, best_score = None, 0.0
+                for ev in events:
+                    h = ev.get("home_team", "")
+                    a = ev.get("away_team", "")
+                    ev_date, _ = _event_date(ev.get("commence_time", ""))
+                    if ev_date != date:
+                        continue
+                    score = (sim(home, h) + sim(away, a)) / 2
+                    if score > best_score:
+                        best_score = score
+                        best = ev
+
+                if best and best_score >= 0.45:
+                    return _structure_event_detail(best, sport, sport_key)
+
+            await asyncio.sleep(0.2)
+        except Exception as e:
+            print(f"[Sports Detail] {sport_key} error: {e}")
+
+    return None
+
+
+def _structure_event_detail(event: Dict, sport: str, sport_key: str) -> Dict:
+    """Convert a raw Odds API event into structured market data for the modal."""
+    home = event.get("home_team", "")
+    away = event.get("away_team", "")
+    date_str, time_str = _event_date(event.get("commence_time", ""))
+
+    market_defs = SPORT_MARKETS.get(sport, {}).get("market_defs", {})
+
+    # Aggregate markets across bookmakers — best odds per outcome per market
+    market_best: Dict[str, Dict[str, Dict]] = {}  # market_key → {outcome_name → {price, line}}
+
+    for bookie in (event.get("bookmakers") or []):
+        for market in (bookie.get("markets") or []):
+            mk = market.get("key", "")
+            if mk not in market_best:
+                market_best[mk] = {}
+            for o in (market.get("outcomes") or []):
+                name  = o.get("name", "")
+                price = float(o.get("price") or 0)
+                point = o.get("point")  # spread/totals line
+                if price > 1:
+                    existing = market_best[mk].get(name, {})
+                    if price > existing.get("price", 0):
+                        market_best[mk][name] = {"price": price, "point": point}
+
+    # Build structured markets for the modal
+    structured_markets = []
+    for mk, outcomes_raw in market_best.items():
+        defn = market_defs.get(mk, {"name": mk.replace("_", " ").title(), "icon": "📌"})
+        outcomes = []
+        total_implied = sum(1/v["price"] for v in outcomes_raw.values() if v["price"] > 1)
+
+        for name, data in outcomes_raw.items():
+            price = data["price"]
+            point = data.get("point")
+            implied = (1 / price) / total_implied if total_implied > 0 else 0
+            label = name
+            if point is not None:
+                sign = "+" if point > 0 else ""
+                label = f"{name} ({sign}{point})"
+            outcomes.append({
+                "name":    name,
+                "label":   label,
+                "odds":    round(price, 2),
+                "implied": round(implied, 3),
+                "point":   point,
+            })
+
+        # Sort: for h2h home first; for totals Over first; for spreads by name
+        if mk == "h2h":
+            outcomes.sort(key=lambda o: (0 if o["name"] == home else 1))
+        elif mk == "totals":
+            outcomes.sort(key=lambda o: (0 if "over" in o["name"].lower() else 1))
+        else:
+            outcomes.sort(key=lambda o: o["name"])
+
+        if outcomes:
+            structured_markets.append({
+                "id":       mk,
+                "name":     defn["name"],
+                "icon":     defn["icon"],
+                "outcomes": outcomes,
+            })
+
+    # Sort markets: h2h first, then totals, then spreads
+    order = {"h2h": 0, "totals": 1, "spreads": 2}
+    structured_markets.sort(key=lambda m: order.get(m["id"], 9))
+
+    # Compute best pick from h2h
+    h2h_outs = next((m["outcomes"] for m in structured_markets if m["id"] == "h2h"), [])
+    best_pick = None
+    if h2h_outs:
+        best = max(h2h_outs, key=lambda o: o["implied"])
+        best_pick = {"label": best["label"], "odds": best["odds"], "confidence": best["implied"]}
+
+    return {
+        "home":       home,
+        "away":       away,
+        "date":       date_str,
+        "time":       time_str,
+        "sport":      sport,
+        "sport_key":  sport_key,
+        "markets":    structured_markets,
+        "best_pick":  best_pick,
+    }

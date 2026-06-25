@@ -645,6 +645,43 @@ async def get_match_analysis(home: str, away: str):
         result["h2h_blended"] = True
         result["h2h_matches_used"] = n
 
+    # Inject live SportyBet odds into each market option (best effort)
+    try:
+        from sportybet import fetch_events_for_date, find_event
+        from datetime import date as _date
+        today = _date.today().isoformat()
+        sb_events = await fetch_events_for_date(today)
+        sb_event  = find_event(home, away, sb_events) if sb_events else None
+        if sb_event:
+            # Build a lookup: market_id -> outcome_desc -> odds string
+            odds_lookup: dict = {}
+            for m in (sb_event.get("markets") or []):
+                mid = str(m.get("id",""))
+                for o in (m.get("outcomes") or []):
+                    key2 = f"{mid}:{(o.get('desc') or '').lower()}"
+                    odds_lookup[key2] = str(o.get("odds",""))
+
+            # Map our market codes to SportyBet market/outcome IDs
+            code_to_sb = {
+                # 1X2
+                "1": ("1", "home"), "X": ("1", "draw"), "2": ("1", "away"),
+                # BTTS
+                "yes": ("29", "yes"), "no": ("29", "no"),
+                # Double chance
+                "1X": ("10", "home or draw"), "12": ("10", "home or away"), "X2": ("10", "draw or away"),
+            }
+            for mkt in result["markets"]:
+                for opt in mkt.get("options", []):
+                    sb_info = code_to_sb.get(opt.get("code","").upper()) or \
+                              code_to_sb.get(opt.get("code",""))
+                    if sb_info:
+                        sb_odds = odds_lookup.get(f"{sb_info[0]}:{sb_info[1]}")
+                        if sb_odds:
+                            opt["odds"] = sb_odds
+                            opt["bookie"] = "sportybet"
+    except Exception:
+        pass  # odds injection is best-effort, never block analysis
+
     return result
 
 
@@ -1310,6 +1347,37 @@ async def get_sport_predictions(sport: str):
             pass
 
     return data
+
+
+@app.get("/api/sports/{sport}/event")
+async def get_sport_event_detail(sport: str, home: str, away: str, date: str):
+    """
+    Full market detail for a specific basketball/tennis/table-tennis match.
+    Used by the sport analysis modal.
+    """
+    from sports_fetcher import fetch_event_detail
+    import json as _json
+
+    cache_key = f"betiq:sport_event:{sport}:{home}:{away}:{date}"
+    r = _get_redis()
+    if r:
+        try:
+            cached = r.get(cache_key)
+            if cached:
+                return _json.loads(cached)
+        except Exception:
+            pass
+
+    detail = await fetch_event_detail(sport, home, away, date)
+    if not detail:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    if r:
+        try:
+            r.setex(cache_key, 3600, _json.dumps(detail))
+        except Exception:
+            pass
+    return detail
 
 
 @app.get("/api/value-bets")

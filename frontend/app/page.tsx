@@ -11,6 +11,7 @@ import { ChatBot } from "@/components/ChatBot";
 import { CalendarView } from "@/components/CalendarView";
 import { ValueBets } from "@/components/ValueBets";
 import { SportCard, type SportPrediction } from "@/components/SportCard";
+import { SportModal } from "@/components/SportModal";
 import { UserMenu } from "@/components/UserMenu";
 import { PaywallModal } from "@/components/PaywallModal";
 import { AnnouncementBanner } from "@/components/AnnouncementBanner";
@@ -143,6 +144,7 @@ export default function HomePage() {
   const [activeSport, setActiveSport] = useState<"football" | "basketball" | "tennis" | "table-tennis">("football");
   const [sportPreds, setSportPreds] = useState<SportPrediction[]>([]);
   const [sportLoading, setSportLoading] = useState(false);
+  const [selectedSportMatch, setSelectedSportMatch] = useState<SportPrediction | null>(null);
   const [showPaywall, setShowPaywall] = useState(false);
   const [savedKeys, setSavedKeys] = useState<Set<string>>(new Set());
 
@@ -401,7 +403,7 @@ export default function HomePage() {
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                 {sportPreds.map((p, i) => (
-                  <SportCard key={i} prediction={p} onClick={() => {}} />
+                  <SportCard key={i} prediction={p} onClick={() => setSelectedSportMatch(p)} />
                 ))}
               </div>
             )}
@@ -561,6 +563,11 @@ export default function HomePage() {
         ))}
         </>}
       </main>
+
+      {/* Sport analysis modal */}
+      {selectedSportMatch && (
+        <SportModal prediction={selectedSportMatch} onClose={() => setSelectedSportMatch(null)} />
+      )}
 
       {/* AI Betting Assistant — premium only */}
       {isPremium && <ChatBot predictions={allPredictions} />}
