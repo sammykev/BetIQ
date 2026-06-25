@@ -987,6 +987,89 @@ async def upload_basketball_csv(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/admin/upload/tennis-csv")
+async def upload_tennis_csv(request: Request):
+    """
+    Upload Jeff Sackmann ATP/WTA CSV files to train the tennis Elo model.
+    Can upload multiple files — all go into data/tennis/ folder.
+    Protected by ADMIN_SECRET header.
+    Form fields: file (required), tour (atp|wta, optional)
+    """
+    if request.headers.get("x-admin-secret") != ADMIN_SECRET:
+        raise HTTPException(status_code=403, detail="Admin access only")
+
+    form = await request.form()
+    upload = form.get("file")
+    if not upload:
+        raise HTTPException(status_code=400, detail="No file provided")
+
+    tennis_dir = os.path.join(DATA_DIR, "tennis")
+    os.makedirs(tennis_dir, exist_ok=True)
+
+    filename = getattr(upload, "filename", None) or "tennis_matches.csv"
+    dest = os.path.join(tennis_dir, filename)
+    try:
+        content = await upload.read()
+        with open(dest, "wb") as f:
+            f.write(content)
+        size_mb = len(content) / (1024 * 1024)
+
+        # Retrain with all CSVs in the tennis folder
+        from tennis_predictor import train_tennis_elo
+        import tennis_predictor as tp_mod
+        elo = train_tennis_elo(tennis_dir)
+        tp_mod._tennis_elo = elo
+        players = len(elo.ratings) if elo else 0
+
+        return {
+            "ok": True,
+            "file": filename,
+            "size_mb": round(size_mb, 2),
+            "players_trained": players,
+            "message": f"Tennis Elo trained on {players} players. Predictions will now use this model.",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/admin/model-status")
+async def model_status():
+    """Return status of all trained models."""
+    status: Dict[str, Any] = {}
+
+    # Football
+    status["football"] = {
+        "ready": _predictor is not None,
+        "predictions": len(_predictions_cache),
+    }
+
+    # Basketball
+    try:
+        from basketball_predictor import get_basketball_elo
+        belo = get_basketball_elo()
+        status["basketball"] = {
+            "ready": belo is not None,
+            "teams": len(belo.ratings) if belo else 0,
+            "games": sum(belo.games_played.values()) // 2 if belo else 0,
+        }
+    except Exception:
+        status["basketball"] = {"ready": False, "teams": 0}
+
+    # Tennis
+    try:
+        from tennis_predictor import get_tennis_elo
+        telo = get_tennis_elo()
+        status["tennis"] = {
+            "ready": telo is not None,
+            "players": len(telo.ratings) if telo else 0,
+            "matches": sum(telo.matches.values()) // 2 if telo else 0,
+        }
+    except Exception:
+        status["tennis"] = {"ready": False, "players": 0}
+
+    return status
+
+
 @app.get("/api/debug/calendar-status")
 async def debug_calendar_status():
     """Quick diagnostic: shows what the calendar will return and what's in cache."""
