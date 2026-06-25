@@ -94,6 +94,46 @@ def _save_h2h_cache():
 def _h2h_cache_key(home: str, away: str) -> str:
     return f"{home.lower().strip()}__vs__{away.lower().strip()}"
 
+
+def _predictor_form_summary(team: str) -> Dict:
+    """
+    Return the current rolling form for a team from the live predictor.
+    This updates every 3 hours via _fetch_and_save_results().
+    Source: football-data.org results API + training CSVs.
+    """
+    if _predictor is None:
+        return {}
+    stats = _predictor.team_stats.get(team, {})
+    if not stats or not stats.get("pts"):
+        return {"available": False}
+
+    pts  = stats.get("pts", [])[-10:]   # last 10 games
+    gf   = stats.get("gf",  [])[-10:]
+    ga   = stats.get("ga",  [])[-10:]
+    n    = len(pts)
+    if n == 0:
+        return {"available": False}
+
+    wins   = sum(1 for p in pts if p == 3)
+    draws  = sum(1 for p in pts if p == 1)
+    losses = sum(1 for p in pts if p == 0)
+    form_str = ""
+    for p in pts[-5:]:
+        form_str += "W" if p == 3 else ("D" if p == 1 else "L")
+
+    return {
+        "available":     True,
+        "games":         n,
+        "form":          form_str,                         # e.g. "WWDLW"
+        "wins":          wins,
+        "draws":         draws,
+        "losses":        losses,
+        "goals_scored":  round(sum(gf) / n, 1) if gf else 0,
+        "goals_conceded":round(sum(ga) / n, 1) if ga else 0,
+        "elo":           round(_predictor.elo.get(team)),
+        "data_source":   "football-data.org API (updated every 3h) + training CSVs",
+    }
+
 def _load_predictions_cache():
     global _predictions_cache, _last_updated
     # 1. Try Redis (survives Render deploys)
@@ -699,14 +739,126 @@ def _parse_csv_h2h(home: str, away: str, limit: int = 10) -> Dict:
     }
 
 
+async def _fetch_live_odds(home: str, away: str, date_str: str = "") -> Dict:
+    """
+    Fetch truly live odds from The Odds API at request time.
+    Called when a match modal opens — not from cache.
+    Returns {home_odds, draw_odds, away_odds, btts_yes, btts_no, bookie}.
+    """
+    api_key = os.getenv("ODDS_API_KEY", "")
+    if not api_key:
+        return {}
+
+    from difflib import SequenceMatcher
+    def sim(a, b): return SequenceMatcher(None, a.lower(), b.lower()).ratio()
+
+    SPORT_KEYS = [
+        "soccer_epl", "soccer_italy_serie_a", "soccer_germany_bundesliga",
+        "soccer_spain_la_liga", "soccer_france_ligue_one",
+        "soccer_uefa_champs_league", "soccer_uefa_europa_league",
+        "soccer_portugal_primeira_liga", "soccer_netherlands_eredivisie",
+        "soccer_england_efl_champ", "soccer_germany_bundesliga2",
+        "soccer_fifa_world_cup", "soccer_africa_cup_of_nations",
+        "soccer_uefa_nations_league", "soccer_conmebol_copa_america",
+    ]
+
+    try:
+        import httpx as _hx
+        async with _hx.AsyncClient(timeout=10) as client:
+            for sport_key in SPORT_KEYS:
+                r = await client.get(
+                    f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/",
+                    params={"apiKey": api_key, "regions": "eu",
+                            "markets": "h2h,btts", "oddsFormat": "decimal"},
+                )
+                if r.status_code != 200:
+                    continue
+                for ev in r.json():
+                    h = ev.get("home_team","")
+                    a = ev.get("away_team","")
+                    if (sim(home, h) + sim(away, a)) / 2 < 0.55:
+                        continue
+                    # Found the match — extract best odds
+                    best: Dict[str, float] = {}
+                    btts: Dict[str, float] = {}
+                    for bk in (ev.get("bookmakers") or []):
+                        for mkt in (bk.get("markets") or []):
+                            if mkt["key"] == "h2h":
+                                for o in mkt.get("outcomes",[]):
+                                    n = o["name"]; p = float(o.get("price",0))
+                                    if n == h:    best["1"] = max(best.get("1",0), p)
+                                    elif n == a:  best["2"] = max(best.get("2",0), p)
+                                    else:         best["X"] = max(best.get("X",0), p)
+                            elif mkt["key"] == "btts":
+                                for o in mkt.get("outcomes",[]):
+                                    if o["name"].lower() == "yes":
+                                        btts["yes"] = max(btts.get("yes",0), float(o.get("price",0)))
+                                    else:
+                                        btts["no"]  = max(btts.get("no",0),  float(o.get("price",0)))
+                    if best:
+                        print(f"[LiveOdds] {home} vs {away}: 1={best.get('1')} X={best.get('X')} 2={best.get('2')}")
+                        return {**best, **btts, "bookie": "market (live)"}
+    except Exception as e:
+        print(f"[LiveOdds] fetch error: {e}")
+    return {}
+
+
 @app.get("/api/analysis")
 async def get_match_analysis(home: str, away: str):
     if _predictor is None:
         raise HTTPException(status_code=503, detail="Model not ready yet")
 
-    result = _predictor.predict_match_full(home, away)
+    # Find this fixture in our predictions cache to get date + any cached odds
+    cached_fx = next(
+        (p for p in _predictions_cache
+         if p.get("home","").lower() == home.lower()
+         and p.get("away","").lower() == away.lower()),
+        {}
+    )
+    fx_date = cached_fx.get("date", "")
+
+    # Fetch LIVE odds right now from The Odds API (not from cache)
+    live_odds = await _fetch_live_odds(home, away, fx_date)
+
+    # If live odds available, re-run prediction with them for better accuracy
+    if live_odds:
+        result = _predictor.predict_match_full(
+            home, away,
+            odds_home=live_odds.get("1", 0),
+            odds_draw=live_odds.get("X", 0),
+            odds_away=live_odds.get("2", 0),
+        )
+    else:
+        result = _predictor.predict_match_full(home, away)
+
     if result is None:
         raise HTTPException(status_code=404, detail="Could not generate analysis")
+
+    # Tag live odds onto 1X2 market options
+    if live_odds:
+        for mkt in result["markets"]:
+            if mkt["id"] == "1x2":
+                for opt in mkt["options"]:
+                    if opt["code"] == "1" and live_odds.get("1"):
+                        opt["odds"] = str(live_odds["1"]); opt["bookie"] = live_odds.get("bookie","")
+                    elif opt["code"] == "X" and live_odds.get("X"):
+                        opt["odds"] = str(live_odds["X"]); opt["bookie"] = live_odds.get("bookie","")
+                    elif opt["code"] == "2" and live_odds.get("2"):
+                        opt["odds"] = str(live_odds["2"]); opt["bookie"] = live_odds.get("bookie","")
+            elif mkt["id"] == "btts":
+                for opt in mkt["options"]:
+                    if opt["code"] == "BTTS-Y" and live_odds.get("yes"):
+                        opt["odds"] = str(live_odds["yes"]); opt["bookie"] = live_odds.get("bookie","")
+                    elif opt["code"] == "BTTS-N" and live_odds.get("no"):
+                        opt["odds"] = str(live_odds["no"]); opt["bookie"] = live_odds.get("bookie","")
+        result["live_odds_fetched"] = True
+        result["odds_bookie"] = live_odds.get("bookie", "")
+
+    # Show team form stats in the response
+    result["team_form"] = {
+        "home": _predictor_form_summary(home),
+        "away": _predictor_form_summary(away),
+    }
 
     # Inject cards market if data is available
     extra = _predictor.predict_cards(home, away, _cards_df)
