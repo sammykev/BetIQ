@@ -379,6 +379,41 @@ def _load_ucl_csv() -> pd.DataFrame:
     return pd.concat(rows, ignore_index=True).sort_values("Date").reset_index(drop=True)
 
 
+INTERNATIONAL_CSV = os.path.join(DATA_DIR, "international_results.csv")
+
+def _load_international_csv() -> pd.DataFrame:
+    """
+    Load international football match results (all countries, all competitions).
+    Best source: Kaggle 'International football results from 1872'
+      https://www.kaggle.com/datasets/martj42/international-football-results-from-1872-to-2017
+    Download results.csv and place it at backend/data/international_results.csv
+    Columns: date, home_team, away_team, home_score, away_score, tournament, ...
+    """
+    if not os.path.exists(INTERNATIONAL_CSV):
+        return pd.DataFrame()
+    try:
+        df = pd.read_csv(INTERNATIONAL_CSV, parse_dates=["date"], low_memory=False)
+        # Only use post-2010 matches — older data less relevant for current form
+        df = df[df["date"] >= "2010-01-01"].copy()
+
+        df["Result"] = np.where(df["home_score"] > df["away_score"], "H",
+                       np.where(df["home_score"] < df["away_score"], "A", "D"))
+        result = pd.DataFrame({
+            "Date":     df["date"],
+            "HomeTeam": df["home_team"],
+            "AwayTeam": df["away_team"],
+            "Result":   df["Result"],
+            "FTHG":     df["home_score"].astype(float),
+            "FTAG":     df["away_score"].astype(float),
+        }).dropna(subset=["Date", "HomeTeam", "AwayTeam", "Result"])
+
+        print(f"[CSV] International results: {len(result)} matches (post-2010)")
+        return result.sort_values("Date").reset_index(drop=True)
+    except Exception as e:
+        print(f"[CSV] International results load error: {e}")
+        return pd.DataFrame()
+
+
 # ------------------------------------------------------------------ #
 # Train + predict pipeline
 # ------------------------------------------------------------------ #
@@ -397,8 +432,10 @@ async def _run_pipeline():
         # Legacy: our existing EPL + UCL CSVs (no odds but more historical depth)
         epl_df = _load_epl_csv()
         ucl_df = _load_ucl_csv()
+        # International match history (from Kaggle — fixes national team calibration)
+        intl_df = _load_international_csv()
 
-        parts = [df for df in [fd_df, epl_df, ucl_df] if not df.empty]
+        parts = [df for df in [fd_df, epl_df, ucl_df, intl_df] if not df.empty]
         if not parts:
             print("[Pipeline] No training data found!")
             return
@@ -428,6 +465,10 @@ async def _run_pipeline():
 
         print(f"[Pipeline] Training on {len(combined)} matches...")
         predictor = LeaguePredictor()
+        # Seed national team Elo from FIFA rankings BEFORE training
+        # This prevents unknown national teams (Ecuador, Algeria etc.) from
+        # starting at 1500 and looking equal to Germany/France/Brazil
+        predictor.elo.seed_national_teams()
         predictor.train(combined)
 
         # Make predictor available immediately so card analysis works during API calibration
