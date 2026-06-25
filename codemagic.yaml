@@ -1,0 +1,71 @@
+workflows:
+  ios-betiq:
+    name: BetIQ iOS Build
+    max_build_duration: 60
+    environment:
+      ios_signing:
+        distribution_type: ad_hoc   # change to app_store when ready to publish
+        bundle_identifier: com.betiq.app
+      vars:
+        XCODE_WORKSPACE: "App/App.xcworkspace"
+        XCODE_SCHEME: "App"
+      node: 18.17.0
+      xcode: latest
+      cocoapods: default
+
+    scripts:
+      - name: Install frontend dependencies
+        script: |
+          cd frontend
+          npm ci
+
+      - name: Sync Capacitor
+        script: |
+          cd frontend
+          npx cap sync ios
+
+      - name: Install CocoaPods
+        script: |
+          cd frontend/ios/App
+          pod install
+
+      - name: Set bundle ID
+        script: |
+          cd frontend/ios/App
+          xcrun agvtool new-marketing-version 1.0
+          /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.betiq.app" App/Info.plist
+
+      - name: Build iOS
+        script: |
+          cd frontend/ios
+          xcode-project use-profiles
+          xcodebuild \
+            -workspace App/App.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -archivePath $CM_BUILD_DIR/BetIQ.xcarchive \
+            archive \
+            CODE_SIGN_STYLE=MANUAL \
+            | xcbeautify
+
+      - name: Export IPA
+        script: |
+          xcode-project build-ipa \
+            --workspace frontend/ios/App/App.xcworkspace \
+            --config Release
+
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+
+    publishing:
+      email:
+        recipients:
+          - nkwochaokechukwu.c@gmail.com   # your email
+        notify:
+          success: true
+          failure: true
+      # Uncomment when you have TestFlight set up:
+      # app_store_connect:
+      #   auth: integration
+      #   submit_to_testflight: true
