@@ -47,12 +47,24 @@ function ValueBetCard({ v, onClick }: { v: ValueBet; onClick?: () => void }) {
       <div className="relative z-10 px-4 pb-3 space-y-2 mt-1">
         {/* Value pick banner */}
         <div className="bg-black/30 border border-green-500/30 rounded-lg px-3 py-2 flex items-center justify-between gap-3">
-          <div>
-            <p className="text-[10px] text-green-400/80 uppercase tracking-wide font-semibold">Value Pick</p>
-            <p className="text-sm font-bold text-white">{v.value_label}</p>
+          <div className="min-w-0">
+            <p className="text-[10px] text-green-400/80 uppercase tracking-wide font-semibold">
+              {(v as any).value_market || "Value Pick"}
+            </p>
+            <p className="text-sm font-bold text-white truncate">{v.value_label}</p>
           </div>
           <p className="text-2xl font-black text-green-400 shrink-0">{v.value_odds}</p>
         </div>
+        {/* Other edges for this match */}
+        {(v as any).all_edges && (v as any).all_edges.length > 1 && (
+          <div className="flex gap-1.5 flex-wrap mt-1">
+            {(v as any).all_edges.slice(1,4).map((e: any, i: number) => (
+              <span key={i} className="text-[10px] bg-white/10 text-white/60 px-2 py-0.5 rounded-full">
+                {e.market}: {e.label} +{e.edge}% @ {e.odds}
+              </span>
+            ))}
+          </div>
+        )}
         {/* Probability bars */}
         <div className="space-y-1">
           <div className="flex justify-between text-[10px] text-white/50">

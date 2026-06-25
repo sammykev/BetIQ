@@ -811,16 +811,33 @@ def _parse_csv_h2h(home: str, away: str, limit: int = 10) -> Dict:
 
 async def _fetch_live_odds(home: str, away: str, date_str: str = "") -> Dict:
     """
-    Fetch truly live odds from The Odds API at request time.
-    Called when a match modal opens — not from cache.
-    Returns {home_odds, draw_odds, away_odds, btts_yes, btts_no, bookie}.
+    Fetch live odds from The Odds API for ALL markets it supports.
+
+    What The Odds API actually provides for football:
+      h2h      → 1X2 (Home / Draw / Away)
+      btts     → Both Teams to Score (Yes / No)
+      totals   → Over/Under goals (e.g. Over 2.5 / Under 2.5)
+      spreads  → Asian Handicap (Home -0.5 / Away +0.5 etc.)
+
+    What it does NOT provide (model-only, shown without odds):
+      Double Chance, Correct Score, Win to Nil, HT Result, Draw No Bet
+
+    Returns a nested dict:
+    {
+      "h2h":     {"1": 1.85, "X": 3.40, "2": 4.20},
+      "btts":    {"yes": 1.75, "no": 2.00},
+      "totals":  {"over_2.5": 1.90, "under_2.5": 1.95, ...},
+      "spreads": {"home_-0.5": 2.10, "away_+0.5": 1.75, ...},
+      "bookie":  "market (live · eu bookmakers)",
+    }
     """
     api_key = os.getenv("ODDS_API_KEY", "")
     if not api_key:
         return {}
 
     from difflib import SequenceMatcher
-    def sim(a, b): return SequenceMatcher(None, a.lower(), b.lower()).ratio()
+    def sim(a: str, b: str) -> float:
+        return SequenceMatcher(None, a.lower().strip(), b.lower().strip()).ratio()
 
     SPORT_KEYS = [
         "soccer_epl", "soccer_italy_serie_a", "soccer_germany_bundesliga",
@@ -832,42 +849,85 @@ async def _fetch_live_odds(home: str, away: str, date_str: str = "") -> Dict:
         "soccer_uefa_nations_league", "soccer_conmebol_copa_america",
     ]
 
+    import httpx as _hx
     try:
-        import httpx as _hx
-        async with _hx.AsyncClient(timeout=10) as client:
+        async with _hx.AsyncClient(timeout=12) as client:
             for sport_key in SPORT_KEYS:
                 r = await client.get(
                     f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/",
-                    params={"apiKey": api_key, "regions": "eu",
-                            "markets": "h2h,btts", "oddsFormat": "decimal"},
+                    params={
+                        "apiKey": api_key,
+                        "regions": "eu",
+                        "markets": "h2h,btts,totals,spreads",  # all available markets
+                        "oddsFormat": "decimal",
+                    },
                 )
                 if r.status_code != 200:
                     continue
+
                 for ev in r.json():
-                    h = ev.get("home_team","")
-                    a = ev.get("away_team","")
+                    h = ev.get("home_team", "")
+                    a = ev.get("away_team", "")
                     if (sim(home, h) + sim(away, a)) / 2 < 0.55:
                         continue
-                    # Found the match — extract best odds
-                    best: Dict[str, float] = {}
-                    btts: Dict[str, float] = {}
+
+                    # Found the match — collect best odds per market across all bookmakers
+                    h2h:     Dict[str, float] = {}
+                    btts:    Dict[str, float] = {}
+                    totals:  Dict[str, float] = {}   # "over_2.5", "under_2.5" etc.
+                    spreads: Dict[str, float] = {}   # "home_-0.5", "away_+0.5" etc.
+
                     for bk in (ev.get("bookmakers") or []):
                         for mkt in (bk.get("markets") or []):
-                            if mkt["key"] == "h2h":
-                                for o in mkt.get("outcomes",[]):
-                                    n = o["name"]; p = float(o.get("price",0))
-                                    if n == h:    best["1"] = max(best.get("1",0), p)
-                                    elif n == a:  best["2"] = max(best.get("2",0), p)
-                                    else:         best["X"] = max(best.get("X",0), p)
-                            elif mkt["key"] == "btts":
-                                for o in mkt.get("outcomes",[]):
-                                    if o["name"].lower() == "yes":
-                                        btts["yes"] = max(btts.get("yes",0), float(o.get("price",0)))
-                                    else:
-                                        btts["no"]  = max(btts.get("no",0),  float(o.get("price",0)))
-                    if best:
-                        print(f"[LiveOdds] {home} vs {away}: 1={best.get('1')} X={best.get('X')} 2={best.get('2')}")
-                        return {**best, **btts, "bookie": "market (live)"}
+                            key = mkt.get("key", "")
+
+                            if key == "h2h":
+                                for o in (mkt.get("outcomes") or []):
+                                    n = o.get("name",""); p = float(o.get("price",0) or 0)
+                                    if p <= 1: continue
+                                    if n == h:   h2h["1"] = max(h2h.get("1",0), p)
+                                    elif n == a: h2h["2"] = max(h2h.get("2",0), p)
+                                    else:        h2h["X"] = max(h2h.get("X",0), p)
+
+                            elif key == "btts":
+                                for o in (mkt.get("outcomes") or []):
+                                    n = o.get("name","").lower(); p = float(o.get("price",0) or 0)
+                                    if p <= 1: continue
+                                    if n == "yes": btts["yes"] = max(btts.get("yes",0), p)
+                                    else:          btts["no"]  = max(btts.get("no",0),  p)
+
+                            elif key == "totals":
+                                for o in (mkt.get("outcomes") or []):
+                                    n   = o.get("name","").lower()   # "over" or "under"
+                                    pt  = o.get("point")             # 2.5
+                                    p   = float(o.get("price",0) or 0)
+                                    if p <= 1 or pt is None: continue
+                                    slot = f"{n}_{pt}"               # "over_2.5"
+                                    totals[slot] = max(totals.get(slot,0), p)
+
+                            elif key == "spreads":
+                                for o in (mkt.get("outcomes") or []):
+                                    n   = o.get("name","")
+                                    pt  = o.get("point")
+                                    p   = float(o.get("price",0) or 0)
+                                    if p <= 1 or pt is None: continue
+                                    side = "home" if n == h else "away"
+                                    sign = "+" if pt >= 0 else ""
+                                    slot = f"{side}_{sign}{pt}"     # "home_-0.5"
+                                    spreads[slot] = max(spreads.get(slot,0), p)
+
+                    if h2h:
+                        print(f"[LiveOdds] {home} vs {away} | "
+                              f"1X2: {h2h} | BTTS: {btts} | "
+                              f"Totals keys: {list(totals)[:4]} | "
+                              f"Spreads keys: {list(spreads)[:4]}")
+                        return {
+                            "h2h":     h2h,
+                            "btts":    btts,
+                            "totals":  totals,
+                            "spreads": spreads,
+                            "bookie":  "market (live · eu bookmakers)",
+                        }
     except Exception as e:
         print(f"[LiveOdds] fetch error: {e}")
     return {}
@@ -942,25 +1002,96 @@ async def get_match_analysis(home: str, away: str):
     if result is None:
         raise HTTPException(status_code=404, detail="Could not generate analysis")
 
-    # Tag live odds onto 1X2 market options
+    # Inject live odds from The Odds API into each market
+    # Only inject odds for markets The Odds API actually covers.
+    # Markets WITHOUT real odds (model-only): Double Chance, Correct Score,
+    #   Win to Nil, HT Result — these show model probabilities only.
     if live_odds:
+        bookie = live_odds.get("bookie", "market")
+        h2h    = live_odds.get("h2h", {})
+        btts   = live_odds.get("btts", {})
+        totals = live_odds.get("totals", {})
+        spreads= live_odds.get("spreads", {})
+
         for mkt in result["markets"]:
-            if mkt["id"] == "1x2":
+            mid = mkt["id"]
+
+            if mid == "1x2" and h2h:
                 for opt in mkt["options"]:
-                    if opt["code"] == "1" and live_odds.get("1"):
-                        opt["odds"] = str(live_odds["1"]); opt["bookie"] = live_odds.get("bookie","")
-                    elif opt["code"] == "X" and live_odds.get("X"):
-                        opt["odds"] = str(live_odds["X"]); opt["bookie"] = live_odds.get("bookie","")
-                    elif opt["code"] == "2" and live_odds.get("2"):
-                        opt["odds"] = str(live_odds["2"]); opt["bookie"] = live_odds.get("bookie","")
-            elif mkt["id"] == "btts":
+                    v = {"1": h2h.get("1"), "X": h2h.get("X"), "2": h2h.get("2")}.get(opt["code"])
+                    if v and v > 1: opt["odds"] = round(v,2); opt["bookie"] = bookie
+
+            elif mid == "btts" and btts:
                 for opt in mkt["options"]:
-                    if opt["code"] == "BTTS-Y" and live_odds.get("yes"):
-                        opt["odds"] = str(live_odds["yes"]); opt["bookie"] = live_odds.get("bookie","")
-                    elif opt["code"] == "BTTS-N" and live_odds.get("no"):
-                        opt["odds"] = str(live_odds["no"]); opt["bookie"] = live_odds.get("bookie","")
+                    v = btts.get("yes") if opt["code"] == "BTTS-Y" else btts.get("no")
+                    if v and v > 1: opt["odds"] = round(v,2); opt["bookie"] = bookie
+
+            elif mid == "goals_ou" and totals:
+                # Map our codes (O25, U25 etc.) to Odds API keys (over_2.5, under_2.5)
+                CODE_MAP = {
+                    "O05":"over_0.5","O15":"over_1.5","O25":"over_2.5",
+                    "O35":"over_3.5","O45":"over_4.5",
+                    "U15":"under_1.5","U25":"under_2.5","U35":"under_3.5",
+                }
+                for opt in mkt["options"]:
+                    slot = CODE_MAP.get(opt["code"])
+                    v = totals.get(slot) if slot else None
+                    if v and v > 1: opt["odds"] = round(v,2); opt["bookie"] = bookie
+
+            elif mid == "asian_handicap" and spreads:
+                # Map our codes to spreads keys
+                CODE_MAP = {
+                    "AH-H05":"home_-0.5","AH-A05":"away_+0.5",
+                    "AH-H15":"home_-1.5","AH-A15":"away_+1.5",
+                    "AH-H+05":"home_+0.5","AH-A-05":"away_-0.5",
+                }
+                for opt in mkt["options"]:
+                    slot = CODE_MAP.get(opt["code"])
+                    v = spreads.get(slot) if slot else None
+                    if v and v > 1: opt["odds"] = round(v,2); opt["bookie"] = bookie
+
+            elif mid == "draw_no_bet" and h2h:
+                # Derive DNB from h2h: remove draw, renormalise
+                p1 = (1/h2h["1"]) if h2h.get("1") else 0
+                p2 = (1/h2h["2"]) if h2h.get("2") else 0
+                tot = p1 + p2
+                if tot > 0:
+                    for opt in mkt["options"]:
+                        if opt["code"] == "DNB-H" and p1:
+                            opt["odds"] = round(tot/p1, 2); opt["bookie"] = f"{bookie} (derived)"
+                        elif opt["code"] == "DNB-A" and p2:
+                            opt["odds"] = round(tot/p2, 2); opt["bookie"] = f"{bookie} (derived)"
+
+            elif mid == "double_chance" and h2h:
+                # Derive DC from h2h: 1X = 1/(p_home + p_draw), etc.
+                p1 = (1/h2h["1"]) if h2h.get("1") else 0
+                px = (1/h2h["X"]) if h2h.get("X") else 0
+                p2 = (1/h2h["2"]) if h2h.get("2") else 0
+                overround = p1 + px + p2 or 1
+                fp1, fpx, fp2 = p1/overround, px/overround, p2/overround
+                for opt in mkt["options"]:
+                    if opt["code"] == "1X" and fp1+fpx:
+                        opt["odds"] = round(1/(fp1+fpx), 2); opt["bookie"] = f"{bookie} (derived)"
+                    elif opt["code"] == "X2" and fpx+fp2:
+                        opt["odds"] = round(1/(fpx+fp2), 2); opt["bookie"] = f"{bookie} (derived)"
+                    elif opt["code"] == "12" and fp1+fp2:
+                        opt["odds"] = round(1/(fp1+fp2), 2); opt["bookie"] = f"{bookie} (derived)"
+
+            # Correct Score, Win to Nil, HT Result, Clean Sheet, Result+BTTS:
+            # No bookmaker odds available from The Odds API — show model probabilities only
+            elif mid in ("correct_score","win_to_nil","half_time","clean_sheet","result_btts"):
+                for opt in mkt["options"]:
+                    opt["note"] = "Model probability only — no bookmaker odds available"
+
         result["live_odds_fetched"] = True
-        result["odds_bookie"] = live_odds.get("bookie", "")
+        result["odds_bookie"] = bookie
+        result["odds_coverage"] = {
+            "h2h":     bool(h2h),
+            "btts":    bool(btts),
+            "totals":  bool(totals),
+            "spreads": bool(spreads),
+            "model_only": ["correct_score","win_to_nil","half_time","clean_sheet","result_btts","double_chance (derived)"],
+        }
 
     # Show team form stats in the response
     result["team_form"] = {
