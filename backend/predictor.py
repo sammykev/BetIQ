@@ -57,7 +57,12 @@ FEATURE_COLS = [
     "Home_G_Var", "Away_G_Var",
     "Atk_vs_Def",
     "Def_vs_Atk",
-    "Home_Cards_Avg", "Away_Cards_Avg",   # disciplinary pressure
+    "Home_Cards_Avg", "Away_Cards_Avg",
+    # Market odds features — overround-adjusted implied probabilities
+    # These are the single most predictive features available.
+    # At training time: from football-data.co.uk (B365H/D/A columns)
+    # At prediction time: from The Odds API for upcoming fixtures
+    "Impl_Home", "Impl_Draw", "Impl_Away",
 ]
 
 
@@ -84,7 +89,12 @@ class LeaguePredictor:
                 "yc": [],   # card weight (yellow + 2*red)
             }
 
-    def _feats(self, home: str, away: str) -> Dict:
+    # League-average implied odds — used when market odds aren't available at prediction time
+    # Updated during training based on actual data
+    _avg_impl: Dict[str, float] = {"H": 0.46, "D": 0.27, "A": 0.27}
+
+    def _feats(self, home: str, away: str,
+               odds_home: float = 0, odds_draw: float = 0, odds_away: float = 0) -> Dict:
         self._init(home)
         self._init(away)
         hs, as_ = self.team_stats[home], self.team_stats[away]
@@ -99,9 +109,21 @@ class LeaguePredictor:
         a_var = float(np.std(as_["gf"][-6:])) if len(as_["gf"]) >= 3 else 0.8
         h_elo = self.elo.get(home)
         a_elo = self.elo.get(away)
-
         h_yc = _ewm(hs["yc"]) if hs["yc"] else 1.5
         a_yc = _ewm(as_["yc"]) if as_["yc"] else 1.5
+
+        # Convert raw odds to overround-adjusted implied probabilities
+        if odds_home > 1 and odds_draw > 1 and odds_away > 1:
+            raw = {"H": 1/odds_home, "D": 1/odds_draw, "A": 1/odds_away}
+            overround = sum(raw.values())
+            impl_h = raw["H"] / overround
+            impl_d = raw["D"] / overround
+            impl_a = raw["A"] / overround
+        else:
+            # Fall back to league-average when odds unavailable
+            impl_h = self._avg_impl["H"]
+            impl_d = self._avg_impl["D"]
+            impl_a = self._avg_impl["A"]
 
         return {
             "HomeElo": h_elo, "AwayElo": a_elo, "EloDiff": h_elo - a_elo,
@@ -113,6 +135,9 @@ class LeaguePredictor:
             "Def_vs_Atk": a_gf - h_ga,
             "Home_Cards_Avg": h_yc,
             "Away_Cards_Avg": a_yc,
+            "Impl_Home": impl_h,
+            "Impl_Draw": impl_d,
+            "Impl_Away": impl_a,
         }
 
     def _update(
@@ -147,21 +172,48 @@ class LeaguePredictor:
     def train(self, matches: pd.DataFrame):
         """
         Build features + train XGBoost models.
-        matches columns: HomeTeam, AwayTeam, Result (H/D/A), FTHG, FTAG — sorted ascending by date.
+        Accepts both legacy CSV format and football-data.co.uk format (with B365 odds).
+        Required: HomeTeam, AwayTeam, Result (H/D/A), FTHG, FTAG
+        Optional: B365H, B365D, B365A (odds — massively improve accuracy)
         """
         self.elo = EloSystem()
         self.team_stats = {}
 
+        has_odds = all(c in matches.columns for c in ["B365H", "B365D", "B365A"])
+        if has_odds:
+            print(f"[Predictor] Training WITH bookmaker odds features ({len(matches)} matches)")
+        else:
+            print(f"[Predictor] Training WITHOUT odds — add football-data.co.uk CSVs for better accuracy")
+
+        # Compute avg implied probs across all training data (for fallback at predict time)
+        if has_odds:
+            valid_odds = matches[["B365H","B365D","B365A"]].dropna()
+            valid_odds = valid_odds[(valid_odds > 1).all(axis=1)]
+            if len(valid_odds):
+                inv = valid_odds.apply(lambda x: 1/x)
+                overrounds = inv.sum(axis=1)
+                impl = inv.div(overrounds, axis=0)
+                self._avg_impl = {
+                    "H": float(impl["B365H"].mean()),
+                    "D": float(impl["B365D"].mean()),
+                    "A": float(impl["B365A"].mean()),
+                }
+
         rows = []
         for _, r in matches.iterrows():
-            f = self._feats(r["HomeTeam"], r["AwayTeam"])
+            oh = float(r.get("B365H") or 0)
+            od = float(r.get("B365D") or 0)
+            oa = float(r.get("B365A") or 0)
+            f = self._feats(r["HomeTeam"], r["AwayTeam"], oh, od, oa)
             f["Result"] = r["Result"]
             f["TotalGoals"] = r["FTHG"] + r["FTAG"]
             rows.append(f)
             self._update(
                 r["HomeTeam"], r["AwayTeam"], r["Result"], r["FTHG"], r["FTAG"],
-                hyc=r.get("HomeYellowCards"), ayc=r.get("AwayYellowCards"),
-                hrc=r.get("HomeRedCards"), arc=r.get("AwayRedCards"),
+                hyc=r.get("HomeYellowCards") or r.get("HY"),
+                ayc=r.get("AwayYellowCards") or r.get("AY"),
+                hrc=r.get("HomeRedCards") or r.get("HR"),
+                arc=r.get("AwayRedCards") or r.get("AR"),
             )
 
         df = pd.DataFrame(rows).dropna(subset=FEATURE_COLS)
@@ -189,10 +241,12 @@ class LeaguePredictor:
 
         self._ready = True
 
-    def predict_match(self, home: str, away: str) -> Optional[Dict]:
+    def predict_match(self, home: str, away: str,
+                      odds_home: float = 0, odds_draw: float = 0,
+                      odds_away: float = 0) -> Optional[Dict]:
         if not self._ready:
             return None
-        f = self._feats(home, away)
+        f = self._feats(home, away, odds_home, odds_draw, odds_away)
         X = pd.DataFrame([f])[FEATURE_COLS]
 
         wp = self.models["win"].predict_proba(X)[0]
