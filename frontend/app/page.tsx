@@ -10,6 +10,7 @@ import { RefreshCw, TrendingUp, Shield, Info, AlertTriangle, CalendarDays, Perce
 import { ChatBot } from "@/components/ChatBot";
 import { CalendarView } from "@/components/CalendarView";
 import { ValueBets } from "@/components/ValueBets";
+import { SportCard, type SportPrediction } from "@/components/SportCard";
 import { UserMenu } from "@/components/UserMenu";
 import { PaywallModal } from "@/components/PaywallModal";
 import { AnnouncementBanner } from "@/components/AnnouncementBanner";
@@ -139,6 +140,9 @@ export default function HomePage() {
   const [showCalendar, setShowCalendar] = useState(false);
   const [bankersOnly, setBankersOnly] = useState(false);
   const [activeView, setActiveView] = useState<"picks" | "value">("picks");
+  const [activeSport, setActiveSport] = useState<"football" | "basketball" | "tennis" | "table-tennis">("football");
+  const [sportPreds, setSportPreds] = useState<SportPrediction[]>([]);
+  const [sportLoading, setSportLoading] = useState(false);
   const [showPaywall, setShowPaywall] = useState(false);
   const [savedKeys, setSavedKeys] = useState<Set<string>>(new Set());
 
@@ -196,6 +200,19 @@ export default function HomePage() {
     setLoading(true);
     load();
   }, [load]);
+
+  // Load sport predictions when sport tab changes (non-football)
+  useEffect(() => {
+    if (activeSport === "football") return;
+    setSportLoading(true);
+    setSportPreds([]);
+    const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
+    fetch(`${API}/api/sports/${activeSport}`)
+      .then(r => r.ok ? r.json() : [])
+      .then(d => setSportPreds(Array.isArray(d) ? d : []))
+      .catch(() => setSportPreds([]))
+      .finally(() => setSportLoading(false));
+  }, [activeSport]);
 
   // Keep Render backend alive — ping every 10 minutes
   useEffect(() => {
@@ -343,8 +360,56 @@ export default function HomePage() {
           ))}
         </div>
 
-        {/* View toggle: Picks / Value Bets */}
-        <div className="flex gap-2 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-1 w-fit">
+        {/* Sport selector */}
+        <div className="flex gap-2 flex-wrap">
+          {([
+            { key: "football",    label: "⚽ Football"    },
+            { key: "basketball",  label: "🏀 Basketball"  },
+            { key: "tennis",      label: "🎾 Tennis"      },
+            { key: "table-tennis",label: "🏓 Table Tennis"},
+          ] as const).map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => setActiveSport(key)}
+              className={clsx(
+                "px-4 py-1.5 rounded-full text-sm font-semibold border transition-all",
+                activeSport === key
+                  ? "bg-green-500/20 text-green-300 border-green-500/40"
+                  : "bg-slate-200 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-300 dark:border-slate-700 hover:text-slate-800 dark:hover:text-slate-200"
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* Sport predictions (non-football) */}
+        {activeSport !== "football" && (
+          <div className="space-y-4">
+            {sportLoading ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i} className="rounded-xl h-48 animate-pulse bg-slate-800" />
+                ))}
+              </div>
+            ) : sportPreds.length === 0 ? (
+              <div className="text-center py-16 text-slate-500 space-y-2">
+                <p className="text-2xl">{activeSport === "basketball" ? "🏀" : activeSport === "tennis" ? "🎾" : "🏓"}</p>
+                <p className="text-sm">No {activeSport} predictions right now.</p>
+                <p className="text-xs text-slate-600">Requires ODDS_API_KEY in Render env vars.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                {sportPreds.map((p, i) => (
+                  <SportCard key={i} prediction={p} onClick={() => {}} />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* View toggle: Picks / Value Bets (football only) */}
+        {activeSport === "football" && <div className="flex gap-2 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-1 w-fit">
           <button
             onClick={() => setActiveView("picks")}
             className={clsx(
@@ -367,8 +432,9 @@ export default function HomePage() {
           >
             <TrendingUp size={13} /> Value Bets
           </button>
-        </div>
+        </div>}
 
+        {activeSport === "football" && <>
         {/* Disclaimer */}
         <div className="flex items-start gap-2.5 bg-yellow-500/5 border border-yellow-500/20 rounded-xl px-4 py-3">
           <AlertTriangle size={14} className="text-yellow-500 mt-0.5 shrink-0" />
@@ -493,6 +559,7 @@ export default function HomePage() {
             ))}
           </div>
         ))}
+        </>}
       </main>
 
       {/* AI Betting Assistant — premium only */}
