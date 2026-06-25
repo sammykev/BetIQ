@@ -915,6 +915,20 @@ async def _fetch_live_odds(home: str, away: str, date_str: str = "") -> Dict:
     return {}
 
 
+def _sanitize(obj):
+    """Recursively replace NaN/Inf with None so FastAPI can JSON-serialize the response."""
+    import math
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    if isinstance(obj, dict):
+        return {k: _sanitize(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize(v) for v in obj]
+    return obj
+
+
 @app.get("/api/analysis")
 async def get_match_analysis(home: str, away: str):
     if _predictor is None:
@@ -1117,7 +1131,7 @@ async def get_match_analysis(home: str, away: str):
     except Exception:
         pass
 
-    return result
+    return _sanitize(result)
 
 
 @app.get("/api/h2h")
