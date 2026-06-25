@@ -110,6 +110,20 @@ def _event_date(commence_time: str) -> tuple[str, str]:
 
 # ── Basketball ─────────────────────────────────────────────────────────────
 
+def _apply_elo_blend(home: str, away: str, market_p_home: float, market_p_away: float) -> Dict:
+    """Try to blend Elo ratings into market probabilities for basketball."""
+    try:
+        from basketball_predictor import get_basketball_elo, blend_with_market
+        elo = get_basketball_elo()
+        if elo:
+            elo_pred = elo.predict(home, away)
+            if elo_pred and (elo_pred.get("games_home", 0) > 5 or elo_pred.get("games_away", 0) > 5):
+                return blend_with_market(elo_pred, market_p_home, market_p_away)
+    except Exception:
+        pass
+    return {"p_home": market_p_home, "p_away": market_p_away, "elo_home": None, "elo_away": None}
+
+
 def _build_basketball_prediction(event: Dict, league_name: str, flag: str) -> Optional[Dict]:
     """Convert an Odds API basketball event into a BetIQ prediction dict."""
     home = event.get("home_team", "")
@@ -124,8 +138,13 @@ def _build_basketball_prediction(event: Dict, league_name: str, flag: str) -> Op
         return None
 
     probs = _implied_probs(h2h_odds)
-    p_home = probs.get(home, 0)
-    p_away = probs.get(away, 0)
+    market_p_home = probs.get(home, 0)
+    market_p_away = probs.get(away, 0)
+
+    # Blend with Elo model if we have basketball data
+    blended = _apply_elo_blend(home, away, market_p_home, market_p_away)
+    p_home = blended["p_home"]
+    p_away = blended["p_away"]
 
     # Best tip
     if p_home >= p_away:
@@ -176,6 +195,9 @@ def _build_basketball_prediction(event: Dict, league_name: str, flag: str) -> Op
         "total_line":      total_line,
         "odds_home":       round(h2h_odds.get(home, 0), 2),
         "odds_away":       round(h2h_odds.get(away, 0), 2),
+        "elo_home":        blended.get("elo_home"),
+        "elo_away":        blended.get("elo_away"),
+        "elo_blend":       blended.get("blend_weight", 0),
     }
 
 

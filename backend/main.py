@@ -856,6 +856,123 @@ async def get_calendar(month: str = ""):
     return summary
 
 
+@app.post("/api/feedback/result")
+async def submit_match_result(body: Dict[str, Any]):
+    """
+    Submit a confirmed match result to update Elo and track prediction accuracy.
+    Body: {home, away, date, result: "H"|"D"|"A", home_score?, away_score?}
+    """
+    home   = body.get("home", "")
+    away   = body.get("away", "")
+    date_s = body.get("date", "")
+    result = body.get("result", "")  # H / D / A
+    home_s = body.get("home_score")
+    away_s = body.get("away_score")
+
+    if not all([home, away, date_s, result]):
+        raise HTTPException(status_code=400, detail="home, away, date, result required")
+
+    # Update Redis history entry with actual result
+    r = _get_redis()
+    if r:
+        try:
+            raw = r.get(f"betiq:history:{date_s}")
+            if raw:
+                preds = json.loads(raw)
+                TIP_TO_RESULT = {"1": "H", "X": "D", "2": "A"}
+                updated = 0
+                for p in preds:
+                    h_sim = _sim_name(p.get("home",""), home)
+                    a_sim = _sim_name(p.get("away",""), away)
+                    if h_sim and a_sim:
+                        p["actual_result"] = result
+                        expected = TIP_TO_RESULT.get(p.get("tip_code",""), "")
+                        p["outcome"] = "won" if result == expected else "lost"
+                        if home_s is not None and away_s is not None:
+                            p["score"] = f"{home_s}-{away_s}"
+                        updated += 1
+                if updated:
+                    r.set(f"betiq:history:{date_s}", json.dumps(preds), ex=90*86400)
+                    print(f"[Feedback] Updated {updated} predictions for {home} vs {away}")
+        except Exception as e:
+            print(f"[Feedback] Redis update error: {e}")
+
+    # Also append to results CSV so next training run picks it up
+    try:
+        row = {
+            "Date": date_s, "HomeTeam": home, "AwayTeam": away,
+            "Result": result,
+            "FTHG": home_s if home_s is not None else "",
+            "FTAG": away_s if away_s is not None else "",
+        }
+        if os.path.exists(RESULTS_CSV):
+            existing = pd.read_csv(RESULTS_CSV)
+            # Avoid duplicates
+            mask = (existing["HomeTeam"] == home) & (existing["AwayTeam"] == away) & (existing["Date"] == date_s)
+            if not mask.any():
+                existing = pd.concat([existing, pd.DataFrame([row])], ignore_index=True)
+                existing.to_csv(RESULTS_CSV, index=False)
+        else:
+            pd.DataFrame([row]).to_csv(RESULTS_CSV, index=False)
+    except Exception as e:
+        print(f"[Feedback] CSV update error: {e}")
+
+    # Trigger live Elo update if predictor is ready
+    if _predictor is not None and result in ("H", "D", "A"):
+        try:
+            _predictor._update(home, away, result,
+                               float(home_s) if home_s else 0,
+                               float(away_s) if away_s else 0)
+            print(f"[Feedback] Elo updated for {home} vs {away}: {result}")
+        except Exception as e:
+            print(f"[Feedback] Elo update error: {e}")
+
+    return {"ok": True, "message": f"Result recorded: {home} vs {away} = {result}"}
+
+
+@app.post("/api/admin/upload/basketball-csv")
+async def upload_basketball_csv(request: Request):
+    """
+    Upload a Kaggle NBA/basketball CSV to train the Elo model.
+    Multipart form: file field named 'file'.
+    Protected by ADMIN_SECRET header.
+    """
+    from fastapi import UploadFile, File
+    import shutil
+
+    if request.headers.get("x-admin-secret") != ADMIN_SECRET:
+        raise HTTPException(status_code=403, detail="Admin access only")
+
+    form = await request.form()
+    upload = form.get("file")
+    if not upload:
+        raise HTTPException(status_code=400, detail="No file provided")
+
+    os.makedirs(DATA_DIR, exist_ok=True)
+    dest = os.path.join(DATA_DIR, "basketball_games.csv")
+    try:
+        content = await upload.read()
+        with open(dest, "wb") as f:
+            f.write(content)
+        size_mb = len(content) / (1024 * 1024)
+
+        # Retrain immediately
+        from basketball_predictor import train_from_csv, _bball_elo
+        import basketball_predictor as bp_mod
+        elo = train_from_csv(dest)
+        bp_mod._bball_elo = elo  # reset singleton
+        teams = len(elo.ratings) if elo else 0
+
+        return {
+            "ok": True,
+            "size_mb": round(size_mb, 2),
+            "teams_trained": teams,
+            "message": f"Basketball Elo trained on {teams} teams. Delete cache to refresh predictions.",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/debug/calendar-status")
 async def debug_calendar_status():
     """Quick diagnostic: shows what the calendar will return and what's in cache."""
