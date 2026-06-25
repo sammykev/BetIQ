@@ -235,8 +235,21 @@ def _build_tennis_prediction(event: Dict, league_name: str, flag: str,
         return None
 
     probs    = _implied_probs(odds)
-    p_home   = probs.get(p1, 0)
-    p_away   = probs.get(p2, 0)
+    market_p1 = probs.get(p1, 0)
+    market_p2 = probs.get(p2, 0)
+
+    # Detect surface from league name
+    surface = "Hard"
+    ln = league_name.lower()
+    if any(x in ln for x in ["wimbledon", "halle", "queens", "grass"]):
+        surface = "Grass"
+    elif any(x in ln for x in ["roland", "french", "clay", "barcelona", "monte"]):
+        surface = "Clay"
+
+    # Blend with tennis Elo model if available
+    blended = _apply_tennis_elo(p1, p2, surface, market_p1, market_p2)
+    p_home  = blended["p1_win"]
+    p_away  = blended["p2_win"]
 
     if p_home >= p_away:
         tip, tip_code = f"{p1} Win", "1"
@@ -244,14 +257,6 @@ def _build_tennis_prediction(event: Dict, league_name: str, flag: str,
     else:
         tip, tip_code = f"{p2} Win", "2"
         confidence = p_away
-
-    # Detect surface from league name (Wimbledon=Grass, RG=Clay, US/AO=Hard)
-    surface = "Hard"
-    ln = league_name.lower()
-    if any(x in ln for x in ["wimbledon", "halle", "queens", "grass"]):
-        surface = "Grass"
-    elif any(x in ln for x in ["roland", "french", "clay", "barcelona", "monte"]):
-        surface = "Clay"
 
     return {
         "home":            p1,
@@ -353,6 +358,21 @@ async def _fetch_betsapi(sport_id: int) -> List[Dict]:
     except Exception as e:
         print(f"[BetsAPI] sport_id={sport_id} error: {e}")
     return results
+
+
+def _apply_tennis_elo(p1: str, p2: str, surface: str,
+                      market_p1: float, market_p2: float) -> Dict:
+    """Blend tennis Elo with market probabilities."""
+    try:
+        from tennis_predictor import get_tennis_elo, blend_with_market
+        elo = get_tennis_elo()
+        if elo:
+            pred = elo.predict(p1, p2, surface)
+            if pred and (pred.get("matches_p1", 0) > 10 or pred.get("matches_p2", 0) > 10):
+                return blend_with_market(pred, market_p1, market_p2)
+    except Exception:
+        pass
+    return {"p1_win": market_p1, "p2_win": market_p2}
 
 
 def _betsapi_to_prediction(ev: Dict, flag: str, sport: str) -> Optional[Dict]:
