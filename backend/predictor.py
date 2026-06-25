@@ -387,6 +387,37 @@ class LeaguePredictor:
         dc_x2 = round(p_d + p_a, 3)
         dc_12 = round(p_h + p_a, 3)
 
+        # Win to Nil (Poisson: win AND opponent scores 0)
+        p_home_0 = float(pmf(0, xg_h))   # P(home scores 0)
+        p_away_0 = float(pmf(0, xg_a))   # P(away scores 0)
+
+        # P(home win to nil) = P(home > away AND away = 0)
+        p_wtn_home = round(float(sum(
+            joint[i][0] for i in range(1, MAX)
+        )), 3)
+        p_wtn_away = round(float(sum(
+            joint[0][j] for j in range(1, MAX)
+        )), 3)
+        p_wtn_no = round(1 - p_wtn_home - p_wtn_away, 3)
+
+        # Clean Sheet (Poisson: team concedes 0)
+        p_cs_home = round(p_away_0, 3)   # home keeps clean sheet = away scores 0
+        p_cs_away = round(p_home_0, 3)   # away keeps clean sheet = home scores 0
+        p_no_cs_home = round(1 - p_cs_home, 3)
+        p_no_cs_away = round(1 - p_cs_away, 3)
+
+        # Result + BTTS (6 combined outcomes)
+        p_h_btts  = round(float(sum(joint[i][j] for i in range(1,MAX) for j in range(1,MAX) if i>j)), 3)
+        p_d_btts  = round(float(sum(joint[i][j] for i in range(1,MAX) for j in range(1,MAX) if i==j)), 3)
+        p_a_btts  = round(float(sum(joint[i][j] for i in range(1,MAX) for j in range(1,MAX) if i<j)), 3)
+        p_h_nbtts = round(max(0, p_h - p_h_btts), 3)
+        p_d_nbtts = round(max(0, p_d - p_d_btts), 3)
+        p_a_nbtts = round(max(0, p_a - p_a_btts), 3)
+
+        # Draw No Bet
+        dnb_home = round(p_h / max(p_h + p_a, 0.01), 3)
+        dnb_away = round(p_a / max(p_h + p_a, 0.01), 3)
+
         # --- Build all markets ---
         markets = [
             {
@@ -454,6 +485,45 @@ class LeaguePredictor:
                 "id": "correct_score",
                 "name": "Correct Score",
                 "options": [{"label": s["score"], "code": f"CS-{s['score']}", "prob": s["prob"]} for s in top_scores],
+            },
+            {
+                "id": "win_to_nil",
+                "name": "Win to Nil",
+                "options": [
+                    {"label": f"{home} Win to Nil", "code": "WTN-H", "prob": p_wtn_home},
+                    {"label": f"{away} Win to Nil", "code": "WTN-A", "prob": p_wtn_away},
+                    {"label": "No Win to Nil",      "code": "WTN-N", "prob": p_wtn_no},
+                ],
+            },
+            {
+                "id": "clean_sheet",
+                "name": "Clean Sheet",
+                "options": [
+                    {"label": f"{home} Clean Sheet",    "code": "CS-H-Y", "prob": p_cs_home},
+                    {"label": f"{home} No Clean Sheet", "code": "CS-H-N", "prob": p_no_cs_home},
+                    {"label": f"{away} Clean Sheet",    "code": "CS-A-Y", "prob": p_cs_away},
+                    {"label": f"{away} No Clean Sheet", "code": "CS-A-N", "prob": p_no_cs_away},
+                ],
+            },
+            {
+                "id": "result_btts",
+                "name": "Result & Both Teams Score",
+                "options": [
+                    {"label": f"{home} Win & Yes", "code": "RB-H-Y", "prob": p_h_btts},
+                    {"label": "Draw & Yes",         "code": "RB-D-Y", "prob": p_d_btts},
+                    {"label": f"{away} Win & Yes", "code": "RB-A-Y", "prob": p_a_btts},
+                    {"label": f"{home} Win & No",  "code": "RB-H-N", "prob": p_h_nbtts},
+                    {"label": "Draw & No",          "code": "RB-D-N", "prob": p_d_nbtts},
+                    {"label": f"{away} Win & No",  "code": "RB-A-N", "prob": p_a_nbtts},
+                ],
+            },
+            {
+                "id": "draw_no_bet",
+                "name": "Draw No Bet",
+                "options": [
+                    {"label": f"{home} Win", "code": "DNB-H", "prob": dnb_home},
+                    {"label": f"{away} Win", "code": "DNB-A", "prob": dnb_away},
+                ],
             },
         ]
 
