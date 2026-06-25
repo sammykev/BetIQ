@@ -973,13 +973,14 @@ async def get_match_analysis(home: str, away: str):
         if orig_away_gf and adj_xg_a != 1.0:
             _predictor.team_stats[away]["gf"] = [v * adj_xg_a for v in orig_away_gf]
 
-    # If live odds available, re-run prediction with them for better accuracy
-    if live_odds:
+    # live_odds is now nested: {h2h:{1,X,2}, btts:{yes,no}, totals:{over_2.5,...}}
+    _h2h = live_odds.get("h2h", {}) if live_odds else {}
+    if _h2h:
         result = _predictor.predict_match_full(
             home, away,
-            odds_home=live_odds.get("1", 0),
-            odds_draw=live_odds.get("X", 0),
-            odds_away=live_odds.get("2", 0),
+            odds_home=float(_h2h.get("1") or 0),
+            odds_draw=float(_h2h.get("X") or 0),
+            odds_away=float(_h2h.get("2") or 0),
         )
     else:
         result = _predictor.predict_match_full(home, away)
