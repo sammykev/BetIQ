@@ -809,192 +809,67 @@ def _parse_csv_h2h(home: str, away: str, limit: int = 10) -> Dict:
     }
 
 
-def _league_to_sport_key(league_name: str) -> str:
-    """Map our league name to The Odds API sport key — avoids scanning all 15 keys."""
-    ln = league_name.lower()
-    if "premier"    in ln: return "soccer_epl"
-    if "serie a"    in ln: return "soccer_italy_serie_a"
-    if "bundesliga" in ln and "2" not in ln: return "soccer_germany_bundesliga"
-    if "bundesliga 2" in ln or "bundesliga2" in ln: return "soccer_germany_bundesliga2"
-    if "la liga"    in ln: return "soccer_spain_la_liga"
-    if "ligue 1"    in ln: return "soccer_france_ligue_one"
-    if "champions"  in ln: return "soccer_uefa_champs_league"
-    if "europa"     in ln: return "soccer_uefa_europa_league"
-    if "primeira"   in ln or "portugal" in ln: return "soccer_portugal_primeira_liga"
-    if "eredivisie" in ln: return "soccer_netherlands_eredivisie"
-    if "championship" in ln: return "soccer_england_efl_champ"
-    if "world cup"  in ln: return "soccer_fifa_world_cup"
-    if "afcon"      in ln or "africa cup" in ln: return "soccer_africa_cup_of_nations"
-    if "nations"    in ln: return "soccer_uefa_nations_league"
-    if "copa"       in ln: return "soccer_conmebol_copa_america"
-    return ""  # unknown → will try all as fallback
-
-
-def _parse_odds_api_event(ev: Dict, home: str, away: str) -> Dict:
-    """Extract h2h + btts + totals + spreads from a single Odds API event."""
-    h = ev.get("home_team", "")
-    a = ev.get("away_team", "")
-    h2h: Dict[str,float] = {}
-    btts: Dict[str,float] = {}
-    totals: Dict[str,float] = {}
-    spreads: Dict[str,float] = {}
-
-    for bk in (ev.get("bookmakers") or []):
-        for mkt in (bk.get("markets") or []):
-            key = mkt.get("key","")
-            if key == "h2h":
-                for o in (mkt.get("outcomes") or []):
-                    n = o.get("name",""); p = float(o.get("price",0) or 0)
-                    if p <= 1: continue
-                    if n == h:   h2h["1"] = max(h2h.get("1",0), p)
-                    elif n == a: h2h["2"] = max(h2h.get("2",0), p)
-                    else:        h2h["X"] = max(h2h.get("X",0), p)
-            elif key == "btts":
-                for o in (mkt.get("outcomes") or []):
-                    n = o.get("name","").lower(); p = float(o.get("price",0) or 0)
-                    if p <= 1: continue
-                    if n == "yes": btts["yes"] = max(btts.get("yes",0), p)
-                    else:          btts["no"]  = max(btts.get("no",0), p)
-            elif key == "totals":
-                for o in (mkt.get("outcomes") or []):
-                    n = o.get("name","").lower(); pt = o.get("point"); p = float(o.get("price",0) or 0)
-                    if p <= 1 or pt is None: continue
-                    slot = f"{n}_{pt}"
-                    totals[slot] = max(totals.get(slot,0), p)
-            elif key == "spreads":
-                for o in (mkt.get("outcomes") or []):
-                    n = o.get("name",""); pt = o.get("point"); p = float(o.get("price",0) or 0)
-                    if p <= 1 or pt is None: continue
-                    side = "home" if n == h else "away"
-                    sign = "+" if float(pt) >= 0 else ""
-                    spreads[f"{side}_{sign}{pt}"] = max(spreads.get(f"{side}_{sign}{pt}",0), p)
-    return {"h2h": h2h, "btts": btts, "totals": totals, "spreads": spreads}
-
-
-async def _fetch_live_odds(home: str, away: str, date_str: str = "",
-                           league_name: str = "") -> Dict:
+async def _fetch_live_odds(home: str, away: str, date_str: str = "") -> Dict:
     """
-    Fetch full market odds (h2h + btts + totals + spreads) for a match.
-
-    Strategy (saves API quota):
-    1. Check predictions cache — odds already fetched during pipeline run
-    2. Check Redis cache (30-min TTL) — odds cached from a previous modal open
-    3. Only call The Odds API if not in either cache
-       - Uses league_name to pick the ONE correct sport key (not all 15)
-
-    Returns nested dict or {} if not found.
+    Fetch truly live odds from The Odds API at request time.
+    Called when a match modal opens — not from cache.
+    Returns {home_odds, draw_odds, away_odds, btts_yes, btts_no, bookie}.
     """
-    from difflib import SequenceMatcher
-    def sim(a: str, b: str) -> float:
-        return SequenceMatcher(None, a.lower().strip(), b.lower().strip()).ratio()
-
-    # ── 1. Check Redis cache (most recent modal open) ─────────────────────
-    r = _get_redis()
-    cache_key = f"betiq:modal_odds:{home}:{away}:{date_str}"
-    if r:
-        try:
-            cached = r.get(cache_key)
-            if cached:
-                data = json.loads(cached)
-                if data.get("h2h"):
-                    print(f"[LiveOdds] {home} vs {away}: served from Redis cache")
-                    return data
-        except Exception:
-            pass
-
-    # ── 2. Build from predictions cache (zero API calls) ─────────────────
-    cached_fx = next(
-        (p for p in _predictions_cache
-         if p.get("home","").lower() == home.lower()
-         and p.get("away","").lower() == away.lower()),
-        {}
-    )
-    o1 = float(cached_fx.get("odds_home") or 0)
-    ox = float(cached_fx.get("odds_draw") or 0)
-    o2 = float(cached_fx.get("odds_away") or 0)
-    if o1 > 1 and ox > 1 and o2 > 1:
-        result = {
-            "h2h":     {"1": o1, "X": ox, "2": o2},
-            "btts":    {},
-            "totals":  {},
-            "spreads": {},
-            "bookie":  "market (cached at pipeline time)",
-        }
-        print(f"[LiveOdds] {home} vs {away}: 1X2 from predictions cache ({o1}/{ox}/{o2})")
-        # Still try The Odds API for btts/totals/spreads in background
-        api_key = os.getenv("ODDS_API_KEY","")
-        if api_key:
-            try:
-                league = league_name or cached_fx.get("league_name","")
-                sport_key = _league_to_sport_key(league)
-                if sport_key:
-                    import httpx as _hx
-                    async with _hx.AsyncClient(timeout=8) as client:
-                        resp = await client.get(
-                            f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/",
-                            params={"apiKey":api_key,"regions":"eu",
-                                    "markets":"h2h,btts,totals,spreads","oddsFormat":"decimal"},
-                        )
-                        if resp.status_code == 200:
-                            remaining = resp.headers.get("x-requests-remaining","?")
-                            for ev in resp.json():
-                                if (sim(home,ev.get("home_team","")) +
-                                    sim(away,ev.get("away_team",""))) / 2 >= 0.55:
-                                    parsed = _parse_odds_api_event(ev, home, away)
-                                    if parsed["h2h"]:
-                                        result = {**parsed, "bookie": f"market (live · {remaining} quota left)"}
-                                    break
-            except Exception as e:
-                print(f"[LiveOdds] API enrich error: {e}")
-        if r:
-            try: r.setex(cache_key, 1800, json.dumps(result))
-            except Exception: pass
-        return result
-
-    # ── 3. Full Odds API call (match not in predictions cache) ────────────
-    api_key = os.getenv("ODDS_API_KEY","")
+    api_key = os.getenv("ODDS_API_KEY", "")
     if not api_key:
         return {}
 
-    league = league_name or cached_fx.get("league_name","")
-    sport_keys_to_try = []
-    primary = _league_to_sport_key(league)
-    if primary:
-        sport_keys_to_try.append(primary)
-    # Only add fallback keys if primary didn't work
-    fallbacks = [
-        "soccer_fifa_world_cup","soccer_africa_cup_of_nations",
-        "soccer_uefa_nations_league","soccer_epl","soccer_italy_serie_a",
-    ]
-    sport_keys_to_try += [k for k in fallbacks if k != primary]
+    from difflib import SequenceMatcher
+    def sim(a, b): return SequenceMatcher(None, a.lower(), b.lower()).ratio()
 
-    import httpx as _hx
+    SPORT_KEYS = [
+        "soccer_epl", "soccer_italy_serie_a", "soccer_germany_bundesliga",
+        "soccer_spain_la_liga", "soccer_france_ligue_one",
+        "soccer_uefa_champs_league", "soccer_uefa_europa_league",
+        "soccer_portugal_primeira_liga", "soccer_netherlands_eredivisie",
+        "soccer_england_efl_champ", "soccer_germany_bundesliga2",
+        "soccer_fifa_world_cup", "soccer_africa_cup_of_nations",
+        "soccer_uefa_nations_league", "soccer_conmebol_copa_america",
+    ]
+
     try:
+        import httpx as _hx
         async with _hx.AsyncClient(timeout=10) as client:
-            for sport_key in sport_keys_to_try:
-                resp = await client.get(
+            for sport_key in SPORT_KEYS:
+                r = await client.get(
                     f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/",
-                    params={"apiKey":api_key,"regions":"eu",
-                            "markets":"h2h,btts,totals,spreads","oddsFormat":"decimal"},
+                    params={"apiKey": api_key, "regions": "eu",
+                            "markets": "h2h,btts", "oddsFormat": "decimal"},
                 )
-                remaining = resp.headers.get("x-requests-remaining","?")
-                if resp.status_code == 422: continue
-                if resp.status_code != 200:
-                    print(f"[LiveOdds] {sport_key}: HTTP {resp.status_code} (quota={remaining})")
-                    break
-                for ev in resp.json():
-                    if (sim(home,ev.get("home_team","")) +
-                        sim(away,ev.get("away_team",""))) / 2 >= 0.55:
-                        parsed = _parse_odds_api_event(ev, home, away)
-                        if parsed["h2h"]:
-                            result = {**parsed, "bookie": f"market (live · {remaining} quota left)"}
-                            print(f"[LiveOdds] {home} vs {away}: found via {sport_key} (quota={remaining})")
-                            if r:
-                                try: r.setex(cache_key, 1800, json.dumps(result))
-                                except Exception: pass
-                            return result
+                if r.status_code != 200:
+                    continue
+                for ev in r.json():
+                    h = ev.get("home_team","")
+                    a = ev.get("away_team","")
+                    if (sim(home, h) + sim(away, a)) / 2 < 0.55:
+                        continue
+                    # Found the match — extract best odds
+                    best: Dict[str, float] = {}
+                    btts: Dict[str, float] = {}
+                    for bk in (ev.get("bookmakers") or []):
+                        for mkt in (bk.get("markets") or []):
+                            if mkt["key"] == "h2h":
+                                for o in mkt.get("outcomes",[]):
+                                    n = o["name"]; p = float(o.get("price",0))
+                                    if n == h:    best["1"] = max(best.get("1",0), p)
+                                    elif n == a:  best["2"] = max(best.get("2",0), p)
+                                    else:         best["X"] = max(best.get("X",0), p)
+                            elif mkt["key"] == "btts":
+                                for o in mkt.get("outcomes",[]):
+                                    if o["name"].lower() == "yes":
+                                        btts["yes"] = max(btts.get("yes",0), float(o.get("price",0)))
+                                    else:
+                                        btts["no"]  = max(btts.get("no",0),  float(o.get("price",0)))
+                    if best:
+                        print(f"[LiveOdds] {home} vs {away}: 1={best.get('1')} X={best.get('X')} 2={best.get('2')}")
+                        return {**best, **btts, "bookie": "market (live)"}
     except Exception as e:
-        print(f"[LiveOdds] API error: {e}")
+        print(f"[LiveOdds] fetch error: {e}")
     return {}
 
 
@@ -1013,8 +888,7 @@ async def get_match_analysis(home: str, away: str):
     fx_date = cached_fx.get("date", "")
 
     # Fetch LIVE odds right now from The Odds API (not from cache)
-    fx_league = cached_fx.get("league_name","")
-    live_odds = await _fetch_live_odds(home, away, fx_date, fx_league)
+    live_odds = await _fetch_live_odds(home, away, fx_date)
 
     # Fetch live web news and extract structured model adjustments in parallel
     from llm_service import extract_model_adjustments
@@ -1039,14 +913,13 @@ async def get_match_analysis(home: str, away: str):
         if orig_away_gf and adj_xg_a != 1.0:
             _predictor.team_stats[away]["gf"] = [v * adj_xg_a for v in orig_away_gf]
 
-    # live_odds is now nested: {h2h:{1,X,2}, btts:{yes,no}, totals:{over_2.5,...}}
-    _h2h = live_odds.get("h2h", {}) if live_odds else {}
-    if _h2h:
+    # If live odds available, re-run prediction with them for better accuracy
+    if live_odds:
         result = _predictor.predict_match_full(
             home, away,
-            odds_home=float(_h2h.get("1") or 0),
-            odds_draw=float(_h2h.get("X") or 0),
-            odds_away=float(_h2h.get("2") or 0),
+            odds_home=live_odds.get("1", 0),
+            odds_draw=live_odds.get("X", 0),
+            odds_away=live_odds.get("2", 0),
         )
     else:
         result = _predictor.predict_match_full(home, away)
@@ -1069,96 +942,25 @@ async def get_match_analysis(home: str, away: str):
     if result is None:
         raise HTTPException(status_code=404, detail="Could not generate analysis")
 
-    # Inject live odds from The Odds API into each market
-    # Only inject odds for markets The Odds API actually covers.
-    # Markets WITHOUT real odds (model-only): Double Chance, Correct Score,
-    #   Win to Nil, HT Result — these show model probabilities only.
+    # Tag live odds onto 1X2 market options
     if live_odds:
-        bookie = live_odds.get("bookie", "market")
-        h2h    = live_odds.get("h2h", {})
-        btts   = live_odds.get("btts", {})
-        totals = live_odds.get("totals", {})
-        spreads= live_odds.get("spreads", {})
-
         for mkt in result["markets"]:
-            mid = mkt["id"]
-
-            if mid == "1x2" and h2h:
+            if mkt["id"] == "1x2":
                 for opt in mkt["options"]:
-                    v = {"1": h2h.get("1"), "X": h2h.get("X"), "2": h2h.get("2")}.get(opt["code"])
-                    if v and v > 1: opt["odds"] = round(v,2); opt["bookie"] = bookie
-
-            elif mid == "btts" and btts:
+                    if opt["code"] == "1" and live_odds.get("1"):
+                        opt["odds"] = str(live_odds["1"]); opt["bookie"] = live_odds.get("bookie","")
+                    elif opt["code"] == "X" and live_odds.get("X"):
+                        opt["odds"] = str(live_odds["X"]); opt["bookie"] = live_odds.get("bookie","")
+                    elif opt["code"] == "2" and live_odds.get("2"):
+                        opt["odds"] = str(live_odds["2"]); opt["bookie"] = live_odds.get("bookie","")
+            elif mkt["id"] == "btts":
                 for opt in mkt["options"]:
-                    v = btts.get("yes") if opt["code"] == "BTTS-Y" else btts.get("no")
-                    if v and v > 1: opt["odds"] = round(v,2); opt["bookie"] = bookie
-
-            elif mid == "goals_ou" and totals:
-                # Map our codes (O25, U25 etc.) to Odds API keys (over_2.5, under_2.5)
-                CODE_MAP = {
-                    "O05":"over_0.5","O15":"over_1.5","O25":"over_2.5",
-                    "O35":"over_3.5","O45":"over_4.5",
-                    "U15":"under_1.5","U25":"under_2.5","U35":"under_3.5",
-                }
-                for opt in mkt["options"]:
-                    slot = CODE_MAP.get(opt["code"])
-                    v = totals.get(slot) if slot else None
-                    if v and v > 1: opt["odds"] = round(v,2); opt["bookie"] = bookie
-
-            elif mid == "asian_handicap" and spreads:
-                # Map our codes to spreads keys
-                CODE_MAP = {
-                    "AH-H05":"home_-0.5","AH-A05":"away_+0.5",
-                    "AH-H15":"home_-1.5","AH-A15":"away_+1.5",
-                    "AH-H+05":"home_+0.5","AH-A-05":"away_-0.5",
-                }
-                for opt in mkt["options"]:
-                    slot = CODE_MAP.get(opt["code"])
-                    v = spreads.get(slot) if slot else None
-                    if v and v > 1: opt["odds"] = round(v,2); opt["bookie"] = bookie
-
-            elif mid == "draw_no_bet" and h2h:
-                # Derive DNB from h2h: remove draw, renormalise
-                p1 = (1/h2h["1"]) if h2h.get("1") else 0
-                p2 = (1/h2h["2"]) if h2h.get("2") else 0
-                tot = p1 + p2
-                if tot > 0:
-                    for opt in mkt["options"]:
-                        if opt["code"] == "DNB-H" and p1:
-                            opt["odds"] = round(tot/p1, 2); opt["bookie"] = f"{bookie} (derived)"
-                        elif opt["code"] == "DNB-A" and p2:
-                            opt["odds"] = round(tot/p2, 2); opt["bookie"] = f"{bookie} (derived)"
-
-            elif mid == "double_chance" and h2h:
-                # Derive DC from h2h: 1X = 1/(p_home + p_draw), etc.
-                p1 = (1/h2h["1"]) if h2h.get("1") else 0
-                px = (1/h2h["X"]) if h2h.get("X") else 0
-                p2 = (1/h2h["2"]) if h2h.get("2") else 0
-                overround = p1 + px + p2 or 1
-                fp1, fpx, fp2 = p1/overround, px/overround, p2/overround
-                for opt in mkt["options"]:
-                    if opt["code"] == "1X" and fp1+fpx:
-                        opt["odds"] = round(1/(fp1+fpx), 2); opt["bookie"] = f"{bookie} (derived)"
-                    elif opt["code"] == "X2" and fpx+fp2:
-                        opt["odds"] = round(1/(fpx+fp2), 2); opt["bookie"] = f"{bookie} (derived)"
-                    elif opt["code"] == "12" and fp1+fp2:
-                        opt["odds"] = round(1/(fp1+fp2), 2); opt["bookie"] = f"{bookie} (derived)"
-
-            # Correct Score, Win to Nil, HT Result, Clean Sheet, Result+BTTS:
-            # No bookmaker odds available from The Odds API — show model probabilities only
-            elif mid in ("correct_score","win_to_nil","half_time","clean_sheet","result_btts"):
-                for opt in mkt["options"]:
-                    opt["note"] = "Model probability only — no bookmaker odds available"
-
+                    if opt["code"] == "BTTS-Y" and live_odds.get("yes"):
+                        opt["odds"] = str(live_odds["yes"]); opt["bookie"] = live_odds.get("bookie","")
+                    elif opt["code"] == "BTTS-N" and live_odds.get("no"):
+                        opt["odds"] = str(live_odds["no"]); opt["bookie"] = live_odds.get("bookie","")
         result["live_odds_fetched"] = True
-        result["odds_bookie"] = bookie
-        result["odds_coverage"] = {
-            "h2h":     bool(h2h),
-            "btts":    bool(btts),
-            "totals":  bool(totals),
-            "spreads": bool(spreads),
-            "model_only": ["correct_score","win_to_nil","half_time","clean_sheet","result_btts","double_chance (derived)"],
-        }
+        result["odds_bookie"] = live_odds.get("bookie", "")
 
     # Show team form stats in the response
     result["team_form"] = {

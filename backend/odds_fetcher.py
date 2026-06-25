@@ -92,8 +92,8 @@ async def _fetch_odds_for_sport(sport_key: str) -> List[Dict]:
     url = f"{ODDS_API_BASE}/sports/{sport_key}/odds/"
     params = {
         "apiKey": ODDS_API_KEY,
-        "regions": "eu",
-        "markets": "h2h,btts,totals",   # 1X2 + BTTS + Over/Under
+        "regions": "eu",          # European bookmakers = tightest margins
+        "markets": "h2h",         # 1X2 / moneyline
         "oddsFormat": "decimal",
     }
     try:
@@ -118,15 +118,8 @@ async def _fetch_odds_for_sport(sport_key: str) -> List[Dict]:
 
 def _parse_odds_event(event: Dict) -> Optional[Dict]:
     """
-    Extract best available odds from an Odds API event across ALL markets.
-    Returns:
-    {
-      home, away, date,
-      odds:   {1, X, 2},           ← 1X2
-      btts:   {yes, no},            ← BTTS
-      totals: {over_2.5, under_2.5, over_1.5, under_1.5, ...},
-      source: "the-odds-api"
-    }
+    Extract best available 1X2 odds from an Odds API event.
+    Uses the bookmaker with the highest home win price (most generous).
     """
     home_team = event.get("home_team", "")
     away_team = event.get("away_team", "")
@@ -138,48 +131,28 @@ def _parse_odds_event(event: Dict) -> Optional[Dict]:
     except Exception:
         date_str = ""
 
-    best_h2h: Dict[str, float] = {}
-    best_btts: Dict[str, float] = {}
-    best_totals: Dict[str, float] = {}
-
+    # Aggregate odds across bookmakers — use best (highest) odds per outcome
+    best: Dict[str, float] = {}
     for bookie in (event.get("bookmakers") or []):
         for market in (bookie.get("markets") or []):
-            mk = market.get("key", "")
+            if market.get("key") != "h2h":
+                continue
+            for outcome in (market.get("outcomes") or []):
+                name  = outcome.get("name", "")
+                price = float(outcome.get("price") or 0)
+                if price <= 1:
+                    continue
+                if name == home_team:
+                    best["1"] = max(best.get("1", 0), price)
+                elif name == away_team:
+                    best["2"] = max(best.get("2", 0), price)
+                elif name.lower() in ("draw", "tie"):
+                    best["X"] = max(best.get("X", 0), price)
 
-            if mk == "h2h":
-                for o in (market.get("outcomes") or []):
-                    n = o.get("name",""); p = float(o.get("price",0) or 0)
-                    if p <= 1: continue
-                    if n == home_team:               best_h2h["1"] = max(best_h2h.get("1",0), p)
-                    elif n == away_team:             best_h2h["2"] = max(best_h2h.get("2",0), p)
-                    elif n.lower() in ("draw","tie"):best_h2h["X"] = max(best_h2h.get("X",0), p)
-
-            elif mk == "btts":
-                for o in (market.get("outcomes") or []):
-                    n = o.get("name","").lower(); p = float(o.get("price",0) or 0)
-                    if p <= 1: continue
-                    if n == "yes": best_btts["yes"] = max(best_btts.get("yes",0), p)
-                    else:          best_btts["no"]  = max(best_btts.get("no",0),  p)
-
-            elif mk == "totals":
-                for o in (market.get("outcomes") or []):
-                    n  = o.get("name","").lower()
-                    pt = o.get("point")
-                    p  = float(o.get("price",0) or 0)
-                    if p <= 1 or pt is None: continue
-                    slot = f"{n}_{pt}"
-                    best_totals[slot] = max(best_totals.get(slot,0), p)
-
-    if len(best_h2h) < 3:
-        return None
-
-    return {
-        "home":   home_team, "away": away_team, "date": date_str,
-        "odds":   best_h2h,
-        "btts":   best_btts,
-        "totals": best_totals,
-        "source": "the-odds-api",
-    }
+    if len(best) == 3:
+        return {"home": home_team, "away": away_team, "date": date_str,
+                "odds": best, "source": "the-odds-api"}
+    return None
 
 
 async def fetch_odds_for_predictions(predictions: List[Dict]) -> Dict[str, Dict]:
@@ -230,111 +203,53 @@ async def fetch_odds_for_predictions(predictions: List[Dict]) -> Dict[str, Dict]
     return index
 
 
-def _implied(odds_val: float) -> float:
-    return 1 / odds_val if odds_val > 1 else 0
-
-
 def compute_value_bets(predictions: List[Dict], odds_index: Dict[str, Dict]) -> List[Dict]:
-    """
-    Compare model probabilities against bookmaker odds across three markets:
-      1. 1X2  (Home Win / Draw / Away Win)
-      2. Over/Under 2.5 goals
-      3. BTTS (Both Teams to Score)
-
-    Only uses REAL bookmaker odds — no derived/model-only markets.
-    Flags any outcome where model probability exceeds implied probability by ≥ MIN_EDGE.
-    """
+    """Flag predictions where model probability beats implied probability by ≥ MIN_EDGE."""
     value_bets = []
-
     for pred in predictions:
         key = f"{pred['home']}:{pred['away']}:{pred['date']}"
-        ev = odds_index.get(key)
-        if not ev:
+        odds = odds_index.get(key)
+        if not odds:
             continue
 
-        # Support both old flat format {1,X,2} and new nested format {odds:{1,X,2}, btts:{}, totals:{}}
-        h2h    = ev.get("odds", ev)
-        btts   = ev.get("btts", {})
-        totals = ev.get("totals", {})
-        source = ev.get("source", "market")
-
-        candidates = []
-
-        # ── 1X2 ──────────────────────────────────────────────────────────
-        o1 = float(h2h.get("1") or 0)
-        ox = float(h2h.get("X") or 0)
-        o2 = float(h2h.get("2") or 0)
-        if o1 > 1 and ox > 1 and o2 > 1:
-            raw = {"1": _implied(o1), "X": _implied(ox), "2": _implied(o2)}
-            over = sum(raw.values())
-            imp  = {k: v/over for k, v in raw.items()}
-            mod  = {"1": float(pred.get("p_home",0)), "X": float(pred.get("p_draw",0)), "2": float(pred.get("p_away",0))}
-            odds_map = {"1": o1, "X": ox, "2": o2}
-            labels   = {"1": f"{pred['home']} Win", "X": "Draw", "2": f"{pred['away']} Win"}
-            for code in ("1","X","2"):
-                edge = mod[code] - imp[code]
-                if edge >= MIN_EDGE:
-                    candidates.append({"market":"1X2","label":labels[code],"code":code,
-                                       "odds":odds_map[code],"model_prob":mod[code],
-                                       "implied_prob":imp[code],"edge":edge,
-                                       "overround":round((over-1)*100,1)})
-
-        # ── Over/Under 2.5 ───────────────────────────────────────────────
-        o_ov = float(totals.get("over_2.5") or 0)
-        o_un = float(totals.get("under_2.5") or 0)
-        if o_ov > 1 and o_un > 1:
-            raw_t = {"over": _implied(o_ov), "under": _implied(o_un)}
-            over_t = sum(raw_t.values())
-            imp_t  = {k: v/over_t for k,v in raw_t.items()}
-            mod_ov = float(pred.get("p_over25", 0.5))
-            for code, mod_p, label, odds_val in [
-                ("over",  mod_ov,      "Over 2.5 Goals",  o_ov),
-                ("under", 1-mod_ov,    "Under 2.5 Goals", o_un),
-            ]:
-                edge = mod_p - imp_t[code]
-                if edge >= MIN_EDGE:
-                    candidates.append({"market":"Over/Under 2.5","label":label,"code":f"OU-{code.upper()}",
-                                       "odds":odds_val,"model_prob":mod_p,
-                                       "implied_prob":imp_t[code],"edge":edge,
-                                       "overround":round((over_t-1)*100,1)})
-
-        # ── BTTS ─────────────────────────────────────────────────────────
-        b_y = float(btts.get("yes") or 0)
-        b_n = float(btts.get("no")  or 0)
-        if b_y > 1 and b_n > 1:
-            raw_b = {"yes": _implied(b_y), "no": _implied(b_n)}
-            over_b = sum(raw_b.values())
-            imp_b  = {k: v/over_b for k,v in raw_b.items()}
-            mod_btts_y = float(pred.get("p_over15", 0.5))  # proxy: most goals → both likely score
-            for code, mod_p, label, odds_val in [
-                ("yes", mod_btts_y,   "BTTS Yes", b_y),
-                ("no",  1-mod_btts_y, "BTTS No",  b_n),
-            ]:
-                edge = mod_p - imp_b[code]
-                if edge >= MIN_EDGE:
-                    candidates.append({"market":"BTTS","label":label,"code":f"BTTS-{code.upper()}",
-                                       "odds":odds_val,"model_prob":mod_p,
-                                       "implied_prob":imp_b[code],"edge":edge,
-                                       "overround":round((over_b-1)*100,1)})
-
-        if not candidates:
+        o1 = float(odds.get("1") or 0)
+        ox = float(odds.get("X") or 0)
+        o2 = float(odds.get("2") or 0)
+        if not (o1 > 1 and ox > 1 and o2 > 1):
             continue
 
-        best = max(candidates, key=lambda c: c["edge"])
+        raw_imp = {"1": 1/o1, "X": 1/ox, "2": 1/o2}
+        overround = sum(raw_imp.values())
+        imp = {k: v / overround for k, v in raw_imp.items()}
+
+        model = {
+            "1": float(pred.get("p_home", 0)),
+            "X": float(pred.get("p_draw", 0)),
+            "2": float(pred.get("p_away", 0)),
+        }
+
+        best_code, best_edge, best_odds_val = None, 0.0, 0.0
+        for code in ("1", "X", "2"):
+            edge = model[code] - imp[code]
+            if edge > best_edge:
+                best_edge = edge
+                best_code = code
+                best_odds_val = {"1": o1, "X": ox, "2": o2}[code]
+
+        if best_edge < MIN_EDGE or not best_code:
+            continue
+
+        label = {"1": f"{pred['home']} Win", "X": "Draw", "2": f"{pred['away']} Win"}[best_code]
         value_bets.append({
             **pred,
-            "value_outcome":  best["code"],
-            "value_label":    f"{best['market']}: {best['label']}",
-            "value_market":   best["market"],
-            "value_odds":     round(best["odds"], 2),
-            "model_prob":     round(best["model_prob"] * 100, 1),
-            "implied_prob":   round(best["implied_prob"] * 100, 1),
-            "edge":           round(best["edge"] * 100, 1),
-            "overround":      best["overround"],
-            "bookie":         source,
-            "all_edges":      [{"market":c["market"],"label":c["label"],
-                                "edge":round(c["edge"]*100,1),"odds":c["odds"]}
-                               for c in sorted(candidates,key=lambda x:-x["edge"])],
+            "value_outcome": best_code,
+            "value_label":   label,
+            "value_odds":    round(best_odds_val, 2),
+            "model_prob":    round(model[best_code] * 100, 1),
+            "implied_prob":  round(imp[best_code] * 100, 1),
+            "edge":          round(best_edge * 100, 1),
+            "overround":     round((overround - 1) * 100, 1),
+            "bookie":        "Best available (eu bookmakers)",
         })
 
     return sorted(value_bets, key=lambda x: x["edge"], reverse=True)
