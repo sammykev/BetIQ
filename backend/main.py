@@ -1268,6 +1268,50 @@ async def set_prefs(body: Dict[str, Any]):
     return {"ok": True}
 
 
+@app.get("/api/sports/{sport}")
+async def get_sport_predictions(sport: str):
+    """
+    Multi-sport predictions endpoint.
+    sport: basketball | tennis | table-tennis
+    Requires ODDS_API_KEY env var.
+    """
+    from sports_fetcher import (
+        fetch_basketball_predictions,
+        fetch_tennis_predictions,
+        fetch_table_tennis_predictions,
+    )
+    import json as _json
+
+    CACHE_TTL = 3600  # 1 hour — conserves Odds API quota
+    cache_key = f"betiq:sports:{sport}"
+    r = _get_redis()
+
+    if r:
+        try:
+            cached = r.get(cache_key)
+            if cached:
+                return _json.loads(cached)
+        except Exception:
+            pass
+
+    if sport == "basketball":
+        data = await fetch_basketball_predictions()
+    elif sport == "tennis":
+        data = await fetch_tennis_predictions()
+    elif sport == "table-tennis":
+        data = await fetch_table_tennis_predictions()
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown sport: {sport}")
+
+    if r and data:
+        try:
+            r.setex(cache_key, CACHE_TTL, _json.dumps(data))
+        except Exception:
+            pass
+
+    return data
+
+
 @app.get("/api/value-bets")
 async def get_value_bets():
     """
