@@ -778,12 +778,26 @@ def _archive_past_predictions():
     for d, preds in by_date.items():
         if r:
             try:
+                has_settled = any(p.get("outcome") in ("won", "lost") for p in preds)
                 existing_raw = r.get(f"betiq:history:{d}")
-                if not existing_raw:           # don't overwrite already-settled outcomes
-                    r.set(f"betiq:history:{d}", json.dumps(preds), ex=60 * 86400)
+
+                if not existing_raw:
+                    # First time — write regardless
+                    r.set(f"betiq:history:{d}", json.dumps(preds), ex=90 * 86400)
+                elif has_settled:
+                    # We have real results — always overwrite (upgrades pending → won/lost)
+                    existing = json.loads(existing_raw)
+                    # Merge: keep any manually submitted results not in our archive
+                    result_map = {f"{p['home']}:{p['away']}": p for p in preds}
+                    for ex_p in existing:
+                        key2 = f"{ex_p['home']}:{ex_p['away']}"
+                        if key2 not in result_map:
+                            result_map[key2] = ex_p
+                    r.set(f"betiq:history:{d}", json.dumps(list(result_map.values())), ex=90 * 86400)
             except Exception as e:
                 print(f"[History] Redis error for {d}: {e}")
-    print(f"[History] Archived {len(past)} past predictions across {len(by_date)} dates.")
+    settled_count = sum(1 for preds in by_date.values() if any(p.get("outcome") in ("won","lost") for p in preds))
+    print(f"[History] Archived {len(past)} predictions across {len(by_date)} dates ({settled_count} dates with results).")
 
 
 @app.get("/api/history")
@@ -1420,6 +1434,24 @@ async def set_prefs(body: Dict[str, Any]):
     prefs = {k: v for k, v in body.items() if k != "uid"}
     r.set(_ukey(uid, "prefs"), json.dumps(prefs), ex=365 * 86400)
     return {"ok": True}
+
+
+@app.get("/api/sports/{sport}/leagues")
+async def get_sport_leagues(sport: str):
+    """Return distinct leagues/tournaments being predicted for a sport."""
+    import json as _json
+    cache_key = f"betiq:sports:{sport}"
+    r = _get_redis()
+    preds = []
+    if r:
+        try:
+            cached = r.get(cache_key)
+            if cached:
+                preds = _json.loads(cached)
+        except Exception:
+            pass
+    leagues = sorted({p.get("league_name","") or p.get("league","") for p in preds if p.get("league_name") or p.get("league")})
+    return {"sport": sport, "leagues": leagues, "total_predictions": len(preds)}
 
 
 @app.get("/api/sports/{sport}")
