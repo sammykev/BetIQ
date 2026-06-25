@@ -293,44 +293,65 @@ export function PredictionCard({ prediction: p, savedKeys, onClick }: Props) {
           </div>
         </div>
 
-        {/* Teams + win probability bars */}
-        <div className="space-y-1.5">
-          {[
-            { name: p.home, img: home, prob: p.p_home, odds: p.odds_home },
-            { name: "Draw",  img: null,  prob: p.p_draw, odds: p.odds_draw  },
-            { name: p.away, img: away, prob: p.p_away, odds: p.odds_away },
-          ].map(({ name, img, prob, odds }) => (
-            <div key={name}>
-              <div className="flex items-center gap-2 mb-0.5">
-                {img && img.imageUrl && (
-                  <img src={img.imageUrl} alt={name}
-                    className={clsx("shrink-0 object-contain", img.isFlag ? "w-5 h-3.5 rounded-sm" : "w-4 h-4 rounded-full bg-white/10 p-0.5")}
-                    onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
-                )}
-                <span className={clsx("flex-1 truncate drop-shadow", name === "Draw" ? "text-[11px] text-white/60" : "text-sm font-black text-white")}>{name}</span>
-                {odds && (
-                  <span className="text-[11px] font-black bg-white/15 text-white px-1.5 py-0.5 rounded-md shrink-0">{odds}</span>
-                )}
-                <span className={clsx("shrink-0 font-semibold", name === "Draw" ? "text-[11px] text-white/60" : "text-sm text-white")}>{Math.round(prob * 100)}%</span>
-              </div>
-              <div className={clsx("rounded-full overflow-hidden bg-black/30", name === "Draw" ? "h-1" : "h-1.5")}>
-                <div className={clsx("h-full rounded-full", name === "Draw" ? "bg-white/25" : "bg-white/70")}
-                  style={{ width: `${Math.round(prob * 100)}%` }} />
-              </div>
+        {/* Teams — home on top, away below, odds on right */}
+        <div className="space-y-1">
+          {/* Home */}
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 min-w-0 flex-1">
+              {home.imageUrl && (
+                <img src={home.imageUrl} alt={p.home}
+                  className={clsx("shrink-0 object-contain", home.isFlag ? "w-5 h-3.5 rounded-sm" : "w-4 h-4 rounded-full bg-white/10 p-0.5")}
+                  onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
+              )}
+              <span className="text-sm font-black text-white truncate drop-shadow">{p.home}</span>
             </div>
-          ))}
+            {(p as any).odds_home && <span className="text-[11px] font-black bg-white/15 text-white px-1.5 py-0.5 rounded-md shrink-0">{(p as any).odds_home}</span>}
+            <span className="text-sm font-bold text-white shrink-0">{Math.round(p.p_home * 100)}%</span>
+          </div>
+          <div className="h-1.5 bg-black/30 rounded-full overflow-hidden">
+            <div className="h-full bg-white/70 rounded-full" style={{ width: `${Math.round(p.p_home * 100)}%` }} />
+          </div>
+
+          {/* Draw — smaller, between the two teams */}
+          <div className="flex items-center justify-between gap-2 py-0.5">
+            <span className="text-[10px] text-white/40 font-medium">Draw</span>
+            <div className="flex-1 h-1 bg-black/20 rounded-full overflow-hidden mx-2">
+              <div className="h-full bg-white/25 rounded-full" style={{ width: `${Math.round(p.p_draw * 100)}%` }} />
+            </div>
+            <span className="text-[10px] text-white/40 shrink-0">{Math.round(p.p_draw * 100)}%</span>
+          </div>
+
+          {/* Away */}
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 min-w-0 flex-1">
+              {away.imageUrl && (
+                <img src={away.imageUrl} alt={p.away}
+                  className={clsx("shrink-0 object-contain", away.isFlag ? "w-5 h-3.5 rounded-sm" : "w-4 h-4 rounded-full bg-white/10 p-0.5")}
+                  onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
+              )}
+              <span className="text-sm font-black text-white truncate drop-shadow">{p.away}</span>
+            </div>
+            {(p as any).odds_away && <span className="text-[11px] font-black bg-white/15 text-white px-1.5 py-0.5 rounded-md shrink-0">{(p as any).odds_away}</span>}
+            <span className="text-sm font-bold text-white shrink-0">{Math.round(p.p_away * 100)}%</span>
+          </div>
+          <div className="h-1.5 bg-black/30 rounded-full overflow-hidden">
+            <div className="h-full bg-white/70 rounded-full" style={{ width: `${Math.round(p.p_away * 100)}%` }} />
+          </div>
         </div>
 
-        {/* Best pick + confidence gauge */}
-        <div className="bg-black/30 border border-white/15 rounded-xl px-3 py-2 flex items-center gap-3">
-          <div className="flex-1 min-w-0">
-            <p className="text-[10px] text-white/50 uppercase tracking-wide font-semibold mb-0.5">Best pick</p>
+        {/* Best pick */}
+        <div className="bg-black/30 border border-white/15 rounded-xl px-3 py-2.5 flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[10px] text-white/50 uppercase tracking-wide font-semibold">Best pick</p>
             <p className="text-sm font-bold text-white truncate">{p.tip_1x2}</p>
             {!isSkip && p.tip_goals && p.tip_goals !== "Skip" && (
               <p className="text-[10px] text-green-300 mt-0.5">{p.tip_goals}</p>
             )}
           </div>
-          {!isSkip && <ConfidenceGauge value={gconf} />}
+          <div className="text-right shrink-0">
+            <p className="text-[10px] text-white/50">Confidence</p>
+            <p className={clsx("text-xl font-black", gconf >= 65 ? "text-green-400" : gconf >= 50 ? "text-yellow-400" : "text-white")}>{gconf}%</p>
+          </div>
         </div>
       </div>
     </div>
