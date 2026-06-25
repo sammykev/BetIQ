@@ -443,6 +443,26 @@ export function MatchModal({ prediction: p, onClose }: Props) {
               {/* AI Explanation */}
               <AIExplanation explanation={explanation} />
 
+              {/* Web search model adjustment badge */}
+              {analysis.web_adjustment_reason && (
+                <div className="flex items-start gap-2 bg-orange-500/10 border border-orange-500/25 rounded-xl px-3 py-2.5">
+                  <span className="text-orange-400 text-sm shrink-0">🔍</span>
+                  <div>
+                    <p className="text-xs text-orange-300 font-semibold">Web search adjusted this prediction</p>
+                    <p className="text-xs text-orange-200/70 mt-0.5">{analysis.web_adjustment_reason}</p>
+                    {analysis.web_adjustment_flags && analysis.web_adjustment_flags.length > 0 && (
+                      <div className="flex gap-1 flex-wrap mt-1">
+                        {analysis.web_adjustment_flags.map(f => (
+                          <span key={f} className="text-[10px] bg-orange-500/20 text-orange-300 px-1.5 py-0.5 rounded">
+                            {f.replace(/_/g,' ')}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Live odds badge */}
               {analysis.live_odds_fetched && (
                 <div className="flex items-center gap-2 bg-blue-500/10 border border-blue-500/25 rounded-xl px-3 py-2">
