@@ -735,7 +735,28 @@ async def get_match_analysis(home: str, away: str):
         result["h2h_blended"] = True
         result["h2h_matches_used"] = n
 
-    # Inject live SportyBet odds into each market option (best effort)
+    # Inject live SportyBet odds into each market (best-effort)
+    # SportyBet market IDs confirmed from network capture:
+    #   1=1X2, 10=Double Chance, 11=Draw No Bet, 18=O/U Goals,
+    #   29=GG/NG(BTTS), 36=Result+BTTS combo
+    CODE_TO_SB: dict = {
+        # 1X2
+        "1":       ("1",  "home"),           "X":       ("1",  "draw"),
+        "2":       ("1",  "away"),
+        # Double Chance
+        "1X":      ("10", "home or draw"),   "X2":      ("10", "draw or away"),
+        "12":      ("10", "home or away"),
+        # Draw No Bet
+        "DNB-H":   ("11", "home"),           "DNB-A":   ("11", "away"),
+        # BTTS
+        "BTTS-Y":  ("29", "yes"),            "BTTS-N":  ("29", "no"),
+        # Result + BTTS (market 36, specifier total=2.5 based on network capture)
+        "RB-H-Y":  ("36", "home win & yes"), "RB-D-Y":  ("36", "draw & yes"),
+        "RB-A-Y":  ("36", "away win & yes"),
+        "RB-H-N":  ("36", "home win & no"),  "RB-D-N":  ("36", "draw & no"),
+        "RB-A-N":  ("36", "away win & no"),
+    }
+
     try:
         from sportybet import fetch_events_for_date, find_event
         from datetime import date as _date
@@ -743,34 +764,56 @@ async def get_match_analysis(home: str, away: str):
         sb_events = await fetch_events_for_date(today)
         sb_event  = find_event(home, away, sb_events) if sb_events else None
         if sb_event:
-            # Build a lookup: market_id -> outcome_desc -> odds string
             odds_lookup: dict = {}
             for m in (sb_event.get("markets") or []):
                 mid = str(m.get("id",""))
+                spec = str(m.get("specifier","") or "")
                 for o in (m.get("outcomes") or []):
-                    key2 = f"{mid}:{(o.get('desc') or '').lower()}"
-                    odds_lookup[key2] = str(o.get("odds",""))
+                    desc = (o.get("desc") or "").lower().strip()
+                    # Key with and without specifier
+                    odds_lookup[f"{mid}:{desc}"] = str(o.get("odds",""))
+                    if spec:
+                        odds_lookup[f"{mid}:{spec}:{desc}"] = str(o.get("odds",""))
 
-            # Map our market codes to SportyBet market/outcome IDs
-            code_to_sb = {
-                # 1X2
-                "1": ("1", "home"), "X": ("1", "draw"), "2": ("1", "away"),
-                # BTTS
-                "yes": ("29", "yes"), "no": ("29", "no"),
-                # Double chance
-                "1X": ("10", "home or draw"), "12": ("10", "home or away"), "X2": ("10", "draw or away"),
-            }
             for mkt in result["markets"]:
                 for opt in mkt.get("options", []):
-                    sb_info = code_to_sb.get(opt.get("code","").upper()) or \
-                              code_to_sb.get(opt.get("code",""))
-                    if sb_info:
-                        sb_odds = odds_lookup.get(f"{sb_info[0]}:{sb_info[1]}")
-                        if sb_odds:
-                            opt["odds"] = sb_odds
-                            opt["bookie"] = "sportybet"
+                    code = opt.get("code","")
+                    sb = CODE_TO_SB.get(code)
+                    if sb:
+                        odds_val = odds_lookup.get(f"{sb[0]}:{sb[1]}")
+                        if odds_val and float(odds_val) > 1:
+                            opt["odds"] = odds_val
+                            opt["bookie"] = "SportyBet"
     except Exception:
-        pass  # odds injection is best-effort, never block analysis
+        pass
+
+    # Also try The Odds API for markets SportyBet doesn't cover (Win to Nil, Clean Sheet)
+    try:
+        if os.getenv("ODDS_API_KEY"):
+            import httpx as _hx
+            # Find the prediction with odds already fetched for this match
+            cached_odds = next(
+                (p for p in _predictions_cache
+                 if p.get("home","").lower() == home.lower()
+                 and p.get("away","").lower() == away.lower()),
+                {}
+            )
+            # Inject pre-fetched odds from prediction cache onto 1x2 options
+            o1 = cached_odds.get("odds_home")
+            ox = cached_odds.get("odds_draw")
+            o2 = cached_odds.get("odds_away")
+            if o1 and ox and o2:
+                for mkt in result["markets"]:
+                    if mkt["id"] == "1x2":
+                        for opt in mkt["options"]:
+                            if opt["code"] == "1" and not opt.get("odds"):
+                                opt["odds"] = str(o1); opt["bookie"] = "market"
+                            elif opt["code"] == "X" and not opt.get("odds"):
+                                opt["odds"] = str(ox); opt["bookie"] = "market"
+                            elif opt["code"] == "2" and not opt.get("odds"):
+                                opt["odds"] = str(o2); opt["bookie"] = "market"
+    except Exception:
+        pass
 
     return result
 

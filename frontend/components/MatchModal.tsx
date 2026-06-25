@@ -32,14 +32,18 @@ interface Props {
 }
 
 const MARKET_ICONS: Record<string, string> = {
-  "1x2": "⚽",
+  "1x2":         "⚽",
   double_chance: "🛡️",
-  btts: "🎯",
-  goals_ou: "📊",
-  asian_handicap: "⚖️",
-  half_time: "⏱️",
+  btts:          "🎯",
+  goals_ou:      "📊",
+  asian_handicap:"⚖️",
+  half_time:     "⏱️",
   correct_score: "🔢",
-  cards: "🟨",
+  cards:         "🟨",
+  win_to_nil:    "🔒",
+  clean_sheet:   "🧤",
+  result_btts:   "🎯⚽",
+  draw_no_bet:   "🚫",
 };
 
 // ------------------------------------------------------------------ //
