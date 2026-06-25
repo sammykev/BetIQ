@@ -199,6 +199,59 @@ def _h2h_is_fresh(entry: Dict) -> bool:
 # CSV loaders (existing files)
 # ------------------------------------------------------------------ #
 
+FOOTBALL_DATA_DIR = os.path.join(os.path.dirname(__file__), "data", "football")
+
+def _load_football_data_csvs() -> pd.DataFrame:
+    """
+    Load football-data.co.uk CSVs (with Bet365 odds) from data/football/*.csv.
+    These files have columns: Date, HomeTeam, AwayTeam, FTHG, FTAG, FTR, B365H, B365D, B365A, HY, AY, HR, AR
+    """
+    csvs = sorted(glob.glob(os.path.join(FOOTBALL_DATA_DIR, "*.csv")))
+    if not csvs:
+        return pd.DataFrame()
+
+    dfs = []
+    for path in csvs:
+        try:
+            df = pd.read_csv(path, low_memory=False)
+            df.columns = [c.strip() for c in df.columns]
+
+            # Standardise column names
+            renames = {"FTR": "Result"}
+            df = df.rename(columns=renames)
+
+            # Must have basic match columns
+            if not all(c in df.columns for c in ["Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG", "Result"]):
+                continue
+
+            df["Date"] = pd.to_datetime(df["Date"], dayfirst=True, errors="coerce")
+            df = df.dropna(subset=["Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG", "Result"])
+            df = df[df["Result"].isin(["H", "D", "A"])]
+            df["FTHG"] = pd.to_numeric(df["FTHG"], errors="coerce")
+            df["FTAG"] = pd.to_numeric(df["FTAG"], errors="coerce")
+
+            # Parse odds columns
+            for col in ["B365H", "B365D", "B365A"]:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors="coerce")
+
+            keep = ["Date", "HomeTeam", "AwayTeam", "Result", "FTHG", "FTAG",
+                    "B365H", "B365D", "B365A", "HY", "AY", "HR", "AR"]
+            df = df[[c for c in keep if c in df.columns]]
+            dfs.append(df)
+        except Exception as e:
+            print(f"[Data] {os.path.basename(path)}: {e}")
+
+    if not dfs:
+        return pd.DataFrame()
+
+    combined = pd.concat(dfs, ignore_index=True).drop_duplicates(
+        subset=["Date", "HomeTeam", "AwayTeam"]
+    ).sort_values("Date").reset_index(drop=True)
+    print(f"[Data] football-data.co.uk: {len(combined)} matches with odds from {len(csvs)} CSVs")
+    return combined
+
+
 def _load_epl_csv() -> pd.DataFrame:
     rows = []
 
@@ -299,12 +352,23 @@ async def _run_pipeline():
 
     try:
         print("[Pipeline] Loading CSV data...")
+        # Primary: football-data.co.uk CSVs (include Bet365 odds — best for accuracy)
+        fd_df = _load_football_data_csvs()
+        # Legacy: our existing EPL + UCL CSVs (no odds but more historical depth)
         epl_df = _load_epl_csv()
         ucl_df = _load_ucl_csv()
 
-        combined = pd.concat([epl_df, ucl_df], ignore_index=True).sort_values("Date").reset_index(drop=True)
-        if combined.empty:
+        parts = [df for df in [fd_df, epl_df, ucl_df] if not df.empty]
+        if not parts:
             print("[Pipeline] No training data found!")
+            return
+
+        combined = pd.concat(parts, ignore_index=True)
+        combined = combined.drop_duplicates(
+            subset=["Date", "HomeTeam", "AwayTeam"]
+        ).sort_values("Date").reset_index(drop=True)
+        if combined.empty:
+            print("[Pipeline] No training data after dedup!")
             return
 
         global _history_df
@@ -348,14 +412,40 @@ async def _run_pipeline():
                 except Exception as e:
                     print(f"[Pipeline] Recent results error for {code}: {e}")
 
-            print("[Pipeline] Fetching upcoming fixtures...")
+            print("[Pipeline] Fetching upcoming fixtures + live odds...")
             fixtures = await client.fetch_all_upcoming(days_ahead=90)
+
+            # Fetch live odds from The Odds API for upcoming fixtures
+            # Inject into model as features (massively improves accuracy)
+            live_odds: dict = {}
+            try:
+                from odds_fetcher import fetch_odds_for_predictions
+                # Build minimal prediction stubs just for odds lookup
+                stubs = [{"home": fx["home"], "away": fx["away"],
+                          "date": fx.get("date",""), "league_name": fx.get("league_name","")}
+                         for fx in fixtures]
+                live_odds = await fetch_odds_for_predictions(stubs)
+                print(f"[Pipeline] Got live odds for {len(live_odds)}/{len(fixtures)} fixtures")
+            except Exception as e:
+                print(f"[Pipeline] Live odds fetch error (non-fatal): {e}")
 
             for fx in fixtures:
                 try:
-                    tip = predictor.predict_match(fx["home"], fx["away"])
+                    key = f"{fx['home']}:{fx['away']}:{fx.get('date','')}"
+                    odds = live_odds.get(key, {})
+                    tip = predictor.predict_match(
+                        fx["home"], fx["away"],
+                        odds_home=float(odds.get("1") or 0),
+                        odds_draw=float(odds.get("X") or 0),
+                        odds_away=float(odds.get("2") or 0),
+                    )
                     if tip:
-                        predictions.append({**fx, **tip})
+                        predictions.append({
+                            **fx, **tip,
+                            "odds_home": round(float(odds.get("1") or 0), 2) or None,
+                            "odds_draw": round(float(odds.get("X") or 0), 2) or None,
+                            "odds_away": round(float(odds.get("2") or 0), 2) or None,
+                        })
                 except Exception:
                     pass
         else:

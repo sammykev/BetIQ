@@ -18,6 +18,9 @@ export interface Prediction {
   tip_goals: string;
   goals_type: string;
   goals_confidence: number;
+  odds_home?: number;
+  odds_draw?: number;
+  odds_away?: number;
 }
 
 export interface League {
