@@ -83,11 +83,13 @@ export function SportModal({ prediction: p, onClose }: Props) {
 
   useEffect(() => {
     const params = new URLSearchParams({ home: p.home, away: p.away, date: p.date });
-    fetch(`${API}/api/sports/${p.sport}/event?${params}`)
-      .then(r => { if (!r.ok) throw new Error(); return r.json(); })
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 20000);  // 20s timeout
+    fetch(`${API}/api/sports/${p.sport}/event?${params}`, { signal: ctrl.signal })
+      .then(r => { if (!r.ok) throw new Error(r.status.toString()); return r.json(); })
       .then(d => setDetail(d))
       .catch(() => setError(true))
-      .finally(() => setLoading(false));
+      .finally(() => { setLoading(false); clearTimeout(timer); });
   }, [p.home, p.away, p.date, p.sport]);
 
   useEffect(() => {
@@ -198,10 +200,32 @@ export function SportModal({ prediction: p, onClose }: Props) {
               <span className="text-sm">Loading live markets…</span>
             </div>
           ) : error ? (
-            <div className="text-center py-10 space-y-2">
+            <div className="text-center py-10 space-y-3">
               <TrendingUp size={28} className="text-slate-500 mx-auto opacity-40" />
-              <p className="text-slate-500 text-sm">Could not load live markets.</p>
-              <p className="text-slate-600 text-xs">ODDS_API_KEY may not be set in Render.</p>
+              <p className="text-slate-500 text-sm">Live markets unavailable for this match.</p>
+              <p className="text-slate-600 text-xs">
+                This can happen when no active tournament is running for {p.sport === "tennis" ? "tennis" : p.sport === "table_tennis" ? "table tennis" : "this sport"}.
+                The Odds API only covers major tournaments when they're in progress.
+              </p>
+              {/* Show what we DO have from the prediction card */}
+              <div className="mt-4 bg-slate-800/50 border border-slate-700 rounded-xl p-4 text-left space-y-2">
+                <p className="text-xs text-slate-400 font-semibold uppercase tracking-wide">Our Model Prediction</p>
+                <div className="flex justify-between text-sm">
+                  <span className="text-white font-semibold">{p.home}</span>
+                  <span className="text-green-400 font-black">{Math.round(p.p_home * 100)}%</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-white font-semibold">{p.away}</span>
+                  <span className="text-green-400 font-black">{Math.round(p.p_away * 100)}%</span>
+                </div>
+                <div className="pt-2 border-t border-slate-700">
+                  <p className="text-xs text-slate-400">Best pick: <span className="text-white font-bold">{p.tip_1x2}</span></p>
+                  <p className="text-xs text-slate-400">Confidence: <span className="text-green-400 font-bold">{Math.round(p.goals_confidence * 100)}%</span></p>
+                  {p.odds_home && <p className="text-xs text-slate-400 mt-1">
+                    Odds: <span className="text-white">{p.home} {p.odds_home}</span> · <span className="text-white">{p.away} {p.odds_away}</span>
+                  </p>}
+                </div>
+              </div>
             </div>
           ) : detail?.markets.map(market => {
             const bestOdds = Math.max(...market.outcomes.map(o => o.implied));

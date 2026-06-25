@@ -274,34 +274,57 @@ def _build_tennis_prediction(event: Dict, league_name: str, flag: str,
     }
 
 
+FALLBACK_TENNIS_KEYS = [
+    "tennis_atp_french_open", "tennis_wtp_french_open",
+    "tennis_atp_wimbledon", "tennis_wtp_wimbledon",
+    "tennis_atp_us_open", "tennis_wtp_us_open",
+    "tennis_atp_australian_open", "tennis_wtp_australian_open",
+    "tennis_atp_singles", "tennis_wtp_singles",
+    "tennis_atp_rome", "tennis_wtp_rome",
+    "tennis_atp_madrid", "tennis_wtp_madrid",
+]
+
 async def fetch_tennis_predictions() -> List[Dict]:
-    active = await _get_active_sports()
-    tennis_keys = [k for k in active
-                   if any(k.startswith(kw) for kw in TENNIS_KEYWORDS)]
+    try:
+        active = await _get_active_sports()
+        tennis_keys = [k for k in active
+                       if any(k.startswith(kw) for kw in TENNIS_KEYWORDS)]
+    except Exception:
+        tennis_keys = []
+
+    # Fall back to probing known tournament keys if discovery fails
     if not tennis_keys:
-        tennis_keys = []  # nothing active
+        tennis_keys = FALLBACK_TENNIS_KEYS
 
     results = []
     for sport_key in tennis_keys:
-        label = sport_key.replace("tennis_atp_", "ATP ").replace("tennis_wtp_", "WTA ").replace("_", " ").title()
+        label = (sport_key.replace("tennis_atp_", "ATP ")
+                          .replace("tennis_wtp_", "WTA ")
+                          .replace("_", " ").title())
         events = await _fetch_odds(sport_key, markets="h2h")
         for ev in events:
             p = _build_tennis_prediction(ev, label, "🎾", sport="tennis")
             if p:
                 results.append(p)
-        await asyncio.sleep(0.2)
+        if events:
+            await asyncio.sleep(0.2)
 
-    print(f"[Sports] Tennis: {len(results)} predictions from {len(tennis_keys)} tournaments")
+    print(f"[Sports] Tennis: {len(results)} predictions from active tournaments")
     return sorted(results, key=lambda x: x["date"] + x["time"])
 
 
+TABLE_TENNIS_KEYS = ["table_tennis", "table_tennis_wtt", "table_tennis_ittf"]
+
 async def fetch_table_tennis_predictions() -> List[Dict]:
-    events = await _fetch_odds(TABLE_TENNIS_KEY, markets="h2h")
     results = []
-    for ev in events:
-        p = _build_tennis_prediction(ev, "Table Tennis", "🏓", sport="table_tennis")
-        if p:
-            results.append(p)
+    for key in TABLE_TENNIS_KEYS:
+        events = await _fetch_odds(key, markets="h2h")
+        for ev in events:
+            p = _build_tennis_prediction(ev, "Table Tennis", "🏓", sport="table_tennis")
+            if p:
+                results.append(p)
+        if events:
+            break  # found active key, stop trying
     print(f"[Sports] Table Tennis: {len(results)} predictions")
     return sorted(results, key=lambda x: x["date"] + x["time"])
 
@@ -353,12 +376,25 @@ async def fetch_event_detail(sport: str, home: str, away: str, date: str) -> Opt
         sport_keys = [k for k, _, _ in BASKETBALL_SPORTS]
         market_str = "h2h,spreads,totals"
     elif sport == "tennis":
-        active = await _get_active_sports()
-        sport_keys = [k for k in active if any(k.startswith(kw) for kw in TENNIS_KEYWORDS)]
-        market_str = "h2h,totals,alternate_spreads"
+        # First try to get active sports, fall back to common tournament keys
+        try:
+            active = await _get_active_sports()
+            sport_keys = [k for k in active if any(k.startswith(kw) for kw in TENNIS_KEYWORDS)]
+        except Exception:
+            sport_keys = []
+        # If discovery fails, try common tournament keys directly
+        if not sport_keys:
+            sport_keys = [
+                "tennis_atp_french_open", "tennis_wtp_french_open",
+                "tennis_atp_wimbledon", "tennis_wtp_wimbledon",
+                "tennis_atp_us_open", "tennis_wtp_us_open",
+                "tennis_atp_australian_open", "tennis_wtp_australian_open",
+                "tennis_atp_singles", "tennis_wtp_singles",
+            ]
+        market_str = "h2h"
     elif sport == "table_tennis":
-        sport_keys = [TABLE_TENNIS_KEY]
-        market_str = "h2h,totals"
+        sport_keys = [TABLE_TENNIS_KEY, "table_tennis_wtt"]
+        market_str = "h2h"
     else:
         return None
 
