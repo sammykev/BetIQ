@@ -15,6 +15,10 @@ from typing import Dict, List, Optional
 ODDS_API_KEY  = os.getenv("ODDS_API_KEY", "")
 ODDS_BASE     = "https://api.the-odds-api.com/v4"
 
+# ── BetsAPI — free, no key, covers all tennis + table tennis year-round ────
+BETSAPI_BASE  = "https://api.betsapi.com/v3"
+BETSAPI_TOKEN = os.getenv("BETSAPI_TOKEN", "")  # optional paid token for higher limits
+
 # ── Basketball leagues ─────────────────────────────────────────────────────
 BASKETBALL_SPORTS = [
     ("basketball_nba",          "NBA",          "🏀"),
@@ -274,6 +278,114 @@ def _build_tennis_prediction(event: Dict, league_name: str, flag: str,
     }
 
 
+
+# ── BetsAPI helpers ────────────────────────────────────────────────────────
+# BetsAPI sport IDs: 13 = Tennis, 18 = Table Tennis
+BETSAPI_SPORTS = {"tennis": 13, "table_tennis": 18}
+
+async def _fetch_betsapi(sport_id: int) -> List[Dict]:
+    """
+    Fetch upcoming events + odds from BetsAPI (free, no auth required).
+    Returns list of {home, away, date, time, league, p_home, p_away, odds_home, odds_away}.
+    """
+    results = []
+    try:
+        params: Dict = {"sport_id": sport_id, "token": BETSAPI_TOKEN or "1"}
+        async with httpx.AsyncClient(timeout=15) as client:
+            # Get upcoming events
+            r = await client.get(f"{BETSAPI_BASE}/events/upcoming", params=params)
+            if r.status_code != 200:
+                return results
+            data = r.json()
+            events = data.get("results", [])
+            print(f"[BetsAPI] sport_id={sport_id}: {len(events)} upcoming events")
+
+            for ev in events[:80]:  # cap at 80 to stay within rate limits
+                try:
+                    home = ev.get("home", {}).get("name", "")
+                    away = ev.get("away", {}).get("name", "")
+                    league = ev.get("league", {}).get("name", "")
+                    ts = ev.get("time", 0)
+                    dt = datetime.fromtimestamp(int(ts), tz=timezone.utc) if ts else None
+                    ev_date = dt.strftime("%Y-%m-%d") if dt else ""
+                    ev_time = dt.strftime("%H:%M") if dt else "TBD"
+
+                    if not home or not away:
+                        continue
+
+                    # Get odds for this event
+                    odds_data = {}
+                    ev_id = ev.get("id")
+                    if ev_id:
+                        or_ = await client.get(f"{BETSAPI_BASE}/event/odds",
+                                               params={"token": params["token"], "event_id": ev_id,
+                                                       "source": "bet365", "since": ""})
+                        if or_.status_code == 200:
+                            ods = or_.json().get("results", {}).get("odds", {})
+                            # full_time odds: 1_1=home, 1_2=draw, 1_3=away
+                            ft = ods.get("full_time", {})
+                            if ft:
+                                odds_data = {
+                                    "home": float(ft.get("home_od") or ft.get("1_1") or 0),
+                                    "away": float(ft.get("away_od") or ft.get("1_3") or 0),
+                                }
+
+                    if odds_data.get("home") and odds_data.get("away"):
+                        raw_imp = {"h": 1/odds_data["home"], "a": 1/odds_data["away"]}
+                        total = sum(raw_imp.values())
+                        p_home = raw_imp["h"] / total
+                        p_away = raw_imp["a"] / total
+                    else:
+                        p_home, p_away = 0.5, 0.5
+
+                    results.append({
+                        "home": home, "away": away,
+                        "date": ev_date, "time": ev_time,
+                        "league": league, "league_name": league,
+                        "p_home": round(p_home, 3),
+                        "p_away": round(p_away, 3),
+                        "odds_home": round(odds_data.get("home", 0), 2),
+                        "odds_away": round(odds_data.get("away", 0), 2),
+                    })
+                    await asyncio.sleep(0.05)
+                except Exception:
+                    continue
+    except Exception as e:
+        print(f"[BetsAPI] sport_id={sport_id} error: {e}")
+    return results
+
+
+def _betsapi_to_prediction(ev: Dict, flag: str, sport: str) -> Optional[Dict]:
+    """Convert a BetsAPI event dict to our unified prediction format."""
+    home = ev.get("home", "")
+    away = ev.get("away", "")
+    if not home or not away:
+        return None
+    p_home = ev.get("p_home", 0.5)
+    p_away = ev.get("p_away", 0.5)
+    if p_home >= p_away:
+        tip, tip_code = f"{home} Win", "1"
+        confidence = p_home
+    else:
+        tip, tip_code = f"{away} Win", "2"
+        confidence = p_away
+    return {
+        "home": home, "away": away,
+        "date": ev.get("date", ""), "time": ev.get("time", "TBD"),
+        "sport": sport,
+        "league": ev.get("league", ""), "league_name": ev.get("league_name", ""),
+        "flag": flag,
+        "tip_1x2": tip, "tip_code": tip_code, "tip_goals": "",
+        "goals_type": "value" if confidence > 0.65 else "normal",
+        "goals_confidence": round(confidence, 3),
+        "p_home": round(p_home, 3), "p_draw": 0, "p_away": round(p_away, 3),
+        "p_over15": 0, "p_over25": 0,
+        "odds_home": ev.get("odds_home", 0),
+        "odds_away": ev.get("odds_away", 0),
+        "source": "betsapi",
+    }
+
+
 FALLBACK_TENNIS_KEYS = [
     "tennis_atp_french_open", "tennis_wtp_french_open",
     "tennis_atp_wimbledon", "tennis_wtp_wimbledon",
@@ -285,31 +397,41 @@ FALLBACK_TENNIS_KEYS = [
 ]
 
 async def fetch_tennis_predictions() -> List[Dict]:
-    try:
-        active = await _get_active_sports()
-        tennis_keys = [k for k in active
-                       if any(k.startswith(kw) for kw in TENNIS_KEYWORDS)]
-    except Exception:
-        tennis_keys = []
-
-    # Fall back to probing known tournament keys if discovery fails
-    if not tennis_keys:
-        tennis_keys = FALLBACK_TENNIS_KEYS
-
     results = []
-    for sport_key in tennis_keys:
-        label = (sport_key.replace("tennis_atp_", "ATP ")
-                          .replace("tennis_wtp_", "WTA ")
-                          .replace("_", " ").title())
-        events = await _fetch_odds(sport_key, markets="h2h")
-        for ev in events:
-            p = _build_tennis_prediction(ev, label, "🎾", sport="tennis")
-            if p:
-                results.append(p)
-        if events:
-            await asyncio.sleep(0.2)
 
-    print(f"[Sports] Tennis: {len(results)} predictions from active tournaments")
+    # Primary: BetsAPI (covers all ATP/WTA/ITF year-round)
+    betsapi_events = await _fetch_betsapi(BETSAPI_SPORTS["tennis"])
+    for ev in betsapi_events:
+        p = _betsapi_to_prediction(ev, "🎾", "tennis")
+        if p:
+            results.append(p)
+
+    # Secondary: The Odds API (for Grand Slams — better odds accuracy)
+    if ODDS_API_KEY:
+        try:
+            active = await _get_active_sports()
+            tennis_keys = [k for k in active if any(k.startswith(kw) for kw in TENNIS_KEYWORDS)]
+        except Exception:
+            tennis_keys = []
+        if not tennis_keys:
+            tennis_keys = FALLBACK_TENNIS_KEYS
+        seen = {f"{p['home']}:{p['away']}:{p['date']}" for p in results}
+        for sport_key in tennis_keys:
+            label = (sport_key.replace("tennis_atp_", "ATP ")
+                              .replace("tennis_wtp_", "WTA ")
+                              .replace("_", " ").title())
+            events = await _fetch_odds(sport_key, markets="h2h")
+            for ev in events:
+                p = _build_tennis_prediction(ev, label, "🎾", sport="tennis")
+                if p:
+                    key = f"{p['home']}:{p['away']}:{p['date']}"
+                    if key not in seen:  # deduplicate
+                        results.append(p)
+                        seen.add(key)
+            if events:
+                await asyncio.sleep(0.2)
+
+    print(f"[Sports] Tennis: {len(results)} predictions")
     return sorted(results, key=lambda x: x["date"] + x["time"])
 
 
@@ -317,14 +439,25 @@ TABLE_TENNIS_KEYS = ["table_tennis", "table_tennis_wtt", "table_tennis_ittf"]
 
 async def fetch_table_tennis_predictions() -> List[Dict]:
     results = []
-    for key in TABLE_TENNIS_KEYS:
-        events = await _fetch_odds(key, markets="h2h")
-        for ev in events:
-            p = _build_tennis_prediction(ev, "Table Tennis", "🏓", sport="table_tennis")
-            if p:
-                results.append(p)
-        if events:
-            break  # found active key, stop trying
+
+    # Primary: BetsAPI covers table tennis year-round
+    betsapi_events = await _fetch_betsapi(BETSAPI_SPORTS["table_tennis"])
+    for ev in betsapi_events:
+        p = _betsapi_to_prediction(ev, "🏓", "table_tennis")
+        if p:
+            results.append(p)
+
+    # Secondary: The Odds API (only during major WTT events)
+    if ODDS_API_KEY and not results:
+        for key in TABLE_TENNIS_KEYS:
+            events = await _fetch_odds(key, markets="h2h")
+            for ev in events:
+                p = _build_tennis_prediction(ev, "Table Tennis", "🏓", sport="table_tennis")
+                if p:
+                    results.append(p)
+            if events:
+                break
+
     print(f"[Sports] Table Tennis: {len(results)} predictions")
     return sorted(results, key=lambda x: x["date"] + x["time"])
 
