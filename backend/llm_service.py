@@ -59,6 +59,103 @@ async def _fetch_news(home: str, away: str) -> tuple[str, List[str]]:
     return "", []
 
 
+async def extract_model_adjustments(
+    home: str, away: str, news_text: str
+) -> Dict[str, Any]:
+    """
+    Step 2b — LLM reads the web search news and returns structured numerical
+    adjustments the model should apply before outputting predictions.
+
+    Returns a dict like:
+    {
+      "home_attack_modifier": -0.20,   # Haaland out → -20% home goals
+      "away_attack_modifier": 0.0,
+      "home_defense_modifier": 0.0,
+      "away_defense_modifier": 0.10,   # key defender back → +10% defence
+      "confidence_modifier": -0.05,    # less certain overall
+      "flags": ["home_key_striker_out", "away_manager_change"],
+      "reasoning": "Haaland ruled out injured..."
+    }
+    All modifiers are floats between -0.5 and +0.5.
+    """
+    if not GROQ_API_KEY or not news_text:
+        return {}
+
+    prompt = f"""You are a football data analyst. Given this team news for {home} vs {away}:
+
+"{news_text}"
+
+Extract ONLY concrete, confirmed facts and convert them to numerical adjustments.
+Respond ONLY with valid JSON, no explanation:
+
+{{
+  "home_attack_modifier": <float -0.5 to 0.5, 0.0 if no info>,
+  "away_attack_modifier": <float -0.5 to 0.5, 0.0 if no info>,
+  "home_defense_modifier": <float -0.5 to 0.5, 0.0 if no info>,
+  "away_defense_modifier": <float -0.5 to 0.5, 0.0 if no info>,
+  "confidence_modifier": <float -0.15 to 0.0, negative when uncertain>,
+  "flags": [<list of strings like "home_key_striker_out", "away_suspended_defender">],
+  "reasoning": "<1 sentence explaining the main adjustment>"
+}}
+
+Rules:
+- Key striker missing = -0.25 home_attack_modifier
+- Key goalkeeper missing = -0.20 defense_modifier
+- 2+ key players missing = -0.35 attack or defense
+- Manager change (new, unproven) = -0.10 confidence_modifier
+- If news is vague or unconfirmed, use 0.0
+- If no relevant news found, return all zeros"""
+
+    try:
+        data = await _call("llama-3.3-70b-versatile", [
+            {"role": "user", "content": prompt}
+        ], max_tokens=300)
+        text = data["choices"][0]["message"]["content"].strip()
+        # Extract JSON from response
+        import json, re
+        match = re.search(r'\{[\s\S]*\}', text)
+        if match:
+            adj = json.loads(match.group())
+            # Clamp all modifiers to safe range
+            for key in ["home_attack_modifier","away_attack_modifier",
+                        "home_defense_modifier","away_defense_modifier"]:
+                if key in adj:
+                    adj[key] = max(-0.5, min(0.5, float(adj[key])))
+            if "confidence_modifier" in adj:
+                adj["confidence_modifier"] = max(-0.15, min(0.0, float(adj["confidence_modifier"])))
+            print(f"[LLM] Adjustments for {home} vs {away}: {adj.get('reasoning','')}")
+            return adj
+    except Exception as e:
+        print(f"[LLM] adjustment extraction failed: {e}")
+    return {}
+
+
+async def fetch_missing_results(home: str, away: str, date: str) -> Dict[str, Any]:
+    """
+    Search the web for a match result that isn't in our database yet.
+    Returns {found: bool, home_goals: int, away_goals: int, result: str} or {found: False}.
+    """
+    if not GROQ_API_KEY:
+        return {"found": False}
+
+    prompt = f"What was the final score of {home} vs {away} on {date}? Reply with ONLY the score like '2-1' or 'not played yet'."
+
+    for model in ("compound-beta-mini", "compound-beta"):
+        try:
+            data = await _call(model, [{"role": "user", "content": prompt}], max_tokens=50)
+            text = data["choices"][0]["message"]["content"].strip()
+            import re
+            m = re.search(r'(\d+)\s*[-–]\s*(\d+)', text)
+            if m:
+                hg, ag = int(m.group(1)), int(m.group(2))
+                result = "H" if hg > ag else ("A" if ag > hg else "D")
+                print(f"[WebSearch] Found result: {home} {hg}-{ag} {away}")
+                return {"found": True, "home_goals": hg, "away_goals": ag, "result": result, "source": "web_search"}
+        except Exception:
+            continue
+    return {"found": False}
+
+
 async def explain_match(
     home: str,
     away: str,

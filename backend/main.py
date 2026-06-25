@@ -568,6 +568,76 @@ async def _fetch_and_save_results():
                 pass
         print(f"[Results] Applied {updated} results to live model.")
 
+    # Web search fallback: find results for past predictions still marked "pending"
+    # that the API didn't return (e.g. international friendlies, cup games)
+    await _web_search_missing_results()
+
+
+async def _web_search_missing_results():
+    """
+    For past predictions still marked 'pending' in Redis history,
+    use web search (compound-beta) to find the actual result,
+    then update the history and feed into the live model.
+    """
+    if not GROQ_API_KEY:
+        return
+    from llm_service import fetch_missing_results
+    from datetime import date as _date, timedelta
+
+    r = _get_redis()
+    if not r:
+        return
+
+    today = _date.today()
+    searched = 0
+
+    # Check the last 7 days of history for pending predictions
+    for days_ago in range(1, 8):
+        d = (today - timedelta(days=days_ago)).isoformat()
+        try:
+            raw = r.get(f"betiq:history:{d}")
+            if not raw:
+                continue
+            preds = json.loads(raw)
+            still_pending = [p for p in preds if p.get("outcome") == "pending"]
+            if not still_pending:
+                continue
+
+            changed = False
+            for pred in still_pending:
+                if searched >= 5:  # cap to save Groq quota
+                    break
+                try:
+                    res = await fetch_missing_results(pred["home"], pred["away"], d)
+                    if res.get("found"):
+                        pred["actual_result"] = res["result"]
+                        pred["score"] = f"{res['home_goals']}-{res['away_goals']}"
+                        tip_map = {"1": "H", "X": "D", "2": "A"}
+                        expected = tip_map.get(pred.get("tip_code",""), "")
+                        pred["outcome"] = "won" if res["result"] == expected else "lost"
+                        pred["source"] = "web_search"
+                        changed = True
+                        searched += 1
+
+                        # Feed into live model
+                        if _predictor:
+                            _predictor._update(
+                                pred["home"], pred["away"], res["result"],
+                                res["home_goals"], res["away_goals"]
+                            )
+                        print(f"[WebResults] Found via web: {pred['home']} {pred['score']} {pred['away']} → {pred['outcome']}")
+                    await asyncio.sleep(1)
+                except Exception:
+                    pass
+
+            if changed:
+                r.set(f"betiq:history:{d}", json.dumps(preds), ex=90 * 86400)
+        except Exception:
+            pass
+
+    if searched:
+        print(f"[WebResults] Found and applied {searched} missing results via web search")
+
 
 # ------------------------------------------------------------------ #
 # Routes
@@ -820,6 +890,29 @@ async def get_match_analysis(home: str, away: str):
     # Fetch LIVE odds right now from The Odds API (not from cache)
     live_odds = await _fetch_live_odds(home, away, fx_date)
 
+    # Fetch live web news and extract structured model adjustments in parallel
+    from llm_service import extract_model_adjustments
+    from llm_service import _fetch_news as _web_news
+    news_text, news_sources = await _web_news(home, away)
+    adjustments = await extract_model_adjustments(home, away, news_text) if news_text else {}
+
+    # Apply web-search adjustments to xG before running the model
+    # This makes injury news actually move the prediction numbers
+    adj_xg_h = 1.0 + adjustments.get("home_attack_modifier", 0.0)
+    adj_xg_a = 1.0 + adjustments.get("away_attack_modifier", 0.0)
+    adj_def_h = 1.0 + adjustments.get("home_defense_modifier", 0.0)
+    adj_def_a = 1.0 + adjustments.get("away_defense_modifier", 0.0)
+    if adjustments:
+        _predictor.team_stats.setdefault(home, {})
+        _predictor.team_stats.setdefault(away, {})
+        # Temporarily scale the team's goal averages by the web-search adjustment
+        orig_home_gf = _predictor.team_stats[home].get("gf", [])
+        orig_away_gf = _predictor.team_stats[away].get("gf", [])
+        if orig_home_gf and adj_xg_h != 1.0:
+            _predictor.team_stats[home]["gf"] = [v * adj_xg_h for v in orig_home_gf]
+        if orig_away_gf and adj_xg_a != 1.0:
+            _predictor.team_stats[away]["gf"] = [v * adj_xg_a for v in orig_away_gf]
+
     # If live odds available, re-run prediction with them for better accuracy
     if live_odds:
         result = _predictor.predict_match_full(
@@ -830,6 +923,21 @@ async def get_match_analysis(home: str, away: str):
         )
     else:
         result = _predictor.predict_match_full(home, away)
+
+    # Restore original stats after prediction (don't permanently alter training data)
+    if adjustments:
+        if orig_home_gf and adj_xg_h != 1.0:
+            _predictor.team_stats[home]["gf"] = orig_home_gf
+        if orig_away_gf and adj_xg_a != 1.0:
+            _predictor.team_stats[away]["gf"] = orig_away_gf
+
+    # Apply confidence modifier from web search
+    conf_mod = adjustments.get("confidence_modifier", 0.0)
+    if conf_mod and result:
+        result["web_confidence_modifier"] = conf_mod
+        result["web_adjustment_flags"] = adjustments.get("flags", [])
+        result["web_adjustment_reason"] = adjustments.get("reasoning", "")
+        result["web_news_sources"] = news_sources
 
     if result is None:
         raise HTTPException(status_code=404, detail="Could not generate analysis")

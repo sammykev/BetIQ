@@ -108,6 +108,9 @@ export interface MatchAnalysis {
   live_odds_fetched?: boolean;
   odds_bookie?: string;
   team_form?: { home: TeamForm; away: TeamForm };
+  web_confidence_modifier?: number;
+  web_adjustment_flags?: string[];
+  web_adjustment_reason?: string;
 }
 
 export interface H2HMeeting {
