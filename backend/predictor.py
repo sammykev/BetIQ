@@ -18,6 +18,39 @@ import os
 warnings.filterwarnings("ignore")
 
 
+# ── FIFA ranking-calibrated starting Elo for national teams ───────────────
+# Prevents unknown national teams from defaulting to 1500 and looking equal
+# to top sides. Source: FIFA World Rankings (June 2025), converted to Elo scale.
+# Club teams not listed here start at 1500 (correct for unknown clubs).
+FIFA_ELO_SEEDS: Dict[str, float] = {
+    # Top 10
+    "Argentina": 2050, "France": 1990, "England": 1970, "Brazil": 1950,
+    "Portugal": 1930, "Spain": 1920, "Belgium": 1900, "Germany": 1880,
+    "Netherlands": 1870, "Croatia": 1855,
+    # 11-25
+    "Italy": 1845, "Morocco": 1835, "Colombia": 1820, "Uruguay": 1815,
+    "United States": 1810, "USA": 1810, "Mexico": 1805, "Switzerland": 1800,
+    "Japan": 1795, "Senegal": 1785, "Denmark": 1775, "Austria": 1760,
+    "Ukraine": 1755, "Poland": 1745, "South Korea": 1740,
+    # 26-50
+    "Ecuador": 1730, "Hungary": 1725, "Chile": 1718, "Turkey": 1715,
+    "Australia": 1710, "Czech Republic": 1705, "Serbia": 1700,
+    "Norway": 1695, "Paraguay": 1688, "Sweden": 1685, "Venezuela": 1680,
+    "Iran": 1675, "Wales": 1670, "Romania": 1665, "Slovakia": 1660,
+    "Peru": 1655, "Scotland": 1650, "Egypt": 1645, "Ghana": 1640,
+    "Ivory Coast": 1635, "Nigeria": 1630, "Algeria": 1625,
+    "Cameroon": 1618, "South Africa": 1610, "Tunisia": 1605,
+    "Senegal": 1785, "Mali": 1598, "Morocco": 1835, "Qatar": 1570,
+    # Others
+    "Uzbekistan": 1590, "Bosnia-Herzegovina": 1585, "Slovenia": 1582,
+    "Albania": 1575, "Finland": 1568, "Greece": 1562, "Israel": 1558,
+    "Canada": 1555, "Costa Rica": 1545, "Panama": 1538, "Jamaica": 1528,
+    "Bolivia": 1520, "Honduras": 1515, "El Salvador": 1510, "Haiti": 1505,
+    "New Zealand": 1515, "India": 1498, "Saudi Arabia": 1545,
+    "Iraq": 1535, "Oman": 1520, "UAE": 1512, "Bahrain": 1505,
+    "Libya": 1498, "Zimbabwe": 1492, "Rwanda": 1488,
+}
+
 class EloSystem:
     K = 32
     HOME_ADV = 80  # Elo points added for home advantage
@@ -26,7 +59,17 @@ class EloSystem:
         self.ratings: Dict[str, float] = {}
 
     def get(self, team: str) -> float:
-        return self.ratings.get(team, 1500.0)
+        # Check direct rating first (updated by match results)
+        if team in self.ratings:
+            return self.ratings[team]
+        # Fall back to FIFA seed for national teams, else 1500 for clubs
+        return FIFA_ELO_SEEDS.get(team, 1500.0)
+
+    def seed_national_teams(self):
+        """Pre-seed national team Elo from FIFA rankings if no match data yet."""
+        for team, seed in FIFA_ELO_SEEDS.items():
+            if team not in self.ratings:
+                self.ratings[team] = seed
 
     def expected(self, home: str, away: str) -> float:
         diff = self.get(home) - self.get(away) + self.HOME_ADV
