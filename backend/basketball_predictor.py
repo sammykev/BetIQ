@@ -115,7 +115,10 @@ class BasketballElo:
 
 
 def _detect_columns(df: pd.DataFrame) -> Dict[str, str]:
-    """Auto-detect column names regardless of CSV format."""
+    """
+    Auto-detect column names regardless of CSV format.
+    Supports the eoinamoore Kaggle NBA dataset and standard formats.
+    """
     cols = {c.lower().strip(): c for c in df.columns}
 
     def pick(*candidates):
@@ -124,13 +127,23 @@ def _detect_columns(df: pd.DataFrame) -> Dict[str, str]:
                 return cols[c]
         return None
 
+    # Build composite home/away from city+name if needed
+    home_col = pick("hometeamname", "team_name_home", "home_team", "home", "team_id_home", "hometeam")
+    away_col = pick("awayteamname", "team_name_away", "away_team", "away", "team_id_away", "awayteam")
+
+    # If we have city columns, we'll combine city+name later
+    home_city = pick("hometeamcity", "home_city")
+    away_city = pick("awayteamcity", "away_city")
+
     return {
-        "date":      pick("game_date", "date", "game_datetime", "gamedate"),
-        "home":      pick("team_name_home", "home_team", "home", "team_id_home", "hometeam"),
-        "away":      pick("team_name_away", "away_team", "away", "team_id_away", "awayteam"),
+        "date":      pick("gamedate", "game_date", "date", "gamedatetimeest", "gamedatetime"),
+        "home":      home_col,
+        "away":      away_col,
+        "home_city": home_city,
+        "away_city": away_city,
         "wl_home":   pick("wl_home", "result_home", "home_result"),
-        "pts_home":  pick("pts_home", "home_pts", "home_score", "pts_home", "score_home"),
-        "pts_away":  pick("pts_away", "away_pts", "away_score", "pts_away", "score_away"),
+        "pts_home":  pick("homescore", "pts_home", "home_pts", "home_score", "score_home"),
+        "pts_away":  pick("awayscore", "pts_away", "away_pts", "away_score", "score_away"),
     }
 
 
@@ -161,8 +174,17 @@ def train_from_csv(csv_path: str = BBALL_CSV) -> Optional[BasketballElo]:
         trained = 0
 
         for _, row in df.iterrows():
-            home = str(row[mapping["home"]]).strip()
-            away = str(row[mapping["away"]]).strip()
+            home = str(row[mapping["home"]]).strip() if mapping["home"] else ""
+            away = str(row[mapping["away"]]).strip() if mapping["away"] else ""
+            # For this dataset, use full "City Name" format
+            if mapping.get("home_city") and mapping["home_city"] in df.columns:
+                city = str(row[mapping["home_city"]]).strip()
+                if city and city != "nan":
+                    home = f"{city} {home}"
+            if mapping.get("away_city") and mapping["away_city"] in df.columns:
+                city = str(row[mapping["away_city"]]).strip()
+                if city and city != "nan":
+                    away = f"{city} {away}"
             if not home or not away or home == away:
                 continue
 
