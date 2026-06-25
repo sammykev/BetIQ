@@ -443,6 +443,53 @@ export function MatchModal({ prediction: p, onClose }: Props) {
               {/* AI Explanation */}
               <AIExplanation explanation={explanation} />
 
+              {/* Live odds badge */}
+              {analysis.live_odds_fetched && (
+                <div className="flex items-center gap-2 bg-blue-500/10 border border-blue-500/25 rounded-xl px-3 py-2">
+                  <span className="text-blue-400 text-sm">📡</span>
+                  <p className="text-xs text-blue-300 font-medium">
+                    Live odds fetched now from {analysis.odds_bookie || "market"} — model recalibrated in real time
+                  </p>
+                </div>
+              )}
+
+              {/* Team form */}
+              {analysis.team_form && (
+                <div className="grid grid-cols-2 gap-3">
+                  {[
+                    { team: p.home, form: analysis.team_form.home },
+                    { team: p.away, form: analysis.team_form.away },
+                  ].map(({ team, form }) => (
+                    <div key={team} className="bg-slate-100/80 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/50 rounded-xl px-4 py-3 space-y-2">
+                      <p className="text-xs text-slate-500 font-semibold truncate">{team}</p>
+                      {form?.available ? (
+                        <>
+                          <div className="flex gap-1">
+                            {(form.form || "").split("").map((r, i) => (
+                              <span key={i} className={clsx(
+                                "text-[10px] font-black w-5 h-5 rounded flex items-center justify-center",
+                                r === "W" ? "bg-green-500/20 text-green-400" :
+                                r === "D" ? "bg-yellow-500/20 text-yellow-400" :
+                                            "bg-red-500/20 text-red-400"
+                              )}>{r}</span>
+                            ))}
+                          </div>
+                          <div className="grid grid-cols-2 gap-x-3 text-[10px] text-slate-500">
+                            <span>⚽ Scored: <span className="text-white font-semibold">{form.goals_scored}/g</span></span>
+                            <span>🧤 Conceded: <span className="text-white font-semibold">{form.goals_conceded}/g</span></span>
+                            <span>Elo: <span className="text-white font-semibold">{form.elo}</span></span>
+                            <span>{form.wins}W {form.draws}D {form.losses}L</span>
+                          </div>
+                          <p className="text-[9px] text-slate-600">Last {form.games} games · Updated every 3h</p>
+                        </>
+                      ) : (
+                        <p className="text-[10px] text-slate-600">Form data not yet available</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {/* xG row */}
               <div className="grid grid-cols-2 gap-3">
                 {[

@@ -86,12 +86,28 @@ export interface EloContext {
   implied_win_prob: number;
 }
 
+export interface TeamForm {
+  available: boolean;
+  games?: number;
+  form?: string;        // "WWDLW"
+  wins?: number;
+  draws?: number;
+  losses?: number;
+  goals_scored?: number;
+  goals_conceded?: number;
+  elo?: number;
+  data_source?: string;
+}
+
 export interface MatchAnalysis {
   xg_home: number;
   xg_away: number;
   elo: EloContext;
   markets: Market[];
   recommended: MarketOption & { market: string; market_id: string };
+  live_odds_fetched?: boolean;
+  odds_bookie?: string;
+  team_form?: { home: TeamForm; away: TeamForm };
 }
 
 export interface H2HMeeting {
