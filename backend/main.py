@@ -379,6 +379,7 @@ def _load_ucl_csv() -> pd.DataFrame:
     return pd.concat(rows, ignore_index=True).sort_values("Date").reset_index(drop=True)
 
 
+DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 INTERNATIONAL_CSV = os.path.join(DATA_DIR, "international_results.csv")
 
 def _load_international_csv() -> pd.DataFrame:
