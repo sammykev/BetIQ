@@ -237,18 +237,17 @@ export function PredictionCard({ prediction: p, savedKeys, onClick }: Props) {
       <div className="absolute inset-0 bg-black/55" />
 
       {/* ── Card content ── */}
-      <div className="relative z-10 p-4 flex flex-col gap-4">
+      <div className="relative z-10 p-4 flex flex-col gap-3">
 
         {/* Header */}
         <div className="flex items-center justify-between">
-          <span className="text-xs font-semibold text-white/80 truncate max-w-[55%] drop-shadow">
+          <span className="text-[11px] font-semibold text-white/70 truncate max-w-[60%] drop-shadow">
             {p.flag} {p.league_name}
           </span>
           <div className="flex items-center gap-2 shrink-0">
-            <div className="flex items-center gap-1 text-[11px] text-white/60">
-              <Clock size={10} />
-              <span>{p.date}{p.time && p.time !== "TBD" ? ` · ${localTime(p.date, p.time)}` : ""}</span>
-            </div>
+            <span className="text-[10px] text-white/50">
+              {p.date}{p.time && p.time !== "TBD" ? ` · ${localTime(p.date, p.time)}` : ""}
+            </span>
             <SaveButton prediction={p} savedKeys={savedKeys ?? emptySet} size={13} />
             <button
               onClick={e => { e.stopPropagation(); shareMatch(p); }}
@@ -260,101 +259,59 @@ export function PredictionCard({ prediction: p, savedKeys, onClick }: Props) {
           </div>
         </div>
 
-        {/* Teams */}
-        <div className="text-center py-1 space-y-1.5">
-          <div className="flex items-center justify-center gap-2">
+        {/* Teams + probability bars (SportCard style) */}
+        <div className="space-y-2">
+          {/* Home */}
+          <div className="flex items-center gap-2">
             {home.imageUrl && (
-              <img
-                src={home.imageUrl}
-                alt={p.home}
-                className={clsx("object-contain drop-shadow-md shrink-0", home.isFlag ? "w-7 h-5 rounded-sm" : "w-6 h-6 rounded-full bg-white/10 p-0.5")}
-                onError={e => { (e.target as HTMLImageElement).style.display = "none"; }}
-              />
+              <img src={home.imageUrl} alt={p.home}
+                className={clsx("shrink-0 object-contain drop-shadow", home.isFlag ? "w-6 h-4 rounded-sm" : "w-5 h-5 rounded-full bg-white/10 p-0.5")}
+                onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
             )}
-            <p className="text-base font-black text-white drop-shadow-lg tracking-tight leading-snug">{p.home}</p>
+            <span className="text-sm font-black text-white drop-shadow flex-1 truncate">{p.home}</span>
+            <span className="text-sm font-bold text-white shrink-0">{Math.round(p.p_home * 100)}%</span>
           </div>
-          <p className="text-[10px] text-white/50 uppercase tracking-widest font-medium">vs</p>
-          <div className="flex items-center justify-center gap-2">
+          <div className="h-1.5 bg-black/30 rounded-full overflow-hidden">
+            <div className="h-full bg-white/70 rounded-full" style={{ width: `${Math.round(p.p_home * 100)}%` }} />
+          </div>
+
+          {/* Draw */}
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-white/40 uppercase tracking-widest shrink-0 w-5 text-center">vs</span>
+            <span className="text-[11px] text-white/50 flex-1">Draw</span>
+            <span className="text-[11px] font-semibold text-white/60 shrink-0">{Math.round(p.p_draw * 100)}%</span>
+          </div>
+          <div className="h-1 bg-black/20 rounded-full overflow-hidden">
+            <div className="h-full bg-white/30 rounded-full" style={{ width: `${Math.round(p.p_draw * 100)}%` }} />
+          </div>
+
+          {/* Away */}
+          <div className="flex items-center gap-2">
             {away.imageUrl && (
-              <img
-                src={away.imageUrl}
-                alt={p.away}
-                className={clsx("object-contain drop-shadow-md shrink-0", away.isFlag ? "w-7 h-5 rounded-sm" : "w-6 h-6 rounded-full bg-white/10 p-0.5")}
-                onError={e => { (e.target as HTMLImageElement).style.display = "none"; }}
-              />
+              <img src={away.imageUrl} alt={p.away}
+                className={clsx("shrink-0 object-contain drop-shadow", away.isFlag ? "w-6 h-4 rounded-sm" : "w-5 h-5 rounded-full bg-white/10 p-0.5")}
+                onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
             )}
-            <p className="text-base font-black text-white drop-shadow-lg tracking-tight leading-snug">{p.away}</p>
+            <span className="text-sm font-black text-white drop-shadow flex-1 truncate">{p.away}</span>
+            <span className="text-sm font-bold text-white shrink-0">{Math.round(p.p_away * 100)}%</span>
+          </div>
+          <div className="h-1.5 bg-black/30 rounded-full overflow-hidden">
+            <div className="h-full bg-white/70 rounded-full" style={{ width: `${Math.round(p.p_away * 100)}%` }} />
           </div>
         </div>
 
-        {/* 1X2 probability row */}
-        <div className="grid grid-cols-3 gap-2 text-center">
-          {[
-            { label: "Home", value: p.p_home },
-            { label: "Draw", value: p.p_draw },
-            { label: "Away", value: p.p_away },
-          ].map(({ label, value }) => (
-            <div key={label} className="bg-black/30 backdrop-blur-sm rounded-lg px-2 py-2 border border-white/10">
-              <p className="text-[10px] text-white/60 mb-1">{label}</p>
-              <p className="text-sm font-bold text-white">{Math.round(value * 100)}%</p>
-            </div>
-          ))}
-        </div>
-
-        {/* Tips + confidence */}
-        <div className="space-y-2.5 flex-1">
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-white/60">1X2 Pick</span>
-            <span className={clsx("text-xs font-semibold px-2.5 py-0.5 rounded-full border", TIP_CODE_COLORS[p.tip_code] || TIP_CODE_COLORS["?"])}>
-              {p.tip_1x2}
-            </span>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-white/60">Goals Pick</span>
-            <span className={clsx("text-xs font-semibold px-2.5 py-0.5 rounded-full border", GOALS_TYPE_COLORS[p.goals_type] || GOALS_TYPE_COLORS["Skip"])}>
-              {p.tip_goals}
-            </span>
-          </div>
-
-          <div className="pt-1">
-            {isSkip ? (
-              <div className="space-y-1">
-                <div className="flex justify-between text-xs">
-                  <span className="text-white/40">Confidence</span>
-                  <span className="text-white/40">—</span>
-                </div>
-                <div className="h-1.5 bg-white/10 rounded-full" />
-              </div>
-            ) : (
-              <div className="space-y-1">
-                <div className="flex justify-between text-xs">
-                  <span className="text-white/60">Confidence</span>
-                  <span className="text-white font-semibold">{gconf}%</span>
-                </div>
-                <div className="h-1.5 bg-black/30 rounded-full overflow-hidden">
-                  <div className="h-full bg-white/80 rounded-full transition-all" style={{ width: `${gconf}%` }} />
-                </div>
-              </div>
+        {/* Best pick block */}
+        <div className="bg-black/30 border border-white/15 rounded-xl px-3 py-2.5 flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[10px] text-white/50 uppercase tracking-wide font-semibold mb-0.5">Best pick</p>
+            <p className="text-sm font-bold text-white truncate">{p.tip_1x2}</p>
+            {!isSkip && p.tip_goals && p.tip_goals !== "Skip" && (
+              <p className="text-[10px] text-green-300 mt-0.5">{p.tip_goals}</p>
             )}
           </div>
-        </div>
-
-        {/* Footer */}
-        <div className="flex gap-3 pt-2 border-t border-white/15">
-          <div className="flex-1 text-center">
-            <p className="text-[10px] text-white/50">Over 1.5</p>
-            <p className="text-sm font-semibold text-white">{Math.round(p.p_over15 * 100)}%</p>
-          </div>
-          <div className="w-px bg-white/15" />
-          <div className="flex-1 text-center">
-            <p className="text-[10px] text-white/50">Over 2.5</p>
-            <p className="text-sm font-semibold text-white">{Math.round(p.p_over25 * 100)}%</p>
-          </div>
-          <div className="w-px bg-white/15" />
-          <div className="flex-1 text-center">
-            <TrendingUp size={12} className={clsx("mx-auto mb-0.5", isSkip ? "text-white/30" : "text-green-300")} />
-            <p className={clsx("text-sm font-semibold", isSkip ? "text-white/30" : "text-green-300")}>
+          <div className="text-right shrink-0">
+            <p className="text-[10px] text-white/50">Confidence</p>
+            <p className={clsx("text-xl font-black", isSkip ? "text-white/30" : gconf >= 65 ? "text-green-400" : "text-white")}>
               {isSkip ? "—" : `${gconf}%`}
             </p>
           </div>
