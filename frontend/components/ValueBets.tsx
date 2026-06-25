@@ -90,10 +90,27 @@ interface Props {
 }
 
 export function ValueBets({ onMatchClick }: Props) {
-  const [bets, setBets]     = useState<ValueBet[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError]   = useState(false);
+  const [bets, setBets]         = useState<ValueBet[]>([]);
+  const [loading, setLoading]   = useState(true);
+  const [error, setError]       = useState(false);
   const [lastFetch, setLastFetch] = useState<Date | null>(null);
+  const [minEdge, setMinEdge]   = useState(3);         // minimum edge %
+  const [marketFilter, setMarketFilter] = useState("all"); // all | 1X2 | Over/Under | BTTS
+  const [leagueFilter, setLeagueFilter] = useState("ALL");
+
+  // Derived filtered list
+  const leagues = ["ALL", ...Array.from(new Set(bets.map(b => b.league_name))).sort()];
+  const filtered = bets.filter(b => {
+    if (b.edge < minEdge) return false;
+    if (leagueFilter !== "ALL" && b.league_name !== leagueFilter) return false;
+    if (marketFilter !== "all") {
+      const vm = (b as any).value_market || "";
+      if (marketFilter === "1X2" && !vm.includes("1X2")) return false;
+      if (marketFilter === "Over/Under" && !vm.includes("Over/Under")) return false;
+      if (marketFilter === "BTTS" && !vm.includes("BTTS")) return false;
+    }
+    return true;
+  });
 
   const load = async () => {
     setLoading(true);
@@ -143,6 +160,41 @@ export function ValueBets({ onMatchClick }: Props) {
         </div>
       </div>
 
+      {/* Filters */}
+      {bets.length > 0 && (
+        <div className="flex gap-2 flex-wrap items-center">
+          {/* Min edge */}
+          <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5">
+            <span className="text-[11px] text-slate-400">Min edge</span>
+            {[3, 5, 8, 10].map(e => (
+              <button key={e} onClick={() => setMinEdge(e)}
+                className={clsx("text-[11px] font-bold px-2 py-0.5 rounded transition-all",
+                  minEdge === e ? "bg-green-500/20 text-green-300" : "text-slate-500 hover:text-slate-200")}>
+                {e}%
+              </button>
+            ))}
+          </div>
+          {/* Market type */}
+          <div className="flex gap-1">
+            {[["all","All"], ["1X2","1X2"], ["Over/Under","O/U"], ["BTTS","BTTS"]].map(([v, label]) => (
+              <button key={v} onClick={() => setMarketFilter(v)}
+                className={clsx("text-[11px] font-semibold px-2.5 py-1 rounded-lg border transition-all",
+                  marketFilter === v
+                    ? "bg-green-500/20 text-green-300 border-green-500/40"
+                    : "bg-slate-800 text-slate-500 border-slate-700 hover:text-slate-200")}>
+                {label}
+              </button>
+            ))}
+          </div>
+          {/* League */}
+          <select value={leagueFilter} onChange={e => setLeagueFilter(e.target.value)}
+            className="text-[11px] bg-slate-800 border border-slate-700 text-slate-300 rounded-lg px-2 py-1 outline-none">
+            {leagues.map(l => <option key={l} value={l}>{l === "ALL" ? "All Leagues" : l}</option>)}
+          </select>
+          <span className="text-[11px] text-slate-500 ml-1">{filtered.length} results</span>
+        </div>
+      )}
+
       {/* Explainer */}
       <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-3 flex gap-2.5">
         <AlertCircle size={14} className="text-blue-400 shrink-0 mt-0.5" />
@@ -164,7 +216,7 @@ export function ValueBets({ onMatchClick }: Props) {
           <p className="text-sm">Couldn't load live odds right now.</p>
           <button onClick={load} className="text-xs text-blue-400 hover:underline">Try again</button>
         </div>
-      ) : bets.length === 0 ? (
+      ) : filtered.length === 0 ? (
         <div className="text-center py-12 text-slate-500 space-y-2">
           <TrendingUp size={28} className="mx-auto mb-3 opacity-30" />
           <p className="text-sm">No value bets found right now.</p>
@@ -177,7 +229,7 @@ export function ValueBets({ onMatchClick }: Props) {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {bets.map((v, i) => (
+          {filtered.map((v, i) => (
             <ValueBetCard
               key={i}
               v={v}
