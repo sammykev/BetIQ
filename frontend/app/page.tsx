@@ -334,14 +334,19 @@ export default function HomePage() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
-        {/* Stats bar */}
+        {/* Stats bar — sport-aware */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {[
-            { icon: <TrendingUp size={16} />, label: "Total Picks", value: predictions.length, color: "text-blue-400", onClick: undefined, active: false },
-            { icon: <Shield size={16} />, label: "Bankers", value: bankers.length, color: "text-green-400", onClick: () => setBankersOnly(b => !b), active: bankersOnly },
-            { icon: <TrendingUp size={16} />, label: "High Confidence", value: highConf.length, color: "text-yellow-400", onClick: undefined, active: false },
-            { icon: <Info size={16} />, label: "Leagues", value: Object.keys(counts).length, color: "text-purple-400", onClick: undefined, active: false },
-          ].map(({ icon, label, value, color, onClick, active }) => (
+          {(activeSport === "football" ? [
+            { icon: <TrendingUp size={16} />, label: "Total Picks",      value: predictions.length,          color: "text-blue-400",   onClick: undefined,                        active: false },
+            { icon: <Shield size={16} />,    label: "Bankers",           value: bankers.length,              color: "text-green-400",  onClick: () => setBankersOnly(b => !b),    active: bankersOnly },
+            { icon: <TrendingUp size={16} />,label: "High Confidence",   value: highConf.length,             color: "text-yellow-400", onClick: undefined,                        active: false },
+            { icon: <Info size={16} />,      label: "Leagues",           value: Object.keys(counts).length,  color: "text-purple-400", onClick: undefined,                        active: false },
+          ] : [
+            { icon: <TrendingUp size={16} />, label: "Total Picks",   value: sportPreds.length,                                                                          color: "text-blue-400",   onClick: undefined, active: false },
+            { icon: <Shield size={16} />,     label: "High Conf (≥65%)", value: sportPreds.filter(p => p.goals_confidence >= 0.65).length,                              color: "text-green-400",  onClick: undefined, active: false },
+            { icon: <TrendingUp size={16} />, label: "Very High (≥75%)", value: sportPreds.filter(p => p.goals_confidence >= 0.75).length,                              color: "text-yellow-400", onClick: undefined, active: false },
+            { icon: <Info size={16} />,       label: "Leagues / Tourn",  value: new Set(sportPreds.map(p => p.league_name)).size,                                       color: "text-purple-400", onClick: undefined, active: false },
+          ] as { icon: React.ReactNode; label: string; value: number; color: string; onClick: (() => void) | undefined; active: boolean }[]).map(({ icon, label, value, color, onClick, active }) => (
             <div
               key={label}
               onClick={onClick}

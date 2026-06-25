@@ -1813,7 +1813,7 @@ async def get_paywall_state():
                 return {"enabled": val == "true"}
         except Exception:
             pass
-    return {"enabled": True}   # default: paywall on
+    return {"enabled": False}   # default: paywall OFF when Redis unavailable
 
 
 @app.post("/api/config/paywall")
@@ -1828,6 +1828,7 @@ async def set_paywall_state(body: Dict[str, Any], request: Any = None):
     r = _get_redis()
     if r:
         try:
+            # No TTL — persists forever in Redis
             r.set(PAYWALL_KEY, "true" if enabled else "false")
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Redis error: {e}")
