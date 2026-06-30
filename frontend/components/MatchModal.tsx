@@ -501,11 +501,19 @@ export function MatchModal({ prediction: p, onClose }: Props) {
                             {form.goals_conceded != null && (
                               <span>🧤 Conceded: <span className="text-white font-semibold">{form.goals_conceded}/g</span></span>
                             )}
+                            {(form as any).xg_for != null && (
+                              <span>📈 xG For: <span className="text-blue-300 font-semibold">{(form as any).xg_for}</span></span>
+                            )}
+                            {(form as any).xg_against != null && (
+                              <span>📉 xG Vs: <span className="text-orange-300 font-semibold">{(form as any).xg_against}</span></span>
+                            )}
                             <span>Elo: <span className="text-white font-semibold">{form.elo}</span></span>
                             {form.games > 0 && <span>{form.wins}W {form.draws}D {form.losses}L</span>}
                           </div>
                           {form.games > 0
-                            ? <p className="text-[9px] text-slate-600">Last {form.games} games · Updated every 3h</p>
+                            ? <p className="text-[9px] text-slate-600">
+                                Last {form.games} games · {(form as any).data_source?.includes("web") ? "🌐 Live web" : "Updated every 3h"}
+                              </p>
                             : <p className="text-[9px] text-slate-500">Match stats loading — Elo rating shown</p>
                           }
                         </>

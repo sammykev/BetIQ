@@ -95,11 +95,41 @@ def _h2h_cache_key(home: str, away: str) -> str:
     return f"{home.lower().strip()}__vs__{away.lower().strip()}"
 
 
+_WEB_FORM_REDIS_PREFIX = "betiq:web_form:"
+_WEB_FORM_TTL = 60 * 60 * 24  # 24 hours
+
+
+def _redis_team_key(team: str) -> str:
+    return _WEB_FORM_REDIS_PREFIX + team.lower().replace(" ", "_")
+
+
+def _get_web_form_cache(team: str) -> Optional[Dict]:
+    """Synchronous Redis lookup for pre-fetched web form data."""
+    r = _get_redis()
+    if not r:
+        return None
+    try:
+        raw = r.get(_redis_team_key(team))
+        return json.loads(raw) if raw else None
+    except Exception:
+        return None
+
+
+def _set_web_form_cache(team: str, form: Dict):
+    r = _get_redis()
+    if not r:
+        return
+    try:
+        r.setex(_redis_team_key(team), _WEB_FORM_TTL, json.dumps(form))
+    except Exception:
+        pass
+
+
 def _predictor_form_summary(team: str) -> Dict:
     """
-    Return the current rolling form for a team from the live predictor.
-    This updates every 3 hours via _fetch_and_save_results().
-    Source: football-data.org results API + training CSVs.
+    Return the current rolling form for a team.
+    Primary source: predictor.team_stats (built from CSVs + API).
+    Fallback: Redis-cached web form (fetched async in pipeline for sparse teams).
     """
     if _predictor is None:
         return {}
@@ -113,9 +143,39 @@ def _predictor_form_summary(team: str) -> Dict:
     ga  = [v for v in stats.get("ga", [])[-10:] if v == v and v is not None]
     n   = len(pts)
 
-    # No match data — common for national teams without CSV history.
-    # Return Elo so the modal shows the rating instead of "not yet available".
+    # ── Web form fallback (used when local data is sparse) ──────────────
+    web = _get_web_form_cache(team) if n < 5 else None
+
     if n == 0:
+        if web and web.get("matches"):
+            # Build form from web search results
+            matches  = web["matches"]
+            wm       = [m for m in matches if m.get("result") == "W"]
+            dm       = [m for m in matches if m.get("result") == "D"]
+            lm       = [m for m in matches if m.get("result") == "L"]
+            form_str = "".join(
+                "W" if m.get("result") == "W" else ("D" if m.get("result") == "D" else "L")
+                for m in matches[-5:]
+            )
+            return {
+                "available":           True,
+                "games":               len(matches),
+                "form":                form_str,
+                "wins":                len(wm),
+                "draws":               len(dm),
+                "losses":              len(lm),
+                "goals_scored":        _safe_round(web.get("avg_scored")),
+                "goals_conceded":      _safe_round(web.get("avg_conceded")),
+                "home_goals_scored":   None,
+                "home_goals_conceded": None,
+                "away_goals_scored":   None,
+                "away_goals_conceded": None,
+                "xg_for":              _safe_round(web.get("avg_xg_for"), 2),
+                "xg_against":          _safe_round(web.get("avg_xg_against"), 2),
+                "elo":                 elo,
+                "data_source":         "Live web search (last 10 matches)",
+            }
+        # No local OR web data — show Elo only
         return {
             "available":      True,
             "games":          0,
@@ -125,6 +185,8 @@ def _predictor_form_summary(team: str) -> Dict:
             "losses":         0,
             "goals_scored":   None,
             "goals_conceded": None,
+            "xg_for":         None,
+            "xg_against":     None,
             "elo":            elo,
             "data_source":    "Elo rating only — match stats loading",
         }
@@ -135,10 +197,14 @@ def _predictor_form_summary(team: str) -> Dict:
     form_str = "".join("W" if p == 3 else ("D" if p == 1 else "L") for p in pts[-5:])
 
     # Venue-specific goal averages from Dixon-Coles tracking
-    home_gf = stats.get("home_gf", [])[-10:]
-    home_ga = stats.get("home_ga", [])[-10:]
-    away_gf = stats.get("away_gf", [])[-10:]
-    away_ga = stats.get("away_ga", [])[-10:]
+    home_gf = [v for v in stats.get("home_gf", [])[-10:] if v == v and v is not None]
+    home_ga = [v for v in stats.get("home_ga", [])[-10:] if v == v and v is not None]
+    away_gf = [v for v in stats.get("away_gf", [])[-10:] if v == v and v is not None]
+    away_ga = [v for v in stats.get("away_ga", [])[-10:] if v == v and v is not None]
+
+    # Supplement with web xG if local data is sparse and web has it
+    xg_for     = _safe_round(web.get("avg_xg_for"), 2) if web else None
+    xg_against = _safe_round(web.get("avg_xg_against"), 2) if web else None
 
     return {
         "available":           True,
@@ -153,9 +219,20 @@ def _predictor_form_summary(team: str) -> Dict:
         "home_goals_conceded": round(sum(home_ga) / len(home_ga), 1) if home_ga else None,
         "away_goals_scored":   round(sum(away_gf) / len(away_gf), 1) if away_gf else None,
         "away_goals_conceded": round(sum(away_ga) / len(away_ga), 1) if away_ga else None,
+        "xg_for":              xg_for,
+        "xg_against":          xg_against,
         "elo":                 elo,
-        "data_source":         "football-data.org API (updated every 3h) + training CSVs",
+        "data_source":         "football-data.org + CSVs" + (" + web xG" if xg_for else ""),
     }
+
+
+def _safe_round(v, decimals: int = 1):
+    """Round v if it's a valid finite number, else return None."""
+    try:
+        f = float(v)
+        return round(f, decimals) if f == f else None  # NaN guard
+    except (TypeError, ValueError):
+        return None
 
 def _load_predictions_cache():
     global _predictions_cache, _last_updated
@@ -450,6 +527,65 @@ def _load_international_csv() -> pd.DataFrame:
 # Train + predict pipeline
 # ------------------------------------------------------------------ #
 
+async def _prefetch_web_forms(predictor, fixtures: list):
+    """
+    Background task: for each team in upcoming fixtures that has fewer than
+    5 local matches in team_stats, fetch their last 10 results + xG via
+    compound-beta web search and cache in Redis for 24 hours.
+    """
+    from llm_service import fetch_team_form_web, GROQ_API_KEY
+    if not GROQ_API_KEY:
+        return
+
+    seen = set()
+    sparse_teams = []
+    for fx in fixtures:
+        for team in (fx["home"], fx["away"]):
+            if team in seen:
+                continue
+            seen.add(team)
+            local_pts = len(predictor.team_stats.get(team, {}).get("pts", []))
+            # Already have enough local data AND a cached web form → skip
+            if local_pts >= 5 and _get_web_form_cache(team):
+                continue
+            sparse_teams.append(team)
+
+    if not sparse_teams:
+        return
+
+    print(f"[WebForm] Fetching form for {len(sparse_teams)} teams with sparse data...")
+    for team in sparse_teams[:25]:  # cap at 25 to respect Groq quota
+        try:
+            cached = _get_web_form_cache(team)
+            if cached:
+                continue  # already have it
+            form = await fetch_team_form_web(team)
+            if form and form.get("matches"):
+                _set_web_form_cache(team, form)
+                # Also feed confirmed match results into team_stats
+                for m in form.get("matches", []):
+                    try:
+                        scored   = float(m["scored"])
+                        conceded = float(m["conceded"])
+                        result   = m.get("result", "")
+                        if result not in ("W", "D", "L"):
+                            continue
+                        # Translate from team's perspective to H/D/A for _update
+                        if m.get("home"):
+                            predictor._update(team, "__web__", {"W":"H","D":"D","L":"A"}[result], scored, conceded)
+                        else:
+                            predictor._update("__web__", team, {"W":"A","D":"D","L":"H"}[result], conceded, scored)
+                    except Exception:
+                        pass
+        except Exception as e:
+            print(f"[WebForm] Failed for {team}: {e}")
+        await asyncio.sleep(7)  # stay within Groq rate limit
+
+    print("[WebForm] Pre-fetch complete.")
+
+
+# ------------------------------------------------------------------ #
+
 async def _run_pipeline():
     global _predictor, _predictions_cache, _last_updated, _is_training
 
@@ -563,6 +699,11 @@ async def _run_pipeline():
                     pass
         else:
             print("[Pipeline] WARNING: No FOOTBALL_DATA_API_KEY set. Add your key to .env to get live fixtures.")
+
+        # Pre-fetch web form for teams that have sparse local data
+        # Runs as a background task so it doesn't block the pipeline
+        if fixtures:
+            asyncio.create_task(_prefetch_web_forms(predictor, fixtures))
 
         # Archive past predictions from the OLD cache BEFORE replacing it —
         # new `predictions` only has upcoming fixtures so yesterday is already gone.
