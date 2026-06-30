@@ -168,6 +168,113 @@ Rules:
     return {}
 
 
+async def fetch_team_form_web(team: str) -> Dict[str, Any]:
+    """
+    Use compound-beta web search + R1 extraction to fetch a team's
+    last 10 results with goals and xG (when available).
+
+    Returns:
+    {
+      "matches": [
+        {"date": "2026-06-19", "opponent": "Haiti", "home": true,
+         "scored": 3, "conceded": 0, "xg_for": 2.8, "xg_against": 0.4, "result": "W"}
+      ],
+      "avg_scored": 2.1,
+      "avg_conceded": 0.6,
+      "avg_xg_for": 1.9,       # null when xG not found in search
+      "avg_xg_against": 0.7,   # null when xG not found in search
+    }
+    Returns {} on failure.
+    """
+    if not GROQ_API_KEY:
+        return {}
+
+    search_prompt = (
+        f"{team} football last 10 match results 2025 2026 "
+        f"goals scored conceded xG expected goals"
+    )
+
+    search_text = ""
+    for model in ("compound-beta-mini", "compound-beta"):
+        try:
+            data = await _call(model, [{"role": "user", "content": search_prompt}], max_tokens=300)
+            text = data["choices"][0]["message"]["content"].strip()
+            if text:
+                search_text = text
+                break
+        except Exception as e:
+            err = str(e)
+            if "413" in err or "request_too_large" in err:
+                continue
+            print(f"[WebForm] {model} search failed for {team}: {e}")
+            break
+
+    if not search_text:
+        return {}
+
+    extract_prompt = f"""Extract {team}'s last 10 football match results from this text.
+Text: "{search_text}"
+
+Reply ONLY with valid JSON, no extra text:
+{{
+  "matches": [
+    {{"date": "YYYY-MM-DD", "opponent": "TeamName", "home": true,
+      "scored": 2, "conceded": 1, "xg_for": 1.8, "xg_against": 0.7, "result": "W"}}
+  ],
+  "avg_scored": 1.5,
+  "avg_conceded": 0.8,
+  "avg_xg_for": null,
+  "avg_xg_against": null
+}}
+Rules:
+- result: "W" win / "D" draw / "L" loss  (from {team}'s perspective)
+- home: true if {team} played at home
+- xg_for / xg_against: null if not mentioned
+- avg_xg_for / avg_xg_against: average over matches (null if xG unavailable)
+- Only include matches with confirmed final scores — skip future/pending matches
+- Most recent match first"""
+
+    import json, re
+
+    async def _try_parse(text: str) -> Dict:
+        m = re.search(r'\{[\s\S]*\}', text)
+        if not m:
+            return {}
+        try:
+            parsed = json.loads(m.group())
+            if isinstance(parsed.get("matches"), list) and parsed["matches"]:
+                return parsed
+        except json.JSONDecodeError:
+            pass
+        return {}
+
+    # Primary: DeepSeek R1 reasoner (best structured extraction)
+    if DEEPSEEK_API_KEY:
+        try:
+            data = await _call_deepseek([{"role": "user", "content": extract_prompt}], max_tokens=600)
+            result = await _try_parse(data["choices"][0]["message"]["content"])
+            if result:
+                print(f"[WebForm/R1] {team}: {len(result['matches'])} matches, "
+                      f"xG={'yes' if result.get('avg_xg_for') else 'no'}")
+                return result
+        except Exception as e:
+            print(f"[WebForm] DeepSeek extraction failed for {team}: {e}")
+
+    # Fallback: Groq R1 distill
+    if GROQ_API_KEY:
+        try:
+            data = await _call(_GROQ_R1, [{"role": "user", "content": extract_prompt}], max_tokens=600)
+            result = await _try_parse(data["choices"][0]["message"]["content"])
+            if result:
+                print(f"[WebForm/Groq] {team}: {len(result['matches'])} matches, "
+                      f"xG={'yes' if result.get('avg_xg_for') else 'no'}")
+                return result
+        except Exception as e:
+            print(f"[WebForm] Groq extraction failed for {team}: {e}")
+
+    return {}
+
+
 async def fetch_missing_results(home: str, away: str, date: str) -> Dict[str, Any]:
     """
     Search the web for a match result that isn't in our database yet.
