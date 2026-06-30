@@ -146,8 +146,8 @@ def _predictor_form_summary(team: str) -> Dict:
         "wins":                wins,
         "draws":               draws,
         "losses":              losses,
-        "goals_scored":        round(sum(gf) / n, 1) if gf else 0,
-        "goals_conceded":      round(sum(ga) / n, 1) if ga else 0,
+        "goals_scored":        round(sum(gf) / n, 1) if gf else None,
+        "goals_conceded":      round(sum(ga) / n, 1) if ga else None,
         "home_goals_scored":   round(sum(home_gf) / len(home_gf), 1) if home_gf else None,
         "home_goals_conceded": round(sum(home_ga) / len(home_ga), 1) if home_ga else None,
         "away_goals_scored":   round(sum(away_gf) / len(away_gf), 1) if away_gf else None,
@@ -981,8 +981,8 @@ async def get_match_analysis(home: str, away: str):
     adj_def_h = 1.0 + adjustments.get("home_defense_modifier", 0.0)
     adj_def_a = 1.0 + adjustments.get("away_defense_modifier", 0.0)
     if adjustments:
-        _predictor.team_stats.setdefault(home, {})
-        _predictor.team_stats.setdefault(away, {})
+        _predictor._init(home)
+        _predictor._init(away)
         # Temporarily scale goal lists so Dixon-Coles xG reflects the news adjustment.
         # We scale both overall gf and the venue-specific home_gf/away_gf lists.
         orig_home_gf      = _predictor.team_stats[home].get("gf", [])
