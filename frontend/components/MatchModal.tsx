@@ -495,12 +495,19 @@ export function MatchModal({ prediction: p, onClose }: Props) {
                             ))}
                           </div>
                           <div className="grid grid-cols-2 gap-x-3 text-[10px] text-slate-500">
-                            <span>⚽ Scored: <span className="text-white font-semibold">{form.goals_scored}/g</span></span>
-                            <span>🧤 Conceded: <span className="text-white font-semibold">{form.goals_conceded}/g</span></span>
+                            {form.goals_scored != null && (
+                              <span>⚽ Scored: <span className="text-white font-semibold">{form.goals_scored}/g</span></span>
+                            )}
+                            {form.goals_conceded != null && (
+                              <span>🧤 Conceded: <span className="text-white font-semibold">{form.goals_conceded}/g</span></span>
+                            )}
                             <span>Elo: <span className="text-white font-semibold">{form.elo}</span></span>
-                            <span>{form.wins}W {form.draws}D {form.losses}L</span>
+                            {form.games > 0 && <span>{form.wins}W {form.draws}D {form.losses}L</span>}
                           </div>
-                          <p className="text-[9px] text-slate-600">Last {form.games} games · Updated every 3h</p>
+                          {form.games > 0
+                            ? <p className="text-[9px] text-slate-600">Last {form.games} games · Updated every 3h</p>
+                            : <p className="text-[9px] text-slate-500">Match stats loading — Elo rating shown</p>
+                          }
                         </>
                       ) : (
                         <p className="text-[10px] text-slate-600">Form data not yet available</p>

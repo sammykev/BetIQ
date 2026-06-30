@@ -103,35 +103,57 @@ def _predictor_form_summary(team: str) -> Dict:
     """
     if _predictor is None:
         return {}
-    stats = _predictor.team_stats.get(team, {})
-    if not stats or not stats.get("pts"):
-        return {"available": False}
 
-    pts  = stats.get("pts", [])[-10:]   # last 10 games
-    gf   = stats.get("gf",  [])[-10:]
-    ga   = stats.get("ga",  [])[-10:]
-    n    = len(pts)
+    stats = _predictor.team_stats.get(team, {})
+    elo   = round(_predictor.elo.get(team))
+
+    pts = stats.get("pts", [])[-10:]
+    gf  = stats.get("gf",  [])[-10:]
+    ga  = stats.get("ga",  [])[-10:]
+    n   = len(pts)
+
+    # No match data — common for national teams without CSV history.
+    # Return Elo so the modal shows the rating instead of "not yet available".
     if n == 0:
-        return {"available": False}
+        return {
+            "available":      True,
+            "games":          0,
+            "form":           "",
+            "wins":           0,
+            "draws":          0,
+            "losses":         0,
+            "goals_scored":   None,
+            "goals_conceded": None,
+            "elo":            elo,
+            "data_source":    "Elo rating only — match stats loading",
+        }
 
     wins   = sum(1 for p in pts if p == 3)
     draws  = sum(1 for p in pts if p == 1)
     losses = sum(1 for p in pts if p == 0)
-    form_str = ""
-    for p in pts[-5:]:
-        form_str += "W" if p == 3 else ("D" if p == 1 else "L")
+    form_str = "".join("W" if p == 3 else ("D" if p == 1 else "L") for p in pts[-5:])
+
+    # Venue-specific goal averages from Dixon-Coles tracking
+    home_gf = stats.get("home_gf", [])[-10:]
+    home_ga = stats.get("home_ga", [])[-10:]
+    away_gf = stats.get("away_gf", [])[-10:]
+    away_ga = stats.get("away_ga", [])[-10:]
 
     return {
-        "available":     True,
-        "games":         n,
-        "form":          form_str,                         # e.g. "WWDLW"
-        "wins":          wins,
-        "draws":         draws,
-        "losses":        losses,
-        "goals_scored":  round(sum(gf) / n, 1) if gf else 0,
-        "goals_conceded":round(sum(ga) / n, 1) if ga else 0,
-        "elo":           round(_predictor.elo.get(team)),
-        "data_source":   "football-data.org API (updated every 3h) + training CSVs",
+        "available":           True,
+        "games":               n,
+        "form":                form_str,
+        "wins":                wins,
+        "draws":               draws,
+        "losses":              losses,
+        "goals_scored":        round(sum(gf) / n, 1) if gf else 0,
+        "goals_conceded":      round(sum(ga) / n, 1) if ga else 0,
+        "home_goals_scored":   round(sum(home_gf) / len(home_gf), 1) if home_gf else None,
+        "home_goals_conceded": round(sum(home_ga) / len(home_ga), 1) if home_ga else None,
+        "away_goals_scored":   round(sum(away_gf) / len(away_gf), 1) if away_gf else None,
+        "away_goals_conceded": round(sum(away_ga) / len(away_ga), 1) if away_ga else None,
+        "elo":                 elo,
+        "data_source":         "football-data.org API (updated every 3h) + training CSVs",
     }
 
 def _load_predictions_cache():
@@ -621,9 +643,9 @@ async def _web_search_missing_results():
     use web search (compound-beta) to find the actual result,
     then update the history and feed into the live model.
     """
+    from llm_service import GROQ_API_KEY, fetch_missing_results
     if not GROQ_API_KEY:
         return
-    from llm_service import fetch_missing_results
     from datetime import date as _date, timedelta
 
     r = _get_redis()
@@ -961,13 +983,22 @@ async def get_match_analysis(home: str, away: str):
     if adjustments:
         _predictor.team_stats.setdefault(home, {})
         _predictor.team_stats.setdefault(away, {})
-        # Temporarily scale the team's goal averages by the web-search adjustment
-        orig_home_gf = _predictor.team_stats[home].get("gf", [])
-        orig_away_gf = _predictor.team_stats[away].get("gf", [])
-        if orig_home_gf and adj_xg_h != 1.0:
-            _predictor.team_stats[home]["gf"] = [v * adj_xg_h for v in orig_home_gf]
-        if orig_away_gf and adj_xg_a != 1.0:
-            _predictor.team_stats[away]["gf"] = [v * adj_xg_a for v in orig_away_gf]
+        # Temporarily scale goal lists so Dixon-Coles xG reflects the news adjustment.
+        # We scale both overall gf and the venue-specific home_gf/away_gf lists.
+        orig_home_gf      = _predictor.team_stats[home].get("gf", [])
+        orig_home_gf_home = _predictor.team_stats[home].get("home_gf", [])
+        orig_away_gf      = _predictor.team_stats[away].get("gf", [])
+        orig_away_gf_away = _predictor.team_stats[away].get("away_gf", [])
+        if adj_xg_h != 1.0:
+            if orig_home_gf:
+                _predictor.team_stats[home]["gf"]      = [v * adj_xg_h for v in orig_home_gf]
+            if orig_home_gf_home:
+                _predictor.team_stats[home]["home_gf"] = [v * adj_xg_h for v in orig_home_gf_home]
+        if adj_xg_a != 1.0:
+            if orig_away_gf:
+                _predictor.team_stats[away]["gf"]      = [v * adj_xg_a for v in orig_away_gf]
+            if orig_away_gf_away:
+                _predictor.team_stats[away]["away_gf"] = [v * adj_xg_a for v in orig_away_gf_away]
 
     # If live odds available, re-run prediction with them for better accuracy
     if live_odds:
@@ -982,10 +1013,12 @@ async def get_match_analysis(home: str, away: str):
 
     # Restore original stats after prediction (don't permanently alter training data)
     if adjustments:
-        if orig_home_gf and adj_xg_h != 1.0:
-            _predictor.team_stats[home]["gf"] = orig_home_gf
-        if orig_away_gf and adj_xg_a != 1.0:
-            _predictor.team_stats[away]["gf"] = orig_away_gf
+        if adj_xg_h != 1.0:
+            _predictor.team_stats[home]["gf"]      = orig_home_gf
+            _predictor.team_stats[home]["home_gf"] = orig_home_gf_home
+        if adj_xg_a != 1.0:
+            _predictor.team_stats[away]["gf"]      = orig_away_gf
+            _predictor.team_stats[away]["away_gf"] = orig_away_gf_away
 
     # Apply confidence modifier from web search
     conf_mod = adjustments.get("confidence_modifier", 0.0)
