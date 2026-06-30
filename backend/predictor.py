@@ -106,6 +106,13 @@ FEATURE_COLS = [
     # At training time: from football-data.co.uk (B365H/D/A columns)
     # At prediction time: from The Odds API for upcoming fixtures
     "Impl_Home", "Impl_Draw", "Impl_Away",
+    # Dixon-Coles home/away split features
+    "Home_Attack",   # home team attack strength at home vs league avg (>1 = above avg)
+    "Away_Attack",   # away team attack strength away vs league avg
+    "Home_Defense",  # home team defensive weakness at home (>1 = leaks more than avg)
+    "Away_Defense",  # away team defensive weakness away
+    "xG_Home",       # Dixon-Coles expected goals for home team
+    "xG_Away",       # Dixon-Coles expected goals for away team
 ]
 
 
@@ -120,6 +127,8 @@ class LeaguePredictor:
         self.team_stats: Dict[str, dict] = {}
         self.models: Dict[str, xgb.XGBClassifier] = {}
         self._ready = False
+        self._league_home_goals: List[float] = []
+        self._league_away_goals: List[float] = []
 
     # ------------------------------------------------------------------ #
     # Internal helpers
@@ -129,7 +138,11 @@ class LeaguePredictor:
         if team not in self.team_stats:
             self.team_stats[team] = {
                 "gf": [], "ga": [], "pts": [],
-                "yc": [],   # card weight (yellow + 2*red)
+                "yc": [],           # card weight (yellow + 2*red)
+                "home_gf": [],      # goals scored when playing at home
+                "home_ga": [],      # goals conceded when playing at home
+                "away_gf": [],      # goals scored when playing away
+                "away_ga": [],      # goals conceded when playing away
             }
 
     # League-average implied odds — used when market odds aren't available at prediction time
@@ -168,6 +181,27 @@ class LeaguePredictor:
             impl_d = self._avg_impl["D"]
             impl_a = self._avg_impl["A"]
 
+        # --- Dixon-Coles home/away attack/defense ratings ---
+        # League baseline: rolling average of home/away goals across all training matches
+        lg_home = float(np.mean(self._league_home_goals[-2000:])) if len(self._league_home_goals) >= 20 else 1.50
+        lg_away = float(np.mean(self._league_away_goals[-2000:])) if len(self._league_away_goals) >= 20 else 1.20
+
+        # Use venue-specific stats when >= 3 games available, fall back to overall avg
+        h_home_scored   = _ewm(hs["home_gf"]) if len(hs.get("home_gf", [])) >= 3 else h_gf
+        h_home_conceded = _ewm(hs["home_ga"]) if len(hs.get("home_ga", [])) >= 3 else h_ga
+        a_away_scored   = _ewm(as_["away_gf"]) if len(as_.get("away_gf", [])) >= 3 else a_gf
+        a_away_conceded = _ewm(as_["away_ga"]) if len(as_.get("away_ga", [])) >= 3 else a_ga
+
+        # Relative strength vs league baseline (1.0 = exactly average)
+        h_attack  = h_home_scored   / max(lg_home, 0.01)   # home scoring vs avg home scorer
+        a_defense = a_away_conceded / max(lg_home, 0.01)   # away defensive weakness vs home teams
+        a_attack  = a_away_scored   / max(lg_away, 0.01)   # away scoring vs avg away scorer
+        h_defense = h_home_conceded / max(lg_away, 0.01)   # home defensive weakness vs away teams
+
+        # Dixon-Coles λ: attack × opponent_defense_weakness × league_baseline
+        xg_h = max(0.1, h_attack * a_defense * lg_home)
+        xg_a = max(0.1, a_attack * h_defense * lg_away)
+
         return {
             "HomeElo": h_elo, "AwayElo": a_elo, "EloDiff": h_elo - a_elo,
             "Home_G_Avg": h_gf, "Away_G_Avg": a_gf,
@@ -181,6 +215,12 @@ class LeaguePredictor:
             "Impl_Home": impl_h,
             "Impl_Draw": impl_d,
             "Impl_Away": impl_a,
+            "Home_Attack":  round(h_attack, 4),
+            "Away_Attack":  round(a_attack, 4),
+            "Home_Defense": round(h_defense, 4),
+            "Away_Defense": round(a_defense, 4),
+            "xG_Home":      round(xg_h, 4),
+            "xG_Away":      round(xg_a, 4),
         }
 
     def _update(
@@ -191,10 +231,19 @@ class LeaguePredictor:
     ):
         self._init(home)
         self._init(away)
+        # Overall rolling stats (kept for fallback)
         self.team_stats[home]["gf"].append(fthg)
         self.team_stats[home]["ga"].append(ftag)
         self.team_stats[away]["gf"].append(ftag)
         self.team_stats[away]["ga"].append(fthg)
+        # Venue-specific stats for Dixon-Coles
+        self.team_stats[home]["home_gf"].append(fthg)
+        self.team_stats[home]["home_ga"].append(ftag)
+        self.team_stats[away]["away_gf"].append(ftag)
+        self.team_stats[away]["away_ga"].append(fthg)
+        # League-wide baseline (used to normalise attack/defense ratings)
+        self._league_home_goals.append(fthg)
+        self._league_away_goals.append(ftag)
         pts = {"H": (3, 0), "D": (1, 1), "A": (0, 3)}[result]
         self.team_stats[home]["pts"].append(pts[0])
         self.team_stats[away]["pts"].append(pts[1])
@@ -221,6 +270,8 @@ class LeaguePredictor:
         """
         self.elo = EloSystem()
         self.team_stats = {}
+        self._league_home_goals = []
+        self._league_away_goals = []
 
         has_odds = all(c in matches.columns for c in ["B365H", "B365D", "B365A"])
         if has_odds:
@@ -339,12 +390,14 @@ class LeaguePredictor:
             "goals_confidence": round(gconf, 3),
         }
 
-    def predict_match_full(self, home: str, away: str) -> Optional[Dict]:
+    def predict_match_full(self, home: str, away: str,
+                           odds_home: float = 0, odds_draw: float = 0,
+                           odds_away: float = 0) -> Optional[Dict]:
         """Full multi-market analysis using XGBoost + Poisson distribution."""
         if not self._ready:
             return None
 
-        f = self._feats(home, away)
+        f = self._feats(home, away, odds_home, odds_draw, odds_away)
         X = pd.DataFrame([f])[FEATURE_COLS]
 
         # XGBoost probabilities
@@ -353,9 +406,9 @@ class LeaguePredictor:
         p_o15 = float(self.models["o15"].predict_proba(X)[0][1])
         p_o25 = float(self.models["o25"].predict_proba(X)[0][1])
 
-        # Expected goals from features (used for Poisson)
-        xg_h = max(0.1, f["Home_G_Avg"])
-        xg_a = max(0.1, f["Away_G_Avg"])
+        # Dixon-Coles expected goals (venue-adjusted attack vs defense)
+        xg_h = f["xG_Home"]
+        xg_a = f["xG_Away"]
 
         # --- Poisson joint probability matrix ---
         MAX = 9
