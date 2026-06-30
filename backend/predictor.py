@@ -231,6 +231,14 @@ class LeaguePredictor:
     ):
         self._init(home)
         self._init(away)
+        # Reject NaN goals — can come from CSV rows with missing scores
+        try:
+            fthg, ftag = float(fthg), float(ftag)
+            if fthg != fthg or ftag != ftag:  # NaN check (NaN != NaN)
+                self.elo.update(home, away, result)
+                return
+        except (TypeError, ValueError):
+            return
         # Overall rolling stats (kept for fallback)
         self.team_stats[home]["gf"].append(fthg)
         self.team_stats[home]["ga"].append(ftag)

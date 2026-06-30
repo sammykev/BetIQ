@@ -108,8 +108,9 @@ def _predictor_form_summary(team: str) -> Dict:
     elo   = round(_predictor.elo.get(team))
 
     pts = stats.get("pts", [])[-10:]
-    gf  = stats.get("gf",  [])[-10:]
-    ga  = stats.get("ga",  [])[-10:]
+    # Filter NaN values that can creep in from CSV rows with missing scores
+    gf  = [v for v in stats.get("gf", [])[-10:] if v == v and v is not None]
+    ga  = [v for v in stats.get("ga", [])[-10:] if v == v and v is not None]
     n   = len(pts)
 
     # No match data — common for national teams without CSV history.
@@ -419,6 +420,14 @@ def _load_international_csv() -> pd.DataFrame:
         # Only use post-2010 matches — older data less relevant for current form
         df = df[df["date"] >= "2010-01-01"].copy()
 
+        # Drop rows with missing scores BEFORE computing Result — rows with NA
+        # scores (e.g. future WC fixtures already listed in the CSV) would otherwise
+        # produce NaN goals and corrupt team_stats with NaN values.
+        df = df.dropna(subset=["home_score", "away_score"])
+        df["home_score"] = pd.to_numeric(df["home_score"], errors="coerce")
+        df["away_score"] = pd.to_numeric(df["away_score"], errors="coerce")
+        df = df.dropna(subset=["home_score", "away_score"])
+
         df["Result"] = np.where(df["home_score"] > df["away_score"], "H",
                        np.where(df["home_score"] < df["away_score"], "A", "D"))
         result = pd.DataFrame({
@@ -428,7 +437,7 @@ def _load_international_csv() -> pd.DataFrame:
             "Result":   df["Result"],
             "FTHG":     df["home_score"].astype(float),
             "FTAG":     df["away_score"].astype(float),
-        }).dropna(subset=["Date", "HomeTeam", "AwayTeam", "Result"])
+        }).dropna(subset=["Date", "HomeTeam", "AwayTeam", "Result", "FTHG", "FTAG"])
 
         print(f"[CSV] International results: {len(result)} matches (post-2010)")
         return result.sort_values("Date").reset_index(drop=True)
