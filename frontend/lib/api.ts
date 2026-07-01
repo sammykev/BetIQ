@@ -21,6 +21,8 @@ export interface Prediction {
   odds_home?: number;
   odds_draw?: number;
   odds_away?: number;
+  value_edge?: number | null;      // model_prob - implied_prob (positive = value)
+  is_value_bet?: boolean;          // true when value_edge > 0.05
 }
 
 export interface League {
@@ -97,6 +99,8 @@ export interface TeamForm {
   goals_conceded?: number;
   elo?: number;
   data_source?: string;
+  xg_for?: number | null;
+  xg_against?: number | null;
 }
 
 export interface MatchAnalysis {
@@ -189,4 +193,23 @@ export async function fetchH2H(home: string, away: string): Promise<H2HData> {
   const res = await fetch(`${API_URL}/api/h2h?${params}`, { cache: "no-store" });
   if (!res.ok) throw new Error("H2H failed");
   return res.json();
+}
+
+export async function subscribeToPush(subscription: PushSubscription): Promise<void> {
+  await fetch(`${API_URL}/api/push/subscribe`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ subscription: subscription.toJSON() }),
+  });
+}
+
+export async function getPushPublicKey(): Promise<string | null> {
+  try {
+    const res = await fetch(`${API_URL}/api/push/public-key`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.public_key || null;
+  } catch {
+    return null;
+  }
 }

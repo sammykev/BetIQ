@@ -6,7 +6,7 @@ import { MatchModal } from "@/components/MatchModal";
 import { LeagueTabs } from "@/components/LeagueTabs";
 import { fetchPredictions, fetchLeagues, triggerRefresh } from "@/lib/api";
 import type { Prediction, League } from "@/lib/api";
-import { RefreshCw, TrendingUp, Shield, Info, AlertTriangle, CalendarDays, Percent } from "lucide-react";
+import { RefreshCw, TrendingUp, Shield, Info, AlertTriangle, CalendarDays, Percent, Bell } from "lucide-react";
 import { ChatBot } from "@/components/ChatBot";
 import { CalendarView } from "@/components/CalendarView";
 import { ValueBets } from "@/components/ValueBets";
@@ -132,7 +132,7 @@ export default function HomePage() {
   const [leagues, setLeagues] = useState<League[]>([]);
   const [selectedLeague, setSelectedLeague] = useState("ALL");
   const [minConf, setMinConf] = useState(0);
-  const [sortBy, setSortBy] = useState<"date" | "confidence">("date");
+  const [sortBy, setSortBy] = useState<"date" | "confidence" | "value">("date");
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -147,6 +147,8 @@ export default function HomePage() {
   const [selectedSportMatch, setSelectedSportMatch] = useState<SportPrediction | null>(null);
   const [showPaywall, setShowPaywall] = useState(false);
   const [savedKeys, setSavedKeys] = useState<Set<string>>(new Set());
+  const [pushEnabled, setPushEnabled] = useState(false);
+  const [pushSupported, setPushSupported] = useState(false);
 
   const { user, isLoaded } = useUser();
   const [paywallActive, setPaywallActive] = useState(true);
@@ -225,6 +227,18 @@ export default function HomePage() {
     return () => clearInterval(id);
   }, []);
 
+  // Check push notification support
+  useEffect(() => {
+    if ("serviceWorker" in navigator && "PushManager" in window) {
+      setPushSupported(true);
+      navigator.serviceWorker.ready.then(reg => {
+        reg.pushManager.getSubscription().then(sub => {
+          setPushEnabled(!!sub);
+        });
+      });
+    }
+  }, []);
+
   async function handleRefresh() {
     setRefreshing(true);
     try {
@@ -233,6 +247,41 @@ export default function HomePage() {
       await load();
     } finally {
       setRefreshing(false);
+    }
+  }
+
+  async function handlePushToggle() {
+    if (!pushSupported) return;
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      if (pushEnabled) {
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) {
+          await fetch(`${process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com"}/api/push/subscribe`, {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ subscription: sub.toJSON() }),
+          });
+          await sub.unsubscribe();
+        }
+        setPushEnabled(false);
+      } else {
+        const keyRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com"}/api/push/public-key`);
+        const { public_key } = await keyRes.json();
+        if (!public_key) { alert("Push notifications not configured on server."); return; }
+        const sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: public_key,
+        });
+        await fetch(`${process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com"}/api/push/subscribe`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ subscription: sub.toJSON() }),
+        });
+        setPushEnabled(true);
+      }
+    } catch (e) {
+      console.error("Push toggle error:", e);
     }
   }
 
@@ -258,11 +307,15 @@ export default function HomePage() {
   const bankers = predictions.filter((p) => p.goals_type === "Banker");
   const highConf = predictions.filter((p) => p.goals_confidence >= 0.75);
 
-  const sorted = [...predictions].sort((a, b) =>
-    sortBy === "date"
-      ? a.date.localeCompare(b.date) || a.time.localeCompare(b.time)
-      : b.goals_confidence - a.goals_confidence
-  );
+  const sorted = [...predictions].sort((a, b) => {
+    if (sortBy === "value") {
+      const va = (a as any).value_edge ?? -1;
+      const vb = (b as any).value_edge ?? -1;
+      return vb - va;
+    }
+    if (sortBy === "confidence") return b.goals_confidence - a.goals_confidence;
+    return a.date.localeCompare(b.date) || a.time.localeCompare(b.time);
+  });
 
   const fmt = (iso: string | null) => {
     if (!iso) return "Never";
@@ -320,6 +373,21 @@ export default function HomePage() {
               <CalendarDays size={12} />
               History
             </button>
+            {pushSupported && (
+              <button
+                onClick={handlePushToggle}
+                title={pushEnabled ? "Disable value bet notifications" : "Get notified for value bets"}
+                className={clsx(
+                  "flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs transition-all",
+                  pushEnabled
+                    ? "bg-emerald-500/20 border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/30"
+                    : "bg-slate-200 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-700"
+                )}
+              >
+                <Bell size={12} />
+                {pushEnabled ? "Alerts On" : "Alerts"}
+              </button>
+            )}
             <UserMenu onUpgrade={() => setShowPaywall(true)} />
             <button
               onClick={handleRefresh}
@@ -337,10 +405,10 @@ export default function HomePage() {
         {/* Stats bar — sport-aware */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {(activeSport === "football" ? [
-            { icon: <TrendingUp size={16} />, label: "Total Picks",      value: predictions.length,          color: "text-blue-400",   onClick: undefined,                        active: false },
-            { icon: <Shield size={16} />,    label: "Bankers",           value: bankers.length,              color: "text-green-400",  onClick: () => setBankersOnly(b => !b),    active: bankersOnly },
-            { icon: <TrendingUp size={16} />,label: "High Confidence",   value: highConf.length,             color: "text-yellow-400", onClick: undefined,                        active: false },
-            { icon: <Info size={16} />,      label: "Leagues",           value: Object.keys(counts).length,  color: "text-purple-400", onClick: undefined,                        active: false },
+            { icon: <TrendingUp size={16} />, label: "Total Picks",      value: predictions.length,                                       color: "text-blue-400",   onClick: undefined,                                                    active: false },
+            { icon: <Shield size={16} />,    label: "Bankers",           value: bankers.length,                                           color: "text-green-400",  onClick: () => setBankersOnly(b => !b),                                active: bankersOnly },
+            { icon: <TrendingUp size={16} />,label: "High Confidence",   value: highConf.length,                                          color: "text-yellow-400", onClick: undefined,                                                    active: false },
+            { icon: <TrendingUp size={16} />,label: "Value Bets",        value: validPredictions.filter(p => (p as any).is_value_bet).length, color: "text-emerald-400", onClick: () => { setActiveView("picks"); setSortBy("value"); }, active: sortBy === "value" },
           ] : [
             { icon: <TrendingUp size={16} />, label: "Total Picks",   value: sportPreds.length,                                                                          color: "text-blue-400",   onClick: undefined, active: false },
             { icon: <Shield size={16} />,     label: "High Conf (≥65%)", value: sportPreds.filter(p => p.goals_confidence >= 0.65).length,                              color: "text-green-400",  onClick: undefined, active: false },
@@ -501,6 +569,18 @@ export default function HomePage() {
               >
                 <Percent size={11} />
                 Best confidence
+              </button>
+              <button
+                onClick={() => setSortBy("value")}
+                className={clsx(
+                  "flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-all",
+                  sortBy === "value"
+                    ? "bg-slate-300 dark:bg-slate-600 text-slate-900 dark:text-white"
+                    : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
+                )}
+              >
+                <TrendingUp size={11} />
+                Best value
               </button>
             </div>
           </div>
