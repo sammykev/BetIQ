@@ -206,6 +206,17 @@ def _predictor_form_summary(team: str) -> Dict:
     xg_for     = _safe_round(web.get("avg_xg_for"), 2) if web else None
     xg_against = _safe_round(web.get("avg_xg_against"), 2) if web else None
 
+    # Supplement with Understat xG if web xG not available (European clubs)
+    if xg_for is None:
+        try:
+            from understat_fetcher import get_cached_xg
+            ustat = get_cached_xg(_get_redis(), team)
+            if ustat:
+                xg_for     = ustat.get("xg_for")
+                xg_against = ustat.get("xg_against")
+        except Exception:
+            pass
+
     return {
         "available":           True,
         "games":               n,
@@ -689,11 +700,30 @@ async def _run_pipeline():
                         odds_away=float(odds.get("2") or 0),
                     )
                     if tip:
+                        # Value bet detection: model prob vs bookmaker implied prob
+                        tip_code = tip.get("tip_code", "?")
+                        if tip_code == "1" and odds.get("1") and float(odds.get("1", 0)) > 1:
+                            implied = 1.0 / float(odds["1"])
+                            model_p  = tip.get("p_home", 0)
+                        elif tip_code == "X" and odds.get("X") and float(odds.get("X", 0)) > 1:
+                            implied = 1.0 / float(odds["X"])
+                            model_p  = tip.get("p_draw", 0)
+                        elif tip_code == "2" and odds.get("2") and float(odds.get("2", 0)) > 1:
+                            implied = 1.0 / float(odds["2"])
+                            model_p  = tip.get("p_away", 0)
+                        else:
+                            implied = None
+                            model_p  = None
+
+                        value_edge = round(model_p - implied, 3) if (model_p is not None and implied is not None) else None
+
                         predictions.append({
                             **fx, **tip,
                             "odds_home": round(float(odds.get("1") or 0), 2) or None,
                             "odds_draw": round(float(odds.get("X") or 0), 2) or None,
                             "odds_away": round(float(odds.get("2") or 0), 2) or None,
+                            "value_edge": value_edge,
+                            "is_value_bet": value_edge is not None and value_edge > 0.05,
                         })
                 except Exception:
                     pass
@@ -709,11 +739,19 @@ async def _run_pipeline():
         # new `predictions` only has upcoming fixtures so yesterday is already gone.
         _archive_past_predictions()
 
+        # Fetch Understat xG in background (updates Redis cache for European clubs)
+        asyncio.create_task(_refresh_understat_xg())
+
         _predictor = predictor
         _predictions_cache = predictions
         _last_updated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
         _save_predictions_cache()
         print(f"[Pipeline] Done — {len(predictions)} predictions cached.")
+
+        # Send push notifications for high-value picks
+        value_picks = [p for p in predictions if p.get("is_value_bet") and p.get("value_edge", 0) > 0.08]
+        if value_picks:
+            asyncio.create_task(_send_push_notifications(value_picks))
 
     except Exception as e:
         print(f"[Pipeline] Fatal error: {e}")
@@ -1574,6 +1612,97 @@ async def submit_match_result(body: Dict[str, Any]):
             print(f"[Feedback] Elo update error: {e}")
 
     return {"ok": True, "message": f"Result recorded: {home} vs {away} = {result}"}
+
+
+# ── Push notification subscriptions ──────────────────────────────────────── #
+
+PUSH_SUBS_KEY = "betiq:push_subs"
+
+@app.get("/api/push/public-key")
+async def push_public_key():
+    key = os.getenv("VAPID_PUBLIC_KEY", "")
+    return {"public_key": key}
+
+@app.post("/api/push/subscribe")
+async def push_subscribe(req: Request):
+    body = await req.json()
+    sub = body.get("subscription")
+    if not sub:
+        return {"ok": False, "error": "no subscription"}
+    r = _get_redis()
+    if r:
+        import json as _json
+        r.sadd(PUSH_SUBS_KEY, _json.dumps(sub, sort_keys=True))
+    return {"ok": True}
+
+@app.delete("/api/push/subscribe")
+async def push_unsubscribe(req: Request):
+    body = await req.json()
+    sub = body.get("subscription")
+    if not sub:
+        return {"ok": False}
+    r = _get_redis()
+    if r:
+        import json as _json
+        r.srem(PUSH_SUBS_KEY, _json.dumps(sub, sort_keys=True))
+    return {"ok": True}
+
+
+async def _send_push_notifications(value_preds: list):
+    """Send push notification to all subscribers when high-value picks are found."""
+    vapid_private = os.getenv("VAPID_PRIVATE_KEY", "")
+    vapid_claims_email = os.getenv("VAPID_CLAIMS_EMAIL", "admin@betiq.app")
+    if not vapid_private:
+        return
+    r = _get_redis()
+    if not r:
+        return
+    try:
+        from pywebpush import webpush, WebPushException
+        import json as _json
+        subs_raw = r.smembers(PUSH_SUBS_KEY)
+        if not subs_raw:
+            return
+        payload_obj = {
+            "title": f"BetIQ — {len(value_preds)} Value Bet{'s' if len(value_preds) > 1 else ''} Found!",
+            "body": " · ".join(f"{p['home']} vs {p['away']}" for p in value_preds[:3]),
+            "icon": "/logo.svg",
+            "url": "/",
+        }
+        payload = _json.dumps(payload_obj)
+        for sub_raw in subs_raw:
+            try:
+                sub = _json.loads(sub_raw)
+                webpush(
+                    subscription_info=sub,
+                    data=payload,
+                    vapid_private_key=vapid_private,
+                    vapid_claims={"sub": f"mailto:{vapid_claims_email}"},
+                )
+            except WebPushException as e:
+                if "410" in str(e) or "404" in str(e):
+                    r.srem(PUSH_SUBS_KEY, sub_raw)  # remove expired subscription
+            except Exception:
+                pass
+        print(f"[Push] Sent notifications to {len(subs_raw)} subscribers")
+    except ImportError:
+        print("[Push] pywebpush not installed — push notifications disabled")
+    except Exception as e:
+        print(f"[Push] Error: {e}")
+
+
+async def _refresh_understat_xg():
+    """Background: fetch Understat xG for European leagues, cache in Redis."""
+    try:
+        from understat_fetcher import fetch_all_leagues_xg, cache_xg
+        r = _get_redis()
+        if not r:
+            return
+        xg_data = await fetch_all_leagues_xg()
+        if xg_data:
+            cache_xg(r, xg_data)
+    except Exception as e:
+        print(f"[Understat] Refresh error: {e}")
 
 
 @app.post("/api/admin/upload/basketball-csv")

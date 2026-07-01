@@ -1,6 +1,6 @@
 """
 Fetches fixtures and results from football-data.org free API.
-Free tier: 10 req/min, covers EPL, La Liga, Bundesliga, Serie A, Ligue 1, UCL, EL.
+Free tier: 10 req/min, covers EPL, La Liga, Bundesliga, Serie A, Ligue 1, UCL, EL, Eredivisie, Primeira Liga, Brasileirao (12 leagues total).
 """
 
 import asyncio
@@ -22,6 +22,10 @@ LEAGUES: Dict[str, Dict] = {
     "BL1": {"name": "Bundesliga",       "country": "Germany", "flag": "🇩🇪"},
     "SA":  {"name": "Serie A",          "country": "Italy",   "flag": "🇮🇹"},
     "FL1": {"name": "Ligue 1",          "country": "France",  "flag": "🇫🇷"},
+    "EL":  {"name": "Europa League",    "country": "Europe",  "flag": "🟠"},
+    "DED": {"name": "Eredivisie",       "country": "Netherlands","flag": "🇳🇱"},
+    "PPL": {"name": "Primeira Liga",    "country": "Portugal","flag": "🇵🇹"},
+    "BSA": {"name": "Brasileirão",      "country": "Brazil",  "flag": "🇧🇷"},
 }
 
 
