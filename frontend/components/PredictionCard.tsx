@@ -275,9 +275,16 @@ export function PredictionCard({ prediction: p, savedKeys, onClick }: Props) {
 
         {/* Header */}
         <div className="flex items-center justify-between">
-          <span className="text-[11px] font-semibold text-white/70 truncate max-w-[60%] drop-shadow">
-            {p.flag} {p.league_name}
-          </span>
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="text-[11px] font-semibold text-white/70 truncate drop-shadow">
+              {p.flag} {p.league_name}
+            </span>
+            {p.is_value_bet && (
+              <span className="bg-emerald-500 text-black text-[9px] font-black px-1.5 py-0.5 rounded-full uppercase tracking-wide shrink-0">
+                VALUE
+              </span>
+            )}
+          </div>
           <div className="flex items-center gap-2 shrink-0">
             <span className="text-[10px] text-white/50">
               {p.date}{p.time && p.time !== "TBD" ? ` · ${localTime(p.date, p.time)}` : ""}
@@ -352,6 +359,12 @@ export function PredictionCard({ prediction: p, savedKeys, onClick }: Props) {
             <p className="text-[10px] text-white/50">Confidence</p>
             <p className={clsx("text-xl font-black", gconf >= 65 ? "text-green-400" : gconf >= 50 ? "text-yellow-400" : "text-white")}>{gconf}%</p>
           </div>
+          {p.is_value_bet && p.value_edge != null && (
+            <div className="shrink-0 bg-emerald-500/20 border border-emerald-500/40 rounded-lg px-2 py-1 text-center">
+              <p className="text-[9px] text-emerald-400 font-bold uppercase tracking-wide">Value</p>
+              <p className="text-sm font-black text-emerald-300">+{Math.round(p.value_edge * 100)}%</p>
+            </div>
+          )}
         </div>
       </div>
     </div>
