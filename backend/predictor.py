@@ -113,6 +113,9 @@ FEATURE_COLS = [
     "Away_Defense",  # away team defensive weakness away
     "xG_Home",       # Dixon-Coles expected goals for home team
     "xG_Away",       # Dixon-Coles expected goals for away team
+    # Rest days and head-to-head features
+    "Days_Rest_Home", "Days_Rest_Away",
+    "H2H_Home_Rate", "H2H_Draw_Rate",
 ]
 
 
@@ -129,6 +132,8 @@ class LeaguePredictor:
         self._ready = False
         self._league_home_goals: List[float] = []
         self._league_away_goals: List[float] = []
+        self.last_match_date: Dict[str, str] = {}   # team -> "YYYY-MM-DD"
+        self.h2h: Dict[str, Dict] = {}              # "teamA:teamB" -> {a_wins,draws,b_wins,total_goals,n}
 
     # ------------------------------------------------------------------ #
     # Internal helpers
@@ -150,7 +155,8 @@ class LeaguePredictor:
     _avg_impl: Dict[str, float] = {"H": 0.46, "D": 0.27, "A": 0.27}
 
     def _feats(self, home: str, away: str,
-               odds_home: float = 0, odds_draw: float = 0, odds_away: float = 0) -> Dict:
+               odds_home: float = 0, odds_draw: float = 0, odds_away: float = 0,
+               match_date: str = None) -> Dict:
         self._init(home)
         self._init(away)
         hs, as_ = self.team_stats[home], self.team_stats[away]
@@ -202,6 +208,38 @@ class LeaguePredictor:
         xg_h = max(0.1, h_attack * a_defense * lg_home)
         xg_a = max(0.1, a_attack * h_defense * lg_away)
 
+        # ── Rest days ────────────────────────────────────────────────────────
+        from datetime import date as _date
+        _today = match_date or str(_date.today())
+        def _days_since(team: str) -> float:
+            last = self.last_match_date.get(team)
+            if not last:
+                return 7.0  # default: assume 7 days rest
+            try:
+                delta = (_date.fromisoformat(_today) - _date.fromisoformat(last)).days
+                return max(1.0, min(float(delta), 21.0))  # clamp 1-21
+            except Exception:
+                return 7.0
+
+        days_rest_home = _days_since(home)
+        days_rest_away = _days_since(away)
+
+        # ── H2H feature ──────────────────────────────────────────────────────
+        _a, _b = sorted([home.lower(), away.lower()])
+        _h2h = self.h2h.get(f"{_a}:{_b}", {})
+        _h2h_n = _h2h.get("n", 0)
+        _home_is_a = home.lower() == _a
+
+        if _h2h_n >= 3:
+            _a_rate = _h2h.get("a_wins", 0) / _h2h_n
+            _draw_rate = _h2h.get("draws", 0) / _h2h_n
+            # Rotate perspective so "H2H_Home_Rate" is always from home team's view
+            h2h_home_rate = _a_rate if _home_is_a else (1 - _a_rate - _draw_rate)
+            h2h_draw_rate = _draw_rate
+        else:
+            h2h_home_rate = self._avg_impl.get("H", 0.46)
+            h2h_draw_rate = self._avg_impl.get("D", 0.27)
+
         return {
             "HomeElo": h_elo, "AwayElo": a_elo, "EloDiff": h_elo - a_elo,
             "Home_G_Avg": h_gf, "Away_G_Avg": a_gf,
@@ -221,6 +259,10 @@ class LeaguePredictor:
             "Away_Defense": round(a_defense, 4),
             "xG_Home":      round(xg_h, 4),
             "xG_Away":      round(xg_a, 4),
+            "Days_Rest_Home": days_rest_home,
+            "Days_Rest_Away": days_rest_away,
+            "H2H_Home_Rate":  round(h2h_home_rate, 4),
+            "H2H_Draw_Rate":  round(h2h_draw_rate, 4),
         }
 
     def _update(
@@ -228,6 +270,7 @@ class LeaguePredictor:
         fthg: float, ftag: float,
         hyc: float = None, ayc: float = None,
         hrc: float = None, arc: float = None,
+        match_date: str = None,
     ):
         self._init(home)
         self._init(away)
@@ -265,6 +308,26 @@ class LeaguePredictor:
 
         self.elo.update(home, away, result)
 
+        # Track last match date for rest-days feature
+        if match_date:
+            self.last_match_date[home] = match_date
+            self.last_match_date[away] = match_date
+
+        # Track head-to-head record (team names sorted for consistent key)
+        a, b = sorted([home.lower(), away.lower()])
+        h2h_key = f"{a}:{b}"
+        if h2h_key not in self.h2h:
+            self.h2h[h2h_key] = {"a_wins": 0, "draws": 0, "b_wins": 0, "total_goals": 0, "n": 0}
+        rec = self.h2h[h2h_key]
+        rec["n"] += 1
+        rec["total_goals"] += fthg + ftag
+        if result == "D":
+            rec["draws"] += 1
+        elif (result == "H" and home.lower() == a) or (result == "A" and away.lower() == a):
+            rec["a_wins"] += 1
+        else:
+            rec["b_wins"] += 1
+
     # ------------------------------------------------------------------ #
     # Public API
     # ------------------------------------------------------------------ #
@@ -280,6 +343,8 @@ class LeaguePredictor:
         self.team_stats = {}
         self._league_home_goals = []
         self._league_away_goals = []
+        self.last_match_date = {}
+        self.h2h = {}
 
         has_odds = all(c in matches.columns for c in ["B365H", "B365D", "B365A"])
         if has_odds:
@@ -306,7 +371,8 @@ class LeaguePredictor:
             oh = float(r.get("B365H") or 0)
             od = float(r.get("B365D") or 0)
             oa = float(r.get("B365A") or 0)
-            f = self._feats(r["HomeTeam"], r["AwayTeam"], oh, od, oa)
+            match_date_str = str(r["Date"].date()) if pd.notna(r.get("Date")) else None
+            f = self._feats(r["HomeTeam"], r["AwayTeam"], oh, od, oa, match_date=match_date_str)
             f["Result"] = r["Result"]
             f["TotalGoals"] = r["FTHG"] + r["FTAG"]
             rows.append(f)
@@ -316,6 +382,7 @@ class LeaguePredictor:
                 ayc=r.get("AwayYellowCards") or r.get("AY"),
                 hrc=r.get("HomeRedCards") or r.get("HR"),
                 arc=r.get("AwayRedCards") or r.get("AR"),
+                match_date=match_date_str,
             )
 
         df = pd.DataFrame(rows).dropna(subset=FEATURE_COLS)
@@ -333,6 +400,23 @@ class LeaguePredictor:
         )
         y_win = df["Result"].map({"A": 0, "D": 1, "H": 2})
         self.models["win"].fit(X, y_win)
+
+        # Calibrate probabilities using isotonic regression (fixes overconfidence)
+        # Hold out 20% of data for calibration
+        try:
+            from sklearn.calibration import CalibratedClassifierCV
+            from sklearn.model_selection import train_test_split as _tts
+            if len(X) >= 200:  # need enough data for calibration
+                X_tr, X_cal, y_tr, y_cal = _tts(X, y_win, test_size=0.2, random_state=42, stratify=y_win)
+                _raw = xgb.XGBClassifier(**xgb_base, num_class=3,
+                                          objective="multi:softprob", eval_metric="mlogloss")
+                _raw.fit(X_tr, y_tr)
+                _cal = CalibratedClassifierCV(_raw, method="isotonic", cv="prefit")
+                _cal.fit(X_cal, y_cal)
+                self.models["win"] = _cal
+                print("[Predictor] Win model calibrated (isotonic regression)")
+        except Exception as _e:
+            print(f"[Predictor] Calibration failed (using raw XGBoost): {_e}")
 
         bin_params = {**xgb_base, "objective": "binary:logistic", "eval_metric": "logloss"}
         self.models["o15"] = xgb.XGBClassifier(**bin_params)
