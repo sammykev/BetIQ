@@ -657,6 +657,7 @@ async def _run_pipeline():
 
         # Fetch recent results from API to update Elo with current season data
         predictions = []
+        fixtures: list = []  # pre-init so the block below is safe when API_KEY is unset
         if API_KEY:
             client = FootballDataClient(API_KEY)
 
@@ -665,6 +666,7 @@ async def _run_pipeline():
                 try:
                     recent = await client.fetch_recent_results(code, days_back=60)
                     if recent.empty or "HomeTeam" not in recent.columns:
+                        await asyncio.sleep(6)  # still pace requests even on empty results
                         continue
                     for _, r in recent.iterrows():
                         predictor._update(r["HomeTeam"], r["AwayTeam"], r["Result"], r["FTHG"], r["FTAG"])
@@ -698,6 +700,7 @@ async def _run_pipeline():
                         odds_home=float(odds.get("1") or 0),
                         odds_draw=float(odds.get("X") or 0),
                         odds_away=float(odds.get("2") or 0),
+                        match_date=fx.get("date"),
                     )
                     if tip:
                         # Value bet detection: model prob vs bookmaker implied prob

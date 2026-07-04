@@ -401,20 +401,19 @@ class LeaguePredictor:
         y_win = df["Result"].map({"A": 0, "D": 1, "H": 2})
         self.models["win"].fit(X, y_win)
 
-        # Calibrate probabilities using isotonic regression (fixes overconfidence)
-        # Hold out 20% of data for calibration
+        # Calibrate probabilities using isotonic regression (fixes overconfidence).
+        # cv="prefit" was removed in sklearn 1.6; use cv=5 for cross-validated calibration.
         try:
             from sklearn.calibration import CalibratedClassifierCV
-            from sklearn.model_selection import train_test_split as _tts
             if len(X) >= 200:  # need enough data for calibration
-                X_tr, X_cal, y_tr, y_cal = _tts(X, y_win, test_size=0.2, random_state=42, stratify=y_win)
-                _raw = xgb.XGBClassifier(**xgb_base, num_class=3,
-                                          objective="multi:softprob", eval_metric="mlogloss")
-                _raw.fit(X_tr, y_tr)
-                _cal = CalibratedClassifierCV(_raw, method="isotonic", cv="prefit")
-                _cal.fit(X_cal, y_cal)
+                _cal = CalibratedClassifierCV(
+                    xgb.XGBClassifier(**xgb_base, num_class=3,
+                                      objective="multi:softprob", eval_metric="mlogloss"),
+                    method="isotonic", cv=3,
+                )
+                _cal.fit(X, y_win)
                 self.models["win"] = _cal
-                print("[Predictor] Win model calibrated (isotonic regression)")
+                print("[Predictor] Win model calibrated with 3-fold isotonic regression")
         except Exception as _e:
             print(f"[Predictor] Calibration failed (using raw XGBoost): {_e}")
 
@@ -429,10 +428,11 @@ class LeaguePredictor:
 
     def predict_match(self, home: str, away: str,
                       odds_home: float = 0, odds_draw: float = 0,
-                      odds_away: float = 0) -> Optional[Dict]:
+                      odds_away: float = 0,
+                      match_date: str = None) -> Optional[Dict]:
         if not self._ready:
             return None
-        f = self._feats(home, away, odds_home, odds_draw, odds_away)
+        f = self._feats(home, away, odds_home, odds_draw, odds_away, match_date=match_date)
         X = pd.DataFrame([f])[FEATURE_COLS]
 
         wp = self.models["win"].predict_proba(X)[0]
