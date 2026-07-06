@@ -1,9 +1,8 @@
 """
-Groq-powered match explanation service.
-
-Two-step approach to avoid compound-beta's request size limits:
-1. compound-beta (small prompt) → fetch live injury/team news
-2. llama-3.3-70b-versatile → combine news + stats into a full explanation
+LLM routing for match analysis:
+- Groq (compound-beta)              → live web search / news fetching
+- Groq (deepseek-r1-distill-llama-70b) → fast match explanations
+- DeepSeek API (deepseek-reasoner)  → analytical stat → number extraction
 """
 
 import os
@@ -12,6 +11,12 @@ from typing import Dict, Any, List
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions"
+
+# Groq-hosted DeepSeek R1 distill — fast, good reasoning
+_GROQ_R1 = "deepseek-r1-distill-llama-70b"
 
 
 async def _call(model: str, messages: list, max_tokens: int = 400) -> Dict:
@@ -24,6 +29,19 @@ async def _call(model: str, messages: list, max_tokens: int = 400) -> Dict:
         )
     if r.status_code != 200:
         raise RuntimeError(f"{model} {r.status_code}: {r.text[:120]}")
+    return r.json()
+
+
+async def _call_deepseek(messages: list, max_tokens: int = 400) -> Dict:
+    """DeepSeek API call using deepseek-reasoner (R1). No temperature param — reasoner sets it internally."""
+    async with httpx.AsyncClient(timeout=60) as client:
+        r = await client.post(
+            DEEPSEEK_URL,
+            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
+            json={"model": "deepseek-reasoner", "messages": messages, "max_tokens": max_tokens},
+        )
+    if r.status_code != 200:
+        raise RuntimeError(f"deepseek-reasoner {r.status_code}: {r.text[:120]}")
     return r.json()
 
 
@@ -78,7 +96,9 @@ async def extract_model_adjustments(
     }
     All modifiers are floats between -0.5 and +0.5.
     """
-    if not GROQ_API_KEY or not news_text:
+    if not news_text:
+        return {}
+    if not DEEPSEEK_API_KEY and not GROQ_API_KEY:
         return {}
 
     prompt = f"""You are a football data analyst. Given this team news for {home} vs {away}:
@@ -106,27 +126,152 @@ Rules:
 - If news is vague or unconfirmed, use 0.0
 - If no relevant news found, return all zeros"""
 
-    try:
-        data = await _call("llama-3.3-70b-versatile", [
-            {"role": "user", "content": prompt}
-        ], max_tokens=300)
-        text = data["choices"][0]["message"]["content"].strip()
-        # Extract JSON from response
-        import json, re
-        match = re.search(r'\{[\s\S]*\}', text)
-        if match:
-            adj = json.loads(match.group())
-            # Clamp all modifiers to safe range
-            for key in ["home_attack_modifier","away_attack_modifier",
-                        "home_defense_modifier","away_defense_modifier"]:
-                if key in adj:
-                    adj[key] = max(-0.5, min(0.5, float(adj[key])))
-            if "confidence_modifier" in adj:
-                adj["confidence_modifier"] = max(-0.15, min(0.0, float(adj["confidence_modifier"])))
-            print(f"[LLM] Adjustments for {home} vs {away}: {adj.get('reasoning','')}")
-            return adj
-    except Exception as e:
-        print(f"[LLM] adjustment extraction failed: {e}")
+    import json, re
+
+    async def _parse_adj(text: str) -> Dict[str, Any]:
+        m = re.search(r'\{[\s\S]*\}', text)
+        if not m:
+            return {}
+        adj = json.loads(m.group())
+        for key in ["home_attack_modifier", "away_attack_modifier",
+                    "home_defense_modifier", "away_defense_modifier"]:
+            if key in adj:
+                adj[key] = max(-0.5, min(0.5, float(adj[key])))
+        if "confidence_modifier" in adj:
+            adj["confidence_modifier"] = max(-0.15, min(0.0, float(adj["confidence_modifier"])))
+        return adj
+
+    # Primary: DeepSeek reasoner (R1) — best for analytical inference
+    if DEEPSEEK_API_KEY:
+        try:
+            data = await _call_deepseek([{"role": "user", "content": prompt}], max_tokens=400)
+            text = data["choices"][0]["message"]["content"].strip()
+            adj = await _parse_adj(text)
+            if adj:
+                print(f"[LLM/DeepSeek-R1] Adjustments for {home} vs {away}: {adj.get('reasoning','')}")
+                return adj
+        except Exception as e:
+            print(f"[LLM] deepseek-reasoner adjustment failed, falling back to Groq: {e}")
+
+    # Fallback: Groq R1 distill
+    if GROQ_API_KEY:
+        try:
+            data = await _call(_GROQ_R1, [{"role": "user", "content": prompt}], max_tokens=300)
+            text = data["choices"][0]["message"]["content"].strip()
+            adj = await _parse_adj(text)
+            if adj:
+                print(f"[LLM/Groq-R1] Adjustments for {home} vs {away}: {adj.get('reasoning','')}")
+                return adj
+        except Exception as e:
+            print(f"[LLM] Groq R1 adjustment extraction failed: {e}")
+
+    return {}
+
+
+async def fetch_team_form_web(team: str) -> Dict[str, Any]:
+    """
+    Use compound-beta web search + R1 extraction to fetch a team's
+    last 10 results with goals and xG (when available).
+
+    Returns:
+    {
+      "matches": [
+        {"date": "2026-06-19", "opponent": "Haiti", "home": true,
+         "scored": 3, "conceded": 0, "xg_for": 2.8, "xg_against": 0.4, "result": "W"}
+      ],
+      "avg_scored": 2.1,
+      "avg_conceded": 0.6,
+      "avg_xg_for": 1.9,       # null when xG not found in search
+      "avg_xg_against": 0.7,   # null when xG not found in search
+    }
+    Returns {} on failure.
+    """
+    if not GROQ_API_KEY:
+        return {}
+
+    search_prompt = (
+        f"{team} football last 10 match results 2025 2026 "
+        f"goals scored conceded xG expected goals"
+    )
+
+    search_text = ""
+    for model in ("compound-beta-mini", "compound-beta"):
+        try:
+            data = await _call(model, [{"role": "user", "content": search_prompt}], max_tokens=300)
+            text = data["choices"][0]["message"]["content"].strip()
+            if text:
+                search_text = text
+                break
+        except Exception as e:
+            err = str(e)
+            if "413" in err or "request_too_large" in err:
+                continue
+            print(f"[WebForm] {model} search failed for {team}: {e}")
+            break
+
+    if not search_text:
+        return {}
+
+    extract_prompt = f"""Extract {team}'s last 10 football match results from this text.
+Text: "{search_text}"
+
+Reply ONLY with valid JSON, no extra text:
+{{
+  "matches": [
+    {{"date": "YYYY-MM-DD", "opponent": "TeamName", "home": true,
+      "scored": 2, "conceded": 1, "xg_for": 1.8, "xg_against": 0.7, "result": "W"}}
+  ],
+  "avg_scored": 1.5,
+  "avg_conceded": 0.8,
+  "avg_xg_for": null,
+  "avg_xg_against": null
+}}
+Rules:
+- result: "W" win / "D" draw / "L" loss  (from {team}'s perspective)
+- home: true if {team} played at home
+- xg_for / xg_against: null if not mentioned
+- avg_xg_for / avg_xg_against: average over matches (null if xG unavailable)
+- Only include matches with confirmed final scores — skip future/pending matches
+- Most recent match first"""
+
+    import json, re
+
+    async def _try_parse(text: str) -> Dict:
+        m = re.search(r'\{[\s\S]*\}', text)
+        if not m:
+            return {}
+        try:
+            parsed = json.loads(m.group())
+            if isinstance(parsed.get("matches"), list) and parsed["matches"]:
+                return parsed
+        except json.JSONDecodeError:
+            pass
+        return {}
+
+    # Primary: DeepSeek R1 reasoner (best structured extraction)
+    if DEEPSEEK_API_KEY:
+        try:
+            data = await _call_deepseek([{"role": "user", "content": extract_prompt}], max_tokens=600)
+            result = await _try_parse(data["choices"][0]["message"]["content"])
+            if result:
+                print(f"[WebForm/R1] {team}: {len(result['matches'])} matches, "
+                      f"xG={'yes' if result.get('avg_xg_for') else 'no'}")
+                return result
+        except Exception as e:
+            print(f"[WebForm] DeepSeek extraction failed for {team}: {e}")
+
+    # Fallback: Groq R1 distill
+    if GROQ_API_KEY:
+        try:
+            data = await _call(_GROQ_R1, [{"role": "user", "content": extract_prompt}], max_tokens=600)
+            result = await _try_parse(data["choices"][0]["message"]["content"])
+            if result:
+                print(f"[WebForm/Groq] {team}: {len(result['matches'])} matches, "
+                      f"xG={'yes' if result.get('avg_xg_for') else 'no'}")
+                return result
+        except Exception as e:
+            print(f"[WebForm] Groq extraction failed for {team}: {e}")
+
     return {}
 
 
@@ -166,7 +311,7 @@ async def explain_match(
     Generate a plain-language match explanation with live qualitative context.
     Returns {explanation, sources, model, error}
     """
-    if not GROQ_API_KEY:
+    if not GROQ_API_KEY and not DEEPSEEK_API_KEY:
         return {"explanation": None, "sources": [], "model": None, "error": "no_key"}
 
     # Step 1 — fetch live news (small compound-beta call)
@@ -213,22 +358,29 @@ async def explain_match(
         f"end with a confidence verdict. No bullet points — flowing prose only."
     )
 
-    try:
-        data = await _call("llama-3.3-70b-versatile", [
-            {"role": "user", "content": prompt}
-        ], max_tokens=350)
+    used_web = bool(sources)
+    label_prefix = "compound-beta+" if used_web else ""
 
-        text = data["choices"][0]["message"]["content"].strip()
-        used_web = bool(sources)
-        print(f"[LLM] Explained {home} vs {away} "
-              f"({'compound-beta+llama' if used_web else 'llama-only'}, {len(sources)} sources)")
-        return {
-            "explanation": text,
-            "sources": sources,
-            "model": "compound-beta+llama" if used_web else "llama-3.3-70b-versatile",
-            "error": None,
-        }
+    # Primary: Groq R1 distill — fast, strong reasoning for match previews
+    if GROQ_API_KEY:
+        try:
+            data = await _call(_GROQ_R1, [{"role": "user", "content": prompt}], max_tokens=350)
+            text = data["choices"][0]["message"]["content"].strip()
+            model_tag = f"{label_prefix}deepseek-r1-distill"
+            print(f"[LLM] Explained {home} vs {away} ({model_tag}, {len(sources)} sources)")
+            return {"explanation": text, "sources": sources, "model": model_tag, "error": None}
+        except Exception as e:
+            print(f"[LLM] Groq R1 explanation failed, trying DeepSeek API: {e}")
 
-    except Exception as e:
-        print(f"[LLM] llama explanation failed: {e}")
-        return {"explanation": None, "sources": [], "model": None, "error": "all_models_failed"}
+    # Fallback: DeepSeek API reasoner
+    if DEEPSEEK_API_KEY:
+        try:
+            data = await _call_deepseek([{"role": "user", "content": prompt}], max_tokens=350)
+            text = data["choices"][0]["message"]["content"].strip()
+            model_tag = f"{label_prefix}deepseek-reasoner"
+            print(f"[LLM] Explained {home} vs {away} ({model_tag}, {len(sources)} sources)")
+            return {"explanation": text, "sources": sources, "model": model_tag, "error": None}
+        except Exception as e:
+            print(f"[LLM] DeepSeek reasoner explanation failed: {e}")
+
+    return {"explanation": None, "sources": [], "model": None, "error": "all_models_failed"}

@@ -38,3 +38,6 @@ build/
 # Logs
 *.log
 npm-debug.log*
+
+# Claude Code internal files
+.claude/
