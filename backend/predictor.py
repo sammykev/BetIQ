@@ -14,8 +14,11 @@ from typing import Dict, List, Optional
 import xgboost as xgb
 import warnings
 import os
+import joblib
 
 warnings.filterwarnings("ignore")
+
+MODEL_CACHE_PATH = os.path.join(os.path.dirname(__file__), "data", "model_cache.joblib")
 
 
 # ── FIFA ranking-calibrated starting Elo for national teams ───────────────
@@ -283,6 +286,44 @@ class LeaguePredictor:
         self.models["o25"].fit(X, (df["TotalGoals"] >= 3).astype(int))
 
         self._ready = True
+
+    def save_cache(self, data_mtime: float):
+        """Persist trained model + state to disk so cold restarts skip retraining."""
+        try:
+            os.makedirs(os.path.dirname(MODEL_CACHE_PATH), exist_ok=True)
+            payload = {
+                "models": self.models,
+                "elo": self.elo,
+                "team_stats": self.team_stats,
+                "_avg_impl": self._avg_impl,
+                "data_mtime": data_mtime,
+            }
+            joblib.dump(payload, MODEL_CACHE_PATH, compress=3)
+            print(f"[Cache] Model saved → {MODEL_CACHE_PATH}")
+        except Exception as e:
+            print(f"[Cache] Save failed: {e}")
+
+    @classmethod
+    def load_cache(cls, data_mtime: float) -> Optional["LeaguePredictor"]:
+        """Load cached model if it's newer than training data. Returns None if stale/missing."""
+        if not os.path.exists(MODEL_CACHE_PATH):
+            return None
+        try:
+            payload = joblib.load(MODEL_CACHE_PATH)
+            if payload.get("data_mtime", 0) < data_mtime:
+                print("[Cache] Training data is newer than cache — retraining.")
+                return None
+            inst = cls.__new__(cls)
+            inst.models     = payload["models"]
+            inst.elo        = payload["elo"]
+            inst.team_stats = payload["team_stats"]
+            inst._avg_impl  = payload["_avg_impl"]
+            inst._ready     = True
+            print("[Cache] Model loaded from disk — skipping training.")
+            return inst
+        except Exception as e:
+            print(f"[Cache] Load failed: {e}")
+            return None
 
     def predict_match(self, home: str, away: str,
                       odds_home: float = 0, odds_draw: float = 0,

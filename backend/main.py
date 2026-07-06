@@ -465,12 +465,26 @@ async def _run_pipeline():
                 print(f"[Pipeline] Saved results load error: {e}")
 
         print(f"[Pipeline] Training on {len(combined)} matches...")
-        predictor = LeaguePredictor()
-        # Seed national team Elo from FIFA rankings BEFORE training
-        # This prevents unknown national teams (Ecuador, Algeria etc.) from
-        # starting at 1500 and looking equal to Germany/France/Brazil
-        predictor.elo.seed_national_teams()
-        predictor.train(combined)
+
+        # Compute the latest mtime across all data sources so we know when to invalidate
+        def _mtime(path):
+            try: return os.path.getmtime(path)
+            except: return 0.0
+        data_mtime = max(
+            _mtime(INTERNATIONAL_CSV),
+            _mtime(RESULTS_CSV) if os.path.exists(RESULTS_CSV) else 0,
+            *[_mtime(os.path.join(DATA_DIR, f)) for f in os.listdir(DATA_DIR) if f.endswith(".csv")]
+        )
+
+        predictor = LeaguePredictor.load_cache(data_mtime)
+        if predictor is None:
+            predictor = LeaguePredictor()
+            # Seed national team Elo from FIFA rankings BEFORE training
+            # This prevents unknown national teams (Ecuador, Algeria etc.) from
+            # starting at 1500 and looking equal to Germany/France/Brazil
+            predictor.elo.seed_national_teams()
+            predictor.train(combined)
+            predictor.save_cache(data_mtime)
 
         # Make predictor available immediately so card analysis works during API calibration
         global _predictor

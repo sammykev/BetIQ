@@ -7,6 +7,7 @@ out/
 
 # Runtime cache files
 backend/h2h_cache.json
+backend/data/model_cache.joblib
 
 # Python
 __pycache__/
