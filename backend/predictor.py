@@ -19,6 +19,7 @@ import joblib
 warnings.filterwarnings("ignore")
 
 MODEL_CACHE_PATH = os.path.join(os.path.dirname(__file__), "data", "model_cache.joblib")
+MODEL_CACHE_VERSION = 2  # bump when FEATURE_COLS or saved fields change
 
 
 # ── FIFA ranking-calibrated starting Elo for national teams ───────────────
@@ -434,10 +435,15 @@ class LeaguePredictor:
         try:
             os.makedirs(os.path.dirname(MODEL_CACHE_PATH), exist_ok=True)
             payload = {
+                "version": MODEL_CACHE_VERSION,
                 "models": self.models,
                 "elo": self.elo,
                 "team_stats": self.team_stats,
                 "_avg_impl": self._avg_impl,
+                "_league_home_goals": self._league_home_goals,
+                "_league_away_goals": self._league_away_goals,
+                "last_match_date": self.last_match_date,
+                "h2h": self.h2h,
                 "data_mtime": data_mtime,
             }
             joblib.dump(payload, MODEL_CACHE_PATH, compress=3)
@@ -452,15 +458,22 @@ class LeaguePredictor:
             return None
         try:
             payload = joblib.load(MODEL_CACHE_PATH)
+            if payload.get("version", 1) != MODEL_CACHE_VERSION:
+                print("[Cache] Cache version mismatch — retraining.")
+                return None
             if payload.get("data_mtime", 0) < data_mtime:
                 print("[Cache] Training data is newer than cache — retraining.")
                 return None
             inst = cls.__new__(cls)
-            inst.models     = payload["models"]
-            inst.elo        = payload["elo"]
-            inst.team_stats = payload["team_stats"]
-            inst._avg_impl  = payload["_avg_impl"]
-            inst._ready     = True
+            inst.models               = payload["models"]
+            inst.elo                  = payload["elo"]
+            inst.team_stats           = payload["team_stats"]
+            inst._avg_impl            = payload["_avg_impl"]
+            inst._league_home_goals   = payload.get("_league_home_goals", [])
+            inst._league_away_goals   = payload.get("_league_away_goals", [])
+            inst.last_match_date      = payload.get("last_match_date", {})
+            inst.h2h                  = payload.get("h2h", {})
+            inst._ready               = True
             print("[Cache] Model loaded from disk — skipping training.")
             return inst
         except Exception as e:
