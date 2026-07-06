@@ -912,7 +912,7 @@ async def _web_search_missing_results():
 # Routes
 # ------------------------------------------------------------------ #
 
-@app.get("/api/health")
+@app.api_route("/api/health", methods=["GET", "HEAD"])
 async def health():
     return {
         "status": "ok",
