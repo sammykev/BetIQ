@@ -19,7 +19,7 @@ import joblib
 warnings.filterwarnings("ignore")
 
 MODEL_CACHE_PATH = os.path.join(os.path.dirname(__file__), "data", "model_cache.joblib")
-MODEL_CACHE_VERSION = 2  # bump when FEATURE_COLS or saved fields change
+MODEL_CACHE_VERSION = 3  # bump when FEATURE_COLS or saved fields change
 
 
 # ── FIFA ranking-calibrated starting Elo for national teams ───────────────
@@ -55,6 +55,31 @@ FIFA_ELO_SEEDS: Dict[str, float] = {
     "Libya": 1498, "Zimbabwe": 1492, "Rwanda": 1488,
 }
 
+# Competition importance multiplier for Elo K factor.
+# Higher-stakes competitions should update ratings more aggressively.
+COMPETITION_K: Dict[str, float] = {
+    "CL": 1.5, "WC": 1.5, "EC": 1.4,   # Champions League, World Cup, Euros
+    "EL": 1.3, "CA": 1.3,               # Europa League, Copa América
+    "PL": 1.2, "PD": 1.2, "SA": 1.2,   # Premier League, La Liga, Serie A
+    "BL1": 1.2, "FL1": 1.2,             # Bundesliga, Ligue 1
+    "DED": 1.1, "PPL": 1.1,             # Eredivisie, Primeira Liga
+    "ELC": 1.0,                          # Championship
+}
+
+
+def _dc_tau(i: int, j: int, mu_h: float, mu_a: float, rho: float) -> float:
+    """Dixon-Coles correction factor for low-scoring scorelines (0-0, 1-0, 0-1, 1-1)."""
+    if i == 0 and j == 0:
+        return 1.0 - mu_h * mu_a * rho
+    if i == 0 and j == 1:
+        return 1.0 + mu_h * rho
+    if i == 1 and j == 0:
+        return 1.0 + mu_a * rho
+    if i == 1 and j == 1:
+        return 1.0 - rho
+    return 1.0
+
+
 class EloSystem:
     K = 32
     HOME_ADV = 80  # Elo points added for home advantage
@@ -79,10 +104,11 @@ class EloSystem:
         diff = self.get(home) - self.get(away) + self.HOME_ADV
         return 1.0 / (1.0 + 10 ** (-diff / 400))
 
-    def update(self, home: str, away: str, result: str):
+    def update(self, home: str, away: str, result: str, competition: str = ""):
         exp = self.expected(home, away)
         actual = {"H": 1.0, "D": 0.5, "A": 0.0}[result]
-        delta = self.K * (actual - exp)
+        k = self.K * COMPETITION_K.get(competition, 1.0)
+        delta = k * (actual - exp)
         self.ratings[home] = self.get(home) + delta
         self.ratings[away] = self.get(away) - delta
 
@@ -120,6 +146,8 @@ FEATURE_COLS = [
     # Rest days and head-to-head features
     "Days_Rest_Home", "Days_Rest_Away",
     "H2H_Home_Rate", "H2H_Draw_Rate",
+    # League context features
+    "League_Avg_Goals", "League_Home_WinRate",
 ]
 
 
@@ -138,6 +166,8 @@ class LeaguePredictor:
         self._league_away_goals: List[float] = []
         self.last_match_date: Dict[str, str] = {}   # team -> "YYYY-MM-DD"
         self.h2h: Dict[str, Dict] = {}              # "teamA:teamB" -> {a_wins,draws,b_wins,total_goals,n}
+        self.dc_rho: float = -0.13                  # Dixon-Coles correlation (estimated in train())
+        self.league_stats: Dict[str, dict] = {}     # league_code -> {avg_goals, home_win_rate}
 
     # ------------------------------------------------------------------ #
     # Internal helpers
@@ -160,7 +190,7 @@ class LeaguePredictor:
 
     def _feats(self, home: str, away: str,
                odds_home: float = 0, odds_draw: float = 0, odds_away: float = 0,
-               match_date: str = None) -> Dict:
+               match_date: str = None, league: str = "") -> Dict:
         self._init(home)
         self._init(away)
         hs, as_ = self.team_stats[home], self.team_stats[away]
@@ -244,6 +274,11 @@ class LeaguePredictor:
             h2h_home_rate = self._avg_impl.get("H", 0.46)
             h2h_draw_rate = self._avg_impl.get("D", 0.27)
 
+        # ── League context features ───────────────────────────────────────────
+        lg_stats = self.league_stats.get(league, {})
+        league_avg_goals   = lg_stats.get("avg_goals",    xg_h + xg_a)
+        league_home_wr     = lg_stats.get("home_win_rate", self._avg_impl.get("H", 0.46))
+
         return {
             "HomeElo": h_elo, "AwayElo": a_elo, "EloDiff": h_elo - a_elo,
             "Home_G_Avg": h_gf, "Away_G_Avg": a_gf,
@@ -267,6 +302,8 @@ class LeaguePredictor:
             "Days_Rest_Away": days_rest_away,
             "H2H_Home_Rate":  round(h2h_home_rate, 4),
             "H2H_Draw_Rate":  round(h2h_draw_rate, 4),
+            "League_Avg_Goals":   round(league_avg_goals, 4),
+            "League_Home_WinRate": round(league_home_wr, 4),
         }
 
     def _update(
@@ -275,6 +312,7 @@ class LeaguePredictor:
         hyc: float = None, ayc: float = None,
         hrc: float = None, arc: float = None,
         match_date: str = None,
+        competition: str = "",
     ):
         self._init(home)
         self._init(away)
@@ -310,7 +348,7 @@ class LeaguePredictor:
             self.team_stats[home]["yc"].append(h_cards)
             self.team_stats[away]["yc"].append(a_cards)
 
-        self.elo.update(home, away, result)
+        self.elo.update(home, away, result, competition=competition)
 
         # Track last match date for rest-days feature
         if match_date:
@@ -349,6 +387,8 @@ class LeaguePredictor:
         self._league_away_goals = []
         self.last_match_date = {}
         self.h2h = {}
+        self.league_stats = {}
+        self.dc_rho = -0.13
 
         has_odds = all(c in matches.columns for c in ["B365H", "B365D", "B365A"])
         if has_odds:
@@ -370,13 +410,48 @@ class LeaguePredictor:
                     "A": float(impl["B365A"].mean()),
                 }
 
+        # Pre-compute per-league stats for league context features.
+        # Uses a separate pass over data so league_stats is ready before the training loop.
+        if "league" in matches.columns:
+            for lg_code, grp in matches.groupby("league"):
+                total_goals = grp["FTHG"].fillna(0) + grp["FTAG"].fillna(0)
+                home_wins   = (grp["Result"] == "H").sum()
+                lg_n        = max(len(grp), 1)
+                self.league_stats[str(lg_code)] = {
+                    "avg_goals":    float(total_goals.mean()),
+                    "home_win_rate": float(home_wins / lg_n),
+                }
+
+        # Estimate Dixon-Coles rho from training data using MLE approximation.
+        # rho < 0 means 0-0 and 1-1 are more common than independent Poisson predicts.
+        try:
+            goals_h = matches["FTHG"].dropna()
+            goals_a = matches["FTAG"].dropna()
+            if len(goals_h) >= 100:
+                mu_h = float(goals_h.mean())
+                mu_a = float(goals_a.mean())
+                n00 = int(((goals_h == 0) & (goals_a == 0)).sum())
+                n11 = int(((goals_h == 1) & (goals_a == 1)).sum())
+                n_total = len(goals_h)
+                # Expected counts under independence
+                e00 = n_total * np.exp(-mu_h) * np.exp(-mu_a)
+                e11 = n_total * mu_h * np.exp(-mu_h) * mu_a * np.exp(-mu_a)
+                # rho estimated from 0-0 excess; clamp to valid range
+                if e00 > 0:
+                    self.dc_rho = float(np.clip((n00 - e00) / (e00 * mu_h * mu_a), -0.5, 0.0))
+                    print(f"[Predictor] DC rho estimated: {self.dc_rho:.4f}")
+        except Exception as _e:
+            print(f"[Predictor] DC rho estimation failed, using default: {_e}")
+
         rows = []
         for _, r in matches.iterrows():
             oh = float(r.get("B365H") or 0)
             od = float(r.get("B365D") or 0)
             oa = float(r.get("B365A") or 0)
             match_date_str = str(r["Date"].date()) if pd.notna(r.get("Date")) else None
-            f = self._feats(r["HomeTeam"], r["AwayTeam"], oh, od, oa, match_date=match_date_str)
+            lg = str(r.get("league", "")) if "league" in r.index else ""
+            f = self._feats(r["HomeTeam"], r["AwayTeam"], oh, od, oa,
+                            match_date=match_date_str, league=lg)
             f["Result"] = r["Result"]
             f["TotalGoals"] = r["FTHG"] + r["FTAG"]
             rows.append(f)
@@ -387,6 +462,7 @@ class LeaguePredictor:
                 hrc=r.get("HomeRedCards") or r.get("HR"),
                 arc=r.get("AwayRedCards") or r.get("AR"),
                 match_date=match_date_str,
+                competition=lg,
             )
 
         df = pd.DataFrame(rows).dropna(subset=FEATURE_COLS)
@@ -444,6 +520,8 @@ class LeaguePredictor:
                 "_league_away_goals": self._league_away_goals,
                 "last_match_date": self.last_match_date,
                 "h2h": self.h2h,
+                "dc_rho": self.dc_rho,
+                "league_stats": self.league_stats,
                 "data_mtime": data_mtime,
             }
             joblib.dump(payload, MODEL_CACHE_PATH, compress=3)
@@ -473,6 +551,8 @@ class LeaguePredictor:
             inst._league_away_goals   = payload.get("_league_away_goals", [])
             inst.last_match_date      = payload.get("last_match_date", {})
             inst.h2h                  = payload.get("h2h", {})
+            inst.dc_rho               = payload.get("dc_rho", -0.13)
+            inst.league_stats         = payload.get("league_stats", {})
             inst._ready               = True
             print("[Cache] Model loaded from disk — skipping training.")
             return inst
@@ -483,10 +563,11 @@ class LeaguePredictor:
     def predict_match(self, home: str, away: str,
                       odds_home: float = 0, odds_draw: float = 0,
                       odds_away: float = 0,
-                      match_date: str = None) -> Optional[Dict]:
+                      match_date: str = None, league: str = "") -> Optional[Dict]:
         if not self._ready:
             return None
-        f = self._feats(home, away, odds_home, odds_draw, odds_away, match_date=match_date)
+        f = self._feats(home, away, odds_home, odds_draw, odds_away,
+                        match_date=match_date, league=league)
         X = pd.DataFrame([f])[FEATURE_COLS]
 
         wp = self.models["win"].predict_proba(X)[0]
@@ -556,12 +637,19 @@ class LeaguePredictor:
         xg_h = f["xG_Home"]
         xg_a = f["xG_Away"]
 
-        # --- Poisson joint probability matrix ---
+        # --- Poisson joint probability matrix with Dixon-Coles tau correction ---
         MAX = 9
         from math import exp, factorial
         def pmf(k, lam): return (lam**k * exp(-lam)) / factorial(k)
 
-        joint = np.array([[pmf(i, xg_h) * pmf(j, xg_a) for j in range(MAX)] for i in range(MAX)])
+        rho = getattr(self, "dc_rho", -0.13)
+        joint = np.array([
+            [pmf(i, xg_h) * pmf(j, xg_a) * _dc_tau(i, j, xg_h, xg_a, rho)
+             for j in range(MAX)]
+            for i in range(MAX)
+        ])
+        # Normalise so probabilities sum to 1 after tau adjustment
+        joint = joint / joint.sum()
 
         # Over/Under markets (Poisson-based)
         def p_over(n):

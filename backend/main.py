@@ -357,6 +357,21 @@ def _load_football_data_csvs() -> pd.DataFrame:
     Load football-data.co.uk CSVs (with Bet365 odds) from data/football/*.csv.
     These files have columns: Date, HomeTeam, AwayTeam, FTHG, FTAG, FTR, B365H, B365D, B365A, HY, AY, HR, AR
     """
+    # Map filename prefix → league code (football-data.co.uk naming convention)
+    _LEAGUE_CODES = {
+        "E0": "PL",  "E1": "ELC", "E2": "EL1", "E3": "EL2",
+        "SP1": "PD", "SP2": "SD",
+        "I1": "SA",  "I2": "SB",
+        "D1": "BL1", "D2": "BL2",
+        "F1": "FL1", "F2": "FL2",
+        "N1": "DED",
+        "B1": "JPL",
+        "P1": "PPL",
+        "SC0": "SPL", "SC1": "D1",
+        "G1": "GSL",
+        "T1": "TSL",
+    }
+
     csvs = sorted(glob.glob(os.path.join(FOOTBALL_DATA_DIR, "*.csv")))
     if not csvs:
         return pd.DataFrame()
@@ -366,6 +381,11 @@ def _load_football_data_csvs() -> pd.DataFrame:
         try:
             df = pd.read_csv(path, low_memory=False)
             df.columns = [c.strip() for c in df.columns]
+
+            # Detect league from filename prefix (e.g. "E0_2324.csv" → "PL")
+            basename = os.path.splitext(os.path.basename(path))[0]
+            prefix = basename.split("_")[0] if "_" in basename else basename[:2]
+            league_code = _LEAGUE_CODES.get(prefix, prefix)
 
             # Standardise column names
             renames = {"FTR": "Result"}
@@ -386,8 +406,10 @@ def _load_football_data_csvs() -> pd.DataFrame:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors="coerce")
 
+            df["league"] = league_code
+
             keep = ["Date", "HomeTeam", "AwayTeam", "Result", "FTHG", "FTAG",
-                    "B365H", "B365D", "B365A", "HY", "AY", "HR", "AR"]
+                    "B365H", "B365D", "B365A", "HY", "AY", "HR", "AR", "league"]
             df = df[[c for c in keep if c in df.columns]]
             dfs.append(df)
         except Exception as e:
@@ -683,7 +705,8 @@ async def _run_pipeline():
                         await asyncio.sleep(6)  # still pace requests even on empty results
                         continue
                     for _, r in recent.iterrows():
-                        predictor._update(r["HomeTeam"], r["AwayTeam"], r["Result"], r["FTHG"], r["FTAG"])
+                        predictor._update(r["HomeTeam"], r["AwayTeam"], r["Result"], r["FTHG"], r["FTAG"],
+                                          competition=code)
                     await asyncio.sleep(10)
                 except Exception as e:
                     print(f"[Pipeline] Recent results error for {code}: {e}")
@@ -715,6 +738,7 @@ async def _run_pipeline():
                         odds_draw=float(odds.get("X") or 0),
                         odds_away=float(odds.get("2") or 0),
                         match_date=fx.get("date"),
+                        league=fx.get("competition_code", ""),
                     )
                     if tip:
                         # Value bet detection: model prob vs bookmaker implied prob
