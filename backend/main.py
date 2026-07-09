@@ -619,6 +619,49 @@ async def _prefetch_web_forms(predictor, fixtures: list):
 
 # ------------------------------------------------------------------ #
 
+def _build_predictions(predictor, fixtures: list, live_odds: dict) -> list:
+    """Turn upcoming fixtures + live odds into prediction dicts (with value-bet flags)."""
+    predictions = []
+    for fx in fixtures:
+        try:
+            key = f"{fx['home']}:{fx['away']}:{fx.get('date','')}"
+            odds = live_odds.get(key, {})
+            tip = predictor.predict_match(
+                fx["home"], fx["away"],
+                odds_home=float(odds.get("1") or 0),
+                odds_draw=float(odds.get("X") or 0),
+                odds_away=float(odds.get("2") or 0),
+                match_date=fx.get("date"),
+                league=fx.get("league", ""),
+            )
+            if not tip:
+                continue
+            # Value bet detection: model prob vs bookmaker implied prob
+            tip_code = tip.get("tip_code", "?")
+            if tip_code == "1" and odds.get("1") and float(odds.get("1", 0)) > 1:
+                implied = 1.0 / float(odds["1"]); model_p = tip.get("p_home", 0)
+            elif tip_code == "X" and odds.get("X") and float(odds.get("X", 0)) > 1:
+                implied = 1.0 / float(odds["X"]); model_p = tip.get("p_draw", 0)
+            elif tip_code == "2" and odds.get("2") and float(odds.get("2", 0)) > 1:
+                implied = 1.0 / float(odds["2"]); model_p = tip.get("p_away", 0)
+            else:
+                implied = None; model_p = None
+
+            value_edge = round(model_p - implied, 3) if (model_p is not None and implied is not None) else None
+
+            predictions.append({
+                **fx, **tip,
+                "odds_home": round(float(odds.get("1") or 0), 2) or None,
+                "odds_draw": round(float(odds.get("X") or 0), 2) or None,
+                "odds_away": round(float(odds.get("2") or 0), 2) or None,
+                "value_edge": value_edge,
+                "is_value_bet": value_edge is not None and value_edge > 0.05,
+            })
+        except Exception:
+            pass
+    return predictions
+
+
 async def _run_pipeline():
     global _predictor, _predictions_cache, _last_updated, _is_training
 
@@ -691,13 +734,47 @@ async def _run_pipeline():
         _predictor = predictor
         print("[Pipeline] Predictor ready — card analysis now available.")
 
-        # Fetch recent results from API to update Elo with current season data
         predictions = []
         fixtures: list = []  # pre-init so the block below is safe when API_KEY is unset
         if API_KEY:
             client = FootballDataClient(API_KEY)
 
+            # ── Fixtures FIRST ────────────────────────────────────────────────
+            # Fetch upcoming fixtures + live odds and publish predictions before the
+            # slow, rate-limited recent-results calibration below. On free hosting the
+            # instance can sleep mid-pipeline; front-loading this guarantees the app
+            # shows today's fixtures (incl. World Cup) even if calibration never
+            # finishes. Elo comes from training + FIFA seeds — good enough to serve;
+            # the second pass refines it.
+            print("[Pipeline] Fetching upcoming fixtures + live odds...")
+            fixtures = await client.fetch_all_upcoming(days_ahead=90)
+
+            live_odds: dict = {}
+            try:
+                from odds_fetcher import fetch_odds_for_predictions
+                stubs = [{"home": fx["home"], "away": fx["away"],
+                          "date": fx.get("date",""), "league_name": fx.get("league_name","")}
+                         for fx in fixtures]
+                live_odds = await fetch_odds_for_predictions(stubs)
+                print(f"[Pipeline] Got live odds for {len(live_odds)}/{len(fixtures)} fixtures")
+            except Exception as e:
+                print(f"[Pipeline] Live odds fetch error (non-fatal): {e}")
+
+            predictions = _build_predictions(predictor, fixtures, live_odds)
+
+            # Archive yesterday's predictions from the OLD cache before we overwrite it.
+            _archive_past_predictions()
+
+            # Publish immediately so fixtures are visible right away.
+            _predictor = predictor
+            _predictions_cache = predictions
+            _last_updated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+            _save_predictions_cache()
+            print(f"[Pipeline] Published {len(predictions)} predictions (pre-calibration).")
+
+            # ── Recent-results Elo calibration (refinement) ───────────────────
             print("[Pipeline] Fetching recent API results to calibrate Elo...")
+            calibrated = False
             for code in list(LEAGUES.keys()):
                 try:
                     recent = await client.fetch_recent_results(code, days_back=60)
@@ -707,67 +784,18 @@ async def _run_pipeline():
                     for _, r in recent.iterrows():
                         predictor._update(r["HomeTeam"], r["AwayTeam"], r["Result"], r["FTHG"], r["FTAG"],
                                           competition=code)
+                    calibrated = True
                     await asyncio.sleep(10)
                 except Exception as e:
                     print(f"[Pipeline] Recent results error for {code}: {e}")
 
-            print("[Pipeline] Fetching upcoming fixtures + live odds...")
-            fixtures = await client.fetch_all_upcoming(days_ahead=90)
-
-            # Fetch live odds from The Odds API for upcoming fixtures
-            # Inject into model as features (massively improves accuracy)
-            live_odds: dict = {}
-            try:
-                from odds_fetcher import fetch_odds_for_predictions
-                # Build minimal prediction stubs just for odds lookup
-                stubs = [{"home": fx["home"], "away": fx["away"],
-                          "date": fx.get("date",""), "league_name": fx.get("league_name","")}
-                         for fx in fixtures]
-                live_odds = await fetch_odds_for_predictions(stubs)
-                print(f"[Pipeline] Got live odds for {len(live_odds)}/{len(fixtures)} fixtures")
-            except Exception as e:
-                print(f"[Pipeline] Live odds fetch error (non-fatal): {e}")
-
-            for fx in fixtures:
-                try:
-                    key = f"{fx['home']}:{fx['away']}:{fx.get('date','')}"
-                    odds = live_odds.get(key, {})
-                    tip = predictor.predict_match(
-                        fx["home"], fx["away"],
-                        odds_home=float(odds.get("1") or 0),
-                        odds_draw=float(odds.get("X") or 0),
-                        odds_away=float(odds.get("2") or 0),
-                        match_date=fx.get("date"),
-                        league=fx.get("competition_code", ""),
-                    )
-                    if tip:
-                        # Value bet detection: model prob vs bookmaker implied prob
-                        tip_code = tip.get("tip_code", "?")
-                        if tip_code == "1" and odds.get("1") and float(odds.get("1", 0)) > 1:
-                            implied = 1.0 / float(odds["1"])
-                            model_p  = tip.get("p_home", 0)
-                        elif tip_code == "X" and odds.get("X") and float(odds.get("X", 0)) > 1:
-                            implied = 1.0 / float(odds["X"])
-                            model_p  = tip.get("p_draw", 0)
-                        elif tip_code == "2" and odds.get("2") and float(odds.get("2", 0)) > 1:
-                            implied = 1.0 / float(odds["2"])
-                            model_p  = tip.get("p_away", 0)
-                        else:
-                            implied = None
-                            model_p  = None
-
-                        value_edge = round(model_p - implied, 3) if (model_p is not None and implied is not None) else None
-
-                        predictions.append({
-                            **fx, **tip,
-                            "odds_home": round(float(odds.get("1") or 0), 2) or None,
-                            "odds_draw": round(float(odds.get("X") or 0), 2) or None,
-                            "odds_away": round(float(odds.get("2") or 0), 2) or None,
-                            "value_edge": value_edge,
-                            "is_value_bet": value_edge is not None and value_edge > 0.05,
-                        })
-                except Exception:
-                    pass
+            # Re-predict with the calibrated Elo and republish.
+            if calibrated and fixtures:
+                predictions = _build_predictions(predictor, fixtures, live_odds)
+                _predictions_cache = predictions
+                _last_updated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+                _save_predictions_cache()
+                print(f"[Pipeline] Republished {len(predictions)} predictions (calibrated).")
         else:
             print("[Pipeline] WARNING: No FOOTBALL_DATA_API_KEY set. Add your key to .env to get live fixtures.")
 
@@ -784,9 +812,6 @@ async def _run_pipeline():
         asyncio.create_task(_refresh_understat_xg())
 
         _predictor = predictor
-        _predictions_cache = predictions
-        _last_updated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-        _save_predictions_cache()
         print(f"[Pipeline] Done — {len(predictions)} predictions cached.")
 
         # Send push notifications for high-value picks
