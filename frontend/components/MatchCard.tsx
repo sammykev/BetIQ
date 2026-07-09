@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { getTeamAssets } from "@/lib/teamAssets";
 import clsx from "clsx";
 
@@ -16,16 +17,17 @@ interface Props {
 }
 
 function TeamName({ name }: { name: string }) {
+  const [broken, setBroken] = useState(false);
   const { imageUrl, isFlag, color } = getTeamAssets(name);
   return (
     <div className="flex items-center gap-1.5 min-w-0">
-      {imageUrl ? (
+      {imageUrl && !broken ? (
         <span className="relative inline-flex items-center justify-center w-5 h-5 rounded-full bg-zinc-100 dark:bg-zinc-800 ring-1 ring-zinc-200/80 dark:ring-zinc-700 overflow-hidden shrink-0">
           <img
             src={imageUrl}
             alt={name}
             className={clsx("object-contain", isFlag ? "w-full h-full object-cover" : "w-[70%] h-[70%]")}
-            onError={e => { (e.target as HTMLImageElement).style.display = "none"; }}
+            onError={() => setBroken(true)}
           />
         </span>
       ) : (

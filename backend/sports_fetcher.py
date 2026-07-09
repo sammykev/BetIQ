@@ -10,7 +10,7 @@ import os
 import asyncio
 import httpx
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 ODDS_API_KEY  = os.getenv("ODDS_API_KEY", "")
 ODDS_BASE     = "https://api.the-odds-api.com/v4"
@@ -20,6 +20,11 @@ BETSAPI_BASE  = "https://api.betsapi.com/v3"
 BETSAPI_TOKEN = os.getenv("BETSAPI_TOKEN", "")  # optional paid token for higher limits
 
 # ── Basketball leagues ─────────────────────────────────────────────────────
+# Used only as a fallback when live discovery (below) can't reach The Odds API.
+# Deliberately NOT the source of truth — a fixed list always misses seasonal
+# competitions (e.g. NBA Summer League only runs in July) and new leagues The
+# Odds API adds over time. fetch_basketball_predictions() discovers whatever
+# basketball leagues are actually active right now instead.
 BASKETBALL_SPORTS = [
     ("basketball_nba",          "NBA",          "🏀"),
     ("basketball_euroleague",   "EuroLeague",   "🏀"),
@@ -35,7 +40,19 @@ TABLE_TENNIS_KEY = "table_tennis"
 
 
 async def _get_active_sports() -> List[str]:
-    """Fetch all currently active sports from The Odds API."""
+    """Fetch all currently active sport keys from The Odds API."""
+    sports = await _get_active_sports_full()
+    return [s["key"] for s in sports]
+
+
+async def _get_active_sports_full() -> List[Dict]:
+    """
+    Fetch all currently active sports from The Odds API, full objects
+    ({key, group, title, ...}) — "active" here means the sport currently has
+    games scheduled, which is exactly how a seasonal league like NBA Summer
+    League shows up automatically in July and disappears afterward without
+    us having to track its calendar.
+    """
     if not ODDS_API_KEY:
         return []
     try:
@@ -43,7 +60,7 @@ async def _get_active_sports() -> List[str]:
             r = await client.get(f"{ODDS_BASE}/sports/",
                                  params={"apiKey": ODDS_API_KEY, "all": "false"})
             if r.status_code == 200:
-                return [s["key"] for s in r.json()]
+                return r.json()
     except Exception as e:
         print(f"[Sports] active sports fetch error: {e}")
     return []
@@ -68,8 +85,24 @@ async def _fetch_odds(sport_key: str, markets: str = "h2h,totals") -> List[Dict]
             remaining = r.headers.get("x-requests-remaining", "?")
             if r.status_code == 200:
                 data = r.json()
-                print(f"[Sports] {sport_key}: {len(data)} events (quota remaining={remaining})")
-                return data
+                # The Odds API's pre-match /odds/ feed can lag in pulling events
+                # once they start (and our own 1h response cache compounds this),
+                # so defensively drop anything whose commence_time has already
+                # passed — otherwise finished/in-play games linger in the list.
+                now = datetime.now(timezone.utc)
+                upcoming = []
+                for ev in data:
+                    ct = ev.get("commence_time", "")
+                    try:
+                        start = datetime.fromisoformat(ct.replace("Z", "+00:00"))
+                    except Exception:
+                        continue  # no parseable start time — skip rather than risk a stale/played game
+                    if start > now:
+                        upcoming.append(ev)
+                dropped = len(data) - len(upcoming)
+                print(f"[Sports] {sport_key}: {len(upcoming)} upcoming events "
+                      f"({dropped} already started/unparsed dropped, quota remaining={remaining})")
+                return upcoming
             elif r.status_code == 422:
                 return []   # sport not currently active
             else:
@@ -205,16 +238,49 @@ def _build_basketball_prediction(event: Dict, league_name: str, flag: str) -> Op
     }
 
 
+def _basketball_league_name(sport_key: str, title: str = "") -> str:
+    """Human league name for a basketball sport key — prefers the API's own title."""
+    if title:
+        return title
+    return (sport_key.replace("basketball_", "")
+                     .replace("_", " ").title())
+
+
+async def _discover_basketball_leagues() -> List[Tuple[str, str, str]]:
+    """
+    Return (sport_key, league_name, flag) for every basketball league The Odds
+    API currently has games scheduled for. Discovered live rather than
+    hardcoded so seasonal competitions (NBA Summer League only runs in July,
+    EuroBasket only every 2 years, etc.) show up automatically while active
+    and disappear on their own once the season ends — no manual list to
+    maintain. Falls back to the static BASKETBALL_SPORTS list if discovery
+    is unavailable (no API key, or The Odds API's /sports/ call fails).
+    """
+    try:
+        active = await _get_active_sports_full()
+    except Exception:
+        active = []
+    leagues = [
+        (s["key"], _basketball_league_name(s["key"], s.get("title", "")), "🏀")
+        for s in active
+        if s.get("key", "").startswith("basketball_")
+    ]
+    if leagues:
+        return leagues
+    return BASKETBALL_SPORTS
+
+
 async def fetch_basketball_predictions() -> List[Dict]:
     results = []
-    for sport_key, league_name, flag in BASKETBALL_SPORTS:
+    leagues = await _discover_basketball_leagues()
+    for sport_key, league_name, flag in leagues:
         events = await _fetch_odds(sport_key, markets="h2h,totals")
         for ev in events:
             p = _build_basketball_prediction(ev, league_name, flag)
             if p:
                 results.append(p)
         await asyncio.sleep(0.2)
-    print(f"[Sports] Basketball: {len(results)} predictions")
+    print(f"[Sports] Basketball: {len(results)} predictions across {len(leagues)} leagues")
     return sorted(results, key=lambda x: x["date"] + x["time"])
 
 

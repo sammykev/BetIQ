@@ -1,6 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import { getSportAssets } from "@/lib/sportsAssets";
+import { useTeamLogo } from "@/lib/useTeamLogo";
 import clsx from "clsx";
 
 export interface SportPrediction {
@@ -35,19 +37,7 @@ interface Props {
   onClick?: () => void;
 }
 
-function Avatar({ image, color, name, face }: { image?: string; color: string; name: string; face: boolean }) {
-  if (image) {
-    return (
-      <span className="relative inline-flex w-7 h-7 rounded-full bg-zinc-100 dark:bg-zinc-800 ring-1 ring-zinc-200/80 dark:ring-zinc-700 overflow-hidden shrink-0">
-        <img
-          src={image}
-          alt={name}
-          className={clsx("w-full h-full", face ? "object-cover object-top" : "object-contain p-1")}
-          onError={e => { (e.target as HTMLImageElement).style.display = "none"; }}
-        />
-      </span>
-    );
-  }
+function InitialsAvatar({ color, name }: { color: string; name: string }) {
   return (
     <span
       className="inline-flex items-center justify-center w-7 h-7 rounded-full text-white font-bold text-[10px] shrink-0"
@@ -56,6 +46,31 @@ function Avatar({ image, color, name, face }: { image?: string; color: string; n
       {name.slice(0, 2).toUpperCase()}
     </span>
   );
+}
+
+function Avatar({ staticImage, color, name, face, sport }: {
+  staticImage?: string; color: string; name: string; face: boolean; sport: string;
+}) {
+  const [broken, setBroken] = useState(false);
+  // Only basketball uses the generic team-logo lookup — it covers any club in
+  // any league (EuroLeague, NCAA, NBL, NBA Summer League, ...) without a
+  // hardcoded list. Tennis/table-tennis use curated player photo maps only.
+  const dynamicImage = useTeamLogo(name, sport === "basketball" && !staticImage);
+  const image = staticImage || dynamicImage;
+
+  if (image && !broken) {
+    return (
+      <span className="relative inline-flex w-7 h-7 rounded-full bg-zinc-100 dark:bg-zinc-800 ring-1 ring-zinc-200/80 dark:ring-zinc-700 overflow-hidden shrink-0">
+        <img
+          src={image}
+          alt={name}
+          className={clsx("w-full h-full", face ? "object-cover object-top" : "object-contain p-1")}
+          onError={() => setBroken(true)}
+        />
+      </span>
+    );
+  }
+  return <InitialsAvatar color={color} name={name} />;
 }
 
 export function SportCard({ prediction: p, onClick }: Props) {
@@ -87,7 +102,7 @@ export function SportCard({ prediction: p, onClick }: Props) {
         ].map(({ name, prob, odds, image, color, strong }) => (
           <div key={name} className="space-y-1">
             <div className="flex items-center gap-2.5 min-w-0">
-              <Avatar image={image} color={color} name={name} face={assets.isPlayerFace} />
+              <Avatar staticImage={image} color={color} name={name} face={assets.isPlayerFace} sport={p.sport} />
               <span className={clsx(
                 "flex-1 truncate text-sm",
                 strong ? "font-bold text-zinc-900 dark:text-white" : "font-medium text-zinc-600 dark:text-zinc-300"

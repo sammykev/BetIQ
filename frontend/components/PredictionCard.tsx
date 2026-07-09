@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { SaveButton } from "./SaveButton";
 import type { Prediction } from "@/lib/api";
 import { Share2, Sparkles } from "lucide-react";
@@ -160,8 +161,9 @@ interface Props {
 
 /** Crest or flag avatar with a monogram fallback. */
 export function TeamBadge({ name, size = 28 }: { name: string; size?: number }) {
+  const [broken, setBroken] = useState(false);
   const asset = getTeamAssets(name);
-  if (asset.imageUrl) {
+  if (asset.imageUrl && !broken) {
     return (
       <span
         className="relative inline-flex items-center justify-center rounded-full bg-zinc-100 dark:bg-zinc-800 ring-1 ring-zinc-200/80 dark:ring-zinc-700 overflow-hidden shrink-0"
@@ -171,7 +173,7 @@ export function TeamBadge({ name, size = 28 }: { name: string; size?: number }) 
           src={asset.imageUrl}
           alt={name}
           className={clsx("object-contain", asset.isFlag ? "w-full h-full object-cover" : "w-[70%] h-[70%]")}
-          onError={e => { (e.target as HTMLImageElement).style.display = "none"; }}
+          onError={() => setBroken(true)}
         />
       </span>
     );

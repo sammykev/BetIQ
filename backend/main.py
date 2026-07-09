@@ -2550,6 +2550,7 @@ async def get_sport_predictions(sport: str):
         fetch_tennis_predictions,
         fetch_table_tennis_predictions,
     )
+    from event_filters import drop_started_events
     import json as _json
 
     CACHE_TTL = 3600  # 1 hour — conserves Odds API quota
@@ -2560,7 +2561,7 @@ async def get_sport_predictions(sport: str):
         try:
             cached = r.get(cache_key)
             if cached:
-                return _json.loads(cached)
+                return drop_started_events(_json.loads(cached))
         except Exception:
             pass
 
@@ -2579,7 +2580,20 @@ async def get_sport_predictions(sport: str):
         except Exception:
             pass
 
-    return data
+    return drop_started_events(data)
+
+
+@app.get("/api/team-logo")
+async def get_team_logo(name: str):
+    """
+    Generic team badge/logo lookup — covers any team in any league (NBA,
+    EuroLeague, NCAA, NBL, NBA Summer League, etc.) without a hardcoded list.
+    Cached server-side (Redis, 30 days) since badges don't change.
+    """
+    from team_logos import lookup_team_logo
+    r = _get_redis()
+    logo = await lookup_team_logo(name, redis_client=r)
+    return {"name": name, "logo": logo}
 
 
 @app.get("/api/sports/{sport}/event")

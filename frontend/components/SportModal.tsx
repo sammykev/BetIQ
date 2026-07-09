@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { X, Star, Loader2, TrendingUp } from "lucide-react";
 import clsx from "clsx";
 import { getSportAssets } from "@/lib/sportsAssets";
+import { useTeamLogo } from "@/lib/useTeamLogo";
 import type { SportPrediction } from "./SportCard";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
@@ -68,10 +69,14 @@ function OddsBar({ outcome, isBest }: { outcome: Outcome; isBest: boolean }) {
   );
 }
 
-function Avatar({ image, color, name, face, size = 44 }: {
-  image?: string; color: string; name: string; face: boolean; size?: number;
+function Avatar({ staticImage, color, name, face, size = 44, sport }: {
+  staticImage?: string; color: string; name: string; face: boolean; size?: number; sport: string;
 }) {
-  if (image) {
+  const [broken, setBroken] = useState(false);
+  const dynamicImage = useTeamLogo(name, sport === "basketball" && !staticImage);
+  const image = staticImage || dynamicImage;
+
+  if (image && !broken) {
     return (
       <span
         className="relative inline-flex rounded-full bg-zinc-100 dark:bg-zinc-800 ring-1 ring-zinc-200/80 dark:ring-zinc-700 overflow-hidden shrink-0"
@@ -81,7 +86,7 @@ function Avatar({ image, color, name, face, size = 44 }: {
           src={image}
           alt={name}
           className={clsx("w-full h-full", face ? "object-cover object-top" : "object-contain p-1.5")}
-          onError={e => { (e.target as HTMLImageElement).style.display = "none"; }}
+          onError={() => setBroken(true)}
         />
       </span>
     );
@@ -154,7 +159,7 @@ export function SportModal({ prediction: p, onClose }: Props) {
 
           <div className="flex items-center gap-4 sm:gap-8">
             <div className="flex-1 flex flex-col items-center text-center gap-2">
-              <Avatar image={assets.homeImage} color={assets.homeColor} name={p.home} face={assets.isPlayerFace} />
+              <Avatar staticImage={assets.homeImage} color={assets.homeColor} name={p.home} face={assets.isPlayerFace} sport={p.sport} />
               <div>
                 <p className="text-base font-bold text-zinc-900 dark:text-white leading-tight">{p.home}</p>
                 <p className="tnum text-[11px] text-zinc-400 dark:text-zinc-500">{Math.round(p.p_home * 100)}% win prob</p>
@@ -162,7 +167,7 @@ export function SportModal({ prediction: p, onClose }: Props) {
             </div>
             <div className="text-zinc-300 dark:text-zinc-600 font-black">vs</div>
             <div className="flex-1 flex flex-col items-center text-center gap-2">
-              <Avatar image={assets.awayImage} color={assets.awayColor} name={p.away} face={assets.isPlayerFace} />
+              <Avatar staticImage={assets.awayImage} color={assets.awayColor} name={p.away} face={assets.isPlayerFace} sport={p.sport} />
               <div>
                 <p className="text-base font-bold text-zinc-900 dark:text-white leading-tight">{p.away}</p>
                 <p className="tnum text-[11px] text-zinc-400 dark:text-zinc-500">{Math.round(p.p_away * 100)}% win prob</p>
