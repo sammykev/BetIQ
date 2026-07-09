@@ -1920,6 +1920,31 @@ async def debug_calendar_status():
     }
 
 
+@app.get("/api/debug/pipeline")
+async def debug_pipeline():
+    """
+    Pipeline / cache state — browser-friendly. Shows whether a refresh is
+    running, when it last published, how many predictions are cached, the
+    per-league breakdown, and any World Cup entries currently served.
+    """
+    by_league: Dict[str, int] = {}
+    for p in _predictions_cache:
+        lg = p.get("league", "?")
+        by_league[lg] = by_league.get(lg, 0) + 1
+    wc = [
+        {"home": p.get("home"), "away": p.get("away"), "date": p.get("date")}
+        for p in _predictions_cache if p.get("league") == "WC"
+    ]
+    return {
+        "is_training": _is_training,
+        "model_ready": _predictor is not None,
+        "last_updated": _last_updated,
+        "total_predictions": len(_predictions_cache),
+        "predictions_by_league": dict(sorted(by_league.items())),
+        "wc_predictions": wc,
+    }
+
+
 @app.get("/api/debug/fixtures")
 async def debug_fixtures(league: str = "WC", days: int = 90):
     """
