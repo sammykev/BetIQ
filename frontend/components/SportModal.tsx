@@ -37,34 +37,62 @@ function OddsBar({ outcome, isBest }: { outcome: Outcome; isBest: boolean }) {
   const pct = Math.round(outcome.implied * 100);
   return (
     <div className={clsx(
-      "flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all",
+      "flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all border",
       isBest
-        ? "bg-green-500/15 border border-green-500/30"
-        : "bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+        ? "bg-brand-50 dark:bg-brand-900/20 border-brand-200 dark:border-brand-800"
+        : "bg-zinc-50 dark:bg-zinc-800/60 border-zinc-100 dark:border-zinc-800"
     )}>
       <div className="flex-1 min-w-0">
         <p className={clsx("text-sm font-semibold truncate",
-          isBest ? "text-green-400" : "text-slate-800 dark:text-slate-200")}>
+          isBest ? "text-brand-700 dark:text-brand-400" : "text-zinc-700 dark:text-zinc-200")}>
           {outcome.label}
         </p>
         <div className="flex items-center gap-2 mt-1">
-          <div className="flex-1 h-1 bg-slate-300 dark:bg-slate-700 rounded-full overflow-hidden">
-            <div className={clsx("h-full rounded-full", isBest ? "bg-green-400" : "bg-slate-500")}
+          <div className="flex-1 h-1 bg-zinc-200 dark:bg-zinc-700 rounded-full overflow-hidden">
+            <div className={clsx("h-full rounded-full", isBest ? "bg-brand-500" : "bg-zinc-400 dark:bg-zinc-500")}
               style={{ width: `${pct}%` }} />
           </div>
-          <span className="text-[11px] text-slate-500 dark:text-slate-400 shrink-0">{pct}%</span>
+          <span className="tnum text-[11px] text-zinc-400 dark:text-zinc-500 shrink-0">{pct}%</span>
         </div>
       </div>
       <div className="text-right shrink-0">
-        <span className={clsx("text-lg font-black",
-          isBest ? "text-green-400" : "text-slate-700 dark:text-slate-200")}>
+        <span className={clsx("tnum text-lg font-black",
+          isBest ? "text-brand-600 dark:text-brand-400" : "text-zinc-700 dark:text-zinc-200")}>
           {outcome.odds}
         </span>
         {isBest && (
-          <p className="text-[9px] text-green-400/70 font-semibold">BEST ODDS</p>
+          <p className="text-[9px] text-brand-600/70 dark:text-brand-400/70 font-bold uppercase tracking-wide">Best odds</p>
         )}
       </div>
     </div>
+  );
+}
+
+function Avatar({ image, color, name, face, size = 44 }: {
+  image?: string; color: string; name: string; face: boolean; size?: number;
+}) {
+  if (image) {
+    return (
+      <span
+        className="relative inline-flex rounded-full bg-zinc-100 dark:bg-zinc-800 ring-1 ring-zinc-200/80 dark:ring-zinc-700 overflow-hidden shrink-0"
+        style={{ width: size, height: size }}
+      >
+        <img
+          src={image}
+          alt={name}
+          className={clsx("w-full h-full", face ? "object-cover object-top" : "object-contain p-1.5")}
+          onError={e => { (e.target as HTMLImageElement).style.display = "none"; }}
+        />
+      </span>
+    );
+  }
+  return (
+    <span
+      className="inline-flex items-center justify-center rounded-full text-white font-bold shrink-0"
+      style={{ width: size, height: size, background: color, fontSize: size * 0.32 }}
+    >
+      {name.slice(0, 2).toUpperCase()}
+    </span>
   );
 }
 
@@ -79,7 +107,6 @@ export function SportModal({ prediction: p, onClose }: Props) {
   const [error, setError]     = useState(false);
 
   const assets = getSportAssets(p.home, p.away, p.sport);
-  const imgSize = assets.isPlayerFace ? "cover" : "60%";
 
   useEffect(() => {
     const params = new URLSearchParams({ home: p.home, away: p.away, date: p.date });
@@ -103,67 +130,42 @@ export function SportModal({ prediction: p, onClose }: Props) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto"
+    <div className="fixed inset-0 z-50 bg-zinc-950/60 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto"
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="w-full max-w-2xl my-8 bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-2xl overflow-hidden shadow-2xl">
+      <div className="w-full max-w-2xl my-8 card !rounded-3xl shadow-pop overflow-hidden animate-scale-in">
 
-        {/* Hero header with bleeding image */}
-        <div className="relative h-40 overflow-hidden">
-          <div className="absolute inset-0 flex">
-            <div className="flex-1" style={{ background: assets.homeColor }} />
-            <div className="flex-1" style={{ background: assets.awayColor }} />
-          </div>
-          {assets.homeImage && (
-            <div className="absolute inset-0" style={{
-              backgroundImage: `url(${assets.homeImage})`,
-              backgroundSize: imgSize,
-              backgroundPosition: assets.isPlayerFace ? "25% top" : "30% center",
-              backgroundRepeat: "no-repeat",
-              maskImage: "linear-gradient(to right,black 0%,black 25%,transparent 70%)",
-              WebkitMaskImage: "linear-gradient(to right,black 0%,black 25%,transparent 70%)",
-            }} />
-          )}
-          {assets.awayImage && (
-            <div className="absolute inset-0" style={{
-              backgroundImage: `url(${assets.awayImage})`,
-              backgroundSize: imgSize,
-              backgroundPosition: assets.isPlayerFace ? "75% top" : "70% center",
-              backgroundRepeat: "no-repeat",
-              maskImage: "linear-gradient(to left,black 0%,black 25%,transparent 70%)",
-              WebkitMaskImage: "linear-gradient(to left,black 0%,black 25%,transparent 70%)",
-            }} />
-          )}
-          <div className="absolute inset-0 bg-black/50" />
-
-          {/* Header content */}
-          <div className="absolute inset-0 flex flex-col justify-between p-5">
-            <div className="flex items-start justify-between">
-              <div>
-                <p className="text-[11px] font-semibold text-white/70">
-                  {p.flag} {p.league_name} · {sportLabel[p.sport] || p.sport}
-                  {p.surface ? ` · ${p.surface}` : ""}
-                </p>
-                <p className="text-[11px] text-white/50 mt-0.5">{p.date}{p.time && p.time !== "TBD" ? ` · ${p.time}` : ""}</p>
-              </div>
-              <button onClick={onClose}
-                className="p-2 hover:bg-white/10 rounded-lg transition-colors">
-                <X size={16} className="text-white/70" />
-              </button>
+        {/* Header */}
+        <div className="border-b border-zinc-100 dark:border-zinc-800 p-5 sm:p-6">
+          <div className="flex items-start justify-between gap-3 mb-5">
+            <div>
+              <p className="text-[11px] font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wide">
+                {p.flag} {p.league_name} · {sportLabel[p.sport] || p.sport}
+                {p.surface ? ` · ${p.surface}` : ""}
+              </p>
+              <p className="tnum text-[11px] text-zinc-400 dark:text-zinc-500 mt-0.5">
+                {p.date}{p.time && p.time !== "TBD" ? ` · ${p.time}` : ""}
+              </p>
             </div>
+            <button onClick={onClose}
+              className="p-2 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-lg transition-colors">
+              <X size={16} className="text-zinc-400" />
+            </button>
+          </div>
 
-            <div className="flex items-end justify-between gap-4">
+          <div className="flex items-center gap-4 sm:gap-8">
+            <div className="flex-1 flex flex-col items-center text-center gap-2">
+              <Avatar image={assets.homeImage} color={assets.homeColor} name={p.home} face={assets.isPlayerFace} />
               <div>
-                <p className="text-xl font-black text-white drop-shadow-lg">{p.home}</p>
-                <p className="text-[10px] text-white/50 mt-0.5">
-                  {Math.round(p.p_home * 100)}% win prob
-                </p>
+                <p className="text-base font-bold text-zinc-900 dark:text-white leading-tight">{p.home}</p>
+                <p className="tnum text-[11px] text-zinc-400 dark:text-zinc-500">{Math.round(p.p_home * 100)}% win prob</p>
               </div>
-              <span className="text-white/40 text-sm font-bold mb-1">vs</span>
-              <div className="text-right">
-                <p className="text-xl font-black text-white drop-shadow-lg">{p.away}</p>
-                <p className="text-[10px] text-white/50 mt-0.5">
-                  {Math.round(p.p_away * 100)}% win prob
-                </p>
+            </div>
+            <div className="text-zinc-300 dark:text-zinc-600 font-black">vs</div>
+            <div className="flex-1 flex flex-col items-center text-center gap-2">
+              <Avatar image={assets.awayImage} color={assets.awayColor} name={p.away} face={assets.isPlayerFace} />
+              <div>
+                <p className="text-base font-bold text-zinc-900 dark:text-white leading-tight">{p.away}</p>
+                <p className="tnum text-[11px] text-zinc-400 dark:text-zinc-500">{Math.round(p.p_away * 100)}% win prob</p>
               </div>
             </div>
           </div>
@@ -174,55 +176,55 @@ export function SportModal({ prediction: p, onClose }: Props) {
 
           {/* Best pick banner */}
           {(detail?.best_pick || p.tip_1x2) && (
-            <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-4 flex items-center gap-4">
-              <div className="w-10 h-10 bg-green-500/20 rounded-full flex items-center justify-center shrink-0">
-                <Star size={18} className="text-green-400" />
+            <div className="bg-brand-50/60 dark:bg-brand-900/15 border border-brand-200 dark:border-brand-800 rounded-2xl p-4 flex items-center gap-4">
+              <div className="w-10 h-10 bg-brand-100 dark:bg-brand-900/40 rounded-full flex items-center justify-center shrink-0">
+                <Star size={18} className="text-brand-600 dark:text-brand-400" />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-xs text-green-400 font-semibold uppercase tracking-wide mb-0.5">Best Pick</p>
-                <p className="text-slate-900 dark:text-white font-bold text-base">
+                <p className="text-[10px] text-brand-700 dark:text-brand-400 font-bold uppercase tracking-wider mb-0.5">Best pick</p>
+                <p className="text-zinc-900 dark:text-white font-bold text-base">
                   {detail?.best_pick?.label || p.tip_1x2}
                 </p>
-                <p className="text-xs text-slate-500 dark:text-slate-400">
+                <p className="tnum text-xs text-zinc-500 dark:text-zinc-400">
                   {Math.round((detail?.best_pick?.confidence || p.goals_confidence) * 100)}% confidence
                 </p>
               </div>
               {(detail?.best_pick?.odds) && (
-                <p className="text-2xl font-black text-green-400 shrink-0">{detail.best_pick.odds}</p>
+                <p className="tnum text-2xl font-black text-brand-600 dark:text-brand-400 shrink-0">{detail.best_pick.odds}</p>
               )}
             </div>
           )}
 
           {/* Markets */}
           {loading ? (
-            <div className="flex items-center justify-center gap-2 py-10 text-slate-500">
+            <div className="flex items-center justify-center gap-2 py-10 text-zinc-400 dark:text-zinc-500">
               <Loader2 size={18} className="animate-spin" />
-              <span className="text-sm">Loading live markets…</span>
+              <span className="text-sm font-medium">Loading live markets…</span>
             </div>
           ) : error ? (
-            <div className="text-center py-10 space-y-3">
-              <TrendingUp size={28} className="text-slate-500 mx-auto opacity-40" />
-              <p className="text-slate-500 text-sm">Live markets unavailable for this match.</p>
-              <p className="text-slate-600 text-xs">
+            <div className="text-center py-8 space-y-3">
+              <TrendingUp size={28} className="text-zinc-300 dark:text-zinc-600 mx-auto" />
+              <p className="text-zinc-500 dark:text-zinc-400 text-sm font-medium">Live markets unavailable for this match.</p>
+              <p className="text-zinc-400 dark:text-zinc-600 text-xs max-w-md mx-auto">
                 This can happen when no active tournament is running for {p.sport === "tennis" ? "tennis" : p.sport === "table_tennis" ? "table tennis" : "this sport"}.
-                The Odds API only covers major tournaments when they're in progress.
+                The Odds API only covers major tournaments when they&apos;re in progress.
               </p>
               {/* Show what we DO have from the prediction card */}
-              <div className="mt-4 bg-slate-800/50 border border-slate-700 rounded-xl p-4 text-left space-y-2">
-                <p className="text-xs text-slate-400 font-semibold uppercase tracking-wide">Our Model Prediction</p>
+              <div className="mt-4 bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-100 dark:border-zinc-800 rounded-2xl p-4 text-left space-y-2">
+                <p className="text-[10px] text-zinc-400 dark:text-zinc-500 font-bold uppercase tracking-wider">Our model prediction</p>
                 <div className="flex justify-between text-sm">
-                  <span className="text-white font-semibold">{p.home}</span>
-                  <span className="text-green-400 font-black">{Math.round(p.p_home * 100)}%</span>
+                  <span className="text-zinc-900 dark:text-white font-semibold">{p.home}</span>
+                  <span className="tnum text-brand-600 dark:text-brand-400 font-black">{Math.round(p.p_home * 100)}%</span>
                 </div>
                 <div className="flex justify-between text-sm">
-                  <span className="text-white font-semibold">{p.away}</span>
-                  <span className="text-green-400 font-black">{Math.round(p.p_away * 100)}%</span>
+                  <span className="text-zinc-900 dark:text-white font-semibold">{p.away}</span>
+                  <span className="tnum text-brand-600 dark:text-brand-400 font-black">{Math.round(p.p_away * 100)}%</span>
                 </div>
-                <div className="pt-2 border-t border-slate-700">
-                  <p className="text-xs text-slate-400">Best pick: <span className="text-white font-bold">{p.tip_1x2}</span></p>
-                  <p className="text-xs text-slate-400">Confidence: <span className="text-green-400 font-bold">{Math.round(p.goals_confidence * 100)}%</span></p>
-                  {p.odds_home && <p className="text-xs text-slate-400 mt-1">
-                    Odds: <span className="text-white">{p.home} {p.odds_home}</span> · <span className="text-white">{p.away} {p.odds_away}</span>
+                <div className="pt-2 border-t border-zinc-100 dark:border-zinc-800">
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">Best pick: <span className="text-zinc-900 dark:text-white font-bold">{p.tip_1x2}</span></p>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">Confidence: <span className="tnum text-brand-600 dark:text-brand-400 font-bold">{Math.round(p.goals_confidence * 100)}%</span></p>
+                  {p.odds_home && <p className="tnum text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+                    Odds: <span className="text-zinc-900 dark:text-white">{p.home} {p.odds_home}</span> · <span className="text-zinc-900 dark:text-white">{p.away} {p.odds_away}</span>
                   </p>}
                 </div>
               </div>
@@ -232,9 +234,8 @@ export function SportModal({ prediction: p, onClose }: Props) {
             return (
               <div key={market.id} className="space-y-2">
                 <div className="flex items-center gap-2">
-                  <span className="text-base">{market.icon}</span>
-                  <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-200">{market.name}</h3>
-                  <span className="ml-auto text-[10px] text-slate-400 dark:text-slate-600">Best available odds</span>
+                  <h3 className="text-sm font-bold text-zinc-800 dark:text-zinc-200">{market.name}</h3>
+                  <span className="ml-auto text-[10px] text-zinc-400 dark:text-zinc-600">Best available odds</span>
                 </div>
                 <div className="space-y-2">
                   {market.outcomes.map(o => (
@@ -245,7 +246,7 @@ export function SportModal({ prediction: p, onClose }: Props) {
             );
           })}
 
-          <p className="text-center text-[10px] text-slate-400 dark:text-slate-600 pt-2">
+          <p className="text-center text-[10px] text-zinc-400 dark:text-zinc-600 pt-2">
             Odds sourced from The Odds API · Best available across EU bookmakers · Always verify before betting
           </p>
         </div>

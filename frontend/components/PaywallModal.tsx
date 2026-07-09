@@ -67,20 +67,22 @@ export function PaywallModal({ onClose, onSuccess }: Props) {
 
   return (
     <div
-      className="fixed inset-0 z-[60] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4"
+      className="fixed inset-0 z-[60] bg-zinc-950/60 backdrop-blur-sm flex items-center justify-center p-4"
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden">
+      <div className="w-full max-w-md card !rounded-3xl shadow-pop overflow-hidden animate-scale-in">
 
         {/* Header */}
-        <div className="relative bg-gradient-to-br from-yellow-500/20 to-green-500/10 border-b border-slate-700 px-6 py-6 text-center">
-          <button onClick={onClose} className="absolute top-4 right-4 p-1.5 hover:bg-slate-700 rounded-lg text-slate-400">
+        <div className="relative bg-gradient-to-br from-amber-50 to-brand-50 dark:from-amber-500/10 dark:to-brand-500/10 border-b border-zinc-100 dark:border-zinc-800 px-6 py-7 text-center">
+          <button onClick={onClose} className="absolute top-4 right-4 p-1.5 hover:bg-zinc-200/60 dark:hover:bg-zinc-800 rounded-lg text-zinc-400 transition-colors">
             <X size={14} />
           </button>
-          <Crown size={32} className="text-yellow-400 mx-auto mb-2" />
-          <h2 className="text-xl font-black text-white">Unlock BetIQ Premium</h2>
-          <p className="text-slate-400 text-sm mt-1">Everything you need to bet smarter</p>
-          <div className="mt-3 inline-block bg-yellow-500 text-black font-black text-lg px-4 py-1 rounded-xl">
+          <span className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-amber-100 dark:bg-amber-500/15 mb-3">
+            <Crown size={26} className="text-amber-500" />
+          </span>
+          <h2 className="text-xl font-black text-zinc-900 dark:text-white">Unlock BetIQ Premium</h2>
+          <p className="text-zinc-500 dark:text-zinc-400 text-sm mt-1">Everything you need to bet smarter</p>
+          <div className="tnum mt-4 inline-block bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 font-black text-lg px-5 py-1.5 rounded-xl">
             {PRICE_LABEL}
           </div>
         </div>
@@ -89,33 +91,33 @@ export function PaywallModal({ onClose, onSuccess }: Props) {
         <div className="px-6 py-5 space-y-2.5">
           {FEATURES.map(f => (
             <div key={f} className="flex items-start gap-2.5">
-              <Check size={14} className="text-green-400 mt-0.5 shrink-0" />
-              <span className="text-sm text-slate-300">{f}</span>
+              <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-brand-50 dark:bg-brand-900/30 mt-0.5 shrink-0">
+                <Check size={11} className="text-brand-600 dark:text-brand-400" />
+              </span>
+              <span className="text-sm text-zinc-600 dark:text-zinc-300">{f}</span>
             </div>
           ))}
         </div>
 
         {/* CTA */}
         <div className="px-6 pb-6 space-y-3">
-          {error && <p className="text-red-400 text-xs text-center">{error}</p>}
+          {error && <p className="text-rose-500 text-xs text-center font-medium">{error}</p>}
 
           {!user ? (
             <SignInButton mode="modal">
-              <button className="w-full py-3 bg-green-500 hover:bg-green-400 text-black font-bold rounded-xl transition-all text-sm">
-                Sign in to upgrade
-              </button>
+              <button className="btn-primary w-full !py-3">Sign in to upgrade</button>
             </SignInButton>
           ) : (
             <button
               onClick={handlePay}
               disabled={loading}
-              className="w-full py-3 bg-yellow-500 hover:bg-yellow-400 disabled:opacity-60 text-black font-bold rounded-xl transition-all text-sm flex items-center justify-center gap-2"
+              className="btn-primary w-full !py-3 !bg-zinc-900 dark:!bg-white hover:!bg-zinc-800 dark:hover:!bg-zinc-100 !text-white dark:!text-zinc-900"
             >
               {loading ? <><Loader2 size={16} className="animate-spin" /> Verifying…</> : `Pay ${PRICE_LABEL}`}
             </button>
           )}
 
-          <p className="text-center text-[10px] text-slate-600">
+          <p className="text-center text-[10px] text-zinc-400 dark:text-zinc-600">
             Secured by Paystack · Cancel anytime · NGN only
           </p>
         </div>

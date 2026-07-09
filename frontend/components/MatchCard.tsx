@@ -1,6 +1,6 @@
 "use client";
 
-import { getTeamAssets, getMatchGradient } from "@/lib/teamAssets";
+import { getTeamAssets } from "@/lib/teamAssets";
 import clsx from "clsx";
 
 interface Props {
@@ -16,77 +16,47 @@ interface Props {
 }
 
 function TeamName({ name }: { name: string }) {
-  const { imageUrl, isFlag } = getTeamAssets(name);
+  const { imageUrl, isFlag, color } = getTeamAssets(name);
   return (
     <div className="flex items-center gap-1.5 min-w-0">
-      {imageUrl && (
-        <img
-          src={imageUrl}
-          alt={name}
-          className={clsx("shrink-0 object-contain",
-            isFlag ? "w-6 h-4 rounded-sm" : "w-5 h-5 rounded-full bg-white/10 p-0.5")}
-          onError={e => { (e.target as HTMLImageElement).style.display = "none"; }}
-        />
+      {imageUrl ? (
+        <span className="relative inline-flex items-center justify-center w-5 h-5 rounded-full bg-zinc-100 dark:bg-zinc-800 ring-1 ring-zinc-200/80 dark:ring-zinc-700 overflow-hidden shrink-0">
+          <img
+            src={imageUrl}
+            alt={name}
+            className={clsx("object-contain", isFlag ? "w-full h-full object-cover" : "w-[70%] h-[70%]")}
+            onError={e => { (e.target as HTMLImageElement).style.display = "none"; }}
+          />
+        </span>
+      ) : (
+        <span
+          className="inline-flex items-center justify-center w-5 h-5 rounded-full text-white font-bold text-[8px] shrink-0"
+          style={{ background: color }}
+        >
+          {name.slice(0, 2).toUpperCase()}
+        </span>
       )}
-      <span className="text-white font-bold text-sm truncate drop-shadow">{name}</span>
+      <span className="text-zinc-900 dark:text-white font-semibold text-sm truncate">{name}</span>
     </div>
   );
 }
 
 export function MatchCard({ home, away, date, time, league, flag, children, onClick, className }: Props) {
-  const gradient = getMatchGradient(home, away);
-  const homeA = getTeamAssets(home);
-  const awayA = getTeamAssets(away);
-  const homeSize = homeA.isFlag ? "cover" : "60%";
-  const awaySize = awayA.isFlag ? "cover" : "60%";
-
   return (
     <div
       onClick={onClick}
-      className={clsx(
-        "relative overflow-hidden rounded-xl border border-white/10",
-        onClick && "cursor-pointer hover:brightness-110 active:scale-[0.98] transition-all",
-        className
-      )}
+      className={clsx("card", onClick && "card-interactive", className)}
     >
-      {/* Background layers */}
-      <div className="absolute inset-0 flex">
-        <div className="flex-1" style={{ background: homeA.color }} />
-        <div className="flex-1" style={{ background: awayA.color }} />
-      </div>
-      {homeA.imageUrl && (
-        <div className="absolute inset-0" style={{
-          backgroundImage: `url(${homeA.imageUrl})`,
-          backgroundSize: homeSize,
-          backgroundPosition: homeA.isFlag ? "left center" : "30% center",
-          backgroundRepeat: "no-repeat",
-          maskImage: "linear-gradient(to right, black 0%, black 20%, transparent 65%)",
-          WebkitMaskImage: "linear-gradient(to right, black 0%, black 20%, transparent 65%)",
-        }} />
-      )}
-      {awayA.imageUrl && (
-        <div className="absolute inset-0" style={{
-          backgroundImage: `url(${awayA.imageUrl})`,
-          backgroundSize: awaySize,
-          backgroundPosition: awayA.isFlag ? "right center" : "70% center",
-          backgroundRepeat: "no-repeat",
-          maskImage: "linear-gradient(to left, black 0%, black 20%, transparent 65%)",
-          WebkitMaskImage: "linear-gradient(to left, black 0%, black 20%, transparent 65%)",
-        }} />
-      )}
-      <div className="absolute inset-0 bg-black/55" />
-
-      {/* Content */}
-      <div className="relative z-10 px-4 py-3 flex items-center gap-3">
+      <div className="px-4 py-3 flex items-center gap-3">
         <div className="flex-1 min-w-0 space-y-1.5">
           {(league || flag) && (
-            <p className="text-[10px] text-white/60 font-medium truncate">
+            <p className="text-[10px] text-zinc-400 dark:text-zinc-500 font-semibold uppercase tracking-wide truncate">
               {flag} {league}{date ? ` · ${date}${time && time !== "TBD" ? ` ${time}` : ""}` : ""}
             </p>
           )}
           <div className="flex items-center gap-2">
             <TeamName name={home} />
-            <span className="text-white/40 text-xs shrink-0">vs</span>
+            <span className="text-zinc-300 dark:text-zinc-600 text-xs shrink-0 font-medium">vs</span>
             <TeamName name={away} />
           </div>
         </div>

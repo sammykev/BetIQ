@@ -67,37 +67,34 @@ function BookingCard({ result, onDismiss }: { result: BookingResult; onDismiss: 
   const bookerLabel: Record<string, string> = { sportybet: "SportyBet", "1xbet": "1xBet" };
 
   return (
-    <div className="rounded-xl border border-slate-600 bg-slate-800/80 p-4 space-y-3 text-sm">
+    <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/80 p-4 space-y-3 text-sm">
 
       {/* ── Booking code (if generated) ── */}
       {result.code && (
         <div className="space-y-2">
-          <p className="text-green-400 font-semibold text-xs uppercase tracking-wide">
-            ✅ {bookerLabel[result.bookie || ""] || "Booking"} Code
+          <p className="text-brand-600 dark:text-brand-400 font-bold text-xs uppercase tracking-wide">
+            ✅ {bookerLabel[result.bookie || ""] || "Booking"} code
           </p>
-          <div className="flex items-center gap-2 bg-black/30 rounded-lg px-3 py-2">
-            <span className="text-xl font-black text-white tracking-widest flex-1 font-mono">
+          <div className="flex items-center gap-2 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-2">
+            <span className="text-xl font-black text-zinc-900 dark:text-white tracking-widest flex-1 font-mono">
               {result.code}
             </span>
-            <button
-              onClick={copyCode}
-              className="flex items-center gap-1 bg-green-500 hover:bg-green-400 text-black text-xs font-bold px-3 py-1.5 rounded-lg transition-colors shrink-0"
-            >
+            <button onClick={copyCode} className="btn-primary !px-3 !py-1.5 !text-xs shrink-0">
               {copiedCode ? <Check size={12} /> : <Copy size={12} />}
               {copiedCode ? "Copied!" : "Copy"}
             </button>
           </div>
           {result.total_odds && (
-            <p className="text-yellow-400 font-semibold text-xs">
+            <p className="tnum text-amber-600 dark:text-amber-400 font-semibold text-xs">
               Combined odds: ~{result.total_odds}x
             </p>
           )}
           {result.matched.length > 0 && (
-            <div className="space-y-1 pt-1 border-t border-slate-700">
+            <div className="space-y-1 pt-1 border-t border-zinc-200 dark:border-zinc-700">
               {result.matched.map((m, i) => (
-                <div key={i} className="flex justify-between text-xs text-slate-300">
+                <div key={i} className="flex justify-between text-xs text-zinc-600 dark:text-zinc-300">
                   <span className="truncate">{m.game}</span>
-                  <span className="text-green-400 font-semibold ml-2 shrink-0">{m.tip} @ {m.odds}</span>
+                  <span className="tnum text-brand-600 dark:text-brand-400 font-semibold ml-2 shrink-0">{m.tip} @ {m.odds}</span>
                 </div>
               ))}
             </div>
@@ -109,13 +106,13 @@ function BookingCard({ result, onDismiss }: { result: BookingResult; onDismiss: 
       {!result.code && result.picks && result.picks.length > 0 && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5 text-blue-400">
+            <div className="flex items-center gap-1.5 text-sky-600 dark:text-sky-400">
               <ClipboardList size={13} />
-              <p className="font-semibold text-xs uppercase tracking-wide">Your Picks</p>
+              <p className="font-bold text-xs uppercase tracking-wide">Your picks</p>
             </div>
             <button
               onClick={copyPicks}
-              className="flex items-center gap-1 bg-blue-500 hover:bg-blue-400 text-white text-xs font-bold px-2.5 py-1 rounded-lg transition-colors"
+              className="flex items-center gap-1 bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold px-2.5 py-1 rounded-lg transition-colors"
             >
               {copiedPicks ? <Check size={11} /> : <Copy size={11} />}
               {copiedPicks ? "Copied!" : "Copy all"}
@@ -124,19 +121,19 @@ function BookingCard({ result, onDismiss }: { result: BookingResult; onDismiss: 
 
           <div className="space-y-1.5">
             {result.picks.map((p, i) => (
-              <div key={i} className="bg-black/30 rounded-lg px-3 py-2 flex items-center justify-between gap-2">
+              <div key={i} className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-2 flex items-center justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="text-white text-xs font-semibold truncate">{p.home} vs {p.away}</p>
-                  <p className="text-slate-400 text-[10px]">{p.league} · {p.date}</p>
+                  <p className="text-zinc-900 dark:text-white text-xs font-semibold truncate">{p.home} vs {p.away}</p>
+                  <p className="text-zinc-400 dark:text-zinc-500 text-[10px]">{p.league} · {p.date}</p>
                 </div>
-                <span className="shrink-0 text-xs font-bold bg-green-500/20 text-green-300 border border-green-500/30 px-2 py-0.5 rounded-full">
+                <span className="shrink-0 text-xs font-bold bg-brand-50 dark:bg-brand-900/30 text-brand-700 dark:text-brand-400 border border-brand-200 dark:border-brand-800 px-2 py-0.5 rounded-full">
                   {p.tip}
                 </span>
               </div>
             ))}
           </div>
 
-          <p className="text-slate-500 text-[10px] pt-1">
+          <p className="text-zinc-400 dark:text-zinc-500 text-[10px] pt-1">
             Copy these picks and add them manually on any betting site.
           </p>
 
@@ -147,24 +144,24 @@ function BookingCard({ result, onDismiss }: { result: BookingResult; onDismiss: 
               { name: "1xBet",     url: "https://1xbet.ng/en/"           },
             ].map(b => (
               <a key={b.name} href={b.url} target="_blank" rel="noopener noreferrer"
-                className="text-[10px] font-semibold px-2.5 py-1 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 transition-colors">
+                className="text-[10px] font-semibold px-2.5 py-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-600 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700 transition-colors">
                 {b.name} ↗
               </a>
             ))}
           </div>
 
           {result.error && (
-            <p className="text-slate-500 text-[10px] italic">{result.error}</p>
+            <p className="text-zinc-400 dark:text-zinc-500 text-[10px] italic">{result.error}</p>
           )}
         </div>
       )}
 
       {/* ── Error only (no code, no picks) ── */}
       {!result.code && (!result.picks || result.picks.length === 0) && (
-        <p className="text-red-400 text-xs">⚠️ {result.error || "Could not generate booking code."}</p>
+        <p className="text-rose-500 text-xs">⚠️ {result.error || "Could not generate booking code."}</p>
       )}
 
-      <button onClick={onDismiss} className="text-slate-500 text-xs hover:text-slate-300 transition-colors pt-1">
+      <button onClick={onDismiss} className="text-zinc-400 text-xs hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors pt-1 font-medium">
         Dismiss
       </button>
     </div>
@@ -233,7 +230,7 @@ function AssistantBubble({
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="bg-slate-800 border border-slate-700 rounded-2xl rounded-tl-sm px-4 py-3 text-slate-100 text-sm whitespace-pre-wrap leading-relaxed max-w-[85%]">
+      <div className="bg-zinc-100 dark:bg-zinc-800 rounded-2xl rounded-tl-sm px-4 py-3 text-zinc-800 dark:text-zinc-100 text-sm whitespace-pre-wrap leading-relaxed max-w-[85%]">
         {displayText}
       </div>
 
@@ -241,7 +238,7 @@ function AssistantBubble({
         <button
           onClick={generateCode}
           disabled={loading}
-          className="self-start flex items-center gap-2 bg-green-500 hover:bg-green-400 disabled:opacity-60 text-black font-bold text-xs px-4 py-2 rounded-xl transition-colors"
+          className="btn-primary self-start !px-4 !py-2 !text-xs"
         >
           {loading ? (
             <Loader2 size={13} className="animate-spin" />
@@ -341,11 +338,11 @@ export function ChatBot({ predictions }: Props) {
 
   return (
     <>
-      {/* Floating button */}
+      {/* Floating button — sits above the mobile bottom nav */}
       {!open && (
         <button
           onClick={() => setOpen(true)}
-          className="fixed bottom-6 right-6 z-50 w-14 h-14 bg-green-500 hover:bg-green-400 text-black rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-105 active:scale-95"
+          className="fixed bottom-20 lg:bottom-6 right-4 lg:right-6 z-50 w-14 h-14 bg-brand-600 hover:bg-brand-700 text-white rounded-full shadow-pop flex items-center justify-center transition-all hover:scale-105 active:scale-95"
           title="BetIQ Assistant"
         >
           <MessageCircle size={24} />
@@ -354,25 +351,25 @@ export function ChatBot({ predictions }: Props) {
 
       {/* Chat panel */}
       {open && (
-        <div className="fixed bottom-6 right-6 z-50 w-[360px] max-w-[calc(100vw-2rem)] flex flex-col bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden"
+        <div className="fixed bottom-20 lg:bottom-6 right-4 lg:right-6 z-50 w-[360px] max-w-[calc(100vw-2rem)] flex flex-col card !rounded-2xl shadow-pop overflow-hidden animate-slide-up"
           style={{ height: minimised ? "auto" : "560px" }}
         >
           {/* Header */}
-          <div className="flex items-center gap-3 px-4 py-3 bg-slate-800 border-b border-slate-700 shrink-0">
-            <img src="/logo.svg" alt="" className="w-7 h-7 rounded-full" />
+          <div className="flex items-center gap-3 px-4 py-3 bg-zinc-50 dark:bg-zinc-800/60 border-b border-zinc-100 dark:border-zinc-800 shrink-0">
+            <img src="/logo.svg" alt="" className="w-7 h-7 rounded-lg" />
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-bold text-white leading-none">BetIQ Assistant</p>
-              <p className="text-[10px] text-green-400 mt-0.5">AI · SportyBet booking</p>
+              <p className="text-sm font-bold text-zinc-900 dark:text-white leading-none">BetIQ Assistant</p>
+              <p className="text-[10px] text-brand-600 dark:text-brand-400 mt-0.5 font-medium">AI · SportyBet booking</p>
             </div>
             <button
               onClick={() => setMinimised(!minimised)}
-              className="p-1 hover:bg-slate-700 rounded-lg text-slate-400"
+              className="p-1 hover:bg-zinc-200/60 dark:hover:bg-zinc-700 rounded-lg text-zinc-400 transition-colors"
             >
               <ChevronDown size={14} className={clsx("transition-transform", minimised && "rotate-180")} />
             </button>
             <button
               onClick={() => { setOpen(false); setMinimised(false); }}
-              className="p-1 hover:bg-slate-700 rounded-lg text-slate-400"
+              className="p-1 hover:bg-zinc-200/60 dark:hover:bg-zinc-700 rounded-lg text-zinc-400 transition-colors"
             >
               <X size={14} />
             </button>
@@ -385,7 +382,7 @@ export function ChatBot({ predictions }: Props) {
                 {messages.map((m, i) =>
                   m.role === "user" ? (
                     <div key={i} className="flex justify-end">
-                      <div className="bg-green-600 text-white rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm max-w-[80%] whitespace-pre-wrap">
+                      <div className="bg-brand-600 text-white rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm max-w-[80%] whitespace-pre-wrap">
                         {m.content}
                       </div>
                     </div>
@@ -395,7 +392,7 @@ export function ChatBot({ predictions }: Props) {
                 )}
 
                 {loading && (
-                  <div className="flex gap-2 items-center text-slate-500 text-sm">
+                  <div className="flex gap-2 items-center text-zinc-400 dark:text-zinc-500 text-sm">
                     <Loader2 size={14} className="animate-spin" />
                     Picking games…
                   </div>
@@ -408,7 +405,7 @@ export function ChatBot({ predictions }: Props) {
                       <button
                         key={s}
                         onClick={() => send(s)}
-                        className="text-xs px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-300 rounded-full transition-colors"
+                        className="text-xs px-3 py-1.5 bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-700 border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 rounded-full transition-colors"
                       >
                         {s}
                       </button>
@@ -420,7 +417,7 @@ export function ChatBot({ predictions }: Props) {
               </div>
 
               {/* Input */}
-              <div className="p-3 border-t border-slate-700 bg-slate-800 shrink-0">
+              <div className="p-3 border-t border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/60 shrink-0">
                 <div className="flex gap-2">
                   <input
                     value={input}
@@ -428,17 +425,17 @@ export function ChatBot({ predictions }: Props) {
                     onKeyDown={handleKey}
                     placeholder="Ask for picks…"
                     disabled={loading}
-                    className="flex-1 bg-slate-700 border border-slate-600 text-slate-100 placeholder-slate-500 text-sm rounded-xl px-3 py-2 outline-none focus:border-green-500 transition-colors disabled:opacity-50"
+                    className="flex-1 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 text-sm rounded-xl px-3 py-2 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all disabled:opacity-50"
                   />
                   <button
                     onClick={() => send()}
                     disabled={!input.trim() || loading}
-                    className="bg-green-500 hover:bg-green-400 disabled:opacity-40 text-black rounded-xl px-3 py-2 transition-colors"
+                    className="bg-brand-600 hover:bg-brand-700 disabled:opacity-40 text-white rounded-xl px-3 py-2 transition-colors"
                   >
                     <Send size={15} />
                   </button>
                 </div>
-                <p className="text-center text-[10px] text-slate-600 mt-2">
+                <p className="text-center text-[10px] text-zinc-400 dark:text-zinc-600 mt-2">
                   Powered by Claude AI · SportyBet Nigeria
                 </p>
               </div>

@@ -1,20 +1,21 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { PredictionCard } from "@/components/PredictionCard";
-import { MatchModal } from "@/components/MatchModal";
 import { LeagueTabs } from "@/components/LeagueTabs";
-import { fetchPredictions, fetchLeagues, triggerRefresh } from "@/lib/api";
+import { triggerRefresh } from "@/lib/api";
 import type { Prediction, League } from "@/lib/api";
-import { RefreshCw, TrendingUp, Shield, Info, AlertTriangle, CalendarDays, Percent, Bell } from "lucide-react";
+import {
+  RefreshCw, TrendingUp, Shield, AlertTriangle, CalendarDays, Percent, Bell,
+  Brain, BarChart3, Bot, Ticket, Globe, ArrowRight, Zap, Target, Layers,
+} from "lucide-react";
 import { ChatBot } from "@/components/ChatBot";
-import { CalendarView } from "@/components/CalendarView";
-import { ValueBets } from "@/components/ValueBets";
 import { SportCard, type SportPrediction } from "@/components/SportCard";
 import { SportModal } from "@/components/SportModal";
-import { UserMenu } from "@/components/UserMenu";
 import { PaywallModal } from "@/components/PaywallModal";
 import { AnnouncementBanner } from "@/components/AnnouncementBanner";
+import { AppShell } from "@/components/shell/AppShell";
 import { useUser, SignInButton, SignUpButton } from "@clerk/nextjs";
 import clsx from "clsx";
 
@@ -26,12 +27,12 @@ const CONFIDENCE_FILTERS = [
 ];
 
 const FEATURES = [
-  { icon: "⚽", title: "AI Predictions", desc: "XGBoost + Elo ratings across 9 leagues" },
-  { icon: "🎯", title: "Match Analysis", desc: "xG, markets, Elo gauge, correct score odds" },
-  { icon: "🤖", title: "AI Assistant", desc: "Chat to build accumulators instantly" },
-  { icon: "🎟️", title: "SportyBet Codes", desc: "One-click booking code generation" },
-  { icon: "📅", title: "History Calendar", desc: "Track past predictions & accuracy" },
-  { icon: "🌐", title: "Live Team News", desc: "Real-time injury & lineup context" },
+  { icon: Brain,        tint: "text-violet-600 bg-violet-50 dark:bg-violet-500/10",   title: "AI Predictions",  desc: "XGBoost + Elo ratings across 9 leagues, retrained on every refresh." },
+  { icon: BarChart3,    tint: "text-sky-600 bg-sky-50 dark:bg-sky-500/10",            title: "Match Analysis",  desc: "xG, 11 betting markets, Elo gauge and correct-score odds per game." },
+  { icon: Bot,          tint: "text-brand-600 bg-brand-50 dark:bg-brand-500/10",      title: "AI Assistant",    desc: "Chat to build accumulators and get instant picks." },
+  { icon: Ticket,       tint: "text-amber-600 bg-amber-50 dark:bg-amber-500/10",      title: "Booking Codes",   desc: "One-click SportyBet booking code generation." },
+  { icon: CalendarDays, tint: "text-rose-600 bg-rose-50 dark:bg-rose-500/10",         title: "History Tracker", desc: "Every past prediction graded — see real accuracy." },
+  { icon: Globe,        tint: "text-teal-600 bg-teal-50 dark:bg-teal-500/10",         title: "Live Team News",  desc: "Real-time injury and lineup context via web search." },
 ];
 
 function WakingUp({ onRetry }: { onRetry: () => void }) {
@@ -45,89 +46,100 @@ function WakingUp({ onRetry }: { onRetry: () => void }) {
   return (
     <div className="text-center py-20 space-y-4">
       <div className="text-5xl animate-bounce">⚽</div>
-      <p className="text-slate-300 font-semibold text-lg">Waking up the server{dots}</p>
-      <p className="text-slate-500 text-sm max-w-xs mx-auto">
-        The backend spins down when idle. It'll be ready in about 30 seconds.
+      <p className="text-zinc-700 dark:text-zinc-300 font-semibold text-lg">Waking up the server{dots}</p>
+      <p className="text-zinc-400 dark:text-zinc-500 text-sm max-w-xs mx-auto">
+        The backend spins down when idle. It&apos;ll be ready in about 30 seconds.
       </p>
-      <button onClick={onRetry}
-        className="px-5 py-2 bg-green-500 hover:bg-green-400 text-black font-bold rounded-xl text-sm transition-all">
-        Try now
-      </button>
+      <button onClick={onRetry} className="btn-primary">Try now</button>
     </div>
   );
 }
 
 function AuthGate() {
   return (
-    <div className="min-h-screen bg-slate-950 flex flex-col">
-      {/* Header */}
-      <header className="border-b border-slate-800 px-6 py-4 flex items-center justify-between">
+    <div className="min-h-screen bg-[#fafafa] dark:bg-[#09090b] flex flex-col">
+      {/* Nav */}
+      <header className="px-5 sm:px-8 py-4 flex items-center justify-between max-w-6xl mx-auto w-full">
         <div className="flex items-center gap-2.5">
-          <img src="/logo.svg" alt="BetIQ" className="w-9 h-9 rounded-full" />
-          <div>
-            <h1 className="text-lg font-bold text-white leading-none">BetIQ</h1>
-            <p className="text-xs text-slate-500 leading-none mt-0.5">AI Football Predictions</p>
-          </div>
+          <img src="/logo.svg" alt="BetIQ" className="w-9 h-9 rounded-xl" />
+          <span className="text-lg font-bold tracking-tight text-zinc-900 dark:text-white">BetIQ</span>
         </div>
         <SignInButton mode="modal">
-          <button className="text-xs text-slate-400 hover:text-white transition-colors">
-            Sign in
-          </button>
+          <button className="btn-secondary !py-1.5">Sign in</button>
         </SignInButton>
       </header>
 
       {/* Hero */}
-      <main className="flex-1 flex flex-col items-center justify-center px-4 py-16 text-center space-y-8">
-        <div className="space-y-4 max-w-lg">
-          <div className="text-6xl">⚽</div>
-          <h2 className="text-4xl font-black text-white leading-tight">
-            Bet smarter with <span className="text-green-400">AI predictions</span>
-          </h2>
-          <p className="text-slate-400 text-lg leading-relaxed">
-            XGBoost models + Elo ratings across 9 leagues. Chat to pick games,
-            get SportyBet booking codes in one tap.
+      <main className="flex-1 w-full max-w-6xl mx-auto px-5 sm:px-8">
+        <section className="pt-16 pb-14 sm:pt-24 sm:pb-20 text-center">
+          <div className="inline-flex items-center gap-1.5 bg-brand-50 dark:bg-brand-900/20 text-brand-700 dark:text-brand-400 border border-brand-100 dark:border-brand-900 text-xs font-semibold px-3 py-1 rounded-full mb-6">
+            <Zap size={12} /> Powered by XGBoost + Elo ratings
+          </div>
+          <h1 className="text-4xl sm:text-6xl font-black tracking-tight text-zinc-900 dark:text-white leading-[1.05] max-w-3xl mx-auto">
+            Football predictions,
+            <br />
+            <span className="text-gradient">engineered by AI.</span>
+          </h1>
+          <p className="text-zinc-500 dark:text-zinc-400 text-lg sm:text-xl leading-relaxed max-w-xl mx-auto mt-6">
+            Machine-learned probabilities across 9 leagues and 11 markets.
+            Chat to build your slip, get a booking code in one tap.
           </p>
-        </div>
 
-        {/* CTA buttons */}
-        <div className="flex flex-col sm:flex-row gap-3 w-full max-w-xs">
-          <SignUpButton mode="modal">
-            <button className="flex-1 bg-green-500 hover:bg-green-400 text-black font-bold py-3 px-6 rounded-xl text-sm transition-all hover:scale-105 active:scale-95">
-              Create free account
-            </button>
-          </SignUpButton>
-          <SignInButton mode="modal">
-            <button className="flex-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white font-semibold py-3 px-6 rounded-xl text-sm transition-all">
-              Sign in
-            </button>
-          </SignInButton>
-        </div>
+          <div className="flex flex-col sm:flex-row gap-3 justify-center mt-9">
+            <SignUpButton mode="modal">
+              <button className="btn-primary !px-7 !py-3 !text-base">
+                Create free account <ArrowRight size={16} />
+              </button>
+            </SignUpButton>
+            <SignInButton mode="modal">
+              <button className="btn-secondary !px-7 !py-3 !text-base">Sign in</button>
+            </SignInButton>
+          </div>
+          <p className="text-zinc-400 dark:text-zinc-600 text-xs mt-4">
+            Free to sign up · No credit card required
+          </p>
 
-        <p className="text-slate-600 text-xs">
-          Free to sign up · No credit card required
-        </p>
+          {/* Stat strip */}
+          <div className="grid grid-cols-3 max-w-lg mx-auto mt-14 divide-x divide-zinc-200 dark:divide-zinc-800">
+            {[
+              { icon: Layers, value: "9",   label: "Leagues covered" },
+              { icon: Target, value: "11+", label: "Betting markets" },
+              { icon: Zap,    value: "6h",  label: "Refresh cycle" },
+            ].map(({ icon: Icon, value, label }) => (
+              <div key={label} className="px-4">
+                <p className="tnum text-2xl sm:text-3xl font-black text-zinc-900 dark:text-white">{value}</p>
+                <p className="text-[11px] sm:text-xs text-zinc-400 dark:text-zinc-500 font-medium mt-1">{label}</p>
+              </div>
+            ))}
+          </div>
+        </section>
 
         {/* Feature grid */}
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 w-full max-w-2xl pt-4">
-          {FEATURES.map(({ icon, title, desc }) => (
-            <div key={title} className="bg-slate-900 border border-slate-800 rounded-xl p-4 text-left space-y-1.5">
-              <span className="text-2xl">{icon}</span>
-              <p className="text-white text-sm font-semibold">{title}</p>
-              <p className="text-slate-500 text-xs leading-relaxed">{desc}</p>
-            </div>
-          ))}
-        </div>
+        <section className="pb-20">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {FEATURES.map(({ icon: Icon, tint, title, desc }) => (
+              <div key={title} className="card p-5 text-left">
+                <span className={clsx("inline-flex items-center justify-center w-10 h-10 rounded-xl mb-3", tint)}>
+                  <Icon size={19} />
+                </span>
+                <p className="text-zinc-900 dark:text-white text-sm font-bold">{title}</p>
+                <p className="text-zinc-500 dark:text-zinc-400 text-[13px] leading-relaxed mt-1">{desc}</p>
+              </div>
+            ))}
+          </div>
+        </section>
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-slate-800 py-4 text-center text-xs text-slate-700">
-        BetIQ · AI Football Predictions · For educational use only
+      <footer className="border-t border-zinc-200 dark:border-zinc-800 py-5 text-center text-xs text-zinc-400 dark:text-zinc-600">
+        BetIQ · AI Football Predictions · Gamble responsibly · For educational use only
       </footer>
     </div>
   );
 }
 
 export default function HomePage() {
+  const router = useRouter();
   const [allPredictions, setAllPredictions] = useState<Prediction[]>([]);
   const [leagues, setLeagues] = useState<League[]>([]);
   const [selectedLeague, setSelectedLeague] = useState("ALL");
@@ -137,16 +149,13 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedMatch, setSelectedMatch] = useState<Prediction | null>(null);
-  const [showCalendar, setShowCalendar] = useState(false);
   const [bankersOnly, setBankersOnly] = useState(false);
-  const [activeView, setActiveView] = useState<"picks" | "value">("picks");
   const [activeSport, setActiveSport] = useState<"football" | "basketball" | "tennis" | "table-tennis">("football");
   const [sportPreds, setSportPreds] = useState<SportPrediction[]>([]);
   const [sportLoading, setSportLoading] = useState(false);
   const [selectedSportMatch, setSelectedSportMatch] = useState<SportPrediction | null>(null);
   const [showPaywall, setShowPaywall] = useState(false);
-  const [savedKeys, setSavedKeys] = useState<Set<string>>(new Set());
+  const [savedKeys] = useState<Set<string>>(new Set());
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushSupported, setPushSupported] = useState(false);
 
@@ -252,12 +261,13 @@ export default function HomePage() {
 
   async function handlePushToggle() {
     if (!pushSupported) return;
+    const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
     try {
       const reg = await navigator.serviceWorker.ready;
       if (pushEnabled) {
         const sub = await reg.pushManager.getSubscription();
         if (sub) {
-          await fetch(`${process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com"}/api/push/subscribe`, {
+          await fetch(`${API}/api/push/subscribe`, {
             method: "DELETE",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ subscription: sub.toJSON() }),
@@ -266,14 +276,14 @@ export default function HomePage() {
         }
         setPushEnabled(false);
       } else {
-        const keyRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com"}/api/push/public-key`);
+        const keyRes = await fetch(`${API}/api/push/public-key`);
         const { public_key } = await keyRes.json();
         if (!public_key) { alert("Push notifications not configured on server."); return; }
         const sub = await reg.pushManager.subscribe({
           userVisibleOnly: true,
           applicationServerKey: public_key,
         });
-        await fetch(`${process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com"}/api/push/subscribe`, {
+        await fetch(`${API}/api/push/subscribe`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ subscription: sub.toJSON() }),
@@ -309,8 +319,8 @@ export default function HomePage() {
 
   const sorted = [...predictions].sort((a, b) => {
     if (sortBy === "value") {
-      const va = (a as any).value_edge ?? -1;
-      const vb = (b as any).value_edge ?? -1;
+      const va = a.value_edge ?? -1;
+      const vb = b.value_edge ?? -1;
       return vb - va;
     }
     if (sortBy === "confidence") return b.goals_confidence - a.goals_confidence;
@@ -322,11 +332,23 @@ export default function HomePage() {
     return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   };
 
+  const openMatch = (p: Prediction) => {
+    const API_B = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
+    fetch(`${API_B}/api/track/match`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ home: p.home, away: p.away }),
+    }).catch(() => {});
+    if (!isPremium) { setShowPaywall(true); return; }
+    const q = new URLSearchParams({ home: p.home, away: p.away, date: p.date });
+    router.push(`/match?${q}`);
+  };
+
   // Auth gate — all hooks above must run first (React rules)
   if (!isLoaded) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-        <div className="w-8 h-8 border-2 border-green-500 border-t-transparent rounded-full animate-spin" />
+      <div className="min-h-screen bg-[#fafafa] dark:bg-[#09090b] flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-brand-600 border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
@@ -335,125 +357,116 @@ export default function HomePage() {
 
   if (maintenanceMode) {
     return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center gap-4 text-center p-6">
-        <img src="/logo.svg" alt="BetIQ" className="w-16 h-16 rounded-full opacity-60" />
-        <h1 className="text-2xl font-black text-white">Back soon</h1>
-        <p className="text-slate-400 max-w-sm">BetIQ is undergoing scheduled maintenance. We'll be back shortly with fresh predictions.</p>
-        <p className="text-slate-600 text-sm">⚽ Thanks for your patience</p>
+      <div className="min-h-screen bg-[#fafafa] dark:bg-[#09090b] flex flex-col items-center justify-center gap-4 text-center p-6">
+        <img src="/logo.svg" alt="BetIQ" className="w-16 h-16 rounded-2xl opacity-60" />
+        <h1 className="text-2xl font-black text-zinc-900 dark:text-white">Back soon</h1>
+        <p className="text-zinc-500 dark:text-zinc-400 max-w-sm">
+          BetIQ is undergoing scheduled maintenance. We&apos;ll be back shortly with fresh predictions.
+        </p>
+        <p className="text-zinc-400 dark:text-zinc-600 text-sm">⚽ Thanks for your patience</p>
       </div>
     );
   }
 
-  return (
-    <div className="min-h-screen bg-white dark:bg-slate-950">
-      {/* Announcement banner — sticky above header */}
-      <AnnouncementBanner text={siteBanner} />
+  const headerActions = (
+    <>
+      {pushSupported && (
+        <button
+          onClick={handlePushToggle}
+          title={pushEnabled ? "Disable value bet notifications" : "Get notified for value bets"}
+          className={clsx(
+            "hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all",
+            pushEnabled
+              ? "bg-brand-50 dark:bg-brand-900/20 border-brand-200 dark:border-brand-800 text-brand-700 dark:text-brand-400"
+              : "bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200"
+          )}
+        >
+          <Bell size={12} />
+          {pushEnabled ? "Alerts on" : "Alerts"}
+        </button>
+      )}
+      <button
+        onClick={handleRefresh}
+        disabled={refreshing}
+        className="btn-secondary !px-3 !py-1.5 !text-xs"
+      >
+        <RefreshCw size={12} className={clsx(refreshing && "animate-spin")} />
+        <span className="hidden sm:inline">Refresh</span>
+      </button>
+    </>
+  );
 
-      {/* Header */}
-      <header className="border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-950/80 backdrop-blur sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-2.5">
-            <img src="/logo.svg" alt="BetIQ" className="w-9 h-9 rounded-full" />
-            <div>
-              <h1 className="text-lg font-bold text-slate-900 dark:text-white tracking-tight leading-none">BetIQ</h1>
-              <p className="text-xs text-slate-500 dark:text-slate-500 leading-none mt-0.5">AI Football Predictions</p>
-            </div>
+  return (
+    <AppShell
+      banner={<AnnouncementBanner text={siteBanner} />}
+      actions={headerActions}
+      onUpgrade={() => setShowPaywall(true)}
+    >
+      <div className="space-y-6">
+        {/* Page heading */}
+        <div className="flex items-end justify-between gap-4 flex-wrap">
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-zinc-900 dark:text-white">
+              Predictions
+            </h1>
+            <p className="text-sm text-zinc-400 dark:text-zinc-500 mt-1">
+              {lastUpdated ? `Model last updated at ${fmt(lastUpdated)}` : "AI picks across 9 leagues"}
+            </p>
           </div>
 
-          <div className="flex items-center gap-3">
-            {lastUpdated && (
-              <span className="text-xs text-slate-500 hidden sm:block">
-                Updated {fmt(lastUpdated)}
-              </span>
-            )}
-            <button
-              onClick={() => isPremium ? setShowCalendar(true) : setShowPaywall(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-700 rounded-lg text-xs text-slate-700 dark:text-slate-300 transition-all"
-            >
-              <CalendarDays size={12} />
-              History
-            </button>
-            {pushSupported && (
+          {/* Sport selector */}
+          <div className="flex gap-2 flex-wrap">
+            {([
+              { key: "football",     label: "⚽ Football"     },
+              { key: "basketball",   label: "🏀 Basketball"   },
+              { key: "tennis",       label: "🎾 Tennis"       },
+              { key: "table-tennis", label: "🏓 Table Tennis" },
+            ] as const).map(({ key, label }) => (
               <button
-                onClick={handlePushToggle}
-                title={pushEnabled ? "Disable value bet notifications" : "Get notified for value bets"}
-                className={clsx(
-                  "flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs transition-all",
-                  pushEnabled
-                    ? "bg-emerald-500/20 border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/30"
-                    : "bg-slate-200 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-700"
-                )}
+                key={key}
+                onClick={() => setActiveSport(key)}
+                className={clsx("chip", activeSport === key ? "chip-active" : "chip-idle")}
               >
-                <Bell size={12} />
-                {pushEnabled ? "Alerts On" : "Alerts"}
+                {label}
               </button>
-            )}
-            <UserMenu onUpgrade={() => setShowPaywall(true)} />
-            <button
-              onClick={handleRefresh}
-              disabled={refreshing}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-700 rounded-lg text-xs text-slate-700 dark:text-slate-300 transition-all disabled:opacity-50"
-            >
-              <RefreshCw size={12} className={clsx(refreshing && "animate-spin")} />
-              Refresh
-            </button>
+            ))}
           </div>
         </div>
-      </header>
 
-      <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
-        {/* Stats bar — sport-aware */}
+        {/* Stats row */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {(activeSport === "football" ? [
-            { icon: <TrendingUp size={16} />, label: "Total Picks",      value: predictions.length,                                       color: "text-blue-400",   onClick: undefined,                                                    active: false },
-            { icon: <Shield size={16} />,    label: "Bankers",           value: bankers.length,                                           color: "text-green-400",  onClick: () => setBankersOnly(b => !b),                                active: bankersOnly },
-            { icon: <TrendingUp size={16} />,label: "High Confidence",   value: highConf.length,                                          color: "text-yellow-400", onClick: undefined,                                                    active: false },
-            { icon: <TrendingUp size={16} />,label: "Value Bets",        value: validPredictions.filter(p => (p as any).is_value_bet).length, color: "text-emerald-400", onClick: () => { setActiveView("picks"); setSortBy("value"); }, active: sortBy === "value" },
+            { icon: TrendingUp, label: "Total picks",     value: predictions.length, tint: "text-sky-600 bg-sky-50 dark:bg-sky-500/10", onClick: undefined as (() => void) | undefined, active: false },
+            { icon: Shield,     label: "Bankers",         value: bankers.length,     tint: "text-brand-600 bg-brand-50 dark:bg-brand-500/10", onClick: () => setBankersOnly(b => !b), active: bankersOnly },
+            { icon: Percent,    label: "High confidence", value: highConf.length,    tint: "text-amber-600 bg-amber-50 dark:bg-amber-500/10", onClick: undefined, active: false },
+            { icon: TrendingUp, label: "Value bets",      value: validPredictions.filter(p => p.is_value_bet).length, tint: "text-violet-600 bg-violet-50 dark:bg-violet-500/10", onClick: () => setSortBy("value"), active: sortBy === "value" },
           ] : [
-            { icon: <TrendingUp size={16} />, label: "Total Picks",   value: sportPreds.length,                                                                          color: "text-blue-400",   onClick: undefined, active: false },
-            { icon: <Shield size={16} />,     label: "High Conf (≥65%)", value: sportPreds.filter(p => p.goals_confidence >= 0.65).length,                              color: "text-green-400",  onClick: undefined, active: false },
-            { icon: <TrendingUp size={16} />, label: "Very High (≥75%)", value: sportPreds.filter(p => p.goals_confidence >= 0.75).length,                              color: "text-yellow-400", onClick: undefined, active: false },
-            { icon: <Info size={16} />,       label: "Leagues / Tourn",  value: new Set(sportPreds.map(p => p.league_name)).size,                                       color: "text-purple-400", onClick: undefined, active: false },
-          ] as { icon: React.ReactNode; label: string; value: number; color: string; onClick: (() => void) | undefined; active: boolean }[]).map(({ icon, label, value, color, onClick, active }) => (
-            <div
+            { icon: TrendingUp, label: "Total picks",       value: sportPreds.length, tint: "text-sky-600 bg-sky-50 dark:bg-sky-500/10", onClick: undefined, active: false },
+            { icon: Shield,     label: "High conf (≥65%)",  value: sportPreds.filter(p => p.goals_confidence >= 0.65).length, tint: "text-brand-600 bg-brand-50 dark:bg-brand-500/10", onClick: undefined, active: false },
+            { icon: Percent,    label: "Very high (≥75%)",  value: sportPreds.filter(p => p.goals_confidence >= 0.75).length, tint: "text-amber-600 bg-amber-50 dark:bg-amber-500/10", onClick: undefined, active: false },
+            { icon: Globe,      label: "Competitions",      value: new Set(sportPreds.map(p => p.league_name)).size, tint: "text-violet-600 bg-violet-50 dark:bg-violet-500/10", onClick: undefined, active: false },
+          ]).map(({ icon: Icon, label, value, tint, onClick, active }) => (
+            <button
               key={label}
               onClick={onClick}
+              disabled={!onClick}
               className={clsx(
-                "bg-slate-50 dark:bg-slate-900 border rounded-xl px-4 py-3 flex items-center gap-3 transition-all",
-                onClick ? "cursor-pointer hover:scale-[1.02]" : "",
-                active
-                  ? "border-green-500/60 bg-green-500/10 dark:bg-green-500/10 ring-1 ring-green-500/40"
-                  : "border-slate-200 dark:border-slate-800"
+                "card px-4 py-3.5 flex items-center gap-3 text-left transition-all",
+                onClick && "hover:shadow-card-hover hover:-translate-y-0.5 cursor-pointer",
+                active && "ring-2 ring-brand-500/50 border-brand-300 dark:border-brand-700"
               )}
             >
-              <span className={color}>{icon}</span>
-              <div>
-                <p className="text-xs text-slate-500">{label}{active ? " — active" : ""}</p>
-                <p className="text-xl font-bold text-slate-900 dark:text-slate-100">{value}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* Sport selector */}
-        <div className="flex gap-2 flex-wrap">
-          {([
-            { key: "football",    label: "⚽ Football"    },
-            { key: "basketball",  label: "🏀 Basketball"  },
-            { key: "tennis",      label: "🎾 Tennis"      },
-            { key: "table-tennis",label: "🏓 Table Tennis"},
-          ] as const).map(({ key, label }) => (
-            <button
-              key={key}
-              onClick={() => setActiveSport(key)}
-              className={clsx(
-                "px-4 py-1.5 rounded-full text-sm font-semibold border transition-all",
-                activeSport === key
-                  ? "bg-green-500/20 text-green-300 border-green-500/40"
-                  : "bg-slate-200 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-300 dark:border-slate-700 hover:text-slate-800 dark:hover:text-slate-200"
-              )}
-            >
-              {label}
+              <span className={clsx("inline-flex items-center justify-center w-9 h-9 rounded-xl shrink-0", tint)}>
+                <Icon size={17} />
+              </span>
+              <span className="min-w-0">
+                <span className="block text-[11px] text-zinc-400 dark:text-zinc-500 font-medium truncate">
+                  {label}{active ? " · on" : ""}
+                </span>
+                <span className="tnum block text-xl font-black text-zinc-900 dark:text-white leading-tight">
+                  {value}
+                </span>
+              </span>
             </button>
           ))}
         </div>
@@ -462,19 +475,18 @@ export default function HomePage() {
         {activeSport !== "football" && (
           <div className="space-y-4">
             {sportLoading ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {Array.from({ length: 6 }).map((_, i) => (
-                  <div key={i} className="rounded-xl h-48 animate-pulse bg-slate-800" />
+                  <div key={i} className="card h-48 animate-pulse !bg-zinc-100 dark:!bg-zinc-900" />
                 ))}
               </div>
             ) : sportPreds.length === 0 ? (
-              <div className="text-center py-16 text-slate-500 space-y-2">
-                <p className="text-2xl">{activeSport === "basketball" ? "🏀" : activeSport === "tennis" ? "🎾" : "🏓"}</p>
-                <p className="text-sm">No {activeSport} predictions right now.</p>
-                <p className="text-xs text-slate-600">Requires ODDS_API_KEY in Render env vars.</p>
+              <div className="text-center py-16 text-zinc-400 dark:text-zinc-500 space-y-2">
+                <p className="text-3xl">{activeSport === "basketball" ? "🏀" : activeSport === "tennis" ? "🎾" : "🏓"}</p>
+                <p className="text-sm font-medium">No {activeSport} predictions right now.</p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {sportPreds.map((p, i) => (
                   <SportCard key={i} prediction={p} onClick={() => setSelectedSportMatch(p)} />
                 ))}
@@ -483,171 +495,109 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* View toggle: Picks / Value Bets (football only) */}
-        {activeSport === "football" && <div className="flex gap-2 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-1 w-fit">
-          <button
-            onClick={() => setActiveView("picks")}
-            className={clsx(
-              "flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-semibold transition-all",
-              activeView === "picks"
-                ? "bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm"
-                : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
-            )}
-          >
-            <Shield size={13} /> Picks
-          </button>
-          <button
-            onClick={() => setActiveView("value")}
-            className={clsx(
-              "flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-semibold transition-all",
-              activeView === "value"
-                ? "bg-white dark:bg-slate-800 text-green-400 shadow-sm"
-                : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
-            )}
-          >
-            <TrendingUp size={13} /> Value Bets
-          </button>
-        </div>}
-
         {activeSport === "football" && <>
-        {/* Disclaimer */}
-        <div className="flex items-start gap-2.5 bg-yellow-500/5 border border-yellow-500/20 rounded-xl px-4 py-3">
-          <AlertTriangle size={14} className="text-yellow-500 mt-0.5 shrink-0" />
-          <p className="text-xs text-yellow-200/70">
-            Gamble responsibly. Past performance does not guarantee future results.
-          </p>
-        </div>
+          {/* Filters */}
+          <div className="space-y-3">
+            <LeagueTabs
+              leagues={leagues}
+              selected={selectedLeague}
+              onSelect={setSelectedLeague}
+              counts={counts}
+            />
 
-        {/* Filters */}
-        <div className="space-y-3">
-          <LeagueTabs
-            leagues={leagues}
-            selected={selectedLeague}
-            onSelect={setSelectedLeague}
-            counts={counts}
-          />
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex gap-1.5">
+                {CONFIDENCE_FILTERS.map(({ label, value }) => (
+                  <button
+                    key={label}
+                    onClick={() => setMinConf(value)}
+                    className={clsx("chip !text-xs !px-3 !py-1", minConf === value ? "chip-active" : "chip-idle")}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
 
-          <div className="flex items-center gap-3 flex-wrap">
-            <div className="flex gap-2">
-              {CONFIDENCE_FILTERS.map(({ label, value }) => (
-                <button
-                  key={label}
-                  onClick={() => setMinConf(value)}
-                  className={clsx(
-                    "px-3 py-1 rounded-lg text-xs font-medium border transition-all",
-                    minConf === value
-                      ? "bg-green-500/20 text-green-300 border-green-500/40"
-                      : "bg-slate-200 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-300 dark:border-slate-700 hover:text-slate-800 dark:hover:text-slate-200"
-                  )}
-                >
-                  {label}
-                </button>
+              <div className="flex items-center gap-0.5 bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-0.5 ml-auto">
+                {([
+                  { key: "date",       label: "Soonest",    icon: CalendarDays },
+                  { key: "confidence", label: "Confidence", icon: Percent },
+                  { key: "value",      label: "Value",      icon: TrendingUp },
+                ] as const).map(({ key, label, icon: Icon }) => (
+                  <button
+                    key={key}
+                    onClick={() => setSortBy(key)}
+                    className={clsx(
+                      "flex items-center gap-1.5 px-3 py-1.5 rounded-[10px] text-xs font-semibold transition-all",
+                      sortBy === key
+                        ? "bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white shadow-sm"
+                        : "text-zinc-400 dark:text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+                    )}
+                  >
+                    <Icon size={11} />
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Picks grid */}
+          {loading ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {Array.from({ length: 9 }).map((_, i) => (
+                <div key={i} className="card p-4 space-y-4 animate-pulse">
+                  <div className="h-3 bg-zinc-100 dark:bg-zinc-800 rounded-full w-1/2" />
+                  <div className="space-y-2.5">
+                    <div className="flex items-center gap-2">
+                      <div className="w-7 h-7 bg-zinc-100 dark:bg-zinc-800 rounded-full" />
+                      <div className="h-4 bg-zinc-100 dark:bg-zinc-800 rounded-full flex-1" />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-7 h-7 bg-zinc-100 dark:bg-zinc-800 rounded-full" />
+                      <div className="h-4 bg-zinc-100 dark:bg-zinc-800 rounded-full flex-1" />
+                    </div>
+                  </div>
+                  <div className="h-1.5 bg-zinc-100 dark:bg-zinc-800 rounded-full" />
+                  <div className="h-14 bg-zinc-50 dark:bg-zinc-800/60 rounded-xl" />
+                </div>
               ))}
             </div>
-
-            <div className="flex items-center gap-1 bg-slate-200 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg p-0.5">
-              <button
-                onClick={() => setSortBy("date")}
-                className={clsx(
-                  "flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-all",
-                  sortBy === "date"
-                    ? "bg-slate-300 dark:bg-slate-600 text-slate-900 dark:text-white"
-                    : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
-                )}
-              >
-                <CalendarDays size={11} />
-                Soonest first
-              </button>
-              <button
-                onClick={() => setSortBy("confidence")}
-                className={clsx(
-                  "flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-all",
-                  sortBy === "confidence"
-                    ? "bg-slate-300 dark:bg-slate-600 text-slate-900 dark:text-white"
-                    : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
-                )}
-              >
-                <Percent size={11} />
-                Best confidence
-              </button>
-              <button
-                onClick={() => setSortBy("value")}
-                className={clsx(
-                  "flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-all",
-                  sortBy === "value"
-                    ? "bg-slate-300 dark:bg-slate-600 text-slate-900 dark:text-white"
-                    : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
-                )}
-              >
-                <TrendingUp size={11} />
-                Best value
+          ) : error === "__waking__" ? (
+            <WakingUp onRetry={() => { setLoading(true); load(); }} />
+          ) : error ? (
+            <div className="text-center py-20 space-y-3">
+              <AlertTriangle size={40} className="text-rose-400 mx-auto" />
+              <p className="text-zinc-700 dark:text-zinc-300 font-medium">Could not reach the prediction server.</p>
+              <button onClick={() => { setLoading(true); load(); }} className="btn-secondary">
+                Retry
               </button>
             </div>
-          </div>
-        </div>
-
-        {/* Value Bets view */}
-        {activeView === "value" && (
-          <ValueBets onMatchClick={(home, away) => {
-            const found = allPredictions.find(p => p.home === home && p.away === away);
-            if (found) setSelectedMatch(found);
-          }} />
-        )}
-
-        {/* Picks view */}
-        {activeView === "picks" && (loading ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-4 animate-pulse">
-                <div className="h-3 bg-slate-200 dark:bg-slate-800 rounded w-1/2" />
-                <div className="space-y-2">
-                  <div className="h-5 bg-slate-200 dark:bg-slate-800 rounded w-3/4 mx-auto" />
-                  <div className="h-3 bg-slate-200 dark:bg-slate-800 rounded w-1/4 mx-auto" />
-                  <div className="h-5 bg-slate-200 dark:bg-slate-800 rounded w-3/4 mx-auto" />
-                </div>
-                <div className="grid grid-cols-3 gap-2">
-                  {[0, 1, 2].map((j) => <div key={j} className="h-10 bg-slate-200 dark:bg-slate-800 rounded-lg" />)}
-                </div>
-                <div className="h-3 bg-slate-200 dark:bg-slate-800 rounded" />
-                <div className="h-3 bg-slate-200 dark:bg-slate-800 rounded w-3/4" />
-              </div>
-            ))}
-          </div>
-        ) : error === "__waking__" ? (
-          <WakingUp onRetry={() => { setLoading(true); load(); }} />
-        ) : error ? (
-          <div className="text-center py-20 space-y-3">
-            <AlertTriangle size={40} className="text-red-400 mx-auto" />
-            <p className="text-red-300 font-medium">Could not reach the prediction server.</p>
-            <button onClick={() => { setLoading(true); load(); }}
-              className="px-4 py-2 bg-slate-800 text-slate-300 rounded-lg text-sm hover:bg-slate-700 transition-all">
-              Retry
-            </button>
-          </div>
-        ) : predictions.length === 0 ? (
-          <div className="text-center py-20 space-y-3">
-            <span className="text-5xl">📭</span>
-            <p className="text-slate-500 dark:text-slate-400">No predictions available for the selected filters.</p>
-            <p className="text-slate-400 dark:text-slate-600 text-sm">Try widening your confidence filter or selecting All Leagues.</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {sorted.map((p, i) => (
-              <PredictionCard
-                key={`${p.home}-${p.away}-${p.date}-${i}`}
-                prediction={p}
-                savedKeys={savedKeys}
-                onClick={() => {
-                  const API_B = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
-                  fetch(`${API_B}/api/track/match`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ home: p.home, away: p.away }) }).catch(() => {});
-                  isPremium ? setSelectedMatch(p) : setShowPaywall(true);
-                }}
-              />
-            ))}
-          </div>
-        ))}
+          ) : predictions.length === 0 ? (
+            <div className="text-center py-20 space-y-3">
+              <span className="text-5xl">📭</span>
+              <p className="text-zinc-500 dark:text-zinc-400 font-medium">No predictions match the selected filters.</p>
+              <p className="text-zinc-400 dark:text-zinc-600 text-sm">Try widening your confidence filter or selecting All Leagues.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {sorted.map((p, i) => (
+                <PredictionCard
+                  key={`${p.home}-${p.away}-${p.date}-${i}`}
+                  prediction={p}
+                  savedKeys={savedKeys}
+                  onClick={() => openMatch(p)}
+                />
+              ))}
+            </div>
+          )}
         </>}
-      </main>
+
+        {/* Footer note */}
+        <p className="text-center text-xs text-zinc-400 dark:text-zinc-600 pt-6">
+          Powered by XGBoost + Elo ratings · football-data.org · Updated every 6 hours · Gamble responsibly
+        </p>
+      </div>
 
       {/* Sport analysis modal */}
       {selectedSportMatch && (
@@ -657,9 +607,6 @@ export default function HomePage() {
       {/* AI Betting Assistant — premium only */}
       {isPremium && <ChatBot predictions={allPredictions} />}
 
-      {/* Calendar / History */}
-      {showCalendar && <CalendarView onClose={() => setShowCalendar(false)} />}
-
       {/* Paywall */}
       {showPaywall && (
         <PaywallModal
@@ -667,20 +614,6 @@ export default function HomePage() {
           onSuccess={() => { setShowPaywall(false); window.location.reload(); }}
         />
       )}
-
-      {/* Match Analysis Modal */}
-      {selectedMatch && (
-        <MatchModal
-          prediction={selectedMatch}
-          onClose={() => setSelectedMatch(null)}
-        />
-      )}
-
-      {/* Footer */}
-      <footer className="border-t border-slate-200 dark:border-slate-800 mt-12 py-6 text-center text-xs text-slate-400 dark:text-slate-600">
-        <p>BetIQ · Powered by XGBoost + Elo Ratings · football-data.org</p>
-        <p className="mt-1">9 leagues · Updated every 6 hours · For educational use only</p>
-      </footer>
-    </div>
+    </AppShell>
   );
 }

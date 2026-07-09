@@ -1,9 +1,8 @@
 "use client";
 
-import { ConfidenceBar } from "./ConfidenceBar";
 import { SaveButton } from "./SaveButton";
 import type { Prediction } from "@/lib/api";
-import { Clock, TrendingUp, Share2 } from "lucide-react";
+import { Share2, Sparkles } from "lucide-react";
 import clsx from "clsx";
 
 const BASE = "https://predict-withbetiq.vercel.app";
@@ -15,6 +14,17 @@ function localTime(date: string, utcTime: string): string {
     return dt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
   } catch {
     return utcTime;
+  }
+}
+
+/** "2026-07-11" → "Sat 11 Jul" */
+function shortDate(date: string): string {
+  try {
+    return new Date(`${date}T00:00:00`).toLocaleDateString(undefined, {
+      weekday: "short", day: "numeric", month: "short",
+    });
+  } catch {
+    return date;
   }
 }
 
@@ -89,18 +99,6 @@ const CLUB_IDS: Record<string, number> = {
   "Benfica": 1903, "Braga": 5602, "Porto": 503, "Sporting CP": 498,
 };
 
-// Fallback brand colors for when no image is found
-const TEAM_COLORS: Record<string, string> = {
-  "Arsenal": "#EF0107", "Liverpool": "#C8102E", "Chelsea": "#034694",
-  "Manchester City": "#6CABDD", "Manchester United": "#DA291C", "Tottenham": "#132257",
-  "Bayern Munich": "#DC052D", "Borussia Dortmund": "#FDE100", "Real Madrid": "#FEBE10",
-  "Barcelona": "#A50044", "PSG": "#004170", "Juventus": "#000000",
-  "AC Milan": "#FB090B", "Inter Milan": "#010E80", "Napoli": "#087AC2",
-  "Brazil": "#009C3B", "Argentina": "#74ACDF", "France": "#0055A4",
-  "Germany": "#000000", "Spain": "#AA151B", "Italy": "#009246",
-  "Portugal": "#006600", "England": "#CF081F", "Nigeria": "#008751",
-};
-
 function hashColor(name: string): string {
   const P = ["#6366f1","#8b5cf6","#ec4899","#f97316","#eab308",
              "#22c55e","#14b8a6","#3b82f6","#06b6d4","#ef4444"];
@@ -109,12 +107,12 @@ function hashColor(name: string): string {
   return P[h % P.length];
 }
 
-function getTeamAssets(name: string): { imageUrl: string; isFlag: boolean; color: string } {
+export function getTeamAssets(name: string): { imageUrl: string; isFlag: boolean; color: string } {
   const code = COUNTRY_CODES[name];
   if (code) return {
     imageUrl: `https://flagcdn.com/w320/${code}.png`,
     isFlag: true,
-    color: TEAM_COLORS[name] || hashColor(name),
+    color: hashColor(name),
   };
   // try partial match for country
   const countryKey = Object.keys(COUNTRY_CODES).find(k =>
@@ -123,14 +121,14 @@ function getTeamAssets(name: string): { imageUrl: string; isFlag: boolean; color
   if (countryKey) return {
     imageUrl: `https://flagcdn.com/w320/${COUNTRY_CODES[countryKey]}.png`,
     isFlag: true,
-    color: TEAM_COLORS[name] || hashColor(name),
+    color: hashColor(name),
   };
 
   const id = CLUB_IDS[name];
   if (id) return {
     imageUrl: `https://crests.football-data.org/${id}.png`,
     isFlag: false,
-    color: TEAM_COLORS[name] || hashColor(name),
+    color: hashColor(name),
   };
   // partial match for clubs
   const clubKey = Object.keys(CLUB_IDS).find(k =>
@@ -139,10 +137,10 @@ function getTeamAssets(name: string): { imageUrl: string; isFlag: boolean; color
   if (clubKey) return {
     imageUrl: `https://crests.football-data.org/${CLUB_IDS[clubKey]}.png`,
     isFlag: false,
-    color: TEAM_COLORS[name] || hashColor(name),
+    color: hashColor(name),
   };
 
-  return { imageUrl: "", isFlag: false, color: TEAM_COLORS[name] || hashColor(name) };
+  return { imageUrl: "", isFlag: false, color: hashColor(name) };
 }
 
 function shareMatch(p: Prediction) {
@@ -160,51 +158,57 @@ interface Props {
   onClick?: () => void;
 }
 
-const TIP_CODE_COLORS: Record<string, string> = {
-  "1":  "bg-white/20 text-white border-white/30",
-  "2":  "bg-white/20 text-white border-white/30",
-  "X":  "bg-white/20 text-white border-white/30",
-  "1X": "bg-white/20 text-white border-white/30",
-  "2X": "bg-white/20 text-white border-white/30",
-  "?":  "bg-black/20 text-white/60 border-white/10",
-};
-
-const GOALS_TYPE_COLORS: Record<string, string> = {
-  Banker: "bg-green-400/30 text-green-200 border-green-400/40",
-  Asian:  "bg-yellow-400/30 text-yellow-200 border-yellow-400/30",
-  Skip:   "bg-white/10 text-white/40 border-white/10",
-};
-
-/** Semicircular confidence gauge — 0 to 180° arc */
-function ConfidenceGauge({ value }: { value: number }) {
-  const pct   = Math.min(Math.max(value, 0), 100);
-  const r     = 28;
-  const cx    = 36;
-  const cy    = 36;
-  const circ  = Math.PI * r;                     // half circumference
-  const dash  = (pct / 100) * circ;
-  const color = pct >= 70 ? "#4ade80" : pct >= 50 ? "#facc15" : "#f87171";
-
+/** Crest or flag avatar with a monogram fallback. */
+export function TeamBadge({ name, size = 28 }: { name: string; size?: number }) {
+  const asset = getTeamAssets(name);
+  if (asset.imageUrl) {
+    return (
+      <span
+        className="relative inline-flex items-center justify-center rounded-full bg-zinc-100 dark:bg-zinc-800 ring-1 ring-zinc-200/80 dark:ring-zinc-700 overflow-hidden shrink-0"
+        style={{ width: size, height: size }}
+      >
+        <img
+          src={asset.imageUrl}
+          alt={name}
+          className={clsx("object-contain", asset.isFlag ? "w-full h-full object-cover" : "w-[70%] h-[70%]")}
+          onError={e => { (e.target as HTMLImageElement).style.display = "none"; }}
+        />
+      </span>
+    );
+  }
   return (
-    <div className="flex flex-col items-center">
-      <svg width="72" height="40" viewBox="0 0 72 40">
-        {/* Track */}
-        <path
-          d={`M${cx - r},${cy} A${r},${r} 0 0 1 ${cx + r},${cy}`}
-          fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth="6"
-          strokeLinecap="round"
-        />
-        {/* Fill */}
-        <path
-          d={`M${cx - r},${cy} A${r},${r} 0 0 1 ${cx + r},${cy}`}
-          fill="none" stroke={color} strokeWidth="6"
-          strokeLinecap="round"
-          strokeDasharray={`${dash} ${circ}`}
-          style={{ transition: "stroke-dasharray 0.6s ease" }}
-        />
-      </svg>
-      <p className="text-base font-black -mt-1" style={{ color }}>{pct}%</p>
-      <p className="text-[9px] text-white/40 uppercase tracking-wide">confidence</p>
+    <span
+      className="inline-flex items-center justify-center rounded-full text-white font-bold shrink-0"
+      style={{ width: size, height: size, background: asset.color, fontSize: size * 0.4 }}
+    >
+      {name.slice(0, 2).toUpperCase()}
+    </span>
+  );
+}
+
+function TeamRow({ name, prob, odds, strongest }: {
+  name: string; prob: number; odds?: number; strongest: boolean;
+}) {
+  return (
+    <div className="flex items-center gap-2.5 min-w-0">
+      <TeamBadge name={name} size={28} />
+      <span className={clsx(
+        "flex-1 truncate text-sm",
+        strongest ? "font-bold text-zinc-900 dark:text-white" : "font-medium text-zinc-600 dark:text-zinc-300"
+      )}>
+        {name}
+      </span>
+      {odds != null && odds > 0 && (
+        <span className="tnum text-[11px] font-semibold text-zinc-400 dark:text-zinc-500 bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded-md shrink-0">
+          {odds}
+        </span>
+      )}
+      <span className={clsx(
+        "tnum text-sm w-10 text-right shrink-0",
+        strongest ? "font-bold text-zinc-900 dark:text-white" : "font-medium text-zinc-400 dark:text-zinc-500"
+      )}>
+        {Math.round(prob * 100)}%
+      </span>
     </div>
   );
 }
@@ -212,161 +216,92 @@ function ConfidenceGauge({ value }: { value: number }) {
 export function PredictionCard({ prediction: p, savedKeys, onClick }: Props) {
   const emptySet = new Set<string>();
   const gconf = Math.round(p.goals_confidence * 100);
-  const isSkip = p.tip_goals === "Skip";
 
-  const home = getTeamAssets(p.home);
-  const away = getTeamAssets(p.away);
-
-  // bg-size: flags fill their half, logos are contained with padding
-  const homeSize = home.isFlag ? "cover" : "65%";
-  const awaySize = away.isFlag ? "cover" : "65%";
+  const h = Math.round(p.p_home * 100);
+  const d = Math.round(p.p_draw * 100);
+  const a = Math.max(0, 100 - h - d);
+  const maxP = Math.max(p.p_home, p.p_draw, p.p_away);
 
   return (
-    <div
+    <article
       onClick={onClick}
-      className={clsx(
-        "relative overflow-hidden rounded-xl border border-white/10 flex flex-col gap-4 card-glow transition-all duration-200",
-        onClick && "cursor-pointer hover:brightness-110 active:scale-[0.98]"
-      )}
+      className={clsx("card p-4 flex flex-col gap-3.5", onClick && "card-interactive")}
     >
-      {/* ── Background layers ── */}
-
-      {/* Base solid split */}
-      <div className="absolute inset-0 flex">
-        <div className="flex-1" style={{ background: home.color }} />
-        <div className="flex-1" style={{ background: away.color }} />
-      </div>
-
-      {/* Home image — fades right */}
-      {home.imageUrl && (
-        <div
-          className="absolute inset-0"
-          style={{
-            backgroundImage: `url(${home.imageUrl})`,
-            backgroundSize: homeSize,
-            backgroundPosition: home.isFlag ? "left center" : "35% center",
-            backgroundRepeat: "no-repeat",
-            maskImage: "linear-gradient(to right, black 0%, black 25%, transparent 70%)",
-            WebkitMaskImage: "linear-gradient(to right, black 0%, black 25%, transparent 70%)",
-          }}
-        />
-      )}
-
-      {/* Away image — fades left */}
-      {away.imageUrl && (
-        <div
-          className="absolute inset-0"
-          style={{
-            backgroundImage: `url(${away.imageUrl})`,
-            backgroundSize: awaySize,
-            backgroundPosition: away.isFlag ? "right center" : "65% center",
-            backgroundRepeat: "no-repeat",
-            maskImage: "linear-gradient(to left, black 0%, black 25%, transparent 70%)",
-            WebkitMaskImage: "linear-gradient(to left, black 0%, black 25%, transparent 70%)",
-          }}
-        />
-      )}
-
-      {/* Dark overlay for readability */}
-      <div className="absolute inset-0 bg-black/55" />
-
-      {/* ── Card content ── */}
-      <div className="relative z-10 p-4 flex flex-col gap-3">
-
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5 min-w-0">
-            <span className="text-[11px] font-semibold text-white/70 truncate drop-shadow">
-              {p.flag} {p.league_name}
+      {/* Header: league + date */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span className="text-sm leading-none">{p.flag}</span>
+          <span className="text-[11px] font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wide truncate">
+            {p.league_name}
+          </span>
+          {p.is_value_bet && (
+            <span className="bg-brand-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full uppercase tracking-wider shrink-0">
+              Value
             </span>
-            {p.is_value_bet && (
-              <span className="bg-emerald-500 text-black text-[9px] font-black px-1.5 py-0.5 rounded-full uppercase tracking-wide shrink-0">
-                VALUE
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <span className="text-[10px] text-white/50">
-              {p.date}{p.time && p.time !== "TBD" ? ` · ${localTime(p.date, p.time)}` : ""}
-            </span>
-            <SaveButton prediction={p} savedKeys={savedKeys ?? emptySet} size={13} />
-            <button
-              onClick={e => { e.stopPropagation(); shareMatch(p); }}
-              className="text-white/50 hover:text-white transition-colors"
-              title="Share this pick"
-            >
-              <Share2 size={13} />
-            </button>
-          </div>
-        </div>
-
-        {/* Teams — home on top, away below, odds on right */}
-        <div className="space-y-1">
-          {/* Home */}
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5 min-w-0 flex-1">
-              {home.imageUrl && (
-                <img src={home.imageUrl} alt={p.home}
-                  className={clsx("shrink-0 object-contain", home.isFlag ? "w-5 h-3.5 rounded-sm" : "w-4 h-4 rounded-full bg-white/10 p-0.5")}
-                  onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
-              )}
-              <span className="text-sm font-black text-white truncate drop-shadow">{p.home}</span>
-            </div>
-            {(p as any).odds_home && <span className="text-[11px] font-black bg-white/15 text-white px-1.5 py-0.5 rounded-md shrink-0">{(p as any).odds_home}</span>}
-            <span className="text-sm font-bold text-white shrink-0">{Math.round(p.p_home * 100)}%</span>
-          </div>
-          <div className="h-1.5 bg-black/30 rounded-full overflow-hidden">
-            <div className="h-full bg-white/70 rounded-full" style={{ width: `${Math.round(p.p_home * 100)}%` }} />
-          </div>
-
-          {/* Draw — smaller, between the two teams */}
-          <div className="flex items-center justify-between gap-2 py-0.5">
-            <span className="text-[10px] text-white/40 font-medium">Draw</span>
-            <div className="flex-1 h-1 bg-black/20 rounded-full overflow-hidden mx-2">
-              <div className="h-full bg-white/25 rounded-full" style={{ width: `${Math.round(p.p_draw * 100)}%` }} />
-            </div>
-            <span className="text-[10px] text-white/40 shrink-0">{Math.round(p.p_draw * 100)}%</span>
-          </div>
-
-          {/* Away */}
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5 min-w-0 flex-1">
-              {away.imageUrl && (
-                <img src={away.imageUrl} alt={p.away}
-                  className={clsx("shrink-0 object-contain", away.isFlag ? "w-5 h-3.5 rounded-sm" : "w-4 h-4 rounded-full bg-white/10 p-0.5")}
-                  onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
-              )}
-              <span className="text-sm font-black text-white truncate drop-shadow">{p.away}</span>
-            </div>
-            {(p as any).odds_away && <span className="text-[11px] font-black bg-white/15 text-white px-1.5 py-0.5 rounded-md shrink-0">{(p as any).odds_away}</span>}
-            <span className="text-sm font-bold text-white shrink-0">{Math.round(p.p_away * 100)}%</span>
-          </div>
-          <div className="h-1.5 bg-black/30 rounded-full overflow-hidden">
-            <div className="h-full bg-white/70 rounded-full" style={{ width: `${Math.round(p.p_away * 100)}%` }} />
-          </div>
-        </div>
-
-        {/* Best pick */}
-        <div className="bg-black/30 border border-white/15 rounded-xl px-3 py-2.5 flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-[10px] text-white/50 uppercase tracking-wide font-semibold">Best pick</p>
-            <p className="text-sm font-bold text-white truncate">{p.tip_1x2}</p>
-            {!isSkip && p.tip_goals && p.tip_goals !== "Skip" && (
-              <p className="text-[10px] text-green-300 mt-0.5">{p.tip_goals}</p>
-            )}
-          </div>
-          <div className="text-right shrink-0">
-            <p className="text-[10px] text-white/50">Confidence</p>
-            <p className={clsx("text-xl font-black", gconf >= 65 ? "text-green-400" : gconf >= 50 ? "text-yellow-400" : "text-white")}>{gconf}%</p>
-          </div>
-          {p.is_value_bet && p.value_edge != null && (
-            <div className="shrink-0 bg-emerald-500/20 border border-emerald-500/40 rounded-lg px-2 py-1 text-center">
-              <p className="text-[9px] text-emerald-400 font-bold uppercase tracking-wide">Value</p>
-              <p className="text-sm font-black text-emerald-300">+{Math.round(p.value_edge * 100)}%</p>
-            </div>
           )}
         </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-[11px] tnum text-zinc-400 dark:text-zinc-500 font-medium">
+            {shortDate(p.date)}{p.time && p.time !== "TBD" ? ` · ${localTime(p.date, p.time)}` : ""}
+          </span>
+          <SaveButton prediction={p} savedKeys={savedKeys ?? emptySet} size={14} />
+          <button
+            onClick={e => { e.stopPropagation(); shareMatch(p); }}
+            className="text-zinc-300 dark:text-zinc-600 hover:text-zinc-500 dark:hover:text-zinc-400 transition-colors"
+            title="Share this pick"
+          >
+            <Share2 size={14} />
+          </button>
+        </div>
       </div>
-    </div>
+
+      {/* Teams */}
+      <div className="space-y-2">
+        <TeamRow name={p.home} prob={p.p_home} odds={p.odds_home} strongest={p.p_home === maxP} />
+        <TeamRow name={p.away} prob={p.p_away} odds={p.odds_away} strongest={p.p_away === maxP} />
+      </div>
+
+      {/* Segmented 1X2 probability bar */}
+      <div>
+        <div className="flex h-1.5 rounded-full overflow-hidden gap-px bg-zinc-100 dark:bg-zinc-800">
+          <div className="bg-brand-500 rounded-l-full" style={{ width: `${h}%` }} />
+          <div className="bg-zinc-300 dark:bg-zinc-600" style={{ width: `${d}%` }} />
+          <div className="bg-sky-500 rounded-r-full" style={{ width: `${a}%` }} />
+        </div>
+        <div className="flex justify-between mt-1.5 text-[10px] tnum font-medium text-zinc-400 dark:text-zinc-500">
+          <span><span className="text-brand-600 dark:text-brand-400 font-bold">1</span> {h}%</span>
+          <span><span className="font-bold">X</span> {d}%</span>
+          <span><span className="text-sky-600 dark:text-sky-400 font-bold">2</span> {a}%</span>
+        </div>
+      </div>
+
+      {/* Best pick footer */}
+      <div className="flex items-center justify-between gap-3 bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-100 dark:border-zinc-800 rounded-xl px-3 py-2.5 mt-auto">
+        <div className="min-w-0">
+          <p className="text-[10px] text-zinc-400 dark:text-zinc-500 uppercase tracking-wider font-semibold flex items-center gap-1">
+            <Sparkles size={9} /> Best pick
+          </p>
+          <p className="text-sm font-bold text-zinc-900 dark:text-white truncate">{p.tip_1x2}</p>
+          {p.tip_goals && p.tip_goals !== "Skip" && (
+            <p className="text-[11px] text-brand-600 dark:text-brand-400 font-medium mt-0.5 truncate">{p.tip_goals}</p>
+          )}
+        </div>
+        <div className="text-right shrink-0">
+          <p className="text-[10px] text-zinc-400 dark:text-zinc-500 uppercase tracking-wider font-semibold">Conf.</p>
+          <p className={clsx(
+            "tnum text-lg font-black leading-tight",
+            gconf >= 65 ? "text-brand-600 dark:text-brand-400" : gconf >= 50 ? "text-amber-500" : "text-zinc-400"
+          )}>
+            {gconf}%
+          </p>
+        </div>
+        {p.is_value_bet && p.value_edge != null && (
+          <div className="shrink-0 bg-brand-50 dark:bg-brand-900/30 border border-brand-200 dark:border-brand-800 rounded-lg px-2 py-1 text-center">
+            <p className="text-[9px] text-brand-700 dark:text-brand-400 font-bold uppercase tracking-wide">Edge</p>
+            <p className="tnum text-sm font-black text-brand-600 dark:text-brand-300">+{Math.round(p.value_edge * 100)}%</p>
+          </div>
+        )}
+      </div>
+    </article>
   );
 }

@@ -7,10 +7,10 @@ interface Props {
 }
 
 const colorMap = {
-  green: "bg-green-500",
-  yellow: "bg-yellow-400",
-  red: "bg-red-500",
-  blue: "bg-blue-500",
+  green: "bg-brand-500",
+  yellow: "bg-amber-400",
+  red: "bg-rose-500",
+  blue: "bg-sky-500",
 };
 
 export function ConfidenceBar({ value, label, color = "green" }: Props) {
@@ -18,9 +18,9 @@ export function ConfidenceBar({ value, label, color = "green" }: Props) {
   const barColor =
     color === "green"
       ? value >= 0.75
-        ? "bg-green-400"
+        ? "bg-brand-500"
         : value >= 0.6
-        ? "bg-yellow-400"
+        ? "bg-amber-400"
         : "bg-orange-400"
       : colorMap[color];
 
@@ -28,11 +28,11 @@ export function ConfidenceBar({ value, label, color = "green" }: Props) {
     <div className="space-y-1">
       {label && (
         <div className="flex justify-between text-xs">
-          <span className="text-slate-500 dark:text-slate-400">{label}</span>
-          <span className="text-slate-800 dark:text-slate-200 font-medium">{pct}%</span>
+          <span className="text-zinc-400 dark:text-zinc-500">{label}</span>
+          <span className="tnum text-zinc-800 dark:text-zinc-200 font-medium">{pct}%</span>
         </div>
       )}
-      <div className="h-1.5 bg-slate-300 dark:bg-slate-700 rounded-full overflow-hidden">
+      <div className="h-1.5 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden">
         <div
           className={`h-full rounded-full transition-all duration-500 ${barColor}`}
           style={{ width: `${pct}%` }}
