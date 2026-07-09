@@ -734,43 +734,64 @@ async def _run_pipeline():
         _predictor = predictor
         print("[Pipeline] Predictor ready — card analysis now available.")
 
+        # Archive yesterday's predictions from the OLD cache before we start
+        # overwriting it below.
+        _archive_past_predictions()
+
         predictions = []
         fixtures: list = []  # pre-init so the block below is safe when API_KEY is unset
         if API_KEY:
             client = FootballDataClient(API_KEY)
 
-            # ── Fixtures FIRST ────────────────────────────────────────────────
-            # Fetch upcoming fixtures + live odds and publish predictions before the
-            # slow, rate-limited recent-results calibration below. On free hosting the
-            # instance can sleep mid-pipeline; front-loading this guarantees the app
-            # shows today's fixtures (incl. World Cup) even if calibration never
-            # finishes. Elo comes from training + FIFA seeds — good enough to serve;
-            # the second pass refines it.
-            print("[Pipeline] Fetching upcoming fixtures + live odds...")
-            fixtures = await client.fetch_all_upcoming(days_ahead=90)
+            # ── Fetch + publish per league, incrementally ──────────────────────
+            # football-data.org's free tier is rate-limited, so fetching all 12
+            # leagues takes ~2 minutes minimum (10s pacing per league) and can take
+            # much longer under 429 backoff. Waiting for all 12 to finish before
+            # showing anything means the app looks broken for minutes at a time,
+            # and on a free host that can sleep mid-run, a stall anywhere in the
+            # loop means NONE of it ever gets served. Instead: publish predictions
+            # after each league's fixtures come in, so the first league (World Cup)
+            # is visible within seconds, and every completed league survives even
+            # if a later one stalls or the run never finishes.
+            print("[Pipeline] Fetching upcoming fixtures (publishing after each league)...")
+            for code in list(LEAGUES.keys()):
+                try:
+                    league_fixtures = await client.fetch_upcoming(code, days_ahead=90)
+                except Exception as e:
+                    print(f"[Pipeline] Fixture fetch error for {code}: {e}")
+                    league_fixtures = []
+                if league_fixtures:
+                    fixtures.extend(league_fixtures)
+                    # No live odds yet on this fast pass — predict_match() falls back
+                    # to league-average implied probabilities, which is fine for an
+                    # initial publish; the odds pass below refines it.
+                    predictions = _build_predictions(predictor, fixtures, {})
+                    _predictor = predictor
+                    _predictions_cache = predictions
+                    _last_updated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+                    _save_predictions_cache()
+                    print(f"[Pipeline] +{code}: {len(league_fixtures)} fixtures — "
+                          f"{len(predictions)} predictions published so far.")
+                await asyncio.sleep(10)  # respect football-data.org rate limit
 
+            # ── Live odds pass — improves accuracy + enables value-bet detection ──
             live_odds: dict = {}
-            try:
-                from odds_fetcher import fetch_odds_for_predictions
-                stubs = [{"home": fx["home"], "away": fx["away"],
-                          "date": fx.get("date",""), "league_name": fx.get("league_name","")}
-                         for fx in fixtures]
-                live_odds = await fetch_odds_for_predictions(stubs)
-                print(f"[Pipeline] Got live odds for {len(live_odds)}/{len(fixtures)} fixtures")
-            except Exception as e:
-                print(f"[Pipeline] Live odds fetch error (non-fatal): {e}")
+            if fixtures:
+                try:
+                    from odds_fetcher import fetch_odds_for_predictions
+                    stubs = [{"home": fx["home"], "away": fx["away"],
+                              "date": fx.get("date",""), "league_name": fx.get("league_name","")}
+                             for fx in fixtures]
+                    live_odds = await fetch_odds_for_predictions(stubs)
+                    print(f"[Pipeline] Got live odds for {len(live_odds)}/{len(fixtures)} fixtures")
+                except Exception as e:
+                    print(f"[Pipeline] Live odds fetch error (non-fatal): {e}")
 
-            predictions = _build_predictions(predictor, fixtures, live_odds)
-
-            # Archive yesterday's predictions from the OLD cache before we overwrite it.
-            _archive_past_predictions()
-
-            # Publish immediately so fixtures are visible right away.
-            _predictor = predictor
-            _predictions_cache = predictions
-            _last_updated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-            _save_predictions_cache()
-            print(f"[Pipeline] Published {len(predictions)} predictions (pre-calibration).")
+                predictions = _build_predictions(predictor, fixtures, live_odds)
+                _predictions_cache = predictions
+                _last_updated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+                _save_predictions_cache()
+                print(f"[Pipeline] Republished {len(predictions)} predictions (with live odds).")
 
             # ── Recent-results Elo calibration (refinement) ───────────────────
             print("[Pipeline] Fetching recent API results to calibrate Elo...")
@@ -803,10 +824,6 @@ async def _run_pipeline():
         # Runs as a background task so it doesn't block the pipeline
         if fixtures:
             asyncio.create_task(_prefetch_web_forms(predictor, fixtures))
-
-        # Archive past predictions from the OLD cache BEFORE replacing it —
-        # new `predictions` only has upcoming fixtures so yesterday is already gone.
-        _archive_past_predictions()
 
         # Fetch Understat xG in background (updates Redis cache for European clubs)
         asyncio.create_task(_refresh_understat_xg())
