@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 
 from predictor import LeaguePredictor
 from data_fetcher import FootballDataClient, LEAGUES
-from scrapers.fbref import load_cards, refresh as scrape_fbref, CORNERS_CSV, CARDS_CSV
+from scrapers.fbref import load_cards, load_corners, refresh as scrape_fbref, CORNERS_CSV, CARDS_CSV
 
 load_dotenv()
 
@@ -70,6 +70,7 @@ _last_updated: Optional[str] = None
 _is_training = False
 _history_df: Optional[pd.DataFrame] = None
 _cards_df: pd.DataFrame = pd.DataFrame()
+_corners_df: pd.DataFrame = pd.DataFrame()
 
 # --- H2H cache (in-memory + file-backed) ---
 _h2h_cache: Dict[str, Dict] = {}
@@ -1328,10 +1329,11 @@ async def get_match_analysis(home: str, away: str):
         "away": _predictor_form_summary(away),
     }
 
-    # Inject cards market if data is available
-    extra = _predictor.predict_cards(home, away, _cards_df)
-    if "cards" in extra:
-        result["markets"].append(extra["cards"])
+    # Inject cards + corners markets if data is available
+    extra = _predictor.predict_cards(home, away, _cards_df, _corners_df)
+    for market_id in ("cards", "corners", "corners_race"):
+        if market_id in extra:
+            result["markets"].append(extra[market_id])
 
     # Blend H2H win rates into model probabilities if cached data exists
     key = _h2h_cache_key(home, away)
@@ -1960,6 +1962,72 @@ async def debug_pipeline():
         "predictions_by_league": dict(sorted(by_league.items())),
         "wc_predictions": wc,
     }
+
+
+@app.get("/api/debug/odds")
+async def debug_odds(probe_sportybet: bool = True, probe_odds_api: bool = False):
+    """
+    Diagnose why market odds might be missing. There are TWO independent odds
+    systems and either can fail on its own:
+      1. The Odds API (the-odds-api.com) — powers the small 1X2 odds badges on
+         prediction cards and value-bet detection. Free tier: 500 req/month.
+      2. SportyBet (scraped, no quota) — powers the full market list + live
+         odds shown in the Bet Builder / match analysis screen.
+
+    By default this reports what's already cached (no extra Odds API calls,
+    since that quota is scarce) and does one fresh SportyBet lookup (free).
+    Pass probe_odds_api=true to force one live Odds API call — only do this
+    if you need to see a fresh error message, since it spends quota.
+    """
+    out: Dict = {}
+
+    # ── The Odds API — read from what's already cached, no extra spend ──────
+    with_odds = sum(1 for p in _predictions_cache if p.get("odds_home"))
+    with_value_flag = sum(1 for p in _predictions_cache if p.get("value_edge") is not None)
+    out["odds_api"] = {
+        "api_key_set": bool(os.getenv("ODDS_API_KEY", "")),
+        "cached_predictions": len(_predictions_cache),
+        "cached_predictions_with_odds_badge": with_odds,
+        "cached_predictions_with_value_edge_computed": with_value_flag,
+        "note": ("0 with odds while api_key_set=true usually means quota "
+                 "exhausted (500/month) or no bookmaker coverage for these "
+                 "leagues/dates yet.") if with_odds == 0 else None,
+    }
+    if probe_odds_api:
+        try:
+            from odds_fetcher import _fetch_odds_for_sport
+            events = await _fetch_odds_for_sport("soccer_fifa_world_cup")
+            out["odds_api"]["live_probe"] = {
+                "sport": "soccer_fifa_world_cup",
+                "events_returned": len(events),
+            }
+        except Exception as e:
+            out["odds_api"]["live_probe"] = {"error": str(e)}
+
+    # ── SportyBet — free to probe, no quota ──────────────────────────────────
+    if probe_sportybet:
+        try:
+            from sportybet import fetch_events_for_date, find_event
+            from datetime import date as _date, timedelta as _td
+            found_any = {}
+            wc_matches = [p for p in _predictions_cache if p.get("league") == "WC"][:3]
+            for offset in range(0, 3):
+                d = str(_date.today() + _td(days=offset))
+                events = await fetch_events_for_date(d)
+                found_any[d] = len(events)
+                if events and wc_matches:
+                    for m in wc_matches:
+                        if m.get("date") == d:
+                            ev = find_event(m["home"], m["away"], events)
+                            found_any[f"match_{m['home']}_vs_{m['away']}"] = bool(ev)
+            out["sportybet"] = {
+                "events_by_date": found_any,
+                "wc_fixtures_checked": [f"{m['home']} vs {m['away']} ({m['date']})" for m in wc_matches],
+            }
+        except Exception as e:
+            out["sportybet"] = {"error": str(e)}
+
+    return out
 
 
 @app.get("/api/debug/fixtures")
@@ -2899,8 +2967,8 @@ scheduler = AsyncIOScheduler()
 
 
 async def _load_fbref_data():
-    """Load cards CSV, rebuilding from EPL CSV if missing or >7 days old."""
-    global _cards_df
+    """Load cards + corners CSVs, rebuilding from EPL CSV if missing or >7 days old."""
+    global _cards_df, _corners_df
     import time as _time
 
     needs_scrape = True
@@ -2917,7 +2985,8 @@ async def _load_fbref_data():
             print(f"[fbref] Build failed: {e}")
 
     _cards_df = load_cards()
-    print(f"[fbref] Loaded cards data ({len(_cards_df)} teams)")
+    _corners_df = load_corners()
+    print(f"[fbref] Loaded cards data ({len(_cards_df)} teams), corners data ({len(_corners_df)} teams)")
 
 
 @app.on_event("startup")

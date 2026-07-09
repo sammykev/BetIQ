@@ -284,8 +284,84 @@ class TestLeaguePredictorFullMarkets:
     def test_market_ids_include_expected_types(self, trained_predictor):
         result = trained_predictor.predict_match_full("Arsenal", "Chelsea")
         market_ids = {m["id"] for m in result["markets"]}
-        for expected_id in ("1x2", "btts", "goals_ou", "asian_handicap"):
+        for expected_id in ("1x2", "btts", "goals_ou", "asian_handicap",
+                            "goals_odd_even", "goal_range"):
             assert expected_id in market_ids
+
+    def test_goals_odd_even_sums_to_one(self, trained_predictor):
+        result = trained_predictor.predict_match_full("Arsenal", "Chelsea")
+        m = next(m for m in result["markets"] if m["id"] == "goals_odd_even")
+        probs = [o["prob"] for o in m["options"]]
+        assert sum(probs) == pytest.approx(1.0, abs=0.01)
+
+    def test_goal_range_sums_to_one(self, trained_predictor):
+        result = trained_predictor.predict_match_full("Arsenal", "Chelsea")
+        m = next(m for m in result["markets"] if m["id"] == "goal_range")
+        probs = [o["prob"] for o in m["options"]]
+        assert sum(probs) == pytest.approx(1.0, abs=0.01)
+
+
+class TestPredictCards:
+    def _cards_df(self):
+        return pd.DataFrame([
+            {"team": "Arsenal", "home_cards_for": 1.8, "home_cards_against": 1.4,
+             "away_cards_for": 2.1, "away_cards_against": 1.6},
+            {"team": "Chelsea", "home_cards_for": 2.0, "home_cards_against": 1.5,
+             "away_cards_for": 2.3, "away_cards_against": 1.7},
+        ])
+
+    def _corners_df(self):
+        return pd.DataFrame([
+            {"team": "Arsenal", "home_corners_for": 6.2, "home_corners_against": 4.1,
+             "away_corners_for": 5.0, "away_corners_against": 4.8},
+            {"team": "Chelsea", "home_corners_for": 5.8, "home_corners_against": 4.4,
+             "away_corners_for": 4.7, "away_corners_against": 5.1},
+        ])
+
+    def test_returns_empty_dict_when_no_data(self, trained_predictor):
+        result = trained_predictor.predict_cards("Arsenal", "Chelsea", pd.DataFrame())
+        assert result == {}
+
+    def test_cards_market_present_and_backward_compatible(self, trained_predictor):
+        # corners_df omitted — old 3-arg call style must still work
+        result = trained_predictor.predict_cards("Arsenal", "Chelsea", self._cards_df())
+        assert "cards" in result
+        assert "corners" not in result
+        assert result["cards"]["id"] == "cards"
+        assert len(result["cards"]["options"]) > 0
+
+    def test_corners_market_present_when_data_given(self, trained_predictor):
+        result = trained_predictor.predict_cards(
+            "Arsenal", "Chelsea", self._cards_df(), self._corners_df()
+        )
+        assert "corners" in result
+        assert result["corners"]["id"] == "corners"
+        labels = {o["label"] for o in result["corners"]["options"]}
+        assert "Over 9.5 Corners" in labels
+
+    def test_corners_race_market_present_and_sums_to_one(self, trained_predictor):
+        result = trained_predictor.predict_cards(
+            "Arsenal", "Chelsea", self._cards_df(), self._corners_df()
+        )
+        assert "corners_race" in result
+        probs = [o["prob"] for o in result["corners_race"]["options"]]
+        assert sum(probs) == pytest.approx(1.0, abs=0.02)
+
+    def test_all_probs_in_valid_range(self, trained_predictor):
+        result = trained_predictor.predict_cards(
+            "Arsenal", "Chelsea", self._cards_df(), self._corners_df()
+        )
+        for market in result.values():
+            for opt in market["options"]:
+                assert 0.0 <= opt["prob"] <= 1.0
+
+    def test_unknown_team_falls_back_to_defaults(self, trained_predictor):
+        # Team not present in either DataFrame should not raise
+        result = trained_predictor.predict_cards(
+            "Unknown FC", "Also Unknown", self._cards_df(), self._corners_df()
+        )
+        assert "cards" in result
+        assert "corners" in result
 
 
 class TestLeaguePredictorImpliedOdds:

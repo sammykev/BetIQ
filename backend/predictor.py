@@ -668,6 +668,16 @@ class LeaguePredictor:
         ou["under_35"] = round(1 - ou["over_35"], 3)
         ou["under_45"] = round(1 - ou["over_45"], 3)
 
+        # Odd/Even total goals — common bet-builder leg, derived from the same joint matrix
+        p_goals_odd = float(sum(joint[i][j] for i in range(MAX) for j in range(MAX) if (i + j) % 2 == 1))
+        p_goals_even = round(1 - p_goals_odd, 3)
+        p_goals_odd = round(p_goals_odd, 3)
+
+        # Goal-range buckets — 0-1, 2-3, 4+ goals
+        p_range_01 = round(float(sum(joint[i][j] for i in range(MAX) for j in range(MAX) if i + j <= 1)), 3)
+        p_range_23 = round(float(sum(joint[i][j] for i in range(MAX) for j in range(MAX) if 2 <= i + j <= 3)), 3)
+        p_range_4p = round(max(0.0, 1 - p_range_01 - p_range_23), 3)
+
         # BTTS
         p_home_scores = float(1 - pmf(0, xg_h))
         p_away_scores = float(1 - pmf(0, xg_a))
@@ -788,6 +798,23 @@ class LeaguePredictor:
                     {"label": "Under 1.5", "code": "U15",  "prob": ou["under_15"]},
                     {"label": "Under 2.5", "code": "U25",  "prob": ou["under_25"]},
                     {"label": "Under 3.5", "code": "U35",  "prob": ou["under_35"]},
+                ],
+            },
+            {
+                "id": "goals_odd_even",
+                "name": "Total Goals — Odd/Even",
+                "options": [
+                    {"label": "Odd",  "code": "GOE-ODD",  "prob": p_goals_odd},
+                    {"label": "Even", "code": "GOE-EVEN", "prob": p_goals_even},
+                ],
+            },
+            {
+                "id": "goal_range",
+                "name": "Total Goals — Range",
+                "options": [
+                    {"label": "0-1 Goals", "code": "GR-01", "prob": p_range_01},
+                    {"label": "2-3 Goals", "code": "GR-23", "prob": p_range_23},
+                    {"label": "4+ Goals",  "code": "GR-4P", "prob": p_range_4p},
                 ],
             },
             {
@@ -918,10 +945,11 @@ class LeaguePredictor:
         home: str,
         away: str,
         cards_df: pd.DataFrame,
+        corners_df: Optional[pd.DataFrame] = None,
     ) -> Dict:
         """
         Predict corners and cards markets using team averages from fbref data.
-        Returns two market dicts ready to append to the markets list.
+        Returns market dicts ready to append to the markets list.
         """
         from math import exp, factorial
 
@@ -939,7 +967,7 @@ class LeaguePredictor:
         result = {}
 
         # ── Cards ──────────────────────────────────────────────────────────
-        if not cards_df.empty:
+        if cards_df is not None and not cards_df.empty:
             def get_cards(team, is_home):
                 row = cards_df[cards_df["team"].str.lower() == team.lower()]
                 if row.empty:
@@ -974,5 +1002,66 @@ class LeaguePredictor:
                 ],
             }
             result["cards"] = cards_market
+
+        # ── Corners ────────────────────────────────────────────────────────
+        if corners_df is not None and not corners_df.empty:
+            def get_corners(team, is_home):
+                row = corners_df[corners_df["team"].str.lower() == team.lower()]
+                if row.empty:
+                    return (5.0, 4.5) if is_home else (4.5, 5.0)
+                r = row.iloc[0]
+                if is_home:
+                    return (
+                        float(r.get("home_corners_for", 5.0)),
+                        float(r.get("home_corners_against", 4.5)),
+                    )
+                return (
+                    float(r.get("away_corners_for", 4.5)),
+                    float(r.get("away_corners_against", 5.0)),
+                )
+
+            h_cnf, h_cna = get_corners(home, is_home=True)
+            a_cnf, a_cna = get_corners(away, is_home=False)
+
+            exp_h_corners = (h_cnf + a_cna) / 2
+            exp_a_corners = (a_cnf + h_cna) / 2
+            exp_total_corners = exp_h_corners + exp_a_corners
+
+            corners_market = {
+                "id": "corners",
+                "name": "Total Corners",
+                "options": [
+                    {"label": "Over 8.5 Corners",  "code": "CNR-O85",  "prob": p_over_poisson(exp_total_corners, 8)},
+                    {"label": "Over 9.5 Corners",  "code": "CNR-O95",  "prob": p_over_poisson(exp_total_corners, 9)},
+                    {"label": "Over 10.5 Corners", "code": "CNR-O105", "prob": p_over_poisson(exp_total_corners, 10)},
+                    {"label": "Under 9.5 Corners", "code": "CNR-U95",  "prob": round(1 - p_over_poisson(exp_total_corners, 9), 3)},
+                    {"label": "Under 10.5 Corners","code": "CNR-U105", "prob": round(1 - p_over_poisson(exp_total_corners, 10), 3)},
+                ],
+            }
+            result["corners"] = corners_market
+
+            # Team-to-have-most-corners is a common bet-builder leg
+            p_home_more = 0.0
+            MAX_C = 20
+            for i in range(MAX_C):
+                for j in range(MAX_C):
+                    if i > j:
+                        p_home_more += pmf(i, exp_h_corners) * pmf(j, exp_a_corners)
+            p_away_more = 0.0
+            for i in range(MAX_C):
+                for j in range(MAX_C):
+                    if j > i:
+                        p_away_more += pmf(i, exp_h_corners) * pmf(j, exp_a_corners)
+            p_tie_c = max(0.0, 1 - p_home_more - p_away_more)
+
+            result["corners_race"] = {
+                "id": "corners_race",
+                "name": "Corners — Most Wins",
+                "options": [
+                    {"label": f"{home} — Most Corners", "code": "CNR-H", "prob": round(p_home_more, 3)},
+                    {"label": "Tie",                     "code": "CNR-T", "prob": round(p_tie_c, 3)},
+                    {"label": f"{away} — Most Corners", "code": "CNR-A", "prob": round(p_away_more, 3)},
+                ],
+            }
 
         return result
