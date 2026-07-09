@@ -1895,6 +1895,70 @@ async def debug_calendar_status():
     }
 
 
+@app.get("/api/debug/fixtures")
+async def debug_fixtures(league: str = "WC", days: int = 90):
+    """
+    Diagnostic: hit football-data.org directly for one competition and report
+    what actually comes back — HTTP reachability, per-status counts, a sample,
+    and how many survive our upcoming-fixtures filter. Use this to tell apart
+    "no API access" vs "matches all TBD/finished" vs "working".
+    Example: /api/debug/fixtures?league=WC
+    """
+    from datetime import date as _date, timedelta as _td
+    league = league.upper()
+    out: Dict = {
+        "league": league,
+        "known_league": league in LEAGUES,
+        "api_key_set": bool(API_KEY),
+        "date_from": str(_date.today()),
+        "date_to": str(_date.today() + _td(days=days)),
+    }
+    if not API_KEY:
+        out["error"] = "FOOTBALL_DATA_API_KEY not set on the server"
+        return out
+
+    client = FootballDataClient(API_KEY)
+    raw = await client.fetch_matches_raw(league, days)
+    if raw is None:
+        out["error"] = ("football-data.org returned no data — the competition may "
+                        "not be available on this API key's plan (or it was rate-limited).")
+        out["raw_matches"] = 0
+        return out
+
+    matches = raw.get("matches", []) or []
+    status_counts: Dict[str, int] = {}
+    tbd = 0
+    _SKIP = {"tbd", "tba", "to be announced", "", "none"}
+    for m in matches:
+        st = m.get("status", "UNKNOWN")
+        status_counts[st] = status_counts.get(st, 0) + 1
+        hn = (m.get("homeTeam", {}).get("name") or "").strip().lower()
+        an = (m.get("awayTeam", {}).get("name") or "").strip().lower()
+        if hn in _SKIP or an in _SKIP:
+            tbd += 1
+
+    # What our real fetch_upcoming would return after filtering
+    upcoming = await client.fetch_upcoming(league, days)
+
+    out.update({
+        "competition": raw.get("competition", {}).get("name"),
+        "raw_matches": len(matches),
+        "status_breakdown": status_counts,
+        "matches_with_tbd_teams": tbd,
+        "fixtures_after_filter": len(upcoming),
+        "sample": [
+            {
+                "home": m.get("homeTeam", {}).get("name"),
+                "away": m.get("awayTeam", {}).get("name"),
+                "date": m.get("utcDate", "")[:10],
+                "status": m.get("status"),
+            }
+            for m in matches[:8]
+        ],
+    })
+    return out
+
+
 @app.get("/api/explain")
 async def explain_match(home: str, away: str):
     """

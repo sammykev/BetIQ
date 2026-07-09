@@ -101,6 +101,17 @@ class FootballDataClient:
             })
         return fixtures
 
+    async def fetch_matches_raw(self, league_code: str, days_ahead: int = 90) -> Optional[Dict]:
+        """Raw, unfiltered competition matches over the date window (for diagnostics)."""
+        today = date.today()
+        date_to = today + timedelta(days=days_ahead)
+        url = (
+            f"{API_BASE}/competitions/{league_code}/matches"
+            f"?dateFrom={today}&dateTo={date_to}"
+        )
+        async with httpx.AsyncClient() as client:
+            return await self._get(client, url)
+
     async def fetch_h2h(self, match_id: int, limit: int = 10) -> Optional[Dict]:
         """Fetch head-to-head record for a specific match ID."""
         url = f"{API_BASE}/matches/{match_id}/head2head?limit={limit}"
