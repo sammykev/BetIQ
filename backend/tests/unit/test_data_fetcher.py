@@ -34,12 +34,16 @@ def _resp(status: int, body: dict = None) -> httpx.Response:
     return httpx.Response(status, json=body or {}, request=_FAKE_REQUEST)
 
 
-def _match_payload(home="Arsenal", away="Chelsea", date="2025-06-01T15:00:00Z", match_id=1):
+def _match_payload(home="Arsenal", away="Chelsea", date="2025-06-01T15:00:00Z",
+                   match_id=1, status="TIMED"):
+    # football-data.org always includes a status; TIMED = kickoff time confirmed
+    # (the common case for near-term fixtures, incl. matches today).
     return {
         "id": match_id,
         "homeTeam": {"name": home},
         "awayTeam": {"name": away},
         "utcDate": date,
+        "status": status,
     }
 
 
@@ -214,6 +218,49 @@ class TestFetchUpcoming:
         with patch.object(client, "_get", new_callable=AsyncMock, return_value=payload):
             result = await client.fetch_upcoming("PL", 7)
         assert result[0]["match_id"] == 42
+
+    async def test_keeps_timed_fixtures(self):
+        # Matches with a confirmed kickoff (today / near-term) are TIMED, not SCHEDULED.
+        payload = {"matches": [_match_payload(status="TIMED")]}
+        client = _make_client()
+        with patch.object(client, "_get", new_callable=AsyncMock, return_value=payload):
+            result = await client.fetch_upcoming("WC", 7)
+        assert len(result) == 1
+
+    async def test_keeps_scheduled_fixtures(self):
+        payload = {"matches": [_match_payload(status="SCHEDULED")]}
+        client = _make_client()
+        with patch.object(client, "_get", new_callable=AsyncMock, return_value=payload):
+            result = await client.fetch_upcoming("WC", 7)
+        assert len(result) == 1
+
+    async def test_excludes_finished_and_in_play_fixtures(self):
+        payload = {
+            "matches": [
+                _match_payload("Arsenal", "Chelsea", match_id=1, status="FINISHED"),
+                _match_payload("Spain", "Brazil", match_id=2, status="IN_PLAY"),
+                _match_payload("France", "Germany", match_id=3, status="TIMED"),
+            ]
+        }
+        client = _make_client()
+        with patch.object(client, "_get", new_callable=AsyncMock, return_value=payload):
+            result = await client.fetch_upcoming("WC", 7)
+        assert len(result) == 1
+        assert result[0]["home"] == "France"
+
+    async def test_does_not_filter_url_by_status(self):
+        # Regression: filtering the request on status=SCHEDULED dropped TIMED
+        # matches (i.e. everything happening today). The URL must not pin a status.
+        captured = {}
+
+        async def _fake_get(_client, url, *a, **k):
+            captured["url"] = url
+            return {"matches": []}
+
+        client = _make_client()
+        with patch.object(client, "_get", side_effect=_fake_get):
+            await client.fetch_upcoming("WC", 7)
+        assert "status=SCHEDULED" not in captured["url"]
 
 
 # ── fetch_recent_results ───────────────────────────────────────────────────

@@ -63,9 +63,14 @@ class FootballDataClient:
         """Return upcoming fixtures for a league within the next N days."""
         today = date.today()
         date_to = today + timedelta(days=days_ahead)
+        # NOTE: do NOT filter by status=SCHEDULED here. football-data.org marks a
+        # match as TIMED (not SCHEDULED) once its exact kickoff time is confirmed,
+        # which is the case for essentially every match happening today or in the
+        # next few days. Filtering on SCHEDULED-only silently drops those. Instead
+        # fetch the full date range and keep any not-yet-played fixture below.
         url = (
             f"{API_BASE}/competitions/{league_code}/matches"
-            f"?status=SCHEDULED&dateFrom={today}&dateTo={date_to}"
+            f"?dateFrom={today}&dateTo={date_to}"
         )
         async with httpx.AsyncClient() as client:
             data = await self._get(client, url)
@@ -74,8 +79,12 @@ class FootballDataClient:
             return []
 
         _SKIP = {"tbd", "tba", "to be announced", "", "none"}
+        _UPCOMING = {"SCHEDULED", "TIMED"}  # not yet played
         fixtures = []
         for m in data["matches"]:
+            # Only keep fixtures that haven't kicked off / finished yet.
+            if m.get("status") not in _UPCOMING:
+                continue
             home_name = (m["homeTeam"].get("name") or "").strip()
             away_name = (m["awayTeam"].get("name") or "").strip()
             if home_name.lower() in _SKIP or away_name.lower() in _SKIP:
