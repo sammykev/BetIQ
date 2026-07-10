@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { getTeamAssets } from "@/lib/teamAssets";
+import { useTeamLogo } from "@/lib/useTeamLogo";
 import clsx from "clsx";
 
 interface Props {
@@ -19,14 +20,20 @@ interface Props {
 function TeamName({ name }: { name: string }) {
   const [broken, setBroken] = useState(false);
   const { imageUrl, isFlag, color } = getTeamAssets(name);
+  // Falls back to the generic /api/team-logo lookup when the static flag/crest
+  // map doesn't know this team — covers leagues and rare national teams not
+  // hand-maintained in lib/teamAssets.ts.
+  const dynamicImage = useTeamLogo(name, !imageUrl);
+  const image = imageUrl || dynamicImage;
+  const useFlagFit = imageUrl ? isFlag : false;
   return (
     <div className="flex items-center gap-1.5 min-w-0">
-      {imageUrl && !broken ? (
+      {image && !broken ? (
         <span className="relative inline-flex items-center justify-center w-5 h-5 rounded-full bg-zinc-100 dark:bg-zinc-800 ring-1 ring-zinc-200/80 dark:ring-zinc-700 overflow-hidden shrink-0">
           <img
-            src={imageUrl}
+            src={image}
             alt={name}
-            className={clsx("object-contain", isFlag ? "w-full h-full object-cover" : "w-[70%] h-[70%]")}
+            className={clsx("object-contain", useFlagFit ? "w-full h-full object-cover" : "w-[70%] h-[70%]")}
             onError={() => setBroken(true)}
           />
         </span>

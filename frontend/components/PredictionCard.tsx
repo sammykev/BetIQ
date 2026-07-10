@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { SaveButton } from "./SaveButton";
+import { useTeamLogo } from "@/lib/useTeamLogo";
 import type { Prediction } from "@/lib/api";
 import { Share2, Sparkles } from "lucide-react";
 import clsx from "clsx";
@@ -163,16 +164,25 @@ interface Props {
 export function TeamBadge({ name, size = 28 }: { name: string; size?: number }) {
   const [broken, setBroken] = useState(false);
   const asset = getTeamAssets(name);
-  if (asset.imageUrl && !broken) {
+  // Static flag/crest maps only cover ~10 leagues + a curated country list.
+  // Any team outside those (smaller leagues, newly-added competitions, rare
+  // World Cup qualifiers not yet added to the flag map) falls back to the
+  // generic /api/team-logo lookup — same mechanism already used for
+  // basketball, works for any team in any league without hardcoding.
+  const dynamicImage = useTeamLogo(name, !asset.imageUrl);
+  const image = asset.imageUrl || dynamicImage;
+  const isFlag = asset.imageUrl ? asset.isFlag : false;
+
+  if (image && !broken) {
     return (
       <span
         className="relative inline-flex items-center justify-center rounded-full bg-zinc-100 dark:bg-zinc-800 ring-1 ring-zinc-200/80 dark:ring-zinc-700 overflow-hidden shrink-0"
         style={{ width: size, height: size }}
       >
         <img
-          src={asset.imageUrl}
+          src={image}
           alt={name}
-          className={clsx("object-contain", asset.isFlag ? "w-full h-full object-cover" : "w-[70%] h-[70%]")}
+          className={clsx("object-contain", isFlag ? "w-full h-full object-cover" : "w-[70%] h-[70%]")}
           onError={() => setBroken(true)}
         />
       </span>

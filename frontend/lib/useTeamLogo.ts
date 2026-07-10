@@ -27,10 +27,12 @@ async function fetchLogo(name: string): Promise<string | null> {
 }
 
 /**
- * Looks up a team's logo via the generic /api/team-logo backend endpoint
- * (covers any league — EuroLeague, NCAA, NBL, seasonal competitions like NBA
- * Summer League — without a hardcoded per-team list). Pass `enabled: false`
- * to skip the lookup entirely, e.g. when a fast static match already exists.
+ * Looks up a team's logo via the generic /api/team-logo backend endpoint —
+ * covers any team in any league (World Cup national teams not yet in the
+ * static flag map, smaller football leagues, EuroLeague/NCAA/NBL basketball,
+ * seasonal competitions like NBA Summer League) without a hardcoded
+ * per-team/per-league list. Pass `enabled: false` to skip the lookup
+ * entirely, e.g. when a fast static match already exists.
  */
 export function useTeamLogo(name: string, enabled: boolean): string | null {
   const [logo, setLogo] = useState<string | null>(() => (enabled ? _cache.get(name) ?? null : null));
