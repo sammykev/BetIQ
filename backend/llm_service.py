@@ -206,27 +206,42 @@ async def fetch_team_form_web(team: str, competition: str = "", debug: bool = Fa
         return _fail("no_api_key", "GROQ_API_KEY not set")
 
     comp_hint = f" {competition}" if competition else ""
-    search_prompt = (
-        f"{team}{comp_hint} football last 10 match results 2025 2026 "
-        f"goals scored conceded xG expected goals statistics"
-    )
+
+    # compound-beta performs its own web search + page fetching internally,
+    # and stuffs the retrieved content into its own context before replying
+    # — a 413 here means THAT internal context got too large, not that our
+    # outgoing prompt did (it's tiny either way). A team that's in heavy,
+    # high-volume current coverage (e.g. mid-tournament) triggers this far
+    # more than a quiet club team, since the search pulls in more/longer
+    # pages. _fetch_news() above hit the exact same issue and fixed it by
+    # keeping the prompt as minimal as possible — same approach here, plus
+    # a genuinely shorter last-resort retry (not just cycling models on an
+    # unchanged prompt, which fails identically since the prompt is the
+    # actual variable that controls how much compound-beta goes and fetches).
+    prompt_tiers = [
+        f"{team}{comp_hint} last 5 matches xG?",
+        f"{team} xG?",  # minimal fallback if the above still 413s
+    ]
 
     search_text = ""
     search_errors = []
-    for model in ("compound-beta-mini", "compound-beta"):
-        try:
-            data = await _call(model, [{"role": "user", "content": search_prompt}], max_tokens=300)
-            text = data["choices"][0]["message"]["content"].strip()
-            if text:
-                search_text = text
-                break
-        except Exception as e:
-            err = str(e)
-            search_errors.append(f"{model}: {err}")
-            if "413" in err or "request_too_large" in err:
-                continue
-            print(f"[WebForm] {model} search failed for {team}: {e}")
+    for prompt in prompt_tiers:
+        if search_text:
             break
+        for model in ("compound-beta-mini", "compound-beta"):
+            try:
+                data = await _call(model, [{"role": "user", "content": prompt}], max_tokens=300)
+                text = data["choices"][0]["message"]["content"].strip()
+                if text:
+                    search_text = text
+                    break
+            except Exception as e:
+                err = str(e)
+                search_errors.append(f"{model} ({prompt!r}): {err}")
+                if "413" in err or "request_too_large" in err:
+                    continue
+                print(f"[WebForm] {model} search failed for {team}: {e}")
+                break
 
     if not search_text:
         detail = "; ".join(search_errors) if search_errors else "both compound-beta models returned empty content"
