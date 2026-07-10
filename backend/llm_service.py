@@ -168,10 +168,17 @@ Rules:
     return {}
 
 
-async def fetch_team_form_web(team: str) -> Dict[str, Any]:
+async def fetch_team_form_web(team: str, competition: str = "") -> Dict[str, Any]:
     """
     Use compound-beta web search + R1 extraction to fetch a team's
     last 10 results with goals and xG (when available).
+
+    `competition` (e.g. "FIFA World Cup", "AFCON") narrows the search when
+    known — national teams play across friendlies, qualifiers, and
+    tournaments, and stats sites like Opta/The Analyst, FotMob, and FBref
+    publish tournament-specific xG that a generic team-name search often
+    misses. Naming the competition explicitly steers the web search toward
+    that data instead of whatever's most recently indexed for the team.
 
     Returns:
     {
@@ -189,9 +196,10 @@ async def fetch_team_form_web(team: str) -> Dict[str, Any]:
     if not GROQ_API_KEY:
         return {}
 
+    comp_hint = f" {competition}" if competition else ""
     search_prompt = (
-        f"{team} football last 10 match results 2025 2026 "
-        f"goals scored conceded xG expected goals"
+        f"{team}{comp_hint} football last 10 match results 2025 2026 "
+        f"goals scored conceded xG expected goals statistics"
     )
 
     search_text = ""

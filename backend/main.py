@@ -637,11 +637,24 @@ def _load_international_csv() -> pd.DataFrame:
 # Train + predict pipeline
 # ------------------------------------------------------------------ #
 
+_MAJOR_TOURNAMENT_HINTS = (
+    "world cup", "euro", "afcon", "africa cup", "copa america",
+    "nations league", "confederations",
+)
+
+
 async def _prefetch_web_forms(predictor, fixtures: list):
     """
     Background task: for each team in upcoming fixtures that has fewer than
     5 local matches in team_stats, fetch their last 10 results + xG via
     compound-beta web search and cache in Redis for 24 hours.
+
+    Teams playing in a major international tournament right now (World Cup,
+    Euros, AFCON, ...) are fetched first — those are exactly the teams with
+    the sparsest local history (national teams, limited club-style CSV
+    coverage) and where a tournament-aware search matters most, so they
+    shouldn't lose their slot in the 25-per-run Groq quota cap to a random
+    friendly fixture that happened to be seen first.
     """
     from llm_service import fetch_team_form_web, GROQ_API_KEY
     if not GROQ_API_KEY:
@@ -649,8 +662,12 @@ async def _prefetch_web_forms(predictor, fixtures: list):
 
     seen = set()
     sparse_teams = []
+    team_competition: Dict[str, str] = {}
     for fx in fixtures:
+        league_name = fx.get("league_name", "")
         for team in (fx["home"], fx["away"]):
+            if team not in team_competition and league_name:
+                team_competition[team] = league_name
             if team in seen:
                 continue
             seen.add(team)
@@ -663,13 +680,19 @@ async def _prefetch_web_forms(predictor, fixtures: list):
     if not sparse_teams:
         return
 
+    def _is_major_tournament(team: str) -> bool:
+        comp = team_competition.get(team, "").lower()
+        return any(hint in comp for hint in _MAJOR_TOURNAMENT_HINTS)
+
+    sparse_teams.sort(key=lambda t: 0 if _is_major_tournament(t) else 1)
+
     print(f"[WebForm] Fetching form for {len(sparse_teams)} teams with sparse data...")
     for team in sparse_teams[:25]:  # cap at 25 to respect Groq quota
         try:
             cached = _get_web_form_cache(team)
             if cached:
                 continue  # already have it
-            form = await fetch_team_form_web(team)
+            form = await fetch_team_form_web(team, competition=team_competition.get(team, ""))
             if form and form.get("matches"):
                 _set_web_form_cache(team, form)
                 # Also feed confirmed match results into team_stats
@@ -2037,6 +2060,59 @@ async def debug_pipeline():
         "predictions_by_league": dict(sorted(by_league.items())),
         "wc_predictions": wc,
     }
+
+
+@app.get("/api/debug/team-form")
+async def debug_team_form(team: str, live: bool = False):
+    """
+    Inspect (or force-refresh) the web-searched form/xG for one team — this is
+    the pathway that supplies real xG for teams with sparse local history,
+    e.g. World Cup national teams, since Understat only covers the top-5
+    European club leagues and predictor.py's own "xG_Home"/"xG_Away" is a
+    goals-based Dixon-Coles estimate, not real shot-based xG.
+
+    By default reads whatever is cached (no Groq spend). Pass live=true to
+    force a fresh compound-beta web search + extraction right now — useful
+    to check whether the pathway works at all for a given team, or to see
+    a fresh error, but costs one Groq call.
+
+    Example: /api/debug/team-form?team=Argentina
+             /api/debug/team-form?team=Argentina&live=true
+    """
+    from llm_service import GROQ_API_KEY
+
+    cached = _get_web_form_cache(team)
+    local_pts = len(_predictor.team_stats.get(team, {}).get("pts", [])) if _predictor else None
+
+    out: Dict = {
+        "team": team,
+        "groq_api_key_set": bool(GROQ_API_KEY),
+        "local_match_count": local_pts,
+        "cached_web_form": cached,
+    }
+    if not cached:
+        out["note"] = ("No cached web form for this team yet. It's only fetched for teams "
+                       "with < 5 local matches, during the pipeline's background prefetch "
+                       "(capped at 25 teams per run, World Cup/major-tournament teams "
+                       "prioritised). Pass live=true to fetch it right now instead of waiting.")
+
+    if live:
+        if not GROQ_API_KEY:
+            out["live_fetch_error"] = "GROQ_API_KEY not set on the server"
+        else:
+            from llm_service import fetch_team_form_web
+            fixture_comp = next(
+                (p.get("league_name", "") for p in _predictions_cache
+                 if p.get("home") == team or p.get("away") == team),
+                "",
+            )
+            fresh = await fetch_team_form_web(team, competition=fixture_comp)
+            out["live_fetch_competition_hint"] = fixture_comp or None
+            out["live_fetch_result"] = fresh or None
+            if not fresh:
+                out["live_fetch_error"] = "Web search + extraction returned nothing — see server logs for details."
+
+    return out
 
 
 @app.get("/api/debug/odds")
