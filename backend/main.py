@@ -643,6 +643,31 @@ _MAJOR_TOURNAMENT_HINTS = (
 )
 
 
+def _apply_web_form(predictor, team: str, form: dict) -> None:
+    """
+    Persist a fetched web form to the 24h Redis cache (so the match page's
+    team-form display picks it up) and feed its confirmed results into the
+    live predictor's team_stats/Elo, same as locally-sourced results would
+    be. Shared by the background prefetch and the on-demand debug endpoint
+    so a manual live=true fetch is immediately useful, not just diagnostic.
+    """
+    _set_web_form_cache(team, form)
+    for m in form.get("matches", []):
+        try:
+            scored   = float(m["scored"])
+            conceded = float(m["conceded"])
+            result   = m.get("result", "")
+            if result not in ("W", "D", "L"):
+                continue
+            # Translate from team's perspective to H/D/A for _update
+            if m.get("home"):
+                predictor._update(team, "__web__", {"W":"H","D":"D","L":"A"}[result], scored, conceded)
+            else:
+                predictor._update("__web__", team, {"W":"A","D":"D","L":"H"}[result], conceded, scored)
+        except Exception:
+            pass
+
+
 async def _prefetch_web_forms(predictor, fixtures: list):
     """
     Background task: fetch last-10-match form + xG via compound-beta web
@@ -701,22 +726,7 @@ async def _prefetch_web_forms(predictor, fixtures: list):
                 continue  # already have it
             form = await fetch_team_form_web(team, competition=team_competition.get(team, ""))
             if form and form.get("matches"):
-                _set_web_form_cache(team, form)
-                # Also feed confirmed match results into team_stats
-                for m in form.get("matches", []):
-                    try:
-                        scored   = float(m["scored"])
-                        conceded = float(m["conceded"])
-                        result   = m.get("result", "")
-                        if result not in ("W", "D", "L"):
-                            continue
-                        # Translate from team's perspective to H/D/A for _update
-                        if m.get("home"):
-                            predictor._update(team, "__web__", {"W":"H","D":"D","L":"A"}[result], scored, conceded)
-                        else:
-                            predictor._update("__web__", team, {"W":"A","D":"D","L":"H"}[result], conceded, scored)
-                    except Exception:
-                        pass
+                _apply_web_form(predictor, team, form)
         except Exception as e:
             print(f"[WebForm] Failed for {team}: {e}")
         await asyncio.sleep(7)  # stay within Groq rate limit
@@ -2127,7 +2137,14 @@ async def debug_team_form(team: str, live: bool = False):
                     out["live_fetch_search_text_sample"] = fresh["search_text"]
             else:
                 out["live_fetch_result"] = fresh or None
-                if not fresh:
+                if fresh and fresh.get("matches") and _predictor is not None:
+                    # A successful live check is now also a "warm this team's
+                    # cache right now" action — otherwise the data this call
+                    # just fetched would be thrown away and the match page
+                    # still wouldn't show it until the next full pipeline run.
+                    _apply_web_form(_predictor, team, fresh)
+                    out["cached"] = True
+                elif not fresh:
                     out["live_fetch_error"] = "Unexpected empty result with no debug info."
 
     return out
