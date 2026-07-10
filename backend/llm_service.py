@@ -168,7 +168,7 @@ Rules:
     return {}
 
 
-async def fetch_team_form_web(team: str, competition: str = "") -> Dict[str, Any]:
+async def fetch_team_form_web(team: str, competition: str = "", debug: bool = False) -> Dict[str, Any]:
     """
     Use compound-beta web search + R1 extraction to fetch a team's
     last 10 results with goals and xG (when available).
@@ -191,10 +191,19 @@ async def fetch_team_form_web(team: str, competition: str = "") -> Dict[str, Any
       "avg_xg_for": 1.9,       # null when xG not found in search
       "avg_xg_against": 0.7,   # null when xG not found in search
     }
-    Returns {} on failure.
+    Returns {} on failure — or, if debug=True, a dict with "_debug_stage"
+    ("no_api_key" | "search" | "extraction") and "_debug_detail" describing
+    exactly where and why it failed, plus the raw search text if the search
+    step succeeded (useful to tell "search found nothing" apart from "search
+    found data but extraction couldn't parse it").
     """
+    def _fail(stage: str, detail: str, **extra) -> Dict[str, Any]:
+        if not debug:
+            return {}
+        return {"_debug_stage": stage, "_debug_detail": detail, **extra}
+
     if not GROQ_API_KEY:
-        return {}
+        return _fail("no_api_key", "GROQ_API_KEY not set")
 
     comp_hint = f" {competition}" if competition else ""
     search_prompt = (
@@ -203,6 +212,7 @@ async def fetch_team_form_web(team: str, competition: str = "") -> Dict[str, Any
     )
 
     search_text = ""
+    search_errors = []
     for model in ("compound-beta-mini", "compound-beta"):
         try:
             data = await _call(model, [{"role": "user", "content": search_prompt}], max_tokens=300)
@@ -212,13 +222,15 @@ async def fetch_team_form_web(team: str, competition: str = "") -> Dict[str, Any
                 break
         except Exception as e:
             err = str(e)
+            search_errors.append(f"{model}: {err}")
             if "413" in err or "request_too_large" in err:
                 continue
             print(f"[WebForm] {model} search failed for {team}: {e}")
             break
 
     if not search_text:
-        return {}
+        detail = "; ".join(search_errors) if search_errors else "both compound-beta models returned empty content"
+        return _fail("search", detail)
 
     extract_prompt = f"""Extract {team}'s last 10 football match results from this text.
 Text: "{search_text}"
@@ -256,31 +268,40 @@ Rules:
             pass
         return {}
 
+    extraction_errors = []
+
     # Primary: DeepSeek R1 reasoner (best structured extraction)
     if DEEPSEEK_API_KEY:
         try:
             data = await _call_deepseek([{"role": "user", "content": extract_prompt}], max_tokens=600)
-            result = await _try_parse(data["choices"][0]["message"]["content"])
+            raw = data["choices"][0]["message"]["content"]
+            result = await _try_parse(raw)
             if result:
                 print(f"[WebForm/R1] {team}: {len(result['matches'])} matches, "
                       f"xG={'yes' if result.get('avg_xg_for') else 'no'}")
                 return result
+            extraction_errors.append(f"DeepSeek: parsed but no usable 'matches' — raw: {raw[:200]!r}")
         except Exception as e:
             print(f"[WebForm] DeepSeek extraction failed for {team}: {e}")
+            extraction_errors.append(f"DeepSeek: {e}")
 
     # Fallback: Groq R1 distill
     if GROQ_API_KEY:
         try:
             data = await _call(_GROQ_R1, [{"role": "user", "content": extract_prompt}], max_tokens=600)
-            result = await _try_parse(data["choices"][0]["message"]["content"])
+            raw = data["choices"][0]["message"]["content"]
+            result = await _try_parse(raw)
             if result:
                 print(f"[WebForm/Groq] {team}: {len(result['matches'])} matches, "
                       f"xG={'yes' if result.get('avg_xg_for') else 'no'}")
                 return result
+            extraction_errors.append(f"Groq R1: parsed but no usable 'matches' — raw: {raw[:200]!r}")
         except Exception as e:
             print(f"[WebForm] Groq extraction failed for {team}: {e}")
+            extraction_errors.append(f"Groq R1: {e}")
 
-    return {}
+    return _fail("extraction", "; ".join(extraction_errors) or "no extraction backend available",
+                search_text=search_text[:500])
 
 
 async def fetch_missing_results(home: str, away: str, date: str) -> Dict[str, Any]:

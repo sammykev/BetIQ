@@ -645,9 +645,16 @@ _MAJOR_TOURNAMENT_HINTS = (
 
 async def _prefetch_web_forms(predictor, fixtures: list):
     """
-    Background task: for each team in upcoming fixtures that has fewer than
-    5 local matches in team_stats, fetch their last 10 results + xG via
-    compound-beta web search and cache in Redis for 24 hours.
+    Background task: fetch last-10-match form + xG via compound-beta web
+    search for every team in upcoming fixtures that doesn't already have a
+    cached web form, and cache it in Redis for 24 hours.
+
+    Note this is NOT gated on "few local matches" despite team_stats often
+    holding plenty of historical W/D/L records for national teams (from the
+    international results CSV) — that history has no xG in it at all, so a
+    team can have hundreds of local matches and still need this fetch for
+    real xG. The only thing that skips a team is already having a cached
+    web form.
 
     Teams playing in a major international tournament right now (World Cup,
     Euros, AFCON, ...) are fetched first — those are exactly the teams with
@@ -2091,10 +2098,12 @@ async def debug_team_form(team: str, live: bool = False):
         "cached_web_form": cached,
     }
     if not cached:
-        out["note"] = ("No cached web form for this team yet. It's only fetched for teams "
-                       "with < 5 local matches, during the pipeline's background prefetch "
-                       "(capped at 25 teams per run, World Cup/major-tournament teams "
-                       "prioritised). Pass live=true to fetch it right now instead of waiting.")
+        out["note"] = ("No cached web form for this team yet. It's fetched during the "
+                       "pipeline's background prefetch for any team without one already "
+                       "cached — NOT gated on local match count, since historical W/D/L "
+                       "records (which national teams often have plenty of) contain no xG "
+                       "at all. Capped at 25 teams per run, World Cup/major-tournament teams "
+                       "prioritised. Pass live=true to fetch it right now instead of waiting.")
 
     if live:
         if not GROQ_API_KEY:
@@ -2106,11 +2115,20 @@ async def debug_team_form(team: str, live: bool = False):
                  if p.get("home") == team or p.get("away") == team),
                 "",
             )
-            fresh = await fetch_team_form_web(team, competition=fixture_comp)
+            fresh = await fetch_team_form_web(team, competition=fixture_comp, debug=True)
             out["live_fetch_competition_hint"] = fixture_comp or None
-            out["live_fetch_result"] = fresh or None
-            if not fresh:
-                out["live_fetch_error"] = "Web search + extraction returned nothing — see server logs for details."
+            if fresh.get("_debug_stage"):
+                # Failed — surface exactly where/why instead of pointing at
+                # server logs the free-tier dashboard may not expose usefully.
+                out["live_fetch_result"] = None
+                out["live_fetch_failed_at"] = fresh["_debug_stage"]
+                out["live_fetch_error"] = fresh["_debug_detail"]
+                if "search_text" in fresh:
+                    out["live_fetch_search_text_sample"] = fresh["search_text"]
+            else:
+                out["live_fetch_result"] = fresh or None
+                if not fresh:
+                    out["live_fetch_error"] = "Unexpected empty result with no debug info."
 
     return out
 
