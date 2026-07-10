@@ -339,6 +339,82 @@ def _save_predictions_cache():
     except Exception as e:
         print(f"[Cache] Disk save error: {e}")
 
+ODDS_FETCH_COOLDOWN_SECONDS = 4 * 3600  # don't re-hit The Odds API more than once per 4h
+ODDS_CACHE_FILE = os.path.join("data", "odds_cache.json")
+
+
+def _load_cached_live_odds() -> tuple:
+    """Returns (live_odds_dict, fetched_at_iso_or_None)."""
+    r = _get_redis()
+    if r:
+        try:
+            raw = r.get("betiq:odds_cache")
+            if raw:
+                saved = json.loads(raw)
+                return saved.get("live_odds", {}), saved.get("fetched_at")
+        except Exception as e:
+            print(f"[OddsCache] Redis load error: {e}")
+    if os.path.exists(ODDS_CACHE_FILE):
+        try:
+            with open(ODDS_CACHE_FILE) as f:
+                saved = json.load(f)
+            return saved.get("live_odds", {}), saved.get("fetched_at")
+        except Exception as e:
+            print(f"[OddsCache] Disk load error: {e}")
+    return {}, None
+
+
+def _save_cached_live_odds(live_odds: Dict) -> None:
+    payload = json.dumps({"live_odds": live_odds, "fetched_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")})
+    r = _get_redis()
+    if r:
+        try:
+            r.set("betiq:odds_cache", payload, ex=ODDS_FETCH_COOLDOWN_SECONDS * 3)
+        except Exception as e:
+            print(f"[OddsCache] Redis save error: {e}")
+    try:
+        os.makedirs("data", exist_ok=True)
+        with open(ODDS_CACHE_FILE, "w") as f:
+            f.write(payload)
+    except Exception as e:
+        print(f"[OddsCache] Disk save error: {e}")
+
+
+async def _get_live_odds_throttled(stubs: List[Dict]) -> Dict:
+    """
+    Fetch live 1X2 odds for the given fixtures from The Odds API, but skip the
+    call entirely (reusing the last known result) if we fetched within the
+    last ODDS_FETCH_COOLDOWN_SECONDS.
+
+    Why this exists: free hosting spins the instance down when idle, and the
+    startup handler re-runs the full pipeline on every cold start — which can
+    happen many times a day under light/sporadic traffic. Without a cooldown,
+    each cold start re-fetches odds for every league from scratch, which
+    burns through The Odds API's free 500-requests/month quota fast. Once the
+    quota is gone, every odds badge and value bet silently disappears until
+    the next monthly reset — and each further cold start keeps trying and
+    failing, so nothing self-heals on its own. Throttling the underlying
+    fetch (not just caching the HTTP response) fixes this at the source.
+    """
+    from odds_fetcher import fetch_odds_for_predictions
+    from odds_cache import is_within_cooldown
+
+    cached_odds, fetched_at = _load_cached_live_odds()
+    if cached_odds and is_within_cooldown(fetched_at, ODDS_FETCH_COOLDOWN_SECONDS):
+        print(f"[Pipeline] Reusing cached live odds (cooldown active) — {len(cached_odds)} fixtures.")
+        return cached_odds
+
+    live_odds = await fetch_odds_for_predictions(stubs)
+    if live_odds:
+        _save_cached_live_odds(live_odds)
+    elif cached_odds:
+        # Fresh fetch came back empty (quota exhausted, API down, etc.) — keep
+        # serving the last known-good odds rather than dropping them to zero.
+        print("[Pipeline] Live odds fetch returned nothing — falling back to last known odds.")
+        return cached_odds
+    return live_odds
+
+
 def _h2h_is_fresh(entry: Dict) -> bool:
     try:
         fetched = datetime.fromisoformat(entry["fetched_at"])
@@ -779,11 +855,10 @@ async def _run_pipeline():
             live_odds: dict = {}
             if fixtures:
                 try:
-                    from odds_fetcher import fetch_odds_for_predictions
                     stubs = [{"home": fx["home"], "away": fx["away"],
                               "date": fx.get("date",""), "league_name": fx.get("league_name","")}
                              for fx in fixtures]
-                    live_odds = await fetch_odds_for_predictions(stubs)
+                    live_odds = await _get_live_odds_throttled(stubs)
                     print(f"[Pipeline] Got live odds for {len(live_odds)}/{len(fixtures)} fixtures")
                 except Exception as e:
                     print(f"[Pipeline] Live odds fetch error (non-fatal): {e}")
@@ -2094,6 +2169,68 @@ async def debug_fixtures(league: str = "WC", days: int = 90):
     return out
 
 
+@app.get("/api/debug/predict")
+async def debug_predict(home: str, away: str, date_str: Optional[str] = None):
+    """
+    Explain a single prediction: the raw feature values the model actually
+    saw (Elo, xG, market-implied odds, form, etc.) alongside the resulting
+    probabilities. Use this to check whether a surprising pick (e.g. away
+    favoured despite a big home Elo/xG edge) is a real bug or the market-odds
+    features legitimately outweighing Elo/xG — the model uses ~27 features,
+    not just those two, and Impl_Home/Impl_Draw/Impl_Away (derived from
+    bookmaker odds) are typically the single strongest signal. If those odds
+    got fuzzy-matched to the wrong fixture, this is exactly where it'd show.
+
+    Example: /api/debug/predict?home=Arsenal&away=Chelsea
+    """
+    if _predictor is None or not getattr(_predictor, "_ready", False):
+        raise HTTPException(status_code=503, detail="Model not ready")
+
+    # Pull whatever odds we have cached for this exact fixture, same as the
+    # live pipeline would have used, so the feature values shown here match
+    # what's actually being served — not a fresh, potentially different fetch.
+    cached_odds, odds_fetched_at = _load_cached_live_odds()
+    key_candidates = [k for k in cached_odds if k.startswith(f"{home}:{away}:")]
+    matched_odds = cached_odds.get(key_candidates[0]) if key_candidates else {}
+
+    odds_home = float(matched_odds.get("1") or 0)
+    odds_draw = float(matched_odds.get("X") or 0)
+    odds_away = float(matched_odds.get("2") or 0)
+
+    feats = _predictor._feats(home, away, odds_home, odds_draw, odds_away, match_date=date_str)
+    prediction = _predictor.predict_match(home, away, odds_home, odds_draw, odds_away, match_date=date_str)
+
+    elo_gap = feats["HomeElo"] - feats["AwayElo"]
+    xg_gap = feats["xG_Home"] - feats["xG_Away"]
+
+    # Flag cases where Elo/xG clearly favour one side but the model's win
+    # probability favours the other — the thing the user actually asked about.
+    flags = []
+    if elo_gap > 50 and xg_gap > 0.2 and prediction and prediction["p_away"] > prediction["p_home"]:
+        flags.append("Home leads on both Elo and xG, but the model favours Away — "
+                      "check whether Impl_Home/Impl_Draw/Impl_Away below explain it.")
+    if elo_gap < -50 and xg_gap < -0.2 and prediction and prediction["p_home"] > prediction["p_away"]:
+        flags.append("Away leads on both Elo and xG, but the model favours Home — "
+                      "check whether Impl_Home/Impl_Draw/Impl_Away below explain it.")
+    if not key_candidates:
+        flags.append("No cached live odds matched this exact fixture key — "
+                      "Impl_Home/Draw/Away below are the league-average fallback, "
+                      "not real market odds. This can happen for a new/renamed team "
+                      "name or if this fixture hasn't been through the live-odds pass yet.")
+
+    return {
+        "home": home,
+        "away": away,
+        "prediction": prediction,
+        "features": feats,
+        "elo_gap_home_minus_away": round(elo_gap, 1),
+        "xg_gap_home_minus_away": round(xg_gap, 3),
+        "matched_live_odds": matched_odds or None,
+        "live_odds_cache_age": odds_fetched_at,
+        "flags": flags,
+    }
+
+
 @app.get("/api/explain")
 async def explain_match(home: str, away: str):
     """
@@ -2538,6 +2675,9 @@ async def get_sport_leagues(sport: str):
     return {"sport": sport, "leagues": leagues, "total_predictions": len(preds)}
 
 
+_sports_memory_cache: Dict[str, tuple] = {}  # sport -> (data, fetched_at_monotonic)
+
+
 @app.get("/api/sports/{sport}")
 async def get_sport_predictions(sport: str):
     """
@@ -2545,6 +2685,7 @@ async def get_sport_predictions(sport: str):
     sport: basketball | tennis | table-tennis
     Requires ODDS_API_KEY env var.
     """
+    import time as _time
     from sports_fetcher import (
         fetch_basketball_predictions,
         fetch_tennis_predictions,
@@ -2564,6 +2705,14 @@ async def get_sport_predictions(sport: str):
                 return drop_started_events(_json.loads(cached))
         except Exception:
             pass
+    else:
+        # No Redis (or it's briefly down) — fall back to an in-process cache
+        # so this endpoint still doesn't hit The Odds API on every request.
+        # Without this, any Redis outage turns every page view into a fresh
+        # API call, burning the free 500/month quota within hours.
+        cached_entry = _sports_memory_cache.get(sport)
+        if cached_entry and (_time.monotonic() - cached_entry[1]) < CACHE_TTL:
+            return drop_started_events(cached_entry[0])
 
     if sport == "basketball":
         data = await fetch_basketball_predictions()
@@ -2574,11 +2723,13 @@ async def get_sport_predictions(sport: str):
     else:
         raise HTTPException(status_code=400, detail=f"Unknown sport: {sport}")
 
-    if r and data:
+    if r:
         try:
             r.setex(cache_key, CACHE_TTL, _json.dumps(data))
         except Exception:
             pass
+    else:
+        _sports_memory_cache[sport] = (data, _time.monotonic())
 
     return drop_started_events(data)
 
@@ -2630,23 +2781,27 @@ async def get_sport_event_detail(sport: str, home: str, away: str, date: str):
 @app.get("/api/value-bets")
 async def get_value_bets():
     """
-    Returns predictions where BetIQ's model probability beats SportyBet's
-    implied probability by ≥ 3%. Results cached in Redis for 30 min (only when non-empty).
+    Returns predictions where BetIQ's model probability beats the market's
+    implied probability by >= 3%. Results cached in Redis for 30 min.
+
+    Odds are read from the same throttled odds cache the pipeline maintains
+    (_get_live_odds_throttled) instead of calling The Odds API directly —
+    this used to only cache non-empty results, so once the API's free quota
+    was exhausted, EVERY page view retried the dead API with no backoff,
+    which kept the quota from ever recovering. Now this endpoint never calls
+    The Odds API on its own; it just reads whatever the pipeline last fetched.
     """
-    from odds_fetcher import fetch_odds_for_predictions, compute_value_bets
+    from odds_fetcher import compute_value_bets
     import json as _json
 
     CACHE_KEY = "betiq:value_bets"
     r = _get_redis()
 
-    # Serve from cache only if non-empty result was previously stored
     if r:
         try:
             cached = r.get(CACHE_KEY)
-            if cached:
-                data = _json.loads(cached)
-                if data:  # don't serve empty cache — always retry if previously empty
-                    return data
+            if cached is not None:
+                return _json.loads(cached)
         except Exception:
             pass
 
@@ -2660,13 +2815,17 @@ async def get_value_bets():
     print(f"[ValueBets] Prediction dates: {dates[:5]}")
 
     try:
-        odds_index = await fetch_odds_for_predictions(preds)
+        odds_index, _ = _load_cached_live_odds()
         value_bets = compute_value_bets(preds, odds_index)
-        print(f"[ValueBets] Found {len(value_bets)} value bets from {len(odds_index)} matched events")
+        print(f"[ValueBets] Found {len(value_bets)} value bets from {len(odds_index)} cached odds entries")
 
-        if r and value_bets:  # only cache non-empty results
+        if r:
             try:
-                r.setex(CACHE_KEY, 1800, _json.dumps(value_bets))
+                # Cache even empty results (briefly) — the odds source is
+                # already throttled upstream, this just avoids recomputing
+                # compute_value_bets() on every request during quiet periods.
+                ttl = 1800 if value_bets else 300
+                r.setex(CACHE_KEY, ttl, _json.dumps(value_bets))
             except Exception:
                 pass
 
