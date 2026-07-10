@@ -1964,6 +1964,39 @@ async def upload_basketball_csv(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/debug/basketball-provider")
+async def debug_basketball_provider(date: str = ""):
+    """
+    Raw diagnostic dump for the api-basketball (API-SPORTS) integration —
+    same purpose as the earlier /api/debug/competition-logo: this provider
+    hasn't been exercised against a live key from the sandbox it was built
+    in, so this surfaces the exact response shape for verification before
+    any of it gets wired into automatic Elo retraining.
+
+    Example: /api/debug/basketball-provider
+             /api/debug/basketball-provider?date=2026-07-10
+    """
+    from basketball_data_fetcher import API_KEY as BBALL_KEY, fetch_leagues, fetch_games
+    from datetime import date as _date
+
+    out: Dict = {"api_key_set": bool(BBALL_KEY)}
+    if not BBALL_KEY:
+        out["message"] = "Set API_BASKETBALL_KEY (from https://dashboard.api-football.com) to test this provider."
+        return out
+
+    leagues = await fetch_leagues(search="NBA")
+    out["nba_league_search_count"] = len(leagues)
+    out["nba_league_sample"] = leagues[:3]
+
+    games_date = date or _date.today().strftime("%Y-%m-%d")
+    games = await fetch_games(date=games_date)
+    out["games_date_queried"] = games_date
+    out["games_count"] = len(games)
+    out["games_sample"] = games[:3]
+
+    return out
+
+
 @app.post("/api/admin/upload/tennis-csv")
 async def upload_tennis_csv(request: Request):
     """
