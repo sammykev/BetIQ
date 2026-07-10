@@ -93,6 +93,10 @@ class FootballDataClient:
                 "match_id": m["id"],
                 "home": home_name,
                 "away": away_name,
+                # Team crests ride along for free on every matches response —
+                # no extra API call needed, unlike a per-team lookup.
+                "home_crest": m["homeTeam"].get("crest") or None,
+                "away_crest": m["awayTeam"].get("crest") or None,
                 "date": m["utcDate"][:10],
                 "time": m["utcDate"][11:16],
                 "league": league_code,
@@ -124,12 +128,18 @@ class FootballDataClient:
         we already have a real (non-rate-limited-demo) key for, and one whose
         competition codes are exactly our own LEAGUES dict keys ("WC", "PL",
         ...), so no name-matching is needed at all.
+
+        Raises on a failed/errored request (network error, exhausted 429
+        retries, ...) rather than returning None for that case too — callers
+        need to tell "confirmed: this competition has no emblem" apart from
+        "we don't actually know, the request failed," since only the former
+        is safe to cache for a long time.
         """
         url = f"{API_BASE}/competitions/{league_code}"
         async with httpx.AsyncClient() as client:
             data = await self._get(client, url)
-        if not data:
-            return None
+        if data is None:
+            raise RuntimeError(f"football-data.org request failed for competition {league_code!r}")
         return data.get("emblem")
 
     async def fetch_recent_results(

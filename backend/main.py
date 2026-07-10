@@ -879,6 +879,11 @@ async def _run_pipeline():
                     league_fixtures = []
                 if league_fixtures:
                     fixtures.extend(league_fixtures)
+                    # Team crests ride along for free on the fixtures response
+                    # (no extra API call) — cache them for /api/team-logo.
+                    for fx in league_fixtures:
+                        _cache_team_crest(fx["home"], fx.get("home_crest"))
+                        _cache_team_crest(fx["away"], fx.get("away_crest"))
                     # No live odds yet on this fast pass — predict_match() falls back
                     # to league-average implied probabilities, which is fine for an
                     # initial publish; the odds pass below refines it.
@@ -889,6 +894,17 @@ async def _run_pipeline():
                     _save_predictions_cache()
                     print(f"[Pipeline] +{code}: {len(league_fixtures)} fixtures — "
                           f"{len(predictions)} predictions published so far.")
+                # Backfill this league's badge only if we don't already have a
+                # confirmed one cached — a one-time cost per league, not worth
+                # paying every run, and this is also what self-heals a
+                # previously rate-limited/failed lookup (see
+                # _has_cached_competition_emblem).
+                if not _has_cached_competition_emblem(code):
+                    try:
+                        emblem = await client.fetch_competition_emblem(code)
+                        _cache_competition_emblem(code, emblem)
+                    except Exception as e:
+                        print(f"[Pipeline] Emblem fetch failed for {code}: {e}")
                 await asyncio.sleep(10)  # respect football-data.org rate limit
 
             # ── Live odds pass — improves accuracy + enables value-bet detection ──
@@ -2848,17 +2864,103 @@ async def get_sport_predictions(sport: str):
 @app.get("/api/team-logo")
 async def get_team_logo(name: str):
     """
-    Generic team badge/logo lookup — covers any team in any league (NBA,
-    EuroLeague, NCAA, NBL, NBA Summer League, etc.) without a hardcoded list.
-    Cached server-side (Redis, 30 days) since badges don't change.
+    Generic team badge/logo lookup. Tries the football-data.org crest cache
+    first — crests for every team in our tracked football competitions
+    (World Cup, Premier League, ...) are captured for free from the fixtures
+    the pipeline already fetches, no extra API call needed and no fuzzy name
+    matching required. Falls back to the TheSportsDB-backed generic lookup
+    for anything else (basketball, tennis, a team not yet seen in a fixture
+    window). Cached server-side (Redis, 30 days) since badges don't change.
     """
     from team_logos import lookup_team_logo
+
+    logo = _get_cached_team_crest(name)
+    source = "football-data.org" if logo else None
+
+    if not logo:
+        r = _get_redis()
+        logo = await lookup_team_logo(name, redis_client=r)
+        source = "thesportsdb" if logo else None
+
+    return {"name": name, "logo": logo, "source": source}
+
+
+@app.get("/api/debug/team-logo")
+async def debug_team_logo(name: str):
+    """
+    Diagnose the team badge lookup: whether football-data.org's crest cache
+    (populated for free from the fixtures the pipeline fetches — see
+    _cache_team_crest in _run_pipeline) has this team, and if not, the raw
+    TheSportsDB fallback lookup. A team only appears in the crest cache once
+    the pipeline has fetched at least one fixture involving them within the
+    90-day fixture window, so a team with no upcoming match (e.g. a
+    tournament they didn't qualify for) will always fall through to
+    TheSportsDB.
+    """
+    from team_logos import lookup_team_logo
+
+    out: Dict = {"name": name}
+    out["football_data_crest_cached"] = _get_cached_team_crest(name)
+
     r = _get_redis()
-    logo = await lookup_team_logo(name, redis_client=r)
-    return {"name": name, "logo": logo}
+    out["thesportsdb_logo"] = await lookup_team_logo(name, redis_client=r)
+
+    out["logo"] = out["football_data_crest_cached"] or out["thesportsdb_logo"]
+    out["source"] = (
+        "football-data.org" if out["football_data_crest_cached"]
+        else ("thesportsdb" if out["thesportsdb_logo"] else None)
+    )
+    return out
 
 
 _LEAGUE_NAME_TO_CODE = {info["name"].lower(): code for code, info in LEAGUES.items()}
+
+# Single shared client (and its rate-limit semaphore) for on-demand
+# football-data.org calls made outside the paced pipeline loop — so
+# concurrent requests (e.g. several browsers loading different league badges
+# at once) serialize against the same 10 req/min budget instead of each
+# spawning its own unthrottled client.
+_fd_ondemand_client: Optional[FootballDataClient] = None
+
+
+def _get_fd_client() -> Optional[FootballDataClient]:
+    global _fd_ondemand_client
+    if not API_KEY:
+        return None
+    if _fd_ondemand_client is None:
+        _fd_ondemand_client = FootballDataClient(API_KEY)
+    return _fd_ondemand_client
+
+
+def _competition_emblem_cache_key(code: str) -> str:
+    return f"betiq:fd_emblem:{code}"
+
+
+def _cache_competition_emblem(code: str, emblem: Optional[str]) -> None:
+    r = _get_redis()
+    if not r:
+        return
+    try:
+        r.setex(_competition_emblem_cache_key(code), 60 * 60 * 24 * 30, emblem or "")  # 30 days
+    except Exception:
+        pass
+
+
+def _has_cached_competition_emblem(code: str) -> bool:
+    """
+    True only for a confirmed, truthy cached emblem. A missing key or a
+    cached empty string are both treated as "not yet known" so a stale
+    negative — e.g. from a request that failed under 429 rate-limiting
+    during a burst of concurrent lookups — gets retried rather than trusted
+    for the full 30-day TTL.
+    """
+    r = _get_redis()
+    if not r:
+        return False
+    try:
+        return bool(r.get(_competition_emblem_cache_key(code)))
+    except Exception:
+        return False
 
 
 async def _get_football_competition_emblem(name: str) -> Optional[str]:
@@ -2869,34 +2971,64 @@ async def _get_football_competition_emblem(name: str) -> Optional[str]:
     football-data.org's own competition codes, so no fuzzy name matching is
     needed at all. Returns None for anything not in our LEAGUES dict (e.g. a
     basketball competition) or if the API key isn't configured.
+
+    Normally this is pre-populated by the pipeline (see _run_pipeline), which
+    fetches each league's emblem once (paced alongside its fixture fetches)
+    and caches it for 30 days — this on-demand path only fires as a fallback
+    for a request that lands before the first pipeline run, or for a league
+    whose cache is still empty/stale.
     """
     code = _LEAGUE_NAME_TO_CODE.get(name.strip().lower())
     if not code or not API_KEY:
         return None
 
-    cache_key = f"betiq:fd_emblem:{code}"
-    r = _get_redis()
-    if r:
-        try:
-            cached = r.get(cache_key)
-            if cached is not None:
-                return cached or None
-        except Exception:
-            pass
+    if _has_cached_competition_emblem(code):
+        return _get_redis().get(_competition_emblem_cache_key(code))
 
-    emblem = None
     try:
-        emblem = await FootballDataClient(API_KEY).fetch_competition_emblem(code)
+        emblem = await _get_fd_client().fetch_competition_emblem(code)
     except Exception as e:
+        # Do NOT cache failures — an outage or a transient 429 shouldn't be
+        # remembered as "this competition has no emblem" for a month.
         print(f"[CompetitionLogo] football-data.org emblem fetch failed for {code}: {e}")
+        return None
 
-    if r:
-        try:
-            r.setex(cache_key, 60 * 60 * 24 * 30, emblem or "")  # 30 days
-        except Exception:
-            pass
-
+    _cache_competition_emblem(code, emblem)
     return emblem
+
+
+def _team_crest_cache_key(team_name: str) -> str:
+    return f"betiq:team_crest:{team_name.strip().lower()}"
+
+
+def _cache_team_crest(team_name: str, crest_url: Optional[str]) -> None:
+    """
+    Persist a team's football-data.org crest, captured for free from a
+    fixtures response (no extra API call). Only writes truthy values — a
+    fixture missing a crest for one team shouldn't overwrite/block a crest
+    learned from a different fixture, or block the TheSportsDB fallback.
+    """
+    if not crest_url or not team_name or not team_name.strip():
+        return
+    r = _get_redis()
+    if not r:
+        return
+    try:
+        r.setex(_team_crest_cache_key(team_name), 60 * 60 * 24 * 30, crest_url)  # 30 days
+    except Exception:
+        pass
+
+
+def _get_cached_team_crest(team_name: str) -> Optional[str]:
+    if not team_name or not team_name.strip():
+        return None
+    r = _get_redis()
+    if not r:
+        return None
+    try:
+        return r.get(_team_crest_cache_key(team_name)) or None
+    except Exception:
+        return None
 
 
 @app.get("/api/competition-logo")
@@ -2954,9 +3086,18 @@ async def debug_competition_logo(name: str, sport: str = "Soccer"):
 
     # --- football-data.org path ---
     fd_code = _LEAGUE_NAME_TO_CODE.get(name.strip().lower())
+    r = _get_redis()
+    cached_raw = None
+    if fd_code and r:
+        try:
+            cached_raw = r.get(_competition_emblem_cache_key(fd_code))
+        except Exception:
+            pass
     out["football_data"] = {
         "matched_league_code": fd_code,
         "api_key_set": bool(API_KEY),
+        "redis_cached_value": cached_raw,
+        "redis_cache_treated_as_confirmed": bool(cached_raw) if fd_code else None,
     }
     if fd_code and API_KEY:
         try:
@@ -2974,6 +3115,11 @@ async def debug_competition_logo(name: str, sport: str = "Soccer"):
 
     fd_emblem = out["football_data"].get("emblem")
     if fd_emblem:
+        # Heal the shared cache immediately rather than waiting for the next
+        # pipeline run — useful right after a fix like this one, where the
+        # cache may hold a stale negative result from before the fix.
+        _cache_competition_emblem(fd_code, fd_emblem)
+        out["football_data"]["cache_healed"] = True
         out["logo"] = fd_emblem
         out["source"] = "football-data.org"
         return out

@@ -274,11 +274,11 @@ class TestFetchCompetitionEmblem:
             result = await client.fetch_competition_emblem("WC")
         assert result == "https://crests.football-data.org/wc.svg"
 
-    async def test_returns_none_when_response_missing(self):
+    async def test_raises_when_response_missing(self):
         client = _make_client()
         with patch.object(client, "_get", new_callable=AsyncMock, return_value=None):
-            result = await client.fetch_competition_emblem("WC")
-        assert result is None
+            with pytest.raises(RuntimeError):
+                await client.fetch_competition_emblem("WC")
 
     async def test_returns_none_when_emblem_field_absent(self):
         client = _make_client()
