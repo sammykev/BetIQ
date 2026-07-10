@@ -127,6 +127,28 @@ def _best_odds(event: Dict, market_key: str = "h2h") -> Dict[str, float]:
     return best
 
 
+def _best_market_with_points(event: Dict, market_key: str) -> Dict[str, Dict]:
+    """
+    Like _best_odds, but also keeps each outcome's point/line — needed for
+    spreads (and totals), where the number (-4.5, +4.5, ...) matters as much
+    as the price. Returns {name: {"price": float, "point": float|None}}.
+    """
+    best: Dict[str, Dict] = {}
+    for bookie in (event.get("bookmakers") or []):
+        for market in (bookie.get("markets") or []):
+            if market.get("key") != market_key:
+                continue
+            for o in (market.get("outcomes") or []):
+                name  = o.get("name", "")
+                price = float(o.get("price") or 0)
+                point = o.get("point")
+                if price > 1:
+                    existing = best.get(name, {})
+                    if price > existing.get("price", 0):
+                        best[name] = {"price": price, "point": point}
+    return best
+
+
 def _implied_probs(odds: Dict[str, float]) -> Dict[str, float]:
     """Convert decimal odds to overround-adjusted implied probabilities."""
     raw = {k: 1 / v for k, v in odds.items() if v > 1}
@@ -161,6 +183,42 @@ def _apply_elo_blend(home: str, away: str, market_p_home: float, market_p_away: 
     return {"p_home": market_p_home, "p_away": market_p_away, "elo_home": None, "elo_away": None}
 
 
+SAFE_CONFIDENCE_THRESHOLD = 0.68  # model backs the market favorite with real conviction
+UPSET_MARKET_THRESHOLD    = 0.42  # market prices the model's pick as a clear underdog
+
+
+def _classify_pick(tip_code: str, p_home: float, p_away: float,
+                    market_p_home: float, market_p_away: float) -> Optional[str]:
+    """
+    "safe": the model's pick is also the market's favorite, with strong
+    model confidence behind it — a low-drama, high-likelihood outcome.
+
+    "upset": the model's pick is priced as the underdog by the market — the
+    model thinks the team the crowd doesn't expect to win, wins anyway.
+
+    Deliberately not a value-bet edge calculation (model prob vs. market
+    implied prob, flagged whenever the model is a few points more confident
+    than the market) — that framing rarely resulted in wins in practice and
+    isn't the objective here. This is a simpler, more honest split of what
+    the model is actually telling you: agree with the crowd with real
+    conviction, or go against it outright. Returns None when neither applies
+    (a close call the model doesn't have a strong opinion on either way).
+    """
+    tip_is_home = tip_code == "1"
+    model_conf = p_home if tip_is_home else p_away
+    market_p_tip = market_p_home if tip_is_home else market_p_away
+    market_favorite_is_home = market_p_home >= market_p_away
+
+    if tip_is_home == market_favorite_is_home:
+        if model_conf >= SAFE_CONFIDENCE_THRESHOLD:
+            return "safe"
+        return None
+    else:
+        if market_p_tip <= UPSET_MARKET_THRESHOLD:
+            return "upset"
+        return None
+
+
 def _build_basketball_prediction(event: Dict, league_name: str, flag: str) -> Optional[Dict]:
     """Convert an Odds API basketball event into a BetIQ prediction dict."""
     home = event.get("home_team", "")
@@ -191,6 +249,8 @@ def _build_basketball_prediction(event: Dict, league_name: str, flag: str) -> Op
         tip, tip_code = f"{away} Win", "2"
         confidence = p_away
 
+    pick_type = _classify_pick(tip_code, p_home, p_away, market_p_home, market_p_away)
+
     # Over/Under line
     totals = _best_odds(event, "totals")
     total_line = None
@@ -209,6 +269,13 @@ def _build_basketball_prediction(event: Dict, league_name: str, flag: str) -> Op
                 except Exception:
                     pass
                 break
+
+    # Point spread — shown as market info, not a model pick: the Elo/market
+    # blend estimates win probability, not margin of victory, so we have no
+    # real signal on which side of the spread to back.
+    spreads = _best_market_with_points(event, "spreads")
+    spread_home = spreads.get(home)
+    spread_away = spreads.get(away)
 
     return {
         "home":            home,
@@ -232,6 +299,9 @@ def _build_basketball_prediction(event: Dict, league_name: str, flag: str) -> Op
         "total_line":      total_line,
         "odds_home":       round(h2h_odds.get(home, 0), 2),
         "odds_away":       round(h2h_odds.get(away, 0), 2),
+        "spread_home":     {"point": spread_home["point"], "odds": round(spread_home["price"], 2)} if spread_home else None,
+        "spread_away":     {"point": spread_away["point"], "odds": round(spread_away["price"], 2)} if spread_away else None,
+        "pick_type":       pick_type,
         "elo_home":        blended.get("elo_home"),
         "elo_away":        blended.get("elo_away"),
         "elo_blend":       blended.get("blend_weight", 0),
@@ -274,7 +344,7 @@ async def fetch_basketball_predictions() -> List[Dict]:
     results = []
     leagues = await _discover_basketball_leagues()
     for sport_key, league_name, flag in leagues:
-        events = await _fetch_odds(sport_key, markets="h2h,totals")
+        events = await _fetch_odds(sport_key, markets="h2h,totals,spreads")
         for ev in events:
             p = _build_basketball_prediction(ev, league_name, flag)
             if p:

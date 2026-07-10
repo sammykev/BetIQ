@@ -6,6 +6,11 @@ import { useTeamLogo } from "@/lib/useTeamLogo";
 import { CompetitionBadge } from "./CompetitionBadge";
 import clsx from "clsx";
 
+interface SpreadLine {
+  point: number | null;
+  odds: number;
+}
+
 export interface SportPrediction {
   home: string;
   away: string;
@@ -24,6 +29,11 @@ export interface SportPrediction {
   odds_home?: number;
   odds_away?: number;
   total_line?: number;
+  spread_home?: SpreadLine | null;
+  spread_away?: SpreadLine | null;
+  /** "safe": model backs the market favorite with real conviction.
+   *  "upset": model picks the market's underdog to win outright. */
+  pick_type?: "safe" | "upset" | null;
 }
 
 function localTime(date: string, utcTime: string): string {
@@ -31,6 +41,11 @@ function localTime(date: string, utcTime: string): string {
     const dt = new Date(`${date}T${utcTime}:00Z`);
     return dt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
   } catch { return utcTime; }
+}
+
+function spreadLabel(name: string, spread: SpreadLine): string {
+  if (spread.point == null) return name;
+  return `${name} ${spread.point > 0 ? "+" : ""}${spread.point}`;
 }
 
 interface Props {
@@ -87,10 +102,22 @@ export function SportCard({ prediction: p, onClick }: Props) {
     >
       {/* Header */}
       <div className="flex items-center justify-between gap-2">
-        <span className="flex items-center gap-1 text-[11px] font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wide truncate">
+        <div className="flex items-center gap-1.5 min-w-0">
           <CompetitionBadge name={p.league_name} fallbackEmoji={p.flag} size={12} sport={sportDbSport(p.sport)} />
-          <span className="truncate">{p.league_name}{p.surface ? ` · ${p.surface}` : ""}</span>
-        </span>
+          <span className="text-[11px] font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wide truncate">
+            {p.league_name}{p.surface ? ` · ${p.surface}` : ""}
+          </span>
+          {p.pick_type === "safe" && (
+            <span className="bg-brand-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full uppercase tracking-wider shrink-0">
+              Safe
+            </span>
+          )}
+          {p.pick_type === "upset" && (
+            <span className="bg-violet-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full uppercase tracking-wider shrink-0">
+              Upset
+            </span>
+          )}
+        </div>
         <span className="tnum text-[11px] text-zinc-400 dark:text-zinc-500 font-medium shrink-0">
           {p.date}{timeStr}
         </span>
@@ -152,6 +179,19 @@ export function SportCard({ prediction: p, onClick }: Props) {
           </p>
         </div>
       </div>
+
+      {/* Point spread — informational market line, not a model pick: the
+          Elo/market blend estimates win probability, not margin of victory. */}
+      {(p.spread_home || p.spread_away) && (
+        <p className="flex items-center justify-between text-[10px] text-zinc-400 dark:text-zinc-500 px-0.5 -mt-1.5">
+          <span className="font-semibold uppercase tracking-wider">Spread</span>
+          <span className="tnum font-medium text-zinc-500 dark:text-zinc-400">
+            {p.spread_home && spreadLabel(p.home, p.spread_home)}
+            {p.spread_home && p.spread_away && "  ·  "}
+            {p.spread_away && spreadLabel(p.away, p.spread_away)}
+          </span>
+        </p>
+      )}
     </article>
   );
 }
