@@ -2,6 +2,7 @@
 
 import clsx from "clsx";
 import type { League } from "@/lib/api";
+import { CompetitionBadge } from "./CompetitionBadge";
 
 interface Props {
   leagues: League[];
@@ -28,7 +29,9 @@ export function LeagueTabs({ leagues, selected, onSelect, counts }: Props) {
               onClick={() => onSelect(l.code)}
               className={clsx("chip", active ? "chip-active" : "chip-idle")}
             >
-              <span>{l.flag}</span>
+              {l.code === "ALL"
+                ? <span>{l.flag}</span>
+                : <CompetitionBadge name={l.name} fallbackEmoji={l.flag} size={14} />}
               <span>{l.name}</span>
               {count > 0 && (
                 <span

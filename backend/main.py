@@ -2858,6 +2858,59 @@ async def get_team_logo(name: str):
     return {"name": name, "logo": logo}
 
 
+@app.get("/api/competition-logo")
+async def get_competition_logo(name: str):
+    """
+    Generic competition/league badge lookup (World Cup, Premier League,
+    EuroLeague, etc.) — same TheSportsDB-backed pattern as /api/team-logo.
+    Cached server-side (Redis, 30 days).
+    """
+    from competition_logos import lookup_competition_logo
+    r = _get_redis()
+    logo = await lookup_competition_logo(name, redis_client=r)
+    return {"name": name, "logo": logo}
+
+
+@app.get("/api/debug/competition-logo")
+async def debug_competition_logo(name: str):
+    """
+    Diagnose the competition logo lookup for a specific name — shows whether
+    an alias was used, what TheSportsDB actually returned, and the raw
+    response if nothing matched, since the exact field/endpoint names in
+    competition_logos.py were written without live verification against
+    TheSportsDB's current API.
+
+    Example: /api/debug/competition-logo?name=World Cup
+    """
+    from competition_logos import lookup_competition_logo, _NAME_ALIASES
+    import httpx as _httpx
+
+    alias = _NAME_ALIASES.get(name.strip().lower())
+    out: Dict = {"name": name, "alias_used": alias}
+
+    r = _get_redis()
+    logo = await lookup_competition_logo(name, redis_client=r)
+    out["logo"] = logo
+
+    if not logo:
+        # Show the raw API response for whichever name we'd have searched,
+        # so a wrong endpoint/field-name guess is immediately visible.
+        query_name = alias or name
+        try:
+            async with _httpx.AsyncClient(timeout=8) as client:
+                resp = await client.get(
+                    "https://www.thesportsdb.com/api/v1/json/3/searchleagues.php",
+                    params={"l": query_name},
+                )
+                out["raw_query"] = query_name
+                out["raw_status"] = resp.status_code
+                out["raw_response_sample"] = resp.text[:1000]
+        except Exception as e:
+            out["raw_fetch_error"] = str(e)
+
+    return out
+
+
 @app.get("/api/sports/{sport}/event")
 async def get_sport_event_detail(sport: str, home: str, away: str, date: str):
     """

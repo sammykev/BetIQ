@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { SaveButton } from "./SaveButton";
 import { useTeamLogo } from "@/lib/useTeamLogo";
+import { CompetitionBadge } from "./CompetitionBadge";
 import type { Prediction } from "@/lib/api";
 import { Share2, Sparkles } from "lucide-react";
 import clsx from "clsx";
@@ -242,7 +243,7 @@ export function PredictionCard({ prediction: p, savedKeys, onClick }: Props) {
       {/* Header: league + date */}
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5 min-w-0">
-          <span className="text-sm leading-none">{p.flag}</span>
+          <CompetitionBadge name={p.league_name} fallbackEmoji={p.flag} size={14} className="text-sm" />
           <span className="text-[11px] font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wide truncate">
             {p.league_name}
           </span>

@@ -5,6 +5,7 @@ import { X, Star, Loader2, TrendingUp } from "lucide-react";
 import clsx from "clsx";
 import { getSportAssets } from "@/lib/sportsAssets";
 import { useTeamLogo } from "@/lib/useTeamLogo";
+import { CompetitionBadge } from "./CompetitionBadge";
 import type { SportPrediction } from "./SportCard";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
@@ -143,9 +144,12 @@ export function SportModal({ prediction: p, onClose }: Props) {
         <div className="border-b border-zinc-100 dark:border-zinc-800 p-5 sm:p-6">
           <div className="flex items-start justify-between gap-3 mb-5">
             <div>
-              <p className="text-[11px] font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wide">
-                {p.flag} {p.league_name} · {sportLabel[p.sport] || p.sport}
-                {p.surface ? ` · ${p.surface}` : ""}
+              <p className="flex items-center gap-1 text-[11px] font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wide">
+                <CompetitionBadge name={p.league_name} fallbackEmoji={p.flag} size={12} />
+                <span>
+                  {p.league_name} · {sportLabel[p.sport] || p.sport}
+                  {p.surface ? ` · ${p.surface}` : ""}
+                </span>
               </p>
               <p className="tnum text-[11px] text-zinc-400 dark:text-zinc-500 mt-0.5">
                 {p.date}{p.time && p.time !== "TBD" ? ` · ${p.time}` : ""}

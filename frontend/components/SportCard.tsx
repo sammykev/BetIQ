@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { getSportAssets } from "@/lib/sportsAssets";
 import { useTeamLogo } from "@/lib/useTeamLogo";
+import { CompetitionBadge } from "./CompetitionBadge";
 import clsx from "clsx";
 
 export interface SportPrediction {
@@ -86,8 +87,9 @@ export function SportCard({ prediction: p, onClick }: Props) {
     >
       {/* Header */}
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[11px] font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wide truncate">
-          {p.flag} {p.league_name}{p.surface ? ` · ${p.surface}` : ""}
+        <span className="flex items-center gap-1 text-[11px] font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wide truncate">
+          <CompetitionBadge name={p.league_name} fallbackEmoji={p.flag} size={12} />
+          <span className="truncate">{p.league_name}{p.surface ? ` · ${p.surface}` : ""}</span>
         </span>
         <span className="tnum text-[11px] text-zinc-400 dark:text-zinc-500 font-medium shrink-0">
           {p.date}{timeStr}

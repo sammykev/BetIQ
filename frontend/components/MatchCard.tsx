@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { getTeamAssets } from "@/lib/teamAssets";
 import { useTeamLogo } from "@/lib/useTeamLogo";
+import { CompetitionBadge } from "./CompetitionBadge";
 import clsx from "clsx";
 
 interface Props {
@@ -59,8 +60,11 @@ export function MatchCard({ home, away, date, time, league, flag, children, onCl
       <div className="px-4 py-3 flex items-center gap-3">
         <div className="flex-1 min-w-0 space-y-1.5">
           {(league || flag) && (
-            <p className="text-[10px] text-zinc-400 dark:text-zinc-500 font-semibold uppercase tracking-wide truncate">
-              {flag} {league}{date ? ` · ${date}${time && time !== "TBD" ? ` ${time}` : ""}` : ""}
+            <p className="flex items-center gap-1 text-[10px] text-zinc-400 dark:text-zinc-500 font-semibold uppercase tracking-wide truncate">
+              {flag && <CompetitionBadge name={league || ""} fallbackEmoji={flag} size={11} />}
+              <span className="truncate">
+                {league}{date ? ` · ${date}${time && time !== "TBD" ? ` ${time}` : ""}` : ""}
+              </span>
             </p>
           )}
           <div className="flex items-center gap-2">

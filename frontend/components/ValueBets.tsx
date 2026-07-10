@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { TrendingUp, Loader2, RefreshCw, Info } from "lucide-react";
 import { TeamBadge } from "./PredictionCard";
+import { CompetitionBadge } from "./CompetitionBadge";
 import clsx from "clsx";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
@@ -44,8 +45,11 @@ function ValueBetCard({ v, onClick }: { v: ValueBet; onClick?: () => void }) {
     <article onClick={onClick} className={clsx("card p-4 flex flex-col gap-3", onClick && "card-interactive")}>
       {/* Header */}
       <div className="flex items-center justify-between gap-2">
-        <p className="text-[10px] text-zinc-400 dark:text-zinc-500 font-semibold uppercase tracking-wide truncate">
-          {v.flag} {v.league_name} · {v.date}{v.time && v.time !== "TBD" ? ` ${v.time}` : ""}
+        <p className="flex items-center gap-1 text-[10px] text-zinc-400 dark:text-zinc-500 font-semibold uppercase tracking-wide truncate">
+          <CompetitionBadge name={v.league_name} fallbackEmoji={v.flag} size={11} />
+          <span className="truncate">
+            {v.league_name} · {v.date}{v.time && v.time !== "TBD" ? ` ${v.time}` : ""}
+          </span>
         </p>
         <EdgeBadge edge={v.edge} />
       </div>

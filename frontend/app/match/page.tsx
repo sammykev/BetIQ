@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { fetchMatchAnalysis, fetchExplanation } from "@/lib/api";
 import type { MatchAnalysis, Market, MatchExplanation, Prediction } from "@/lib/api";
 import { TeamBadge } from "@/components/PredictionCard";
+import { CompetitionBadge } from "@/components/CompetitionBadge";
 import { AppShell } from "@/components/shell/AppShell";
 import {
   ArrowLeft, Star, Clock, Sparkles, ExternalLink, Loader2, Copy, Check, Ticket,
@@ -373,7 +374,9 @@ function MatchContent() {
       {/* Match header */}
       <div className="card p-5 sm:p-6">
         <div className="flex items-center gap-2 text-xs text-zinc-400 dark:text-zinc-500 mb-4">
-          {prediction?.flag && <span>{prediction.flag}</span>}
+          {prediction?.flag && (
+            <CompetitionBadge name={prediction.league_name} fallbackEmoji={prediction.flag} size={13} />
+          )}
           <span className="font-semibold uppercase tracking-wide">{prediction?.league_name ?? "Match analysis"}</span>
           <span>·</span>
           <span className="flex items-center gap-1 tnum">
