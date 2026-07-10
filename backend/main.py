@@ -2859,54 +2859,67 @@ async def get_team_logo(name: str):
 
 
 @app.get("/api/competition-logo")
-async def get_competition_logo(name: str):
+async def get_competition_logo(name: str, sport: str = "Soccer"):
     """
     Generic competition/league badge lookup (World Cup, Premier League,
     EuroLeague, etc.) — same TheSportsDB-backed pattern as /api/team-logo.
+    `sport` is TheSportsDB's taxonomy (e.g. "Soccer", "Basketball") —
+    defaults to "Soccer" since that covers most of the app's competitions.
     Cached server-side (Redis, 30 days).
     """
     from competition_logos import lookup_competition_logo
     r = _get_redis()
-    logo = await lookup_competition_logo(name, redis_client=r)
-    return {"name": name, "logo": logo}
+    logo = await lookup_competition_logo(name, redis_client=r, sport=sport)
+    return {"name": name, "sport": sport, "logo": logo}
 
 
 @app.get("/api/debug/competition-logo")
-async def debug_competition_logo(name: str):
+async def debug_competition_logo(name: str, sport: str = "Soccer"):
     """
-    Diagnose the competition logo lookup for a specific name — shows whether
-    an alias was used, what TheSportsDB actually returned, and the raw
-    response if nothing matched, since the exact field/endpoint names in
-    competition_logos.py were written without live verification against
-    TheSportsDB's current API.
+    Diagnose the two-step competition logo lookup (search_all_leagues.php to
+    find the league's ID by fuzzy name match, then lookupleague.php for its
+    badge) — shows how many leagues TheSportsDB returned for the sport,
+    what name we fuzzy-matched against, the best match found (and its
+    score), and the raw lookupleague.php response if a match was found but
+    it had no usable badge field. An earlier version of this lookup guessed
+    a single-call /searchleagues.php endpoint that turned out to be a plain
+    404 — this surfaces every intermediate step so a similarly wrong guess
+    is immediately visible instead of requiring another round-trip.
 
     Example: /api/debug/competition-logo?name=World Cup
     """
-    from competition_logos import lookup_competition_logo, _NAME_ALIASES
+    from competition_logos import (
+        lookup_competition_logo, _NAME_ALIASES, _get_leagues_for_sport,
+        find_best_league_match, _sim,
+    )
     import httpx as _httpx
 
     alias = _NAME_ALIASES.get(name.strip().lower())
-    out: Dict = {"name": name, "alias_used": alias}
+    search_name = alias or name
+    out: Dict = {"name": name, "sport": sport, "alias_used": alias, "search_name": search_name}
+
+    async with _httpx.AsyncClient(timeout=8) as client:
+        leagues = await _get_leagues_for_sport(sport, client)
+        out["leagues_found_for_sport"] = len(leagues)
+        out["sample_league_names"] = [lg.get("strLeague") for lg in leagues[:5]]
+
+        match = find_best_league_match(search_name, leagues)
+        out["best_match"] = {
+            "name": match.get("strLeague"),
+            "id": match.get("idLeague"),
+            "score": round(_sim(search_name, match.get("strLeague") or ""), 3),
+        } if match else None
+
+        if match and match.get("idLeague"):
+            resp = await client.get(
+                f"https://www.thesportsdb.com/api/v1/json/3/lookupleague.php",
+                params={"id": match["idLeague"]},
+            )
+            out["lookupleague_status"] = resp.status_code
+            out["lookupleague_response_sample"] = resp.text[:800]
 
     r = _get_redis()
-    logo = await lookup_competition_logo(name, redis_client=r)
-    out["logo"] = logo
-
-    if not logo:
-        # Show the raw API response for whichever name we'd have searched,
-        # so a wrong endpoint/field-name guess is immediately visible.
-        query_name = alias or name
-        try:
-            async with _httpx.AsyncClient(timeout=8) as client:
-                resp = await client.get(
-                    "https://www.thesportsdb.com/api/v1/json/3/searchleagues.php",
-                    params={"l": query_name},
-                )
-                out["raw_query"] = query_name
-                out["raw_status"] = resp.status_code
-                out["raw_response_sample"] = resp.text[:1000]
-        except Exception as e:
-            out["raw_fetch_error"] = str(e)
+    out["logo"] = await lookup_competition_logo(name, redis_client=r, sport=sport)
 
     return out
 

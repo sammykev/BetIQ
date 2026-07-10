@@ -11,6 +11,8 @@ interface Props {
   fallbackEmoji: string;
   size?: number;
   className?: string;
+  /** TheSportsDB sport taxonomy — "Soccer" (default) or "Basketball" etc. */
+  sport?: string;
 }
 
 /**
@@ -19,9 +21,9 @@ interface Props {
  * /api/competition-logo lookup finds one, otherwise falls back to the emoji
  * exactly as before. Safe to use anywhere the emoji was used inline with text.
  */
-export function CompetitionBadge({ name, fallbackEmoji, size = 14, className }: Props) {
+export function CompetitionBadge({ name, fallbackEmoji, size = 14, className, sport = "Soccer" }: Props) {
   const [broken, setBroken] = useState(false);
-  const logo = useCompetitionLogo(name, !!name);
+  const logo = useCompetitionLogo(name, !!name, sport);
 
   if (logo && !broken) {
     return (

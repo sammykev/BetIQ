@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { getSportAssets } from "@/lib/sportsAssets";
+import { getSportAssets, sportDbSport } from "@/lib/sportsAssets";
 import { useTeamLogo } from "@/lib/useTeamLogo";
 import { CompetitionBadge } from "./CompetitionBadge";
 import clsx from "clsx";
@@ -88,7 +88,7 @@ export function SportCard({ prediction: p, onClick }: Props) {
       {/* Header */}
       <div className="flex items-center justify-between gap-2">
         <span className="flex items-center gap-1 text-[11px] font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wide truncate">
-          <CompetitionBadge name={p.league_name} fallbackEmoji={p.flag} size={12} />
+          <CompetitionBadge name={p.league_name} fallbackEmoji={p.flag} size={12} sport={sportDbSport(p.sport)} />
           <span className="truncate">{p.league_name}{p.surface ? ` · ${p.surface}` : ""}</span>
         </span>
         <span className="tnum text-[11px] text-zinc-400 dark:text-zinc-500 font-medium shrink-0">

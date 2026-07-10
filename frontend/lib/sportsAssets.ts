@@ -113,6 +113,14 @@ export interface SportAssets {
   isPlayerFace: boolean;  // true = face/flag blend, false = logo blend
 }
 
+/** Map our internal sport key to TheSportsDB's sport taxonomy for competition badge lookups. */
+export function sportDbSport(sport: string): string {
+  if (sport === "basketball") return "Basketball";
+  if (sport === "tennis") return "Tennis";
+  if (sport === "table_tennis") return "Table Tennis";
+  return "Soccer";
+}
+
 function hashColor(name: string): string {
   const P = ["#1e40af","#7c3aed","#be123c","#b45309","#166534","#0e7490","#9d174d","#1e3a5f"];
   let h = 0;

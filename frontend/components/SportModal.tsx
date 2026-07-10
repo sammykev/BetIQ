@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { X, Star, Loader2, TrendingUp } from "lucide-react";
 import clsx from "clsx";
-import { getSportAssets } from "@/lib/sportsAssets";
+import { getSportAssets, sportDbSport } from "@/lib/sportsAssets";
 import { useTeamLogo } from "@/lib/useTeamLogo";
 import { CompetitionBadge } from "./CompetitionBadge";
 import type { SportPrediction } from "./SportCard";
@@ -145,7 +145,7 @@ export function SportModal({ prediction: p, onClose }: Props) {
           <div className="flex items-start justify-between gap-3 mb-5">
             <div>
               <p className="flex items-center gap-1 text-[11px] font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wide">
-                <CompetitionBadge name={p.league_name} fallbackEmoji={p.flag} size={12} />
+                <CompetitionBadge name={p.league_name} fallbackEmoji={p.flag} size={12} sport={sportDbSport(p.sport)} />
                 <span>
                   {p.league_name} · {sportLabel[p.sport] || p.sport}
                   {p.surface ? ` · ${p.surface}` : ""}
