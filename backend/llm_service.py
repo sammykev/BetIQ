@@ -1,8 +1,8 @@
 """
 LLM routing for match analysis:
-- Groq (compound-beta)              → live web search / news fetching
-- Groq (deepseek-r1-distill-llama-70b) → fast match explanations
-- DeepSeek API (deepseek-reasoner)  → analytical stat → number extraction
+- Groq (compound-beta)             → live web search / news fetching
+- Groq (see _GROQ_TEXT_MODELS)     → fast match explanations / extraction
+- DeepSeek API (deepseek-reasoner) → analytical stat → number extraction
 """
 
 import os
@@ -15,8 +15,26 @@ GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions"
 
-# Groq-hosted DeepSeek R1 distill — fast, good reasoning
-_GROQ_R1 = "deepseek-r1-distill-llama-70b"
+# Groq-hosted text models to try, in order, for reasoning/extraction calls.
+# This used to be a single hardcoded model (deepseek-r1-distill-llama-70b),
+# which Groq has since decommissioned — that one dead ID silently broke three
+# separate features at once (web-search confidence adjustments, team-form xG
+# extraction, and match explanations) since every call site just raised and
+# fell through to whatever fallback existed (often none). Trying a short list
+# means a single future deprecation degrades gracefully instead of going dark
+# across the board again.
+_GROQ_TEXT_MODELS = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
+
+
+async def _call_groq_text(messages: list, max_tokens: int = 400) -> Dict:
+    """Try each model in _GROQ_TEXT_MODELS in order; return the first success."""
+    errors = []
+    for model in _GROQ_TEXT_MODELS:
+        try:
+            return await _call(model, messages, max_tokens=max_tokens)
+        except Exception as e:
+            errors.append(f"{model}: {e}")
+    raise RuntimeError("; ".join(errors))
 
 
 async def _call(model: str, messages: list, max_tokens: int = 400) -> Dict:
@@ -153,14 +171,14 @@ Rules:
         except Exception as e:
             print(f"[LLM] deepseek-reasoner adjustment failed, falling back to Groq: {e}")
 
-    # Fallback: Groq R1 distill
+    # Fallback: Groq
     if GROQ_API_KEY:
         try:
-            data = await _call(_GROQ_R1, [{"role": "user", "content": prompt}], max_tokens=300)
+            data = await _call_groq_text([{"role": "user", "content": prompt}], max_tokens=300)
             text = data["choices"][0]["message"]["content"].strip()
             adj = await _parse_adj(text)
             if adj:
-                print(f"[LLM/Groq-R1] Adjustments for {home} vs {away}: {adj.get('reasoning','')}")
+                print(f"[LLM/Groq] Adjustments for {home} vs {away}: {adj.get('reasoning','')}")
                 return adj
         except Exception as e:
             print(f"[LLM] Groq R1 adjustment extraction failed: {e}")
@@ -300,20 +318,20 @@ Rules:
             print(f"[WebForm] DeepSeek extraction failed for {team}: {e}")
             extraction_errors.append(f"DeepSeek: {e}")
 
-    # Fallback: Groq R1 distill
+    # Fallback: Groq
     if GROQ_API_KEY:
         try:
-            data = await _call(_GROQ_R1, [{"role": "user", "content": extract_prompt}], max_tokens=600)
+            data = await _call_groq_text([{"role": "user", "content": extract_prompt}], max_tokens=600)
             raw = data["choices"][0]["message"]["content"]
             result = await _try_parse(raw)
             if result:
                 print(f"[WebForm/Groq] {team}: {len(result['matches'])} matches, "
                       f"xG={'yes' if result.get('avg_xg_for') else 'no'}")
                 return result
-            extraction_errors.append(f"Groq R1: parsed but no usable 'matches' — raw: {raw[:200]!r}")
+            extraction_errors.append(f"Groq: parsed but no usable 'matches' — raw: {raw[:200]!r}")
         except Exception as e:
             print(f"[WebForm] Groq extraction failed for {team}: {e}")
-            extraction_errors.append(f"Groq R1: {e}")
+            extraction_errors.append(f"Groq: {e}")
 
     return _fail("extraction", "; ".join(extraction_errors) or "no extraction backend available",
                 search_text=search_text[:500])
@@ -405,16 +423,16 @@ async def explain_match(
     used_web = bool(sources)
     label_prefix = "compound-beta+" if used_web else ""
 
-    # Primary: Groq R1 distill — fast, strong reasoning for match previews
+    # Primary: Groq — fast reasoning for match previews
     if GROQ_API_KEY:
         try:
-            data = await _call(_GROQ_R1, [{"role": "user", "content": prompt}], max_tokens=350)
+            data = await _call_groq_text([{"role": "user", "content": prompt}], max_tokens=350)
             text = data["choices"][0]["message"]["content"].strip()
-            model_tag = f"{label_prefix}deepseek-r1-distill"
+            model_tag = f"{label_prefix}groq"
             print(f"[LLM] Explained {home} vs {away} ({model_tag}, {len(sources)} sources)")
             return {"explanation": text, "sources": sources, "model": model_tag, "error": None}
         except Exception as e:
-            print(f"[LLM] Groq R1 explanation failed, trying DeepSeek API: {e}")
+            print(f"[LLM] Groq explanation failed, trying DeepSeek API: {e}")
 
     # Fallback: DeepSeek API reasoner
     if DEEPSEEK_API_KEY:

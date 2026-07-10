@@ -225,7 +225,7 @@ function AIExplanation({ explanation }: { explanation: MatchExplanation | null }
 
   if (!explanation.explanation) return null;
 
-  const hasWebSearch = explanation.model === "compound-beta" && explanation.sources.length > 0;
+  const hasWebSearch = !!explanation.model?.startsWith("compound-beta") && explanation.sources.length > 0;
 
   return (
     <div className="card p-4 space-y-3">
