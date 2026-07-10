@@ -2876,21 +2876,24 @@ async def get_competition_logo(name: str, sport: str = "Soccer"):
 @app.get("/api/debug/competition-logo")
 async def debug_competition_logo(name: str, sport: str = "Soccer"):
     """
-    Diagnose the two-step competition logo lookup (search_all_leagues.php to
-    find the league's ID by fuzzy name match, then lookupleague.php for its
-    badge) — shows how many leagues TheSportsDB returned for the sport,
-    what name we fuzzy-matched against, the best match found (and its
-    score), and the raw lookupleague.php response if a match was found but
-    it had no usable badge field. An earlier version of this lookup guessed
-    a single-call /searchleagues.php endpoint that turned out to be a plain
-    404 — this surfaces every intermediate step so a similarly wrong guess
-    is immediately visible instead of requiring another round-trip.
+    Diagnose the competition logo lookup: all_leagues.php (the one TheSportsDB
+    endpoint that takes NO query params, so its shape can't be guessed wrong)
+    dumps every league across every sport; we filter to `sport` and
+    fuzzy-match `name` against it, then lookupleague.php?id=X for the badge.
 
-    Example: /api/debug/competition-logo?name=World Cup
+    Two earlier endpoint guesses both failed against the live API
+    (searchleagues.php was a plain 404; search_all_leagues.php?s=<sport>
+    returned zero leagues, likely needing a country param too) — this shows
+    the RAW response at every step regardless of outcome, so a third wrong
+    guess is caught in one round instead of needing yet another back-and-forth.
+
+    Example: /api/debug/competition-logo?name=World%20Cup
+    (URL-encode the space — "World Cup" unencoded gets truncated to "World"
+    by some HTTP clients/shells.)
     """
     from competition_logos import (
-        lookup_competition_logo, _NAME_ALIASES, _get_leagues_for_sport,
-        find_best_league_match, _sim,
+        lookup_competition_logo, _NAME_ALIASES, _get_all_leagues,
+        find_best_league_match, _sim, SPORTSDB_BASE,
     )
     import httpx as _httpx
 
@@ -2898,23 +2901,32 @@ async def debug_competition_logo(name: str, sport: str = "Soccer"):
     search_name = alias or name
     out: Dict = {"name": name, "sport": sport, "alias_used": alias, "search_name": search_name}
 
-    async with _httpx.AsyncClient(timeout=8) as client:
-        leagues = await _get_leagues_for_sport(sport, client)
-        out["leagues_found_for_sport"] = len(leagues)
-        out["sample_league_names"] = [lg.get("strLeague") for lg in leagues[:5]]
+    async with _httpx.AsyncClient(timeout=20) as client:
+        list_resp = await client.get(f"{SPORTSDB_BASE}/all_leagues.php")
+        out["all_leagues_status"] = list_resp.status_code
+        if list_resp.status_code != 200:
+            out["all_leagues_raw_sample"] = list_resp.text[:500]
+            r = _get_redis()
+            out["logo"] = await lookup_competition_logo(name, redis_client=r, sport=sport)
+            return out
 
-        match = find_best_league_match(search_name, leagues)
+        leagues = await _get_all_leagues(client)
+        out["total_leagues_all_sports"] = len(leagues)
+        out["distinct_sports_seen"] = sorted({lg.get("strSport") for lg in leagues if lg.get("strSport")})[:20]
+        sport_leagues = [lg for lg in leagues if (lg.get("strSport") or "").lower() == sport.lower()]
+        out["leagues_found_for_sport"] = len(sport_leagues)
+        out["sample_league_names_for_sport"] = [lg.get("strLeague") for lg in sport_leagues[:8]]
+
+        match = find_best_league_match(search_name, leagues, sport=sport)
         out["best_match"] = {
             "name": match.get("strLeague"),
             "id": match.get("idLeague"),
+            "sport": match.get("strSport"),
             "score": round(_sim(search_name, match.get("strLeague") or ""), 3),
         } if match else None
 
         if match and match.get("idLeague"):
-            resp = await client.get(
-                f"https://www.thesportsdb.com/api/v1/json/3/lookupleague.php",
-                params={"id": match["idLeague"]},
-            )
+            resp = await client.get(f"{SPORTSDB_BASE}/lookupleague.php", params={"id": match["idLeague"]})
             out["lookupleague_status"] = resp.status_code
             out["lookupleague_response_sample"] = resp.text[:800]
 

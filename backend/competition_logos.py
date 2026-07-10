@@ -8,19 +8,19 @@ competitions like NBA Summer League), tennis, and table tennis — a fixed map
 would need constant upkeep and still miss anything new. Searching by name
 covers any competition without maintaining a list.
 
-Unlike team search (searchteams.php?t=<name>, verified working), TheSportsDB
-has no equivalent single-call "search leagues by name" endpoint — a first
-attempt at /searchleagues.php returned a plain 404, confirming it isn't real.
-The actual (documented) approach is two calls:
-  1. search_all_leagues.php?s=<sport> — list every league for a sport
-     (id + name only, no badge)
-  2. lookupleague.php?id=<id> — full details for one league, incl. strBadge
+Two earlier attempts at a parameterized "search leagues" endpoint both
+failed against the live API (searchleagues.php was a plain 404;
+search_all_leagues.php?s=<sport> returned zero results, likely because it
+actually requires a country param too, not sport alone). Rather than guess a
+third parameter shape, this uses all_leagues.php — the one endpoint that
+takes NO query parameters at all, so there's nothing about its shape left to
+guess wrong. It returns every league TheSportsDB knows about (across every
+sport); we fetch it once, cache it in-process for the life of the server,
+and filter/fuzzy-match against it locally. lookupleague.php?id=<id> is then
+used for the one specific league's badge.
 
-So this fetches+caches the per-sport league list once, fuzzy-matches our
-competition name against it in-process, then looks up the matched league's
-badge. Results are cached (Redis if available, else in-process) since
-TheSportsDB is a shared free service and league badges essentially never
-change.
+Results are cached (Redis if available, else in-process) since TheSportsDB is
+a shared free service and league badges essentially never change.
 """
 
 import httpx
@@ -29,9 +29,13 @@ from typing import Dict, List, Optional
 
 SPORTSDB_BASE = "https://www.thesportsdb.com/api/v1/json/3"
 
-# In-process fallback caches when Redis isn't configured.
+# In-process fallback cache when Redis isn't configured (for lookup results).
 _memory_cache: dict = {}
-_leagues_list_cache: Dict[str, List[dict]] = {}  # sport -> [{idLeague, strLeague}, ...]
+
+# The full all_leagues.php dump, cached in-process for this server's lifetime
+# — not Redis, since it's a large one-time payload and every process can just
+# refetch it once on first use rather than storing it centrally.
+_all_leagues_cache: Optional[List[dict]] = None
 
 FUZZY_MATCH_THRESHOLD = 0.55
 
@@ -61,28 +65,33 @@ def _sim(a: str, b: str) -> float:
     return SequenceMatcher(None, a.lower().strip(), b.lower().strip()).ratio()
 
 
-async def _get_leagues_for_sport(sport: str, client: httpx.AsyncClient) -> List[dict]:
-    """Fetch (and cache in-process for this run) the full league list for a sport."""
-    if sport in _leagues_list_cache:
-        return _leagues_list_cache[sport]
+async def _get_all_leagues(client: httpx.AsyncClient) -> List[dict]:
+    """Fetch (and cache in-process for this server's lifetime) every league TheSportsDB knows about."""
+    global _all_leagues_cache
+    if _all_leagues_cache is not None:
+        return _all_leagues_cache
     leagues: List[dict] = []
     try:
-        r = await client.get(f"{SPORTSDB_BASE}/search_all_leagues.php", params={"s": sport})
+        r = await client.get(f"{SPORTSDB_BASE}/all_leagues.php")
         if r.status_code == 200:
             data = r.json()
-            # TheSportsDB's own docs/behavior for this endpoint is inconsistent
-            # about the wrapping key across API versions — check both.
-            leagues = data.get("countrys") or data.get("leagues") or []
+            leagues = data.get("leagues") or data.get("countrys") or []
     except Exception as e:
-        print(f"[CompetitionLogo] leagues list fetch failed for sport={sport!r}: {e}")
-    _leagues_list_cache[sport] = leagues
+        print(f"[CompetitionLogo] all_leagues.php fetch failed: {e}")
+    _all_leagues_cache = leagues
     return leagues
 
 
-def find_best_league_match(name: str, leagues: List[dict]) -> Optional[dict]:
-    """Fuzzy-match a competition name against a list of {idLeague, strLeague} dicts."""
+def find_best_league_match(name: str, leagues: List[dict], sport: Optional[str] = None) -> Optional[dict]:
+    """
+    Fuzzy-match a competition name against a list of {idLeague, strLeague,
+    strSport} dicts. If `sport` is given, only entries whose strSport matches
+    (case-insensitive) are considered.
+    """
     best, best_score = None, 0.0
     for lg in leagues:
+        if sport and (lg.get("strSport") or "").lower() != sport.lower():
+            continue
         candidate_name = lg.get("strLeague") or ""
         if not candidate_name:
             continue
@@ -122,9 +131,9 @@ async def lookup_competition_logo(
 
     logo_url = None
     try:
-        async with httpx.AsyncClient(timeout=8) as client:
-            leagues = await _get_leagues_for_sport(sport, client)
-            match = find_best_league_match(search_name, leagues)
+        async with httpx.AsyncClient(timeout=20) as client:
+            leagues = await _get_all_leagues(client)
+            match = find_best_league_match(search_name, leagues, sport=sport)
             if match and match.get("idLeague"):
                 r = await client.get(f"{SPORTSDB_BASE}/lookupleague.php", params={"id": match["idLeague"]})
                 if r.status_code == 200:
