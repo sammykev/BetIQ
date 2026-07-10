@@ -263,6 +263,43 @@ class TestFetchUpcoming:
         assert "status=SCHEDULED" not in captured["url"]
 
 
+# ── fetch_competition_emblem ────────────────────────────────────────────────
+
+
+class TestFetchCompetitionEmblem:
+    async def test_returns_emblem_from_response(self):
+        client = _make_client()
+        payload = {"id": 2000, "name": "FIFA World Cup", "emblem": "https://crests.football-data.org/wc.svg"}
+        with patch.object(client, "_get", new_callable=AsyncMock, return_value=payload):
+            result = await client.fetch_competition_emblem("WC")
+        assert result == "https://crests.football-data.org/wc.svg"
+
+    async def test_returns_none_when_response_missing(self):
+        client = _make_client()
+        with patch.object(client, "_get", new_callable=AsyncMock, return_value=None):
+            result = await client.fetch_competition_emblem("WC")
+        assert result is None
+
+    async def test_returns_none_when_emblem_field_absent(self):
+        client = _make_client()
+        payload = {"id": 2000, "name": "FIFA World Cup"}
+        with patch.object(client, "_get", new_callable=AsyncMock, return_value=payload):
+            result = await client.fetch_competition_emblem("WC")
+        assert result is None
+
+    async def test_requests_competition_endpoint_for_given_code(self):
+        captured = {}
+
+        async def _fake_get(_client, url, *a, **k):
+            captured["url"] = url
+            return {"emblem": "https://crests.football-data.org/pl.png"}
+
+        client = _make_client()
+        with patch.object(client, "_get", side_effect=_fake_get):
+            await client.fetch_competition_emblem("PL")
+        assert captured["url"].endswith("/competitions/PL")
+
+
 # ── fetch_recent_results ───────────────────────────────────────────────────
 
 

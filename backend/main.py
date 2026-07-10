@@ -21,7 +21,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 
 from predictor import LeaguePredictor
-from data_fetcher import FootballDataClient, LEAGUES
+from data_fetcher import FootballDataClient, LEAGUES, API_BASE
 from scrapers.fbref import load_cards, load_corners, refresh as scrape_fbref, CORNERS_CSV, CARDS_CSV
 
 load_dotenv()
@@ -2858,34 +2858,87 @@ async def get_team_logo(name: str):
     return {"name": name, "logo": logo}
 
 
+_LEAGUE_NAME_TO_CODE = {info["name"].lower(): code for code, info in LEAGUES.items()}
+
+
+async def _get_football_competition_emblem(name: str) -> Optional[str]:
+    """
+    football-data.org emblem for one of our own football leagues — a real,
+    already-paid-for API key rather than TheSportsDB's rate/data-limited free
+    "3" test key, and our league codes ("WC", "PL", ...) map exactly to
+    football-data.org's own competition codes, so no fuzzy name matching is
+    needed at all. Returns None for anything not in our LEAGUES dict (e.g. a
+    basketball competition) or if the API key isn't configured.
+    """
+    code = _LEAGUE_NAME_TO_CODE.get(name.strip().lower())
+    if not code or not API_KEY:
+        return None
+
+    cache_key = f"betiq:fd_emblem:{code}"
+    r = _get_redis()
+    if r:
+        try:
+            cached = r.get(cache_key)
+            if cached is not None:
+                return cached or None
+        except Exception:
+            pass
+
+    emblem = None
+    try:
+        emblem = await FootballDataClient(API_KEY).fetch_competition_emblem(code)
+    except Exception as e:
+        print(f"[CompetitionLogo] football-data.org emblem fetch failed for {code}: {e}")
+
+    if r:
+        try:
+            r.setex(cache_key, 60 * 60 * 24 * 30, emblem or "")  # 30 days
+        except Exception:
+            pass
+
+    return emblem
+
+
 @app.get("/api/competition-logo")
 async def get_competition_logo(name: str, sport: str = "Soccer"):
     """
-    Generic competition/league badge lookup (World Cup, Premier League,
-    EuroLeague, etc.) — same TheSportsDB-backed pattern as /api/team-logo.
-    `sport` is TheSportsDB's taxonomy (e.g. "Soccer", "Basketball") —
-    defaults to "Soccer" since that covers most of the app's competitions.
-    Cached server-side (Redis, 30 days).
+    Competition/league badge lookup (World Cup, Premier League, EuroLeague,
+    etc.). For football competitions we already know (our own LEAGUES dict),
+    tries football-data.org's emblem first — a real API key with exact code
+    matching, no fuzzy search needed. Falls back to the generic
+    TheSportsDB-backed lookup (used for basketball etc., or if the football
+    league isn't one of ours). Cached server-side (Redis, 30 days).
     """
     from competition_logos import lookup_competition_logo
-    r = _get_redis()
-    logo = await lookup_competition_logo(name, redis_client=r, sport=sport)
-    return {"name": name, "sport": sport, "logo": logo}
+
+    logo = await _get_football_competition_emblem(name)
+    source = "football-data.org" if logo else None
+
+    if not logo:
+        r = _get_redis()
+        logo = await lookup_competition_logo(name, redis_client=r, sport=sport)
+        source = "thesportsdb" if logo else None
+
+    return {"name": name, "sport": sport, "logo": logo, "source": source}
 
 
 @app.get("/api/debug/competition-logo")
 async def debug_competition_logo(name: str, sport: str = "Soccer"):
     """
-    Diagnose the competition logo lookup: all_leagues.php (the one TheSportsDB
-    endpoint that takes NO query params, so its shape can't be guessed wrong)
-    dumps every league across every sport; we filter to `sport` and
-    fuzzy-match `name` against it, then lookupleague.php?id=X for the badge.
+    Diagnose the competition logo lookup end-to-end.
 
-    Two earlier endpoint guesses both failed against the live API
-    (searchleagues.php was a plain 404; search_all_leagues.php?s=<sport>
-    returned zero leagues, likely needing a country param too) — this shows
-    the RAW response at every step regardless of outcome, so a third wrong
-    guess is caught in one round instead of needing yet another back-and-forth.
+    Primary path (football only): football-data.org's /competitions/{code}
+    emblem field, using our own LEAGUES dict to map `name` -> code exactly
+    (no fuzzy matching needed, and it's a real paid key rather than
+    TheSportsDB's rate/data-limited free "3" test key).
+
+    Fallback path (any sport, or if the football-data.org lookup found
+    nothing): TheSportsDB's all_leagues.php (the one endpoint that takes NO
+    query params, so its shape can't be guessed wrong) dumps every league
+    across every sport; we filter to `sport` and fuzzy-match `name` against
+    it, then lookupleague.php?id=X for the badge. TheSportsDB's free test key
+    is known to return only a handful of domestic leagues (no World Cup), so
+    this is mainly relevant for basketball etc.
 
     Example: /api/debug/competition-logo?name=World%20Cup
     (URL-encode the space — "World Cup" unencoded gets truncated to "World"
@@ -2897,9 +2950,39 @@ async def debug_competition_logo(name: str, sport: str = "Soccer"):
     )
     import httpx as _httpx
 
+    out: Dict = {"name": name, "sport": sport}
+
+    # --- football-data.org path ---
+    fd_code = _LEAGUE_NAME_TO_CODE.get(name.strip().lower())
+    out["football_data"] = {
+        "matched_league_code": fd_code,
+        "api_key_set": bool(API_KEY),
+    }
+    if fd_code and API_KEY:
+        try:
+            url = f"{API_BASE}/competitions/{fd_code}"
+            async with _httpx.AsyncClient() as client:
+                resp = await client.get(url, headers={"X-Auth-Token": API_KEY}, timeout=20)
+            out["football_data"]["status"] = resp.status_code
+            if resp.status_code == 200:
+                data = resp.json()
+                out["football_data"]["emblem"] = data.get("emblem")
+            else:
+                out["football_data"]["raw_response_sample"] = resp.text[:500]
+        except Exception as e:
+            out["football_data"]["error"] = str(e)
+
+    fd_emblem = out["football_data"].get("emblem")
+    if fd_emblem:
+        out["logo"] = fd_emblem
+        out["source"] = "football-data.org"
+        return out
+
+    # --- TheSportsDB fallback path ---
     alias = _NAME_ALIASES.get(name.strip().lower())
     search_name = alias or name
-    out: Dict = {"name": name, "sport": sport, "alias_used": alias, "search_name": search_name}
+    out["alias_used"] = alias
+    out["search_name"] = search_name
 
     async with _httpx.AsyncClient(timeout=20) as client:
         list_resp = await client.get(f"{SPORTSDB_BASE}/all_leagues.php")
@@ -2932,6 +3015,7 @@ async def debug_competition_logo(name: str, sport: str = "Soccer"):
 
     r = _get_redis()
     out["logo"] = await lookup_competition_logo(name, redis_client=r, sport=sport)
+    out["source"] = "thesportsdb" if out["logo"] else None
 
     return out
 

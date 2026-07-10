@@ -118,6 +118,20 @@ class FootballDataClient:
         async with httpx.AsyncClient() as client:
             return await self._get(client, url)
 
+    async def fetch_competition_emblem(self, league_code: str) -> Optional[str]:
+        """
+        Fetch a competition's emblem/logo URL from football-data.org — an API
+        we already have a real (non-rate-limited-demo) key for, and one whose
+        competition codes are exactly our own LEAGUES dict keys ("WC", "PL",
+        ...), so no name-matching is needed at all.
+        """
+        url = f"{API_BASE}/competitions/{league_code}"
+        async with httpx.AsyncClient() as client:
+            data = await self._get(client, url)
+        if not data:
+            return None
+        return data.get("emblem")
+
     async def fetch_recent_results(
         self, league_code: str, days_back: int = 30
     ) -> pd.DataFrame:
