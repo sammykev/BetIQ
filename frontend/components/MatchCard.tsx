@@ -4,6 +4,7 @@ import { useState } from "react";
 import { getTeamAssets } from "@/lib/teamAssets";
 import { useTeamLogo } from "@/lib/useTeamLogo";
 import { CompetitionBadge } from "./CompetitionBadge";
+import { MatchBleed } from "./MatchBleed";
 import clsx from "clsx";
 
 interface Props {
@@ -55,9 +56,10 @@ export function MatchCard({ home, away, date, time, league, flag, children, onCl
   return (
     <div
       onClick={onClick}
-      className={clsx("card", onClick && "card-interactive", className)}
+      className={clsx("card relative overflow-hidden", onClick && "card-interactive", className)}
     >
-      <div className="px-4 py-3 flex items-center gap-3">
+      <MatchBleed home={home} away={away} />
+      <div className="relative z-10 px-4 py-3 flex items-center gap-3">
         <div className="flex-1 min-w-0 space-y-1.5">
           {(league || flag) && (
             <p className="flex items-center gap-1 text-[10px] text-zinc-400 dark:text-zinc-500 font-semibold uppercase tracking-wide truncate">

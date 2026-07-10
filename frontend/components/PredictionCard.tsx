@@ -4,6 +4,7 @@ import { useState } from "react";
 import { SaveButton } from "./SaveButton";
 import { useTeamLogo } from "@/lib/useTeamLogo";
 import { CompetitionBadge } from "./CompetitionBadge";
+import { MatchBleed } from "./MatchBleed";
 import type { Prediction } from "@/lib/api";
 import { Share2, Sparkles } from "lucide-react";
 import clsx from "clsx";
@@ -238,82 +239,85 @@ export function PredictionCard({ prediction: p, savedKeys, onClick }: Props) {
   return (
     <article
       onClick={onClick}
-      className={clsx("card p-4 flex flex-col gap-3.5", onClick && "card-interactive")}
+      className={clsx("card relative overflow-hidden", onClick && "card-interactive")}
     >
-      {/* Header: league + date */}
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5 min-w-0">
-          <CompetitionBadge name={p.league_name} fallbackEmoji={p.flag} size={14} className="text-sm" />
-          <span className="text-[11px] font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wide truncate">
-            {p.league_name}
-          </span>
-          {p.is_value_bet && (
-            <span className="bg-brand-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full uppercase tracking-wider shrink-0">
-              Value
+      <MatchBleed home={p.home} away={p.away} />
+      <div className="relative z-10 p-4 flex flex-col gap-3.5">
+        {/* Header: league + date */}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <CompetitionBadge name={p.league_name} fallbackEmoji={p.flag} size={14} className="text-sm" />
+            <span className="text-[11px] font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wide truncate">
+              {p.league_name}
             </span>
-          )}
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <span className="text-[11px] tnum text-zinc-400 dark:text-zinc-500 font-medium">
-            {shortDate(p.date)}{p.time && p.time !== "TBD" ? ` · ${localTime(p.date, p.time)}` : ""}
-          </span>
-          <SaveButton prediction={p} savedKeys={savedKeys ?? emptySet} size={14} />
-          <button
-            onClick={e => { e.stopPropagation(); shareMatch(p); }}
-            className="text-zinc-300 dark:text-zinc-600 hover:text-zinc-500 dark:hover:text-zinc-400 transition-colors"
-            title="Share this pick"
-          >
-            <Share2 size={14} />
-          </button>
-        </div>
-      </div>
-
-      {/* Teams */}
-      <div className="space-y-2">
-        <TeamRow name={p.home} prob={p.p_home} odds={p.odds_home} strongest={p.p_home === maxP} />
-        <TeamRow name={p.away} prob={p.p_away} odds={p.odds_away} strongest={p.p_away === maxP} />
-      </div>
-
-      {/* Segmented 1X2 probability bar */}
-      <div>
-        <div className="flex h-1.5 rounded-full overflow-hidden gap-px bg-zinc-100 dark:bg-zinc-800">
-          <div className="bg-brand-500 rounded-l-full" style={{ width: `${h}%` }} />
-          <div className="bg-zinc-300 dark:bg-zinc-600" style={{ width: `${d}%` }} />
-          <div className="bg-sky-500 rounded-r-full" style={{ width: `${a}%` }} />
-        </div>
-        <div className="flex justify-between mt-1.5 text-[10px] tnum font-medium text-zinc-400 dark:text-zinc-500">
-          <span><span className="text-brand-600 dark:text-brand-400 font-bold">1</span> {h}%</span>
-          <span><span className="font-bold">X</span> {d}%</span>
-          <span><span className="text-sky-600 dark:text-sky-400 font-bold">2</span> {a}%</span>
-        </div>
-      </div>
-
-      {/* Best pick footer */}
-      <div className="flex items-center justify-between gap-3 bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-100 dark:border-zinc-800 rounded-xl px-3 py-2.5 mt-auto">
-        <div className="min-w-0">
-          <p className="text-[10px] text-zinc-400 dark:text-zinc-500 uppercase tracking-wider font-semibold flex items-center gap-1">
-            <Sparkles size={9} /> Best pick
-          </p>
-          <p className="text-sm font-bold text-zinc-900 dark:text-white truncate">{p.tip_1x2}</p>
-          {p.tip_goals && p.tip_goals !== "Skip" && (
-            <p className="text-[11px] text-brand-600 dark:text-brand-400 font-medium mt-0.5 truncate">{p.tip_goals}</p>
-          )}
-        </div>
-        <div className="text-right shrink-0">
-          <p className="text-[10px] text-zinc-400 dark:text-zinc-500 uppercase tracking-wider font-semibold">Conf.</p>
-          <p className={clsx(
-            "tnum text-lg font-black leading-tight",
-            gconf >= 65 ? "text-brand-600 dark:text-brand-400" : gconf >= 50 ? "text-amber-500" : "text-zinc-400"
-          )}>
-            {gconf}%
-          </p>
-        </div>
-        {p.is_value_bet && p.value_edge != null && (
-          <div className="shrink-0 bg-brand-50 dark:bg-brand-900/30 border border-brand-200 dark:border-brand-800 rounded-lg px-2 py-1 text-center">
-            <p className="text-[9px] text-brand-700 dark:text-brand-400 font-bold uppercase tracking-wide">Edge</p>
-            <p className="tnum text-sm font-black text-brand-600 dark:text-brand-300">+{Math.round(p.value_edge * 100)}%</p>
+            {p.is_value_bet && (
+              <span className="bg-brand-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full uppercase tracking-wider shrink-0">
+                Value
+              </span>
+            )}
           </div>
-        )}
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="text-[11px] tnum text-zinc-400 dark:text-zinc-500 font-medium">
+              {shortDate(p.date)}{p.time && p.time !== "TBD" ? ` · ${localTime(p.date, p.time)}` : ""}
+            </span>
+            <SaveButton prediction={p} savedKeys={savedKeys ?? emptySet} size={14} />
+            <button
+              onClick={e => { e.stopPropagation(); shareMatch(p); }}
+              className="text-zinc-300 dark:text-zinc-600 hover:text-zinc-500 dark:hover:text-zinc-400 transition-colors"
+              title="Share this pick"
+            >
+              <Share2 size={14} />
+            </button>
+          </div>
+        </div>
+
+        {/* Teams */}
+        <div className="space-y-2">
+          <TeamRow name={p.home} prob={p.p_home} odds={p.odds_home} strongest={p.p_home === maxP} />
+          <TeamRow name={p.away} prob={p.p_away} odds={p.odds_away} strongest={p.p_away === maxP} />
+        </div>
+
+        {/* Segmented 1X2 probability bar */}
+        <div>
+          <div className="flex h-1.5 rounded-full overflow-hidden gap-px bg-zinc-100 dark:bg-zinc-800">
+            <div className="bg-brand-500 rounded-l-full" style={{ width: `${h}%` }} />
+            <div className="bg-zinc-300 dark:bg-zinc-600" style={{ width: `${d}%` }} />
+            <div className="bg-sky-500 rounded-r-full" style={{ width: `${a}%` }} />
+          </div>
+          <div className="flex justify-between mt-1.5 text-[10px] tnum font-medium text-zinc-400 dark:text-zinc-500">
+            <span><span className="text-brand-600 dark:text-brand-400 font-bold">1</span> {h}%</span>
+            <span><span className="font-bold">X</span> {d}%</span>
+            <span><span className="text-sky-600 dark:text-sky-400 font-bold">2</span> {a}%</span>
+          </div>
+        </div>
+
+        {/* Best pick footer */}
+        <div className="flex items-center justify-between gap-3 bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-100 dark:border-zinc-800 rounded-xl px-3 py-2.5 mt-auto">
+          <div className="min-w-0">
+            <p className="text-[10px] text-zinc-400 dark:text-zinc-500 uppercase tracking-wider font-semibold flex items-center gap-1">
+              <Sparkles size={9} /> Best pick
+            </p>
+            <p className="text-sm font-bold text-zinc-900 dark:text-white truncate">{p.tip_1x2}</p>
+            {p.tip_goals && p.tip_goals !== "Skip" && (
+              <p className="text-[11px] text-brand-600 dark:text-brand-400 font-medium mt-0.5 truncate">{p.tip_goals}</p>
+            )}
+          </div>
+          <div className="text-right shrink-0">
+            <p className="text-[10px] text-zinc-400 dark:text-zinc-500 uppercase tracking-wider font-semibold">Conf.</p>
+            <p className={clsx(
+              "tnum text-lg font-black leading-tight",
+              gconf >= 65 ? "text-brand-600 dark:text-brand-400" : gconf >= 50 ? "text-amber-500" : "text-zinc-400"
+            )}>
+              {gconf}%
+            </p>
+          </div>
+          {p.is_value_bet && p.value_edge != null && (
+            <div className="shrink-0 bg-brand-50 dark:bg-brand-900/30 border border-brand-200 dark:border-brand-800 rounded-lg px-2 py-1 text-center">
+              <p className="text-[9px] text-brand-700 dark:text-brand-400 font-bold uppercase tracking-wide">Edge</p>
+              <p className="tnum text-sm font-black text-brand-600 dark:text-brand-300">+{Math.round(p.value_edge * 100)}%</p>
+            </div>
+          )}
+        </div>
       </div>
     </article>
   );
