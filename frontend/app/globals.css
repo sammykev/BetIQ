@@ -36,6 +36,34 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+/* ── Focus & selection ─────────────────────────────────────────────────── */
+/* One brand-tinted keyboard focus ring everywhere, replacing the default
+   browser outline (a blue ring on a green-branded UI is the classic
+   "unfinished" tell). :where() keeps specificity at 0 so components can
+   still opt out. Pointer clicks stay ring-free via :focus-visible. */
+:where(a, button, input, textarea, select, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+::selection {
+  background: rgba(5, 150, 105, 0.18);
+}
+
+/* Respect users who ask for less motion — disable the decorative
+   animations/transitions rather than fight the OS preference. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* Numbers in odds/stats line up vertically */
 .tnum {
   font-variant-numeric: tabular-nums;
@@ -87,12 +115,47 @@ body {
     @apply bg-white dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 border-zinc-200 dark:border-zinc-800 hover:border-zinc-300 dark:hover:border-zinc-700 hover:text-zinc-900 dark:hover:text-zinc-200;
   }
 
+  /* Loading placeholder — a soft shimmer sweep reads more "premium"
+     than a flat pulse and signals content is coming, not broken. */
+  .skeleton {
+    @apply relative overflow-hidden bg-zinc-100 dark:bg-zinc-800/70 rounded-full;
+  }
+  .skeleton::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(255, 255, 255, 0.55),
+      transparent
+    );
+    animation: shimmer 1.6s ease-in-out infinite;
+  }
+  @media (prefers-color-scheme: dark) {
+    .skeleton::after {
+      background: linear-gradient(
+        90deg,
+        transparent,
+        rgba(255, 255, 255, 0.06),
+        transparent
+      );
+    }
+  }
+
   /* Primary / secondary buttons */
   .btn-primary {
     @apply inline-flex items-center justify-center gap-2 bg-brand-600 hover:bg-brand-700 text-white font-semibold rounded-xl px-5 py-2.5 text-sm transition-all shadow-sm hover:shadow active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none;
   }
   .btn-secondary {
     @apply inline-flex items-center justify-center gap-2 bg-white dark:bg-zinc-900 hover:bg-zinc-50 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 font-medium rounded-xl px-4 py-2 text-sm border border-zinc-200 dark:border-zinc-800 transition-all active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none;
+  }
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
   }
 }
 

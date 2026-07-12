@@ -477,7 +477,15 @@ export default function HomePage() {
             {sportLoading ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {Array.from({ length: 6 }).map((_, i) => (
-                  <div key={i} className="card h-48 animate-pulse !bg-zinc-100 dark:!bg-zinc-900" />
+                  <div key={i} className="card p-4 space-y-4">
+                    <div className="skeleton h-3 w-1/2" />
+                    <div className="flex items-center gap-2.5">
+                      <div className="skeleton w-8 h-8 shrink-0" />
+                      <div className="skeleton h-4 flex-1" />
+                    </div>
+                    <div className="skeleton h-1.5 w-full" />
+                    <div className="skeleton h-12 w-full !rounded-xl" />
+                  </div>
                 ))}
               </div>
             ) : sportPreds.length === 0 ? (
@@ -546,20 +554,20 @@ export default function HomePage() {
           {loading ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {Array.from({ length: 9 }).map((_, i) => (
-                <div key={i} className="card p-4 space-y-4 animate-pulse">
-                  <div className="h-3 bg-zinc-100 dark:bg-zinc-800 rounded-full w-1/2" />
+                <div key={i} className="card p-4 space-y-4">
+                  <div className="skeleton h-3 w-1/2" />
                   <div className="space-y-2.5">
                     <div className="flex items-center gap-2">
-                      <div className="w-7 h-7 bg-zinc-100 dark:bg-zinc-800 rounded-full" />
-                      <div className="h-4 bg-zinc-100 dark:bg-zinc-800 rounded-full flex-1" />
+                      <div className="skeleton w-7 h-7 shrink-0" />
+                      <div className="skeleton h-4 flex-1" />
                     </div>
                     <div className="flex items-center gap-2">
-                      <div className="w-7 h-7 bg-zinc-100 dark:bg-zinc-800 rounded-full" />
-                      <div className="h-4 bg-zinc-100 dark:bg-zinc-800 rounded-full flex-1" />
+                      <div className="skeleton w-7 h-7 shrink-0" />
+                      <div className="skeleton h-4 flex-1" />
                     </div>
                   </div>
-                  <div className="h-1.5 bg-zinc-100 dark:bg-zinc-800 rounded-full" />
-                  <div className="h-14 bg-zinc-50 dark:bg-zinc-800/60 rounded-xl" />
+                  <div className="skeleton h-1.5 w-full" />
+                  <div className="skeleton h-14 w-full !rounded-xl" />
                 </div>
               ))}
             </div>
