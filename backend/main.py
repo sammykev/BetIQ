@@ -1965,54 +1965,47 @@ async def upload_basketball_csv(request: Request):
 
 
 @app.get("/api/debug/basketball-provider")
-async def debug_basketball_provider(date: str = ""):
+async def debug_basketball_provider(date: str = "", league: str = "nba"):
     """
-    Raw diagnostic dump for the api-basketball (API-SPORTS) integration —
-    same purpose as the earlier /api/debug/competition-logo. Deliberately
-    bypasses fetch_leagues()/fetch_games() and hits the API directly so a
-    zero-results response can be told apart from an auth/subscription
-    failure or a wrong parameter shape — the parsed helpers collapse all of
-    those into an empty list, which isn't enough to diagnose a live miss.
-    Also calls /status, which every API-SPORTS API exposes to report
-    account/subscription state — the fastest way to confirm whether this key
-    actually has basketball access at all (a common gotcha: one API-SPORTS
-    account key doesn't automatically grant every sport, each needs its own
-    free "subscribe" click in the dashboard).
+    Raw diagnostic dump for the ESPN basketball integration.
+    No API key required — the endpoints are public.
+
+    Hits the scoreboard endpoint directly (bypasses fetch_scoreboard so
+    zero-results vs HTTP error can be distinguished) and returns both the
+    raw response and a normalized parse of the first few events.
 
     Example: /api/debug/basketball-provider
-             /api/debug/basketball-provider?date=2026-07-10
+             /api/debug/basketball-provider?date=20260710
+             /api/debug/basketball-provider?league=wnba
+             /api/debug/basketball-provider?league=ncaam&date=20260301
     """
-    from basketball_data_fetcher import API_KEY as BBALL_KEY, API_BASE
+    from basketball_data_fetcher import ESPN_BASE, parse_completed_games
     from datetime import date as _date
     import httpx as _httpx
 
-    out: Dict = {"api_key_set": bool(BBALL_KEY)}
-    if not BBALL_KEY:
-        out["message"] = "Set API_BASKETBALL_KEY (from https://dashboard.api-football.com) to test this provider."
-        return out
+    dates_param = date or _date.today().strftime("%Y%m%d")
+    url = f"{ESPN_BASE}/{league}/scoreboard"
 
-    games_date = date or _date.today().strftime("%Y-%m-%d")
-    headers = {"x-apisports-key": BBALL_KEY}
+    out: Dict = {
+        "provider": "ESPN unofficial API (no key required)",
+        "league": league,
+        "dates_queried": dates_param,
+        "url": url,
+    }
 
     async with _httpx.AsyncClient(timeout=15) as client:
-        status_r = await client.get(f"{API_BASE}/status", headers=headers)
-        out["account_status"] = {
-            "http_status": status_r.status_code,
-            "raw_sample": status_r.text[:1000],
-        }
-
-        leagues_r = await client.get(f"{API_BASE}/leagues", headers=headers, params={"search": "NBA"})
-        out["leagues_search_nba"] = {
-            "http_status": leagues_r.status_code,
-            "raw_sample": leagues_r.text[:1500],
-        }
-
-        games_r = await client.get(f"{API_BASE}/games", headers=headers, params={"date": games_date})
-        out["games_by_date"] = {
-            "http_status": games_r.status_code,
-            "date_queried": games_date,
-            "raw_sample": games_r.text[:1500],
-        }
+        r = await client.get(url, params={"dates": dates_param, "limit": 20})
+        out["http_status"] = r.status_code
+        try:
+            body = r.json()
+            events = body.get("events", [])
+            out["event_count"] = len(events)
+            out["parsed_sample"] = parse_completed_games(events[:5])
+            raw_str = str(body)
+            out["raw_sample"] = body if len(raw_str) < 4000 else raw_str[:4000]
+        except Exception as exc:
+            out["parse_error"] = str(exc)
+            out["raw_sample"] = r.text[:2000]
 
     return out
 

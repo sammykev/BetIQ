@@ -1,69 +1,95 @@
 """
-Live basketball results via api-basketball (the API-SPORTS family — same
-vendor pattern as football-data.org-style APIs already trusted elsewhere in
-this app). Used to keep basketball_predictor's Elo ratings fresh across
-every league we track (NBA, EuroLeague, NCAA, WNBA, NBL), instead of relying
-on a manually-uploaded, NBA-only Kaggle CSV.
+Live basketball results via ESPN's unofficial public API
+(site.api.espn.com). No API key required — the endpoints are
+public and used by ESPN's own web/mobile clients. Covers NBA,
+WNBA, NCAA Men's, and NCAA Women's. Used to keep
+basketball_predictor's Elo ratings fresh across every league we
+track instead of relying on a manually-uploaded Kaggle CSV.
 
-Free tier: sign up at https://dashboard.api-football.com (the same account
-works across every API-SPORTS sport, including basketball), copy the API
-key from the dashboard, and set API_BASKETBALL_KEY.
+Response shape is stable and well-documented by the open-source
+community (e.g. gist.github.com/nntrn/ee26cb2a0716de0947a0a4e9a157bc1b).
 
-NOTE ON VERIFICATION: this module is built against API-SPORTS' publicly
-documented request/response shape, but has not been exercised against a
-live key — the sandbox this was written in has no outbound internet access.
-/api/debug/basketball-provider in main.py exists specifically to validate
-the real response shape once a key is configured; expect to adjust field
-names here based on that live output, the same way the football-data.org
-competition-emblem and team-crest integrations were verified earlier this
-project.
+/api/debug/basketball-provider in main.py validates the live
+response shape from the deployed environment.
 """
 
-import os
 import httpx
 from typing import Dict, List, Optional
 
-API_KEY  = os.getenv("API_BASKETBALL_KEY", "")
-API_BASE = "https://v1.basketball.api-sports.io"
+ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports/basketball"
+
+LEAGUE_SLUGS: Dict[str, str] = {
+    "nba": "NBA",
+    "wnba": "WNBA",
+    "ncaam": "NCAA Men",
+    "ncaaw": "NCAA Women",
+}
 
 
-async def _get(path: str, params: Optional[Dict] = None) -> Optional[Dict]:
-    if not API_KEY:
-        return None
+async def _get(url: str, params: Optional[Dict] = None) -> Optional[Dict]:
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            r = await client.get(
-                f"{API_BASE}{path}",
-                headers={"x-apisports-key": API_KEY},
-                params=params or {},
-            )
+            r = await client.get(url, params=params or {})
             if r.status_code == 200:
                 return r.json()
-            print(f"[BasketballData] {path}: HTTP {r.status_code} — {r.text[:200]}")
+            print(f"[BasketballData] {url}: HTTP {r.status_code} — {r.text[:200]}")
     except Exception as e:
-        print(f"[BasketballData] {path} error: {e}")
+        print(f"[BasketballData] {url} error: {e}")
     return None
 
 
-async def fetch_leagues(search: str = "") -> List[Dict]:
-    """Raw leagues list — used to discover league IDs (e.g. NBA, EuroLeague)."""
-    params = {"search": search} if search else {}
-    data = await _get("/leagues", params)
+async def fetch_scoreboard(league: str = "nba", dates: str = "") -> List[Dict]:
+    """
+    Raw ESPN event list for a given league and date or date range.
+
+    league: ESPN slug — "nba", "wnba", "ncaam", "ncaaw"
+    dates:  YYYYMMDD for a single day, or YYYYMMDD-YYYYMMDD for a
+            range (e.g. "20241001-20250615" for a full season).
+            Omit for today's scoreboard.
+    """
+    params: Dict = {"limit": 200}
+    if dates:
+        params["dates"] = dates
+    data = await _get(f"{ESPN_BASE}/{league}/scoreboard", params)
     if not data:
         return []
-    return data.get("response", [])
+    return data.get("events", [])
 
 
-async def fetch_games(league_id: Optional[int] = None, season: str = "", date: str = "") -> List[Dict]:
-    """Raw games list — finished games are what feed the Elo trainer."""
-    params: Dict = {}
-    if league_id is not None:
-        params["league"] = league_id
-    if season:
-        params["season"] = season
-    if date:
-        params["date"] = date
-    data = await _get("/games", params)
-    if not data:
-        return []
-    return data.get("response", [])
+def parse_completed_games(events: List[Dict]) -> List[Dict]:
+    """
+    Filter a raw ESPN events list to completed games and normalise
+    each to the shape the Elo trainer expects:
+
+        {
+            "home_team": str,   # e.g. "Los Angeles Lakers"
+            "away_team": str,
+            "home_score": int,
+            "away_score": int,
+            "date": str,        # ISO timestamp from ESPN
+        }
+    """
+    results = []
+    for event in events:
+        comps = event.get("competitions", [])
+        if not comps:
+            continue
+        comp = comps[0]
+        if not comp.get("status", {}).get("type", {}).get("completed", False):
+            continue
+        competitors = comp.get("competitors", [])
+        home = next((c for c in competitors if c.get("homeAway") == "home"), None)
+        away = next((c for c in competitors if c.get("homeAway") == "away"), None)
+        if not home or not away:
+            continue
+        try:
+            results.append({
+                "home_team": home["team"]["displayName"],
+                "away_team": away["team"]["displayName"],
+                "home_score": int(home.get("score", 0)),
+                "away_score": int(away.get("score", 0)),
+                "date": event.get("date", ""),
+            })
+        except (KeyError, ValueError):
+            continue
+    return results
