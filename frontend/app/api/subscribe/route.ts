@@ -1,5 +1,6 @@
 import { auth, clerkClient } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
+import { PREMIUM_PRICE_KOBO } from "@/lib/pricing";
 
 export async function POST(req: NextRequest) {
   try {
@@ -23,6 +24,14 @@ export async function POST(req: NextRequest) {
     if (!data.status || data.data?.status !== "success") {
       console.error("[subscribe] Paystack verify failed:", data.message);
       return NextResponse.json({ error: "payment_not_verified" }, { status: 400 });
+    }
+
+    // The amount is set in the browser, so check what was actually paid —
+    // otherwise an edited checkout (e.g. ₦1) would still unlock premium.
+    const paid = data.data;
+    if (paid.currency !== "NGN" || Number(paid.amount) < PREMIUM_PRICE_KOBO) {
+      console.error(`[subscribe] Amount mismatch for ${reference}: ${paid.amount} ${paid.currency}`);
+      return NextResponse.json({ error: "amount_mismatch" }, { status: 400 });
     }
 
     // Calculate expiry (30 days from now)

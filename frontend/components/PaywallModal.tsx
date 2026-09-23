@@ -3,6 +3,7 @@
 import { useUser, SignInButton } from "@clerk/nextjs";
 import { X, Crown, Check, Loader2 } from "lucide-react";
 import { useState } from "react";
+import { PREMIUM_PRICE_KOBO as PRICE_KOBO, PREMIUM_PRICE_LABEL as PRICE_LABEL } from "@/lib/pricing";
 
 interface Props {
   onClose: () => void;
@@ -17,9 +18,6 @@ const FEATURES = [
   "Prediction history calendar",
   "All leagues, all confidence filters",
 ];
-
-const PRICE_KOBO = 500000;
-const PRICE_LABEL = "₦5,000 / month";
 
 export function PaywallModal({ onClose, onSuccess }: Props) {
   const { user } = useUser();

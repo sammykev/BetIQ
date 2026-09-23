@@ -12,6 +12,7 @@ import {
 import { MatchCard } from "@/components/MatchCard";
 import { AppShell } from "@/components/shell/AppShell";
 import { PageHeader } from "@/components/shell/PageHeader";
+import { PREMIUM_PRICE_LABEL } from "@/lib/pricing";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
 
@@ -482,7 +483,7 @@ export default function DashboardPage() {
                   <p className="font-display font-extrabold text-3xl uppercase text-white leading-none">Free plan</p>
                   <button onClick={() => router.push("/")}
                     className="w-full bg-amber-400 hover:bg-amber-300 text-ink font-bold py-2.5 rounded-xl text-sm transition-all flex items-center justify-center gap-2 active:scale-[0.98]">
-                    <Crown size={14} /> Upgrade to Premium · ₦1,500/month
+                    <Crown size={14} /> Upgrade to Premium · {PREMIUM_PRICE_LABEL}
                   </button>
                 </div>
               )}
