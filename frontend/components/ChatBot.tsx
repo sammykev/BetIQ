@@ -3,9 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useUser } from "@clerk/nextjs";
 import clsx from "clsx";
-import { X, Send, MessageCircle, Loader2, Copy, Check, Ticket, ChevronDown, ClipboardList } from "lucide-react";
+import { X, Send, MessageCircle, Loader2, Copy, Check, Ticket, ChevronDown, ClipboardList, Plus } from "lucide-react";
 import type { Prediction } from "@/lib/api";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
+import { useBetSlip } from "@/lib/useBetSlip";
+import { selectionFromPrediction, type SlipSelection } from "@/lib/slip";
 
 interface Props {
   predictions: Prediction[];
@@ -183,6 +185,23 @@ function AssistantBubble({
   const [booking, setBooking] = useState<BookingResult | null>(null);
   const [loading, setLoading] = useState(false);
   const authFetch = useAuthedFetch();
+  const slip = useBetSlip();
+  const [addedToSlip, setAddedToSlip] = useState(false);
+
+  // The assistant's picks as slip selections, with the model's probability when we have it
+  const addToSlip = () => {
+    if (!selections) return;
+    const list = selections.flatMap((sel): SlipSelection[] => {
+      const pred = predictions.find(p => p.home === sel.home && p.away === sel.away && (!sel.date || p.date === sel.date));
+      if (pred) { const own = selectionFromPrediction(pred); return own ? [own] : []; }
+      if (!["1", "X", "2"].includes(sel.tip_code) || !sel.date) return [];
+      return [{ home: sel.home, away: sel.away, date: sel.date, league: sel.league, market: "1x2",
+                marketName: "Match Result", code: sel.tip_code, label: sel.tip_1x2 || sel.tip_code }];
+    });
+    slip.addMany(list);
+    setAddedToSlip(true);
+    slip.setOpen(true);
+  };
 
   const generateCode = async () => {
     if (!selections) return;
@@ -237,18 +256,24 @@ function AssistantBubble({
       </div>
 
       {selections && !booking && (
-        <button
-          onClick={generateCode}
-          disabled={loading}
-          className="btn-primary self-start !px-4 !py-2 !text-xs"
-        >
-          {loading ? (
-            <Loader2 size={13} className="animate-spin" />
-          ) : (
-            <Ticket size={13} />
-          )}
-          {loading ? "Generating code…" : "Generate SportyBet Code"}
-        </button>
+        <div className="flex flex-wrap gap-2 self-start">
+          <button
+            onClick={generateCode}
+            disabled={loading}
+            className="btn-primary !px-4 !py-2 !text-xs"
+          >
+            {loading ? (
+              <Loader2 size={13} className="animate-spin" />
+            ) : (
+              <Ticket size={13} />
+            )}
+            {loading ? "Generating code…" : "Generate SportyBet Code"}
+          </button>
+          <button onClick={addToSlip} className="btn-secondary !px-4 !py-2 !text-xs">
+            {addedToSlip ? <Check size={13} /> : <Plus size={13} />}
+            {addedToSlip ? "Added to slip" : "Add to slip"}
+          </button>
+        </div>
       )}
 
       {booking && (

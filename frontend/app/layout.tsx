@@ -5,6 +5,7 @@ import { ClerkProvider } from "@clerk/nextjs";
 import Script from "next/script";
 import { themeInitScript } from "@/lib/theme";
 import { ThemeSync } from "@/components/ThemeToggle";
+import { BetSlipProvider } from "@/lib/useBetSlip";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -103,7 +104,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </head>
         <body className="antialiased">
           <ThemeSync />
-          {children}
+          <BetSlipProvider>{children}</BetSlipProvider>
           <Script id="sw-register" strategy="afterInteractive">{`
             if ('serviceWorker' in navigator) {
               navigator.serviceWorker.register('/sw.js');

@@ -2,13 +2,15 @@
 
 import { useState } from "react";
 import { SaveButton } from "./SaveButton";
+import { useBetSlip } from "@/lib/useBetSlip";
+import { isSelected, selectionFromPrediction } from "@/lib/slip";
 import { useTeamLogo } from "@/lib/useTeamLogo";
 import { CompetitionBadge } from "./CompetitionBadge";
 import { MatchBleed } from "./MatchBleed";
 import type { Prediction } from "@/lib/api";
 import { kickoff, localTime } from "@/lib/matchTime";
 import { confidenceTier, headlinePick, pickProbability, type HeadlinePick } from "@/lib/picks";
-import { Share2 } from "lucide-react";
+import { Check, Plus, Share2 } from "lucide-react";
 import clsx from "clsx";
 
 const BASE = "https://predict-withbetiq.vercel.app";
@@ -267,6 +269,30 @@ function PickTicket({ pick, edge }: { pick: HeadlinePick; edge?: number | null }
   );
 }
 
+/** Adds the card's 1X2 / double-chance pick to the bet slip. */
+function SlipToggle({ prediction: p }: { prediction: Prediction }) {
+  const { items, toggle } = useBetSlip();
+  const sel = selectionFromPrediction(p);
+  if (!sel) return null;
+  const inSlip = isSelected(items, sel);
+  return (
+    <button
+      onClick={e => { e.stopPropagation(); toggle(sel); }}
+      aria-pressed={inSlip}
+      aria-label={inSlip ? `Remove ${sel.label} from slip` : `Add ${sel.label} to slip`}
+      className={clsx(
+        "mt-2 w-full inline-flex items-center justify-center gap-1.5 h-8 rounded-lg text-xs font-bold uppercase tracking-wider border transition-colors",
+        inSlip
+          ? "border-brand-400/60 bg-brand-400/10 text-accent"
+          : "border-n-800 text-n-300 hover:text-n-0 hover:border-n-600"
+      )}
+    >
+      {inSlip ? <Check size={13} /> : <Plus size={13} />}
+      {inSlip ? "In slip" : "Slip"}
+    </button>
+  );
+}
+
 export function PredictionCard({ prediction: p, savedKeys, onClick, showDay = true, onSaveToggle }: Props) {
   const emptySet = new Set<string>();
   const headline = headlinePick(p);
@@ -341,6 +367,7 @@ export function PredictionCard({ prediction: p, savedKeys, onClick, showDay = tr
 
         <div className="mt-auto pt-1">
           <PickTicket pick={headline} edge={p.is_value_bet ? p.value_edge : null} />
+          <SlipToggle prediction={p} />
         </div>
       </div>
     </article>

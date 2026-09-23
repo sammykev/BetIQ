@@ -402,3 +402,58 @@ async def generate_booking_code(predictions: List[Dict]) -> Dict:
         "total_odds": round(total_odds, 2) if matched_games else None,
         "error": None if code else "SportyBet returned no booking code — their API may have changed.",
     }
+
+
+# ------------------------------------------------------------------ #
+# Share a slip of id triples (used by the bet slip — booking_slip.py)
+# ------------------------------------------------------------------ #
+
+SHARE_URL = "https://www.sportybet.com/?shareCode={code}&c=ng"
+
+
+def _share_code(data: Any) -> Optional[str]:
+    if not isinstance(data, dict):
+        return None
+    inner = data.get("data") if isinstance(data.get("data"), dict) else data
+    code = inner.get("shareCode") or inner.get("bookingCode") or inner.get("code")
+    return str(code) if code else None
+
+
+async def share_selections(selections: List[Dict[str, str]],
+                           client: Optional[httpx.AsyncClient] = None) -> Optional[Dict[str, str]]:
+    """
+    Create a booking code from {eventId, marketId, specifier, outcomeId}
+    selections. Returns {"code", "url"} or None.
+    """
+    payloads = [
+        # What sportybet.com's own "Book bet" sends
+        {"selections": [{"eventId": s["eventId"], "marketId": s["marketId"],
+                         "specifier": s.get("specifier") or None, "outcomeId": s["outcomeId"]}
+                        for s in selections]},
+        # Older shape, kept as a fallback
+        {"betType": "1", "betList": [{"matchId": s["eventId"], "marketId": s["marketId"],
+                                      "specifiers": s.get("specifier") or "",
+                                      "outcomeId": s["outcomeId"], "status": 0}
+                                     for s in selections]},
+    ]
+    own = client is None
+    client = client or httpx.AsyncClient(timeout=25, follow_redirects=True)
+    try:
+        await _warm_session(client)
+        for payload in payloads:
+            try:
+                r = await client.post(f"{BASE}/orders/share", json=payload, cookies=_session_cookies,
+                                      headers={**_HEADERS, "Content-Type": "application/json"})
+                print(f"[SportyBet] share → {r.status_code}: {r.text[:200]}")
+                if r.status_code in (200, 202) and r.text.strip().startswith("{"):
+                    data = r.json()
+                    code = _share_code(data)
+                    if code:
+                        inner = data.get("data") if isinstance(data.get("data"), dict) else {}
+                        return {"code": code, "url": inner.get("shareURL") or SHARE_URL.format(code=code)}
+            except Exception as e:
+                print(f"[SportyBet] share error: {e}")
+    finally:
+        if own:
+            await client.aclose()
+    return None

@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { Home, TrendingUp, CalendarDays, LayoutDashboard } from "lucide-react";
 import { UserMenu } from "@/components/UserMenu";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { SlipButton, SlipDrawer } from "@/components/BetSlip";
 import clsx from "clsx";
 import type { ReactNode } from "react";
 
@@ -99,6 +100,7 @@ export function AppShell({ children, actions, banner, onUpgrade }: Props) {
           <div className="hidden lg:block" />
           <div className="flex items-center gap-2">
             {actions}
+            <SlipButton />
             <ThemeToggle />
             <UserMenu onUpgrade={onUpgrade ?? (() => {})} />
           </div>
@@ -109,6 +111,8 @@ export function AppShell({ children, actions, banner, onUpgrade }: Props) {
       <main className="lg:pl-60 pb-24 lg:pb-10">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 lg:py-8">{children}</div>
       </main>
+
+      <SlipDrawer />
 
       {/* ── Mobile bottom nav ── */}
       <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 border-t border-n-900 bg-canvas/95 backdrop-blur-md pb-[env(safe-area-inset-bottom)]">

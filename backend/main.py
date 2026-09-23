@@ -3703,6 +3703,26 @@ async def create_booking(body: Dict[str, Any]):
     }
 
 
+@app.post("/api/booking/convert")
+async def convert_slip(body: Dict[str, Any]):
+    """
+    Turn the bet slip into a booking code on the chosen platform.
+    Body: {"platform": "sportybet", "selections": [{home, away, date, market, code, label?}]}
+    """
+    import booking_slip
+    import sportybet
+
+    platform = body.get("platform", "sportybet")
+    if platform != "sportybet":
+        raise HTTPException(status_code=400, detail="Booking codes are only supported for SportyBet")
+    try:
+        selections = booking_slip.validate(body.get("selections"))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return await booking_slip.to_sportybet(
+        selections, sportybet.fetch_events_for_date, sportybet.find_event, sportybet.share_selections)
+
+
 ADMIN_SECRET = os.getenv("ADMIN_SECRET", "")
 PAYWALL_KEY  = "betiq:config:paywall_enabled"
 
