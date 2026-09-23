@@ -56,7 +56,7 @@ const CLUB_IDS: Record<string, number> = {
   "Bournemouth": 1044, "Sunderland": 356,
   // Serie A
   "AC Milan": 98, "Atalanta": 102, "Bologna": 103, "Cagliari": 488,
-  "Empoli": 445, "Fiorentina": 99, "Frosinone": 7398, "Genoa": 107,
+  "Empoli": 445, "Fiorentina": 99, "Frosinone": 470, "Genoa": 107,
   "Inter Milan": 108, "Internazionale": 108, "Juventus": 109, "Lazio": 110,
   "Lecce": 5890, "Milan": 98, "Monza": 5911, "Napoli": 113,
   "Roma": 100, "Salernitana": 5915, "Sassuolo": 471, "Torino": 586,
@@ -77,7 +77,7 @@ const CLUB_IDS: Record<string, number> = {
   "Real Sociedad": 92, "Sevilla": 559, "Valencia": 95, "Villarreal": 94,
   "Alaves": 263,
   // Ligue 1
-  "Brest": 532, "Clermont": 528, "Le Havre": 539, "Lens": 6911,
+  "Brest": 532, "Clermont": 528, "Le Havre": 539, "Lens": 546,
   "Lille": 521, "Lorient": 537, "Lyon": 523, "Marseille": 516,
   "Metz": 527, "Monaco": 548, "Montpellier": 527, "Nantes": 543,
   "Nice": 522, "PSG": 524, "Paris Saint-Germain": 524,

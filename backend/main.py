@@ -817,6 +817,20 @@ async def _sync_football_data(force: bool = False) -> Optional[Dict[str, list]]:
     return report
 
 
+def _load_or_train(combined: pd.DataFrame, data_mtime: float) -> LeaguePredictor:
+    """The cached model if it's newer than the data, else a freshly trained one."""
+    predictor = LeaguePredictor.load_cache(data_mtime)
+    if predictor is None:
+        predictor = LeaguePredictor()
+        # Seed national team Elo from FIFA rankings BEFORE training
+        # This prevents unknown national teams (Ecuador, Algeria etc.) from
+        # starting at 1500 and looking equal to Germany/France/Brazil
+        predictor.elo.seed_national_teams()
+        predictor.train(combined)
+        predictor.save_cache(data_mtime)
+    return predictor
+
+
 async def _run_pipeline():
     global _predictor, _predictions_cache, _last_updated, _is_training
 
@@ -828,12 +842,12 @@ async def _run_pipeline():
         await _sync_football_data()
         print("[Pipeline] Loading CSV data...")
         # Primary: football-data.co.uk CSVs (include Bet365 odds — best for accuracy)
-        fd_df = _load_football_data_csvs()
+        fd_df = await asyncio.to_thread(_load_football_data_csvs)
         # Legacy: our existing EPL + UCL CSVs (no odds but more historical depth)
-        epl_df = _load_epl_csv()
-        ucl_df = _load_ucl_csv()
+        epl_df = await asyncio.to_thread(_load_epl_csv)
+        ucl_df = await asyncio.to_thread(_load_ucl_csv)
         # International match history (from Kaggle — fixes national team calibration)
-        intl_df = _load_international_csv()
+        intl_df = await asyncio.to_thread(_load_international_csv)
 
         # One naming scheme for club training data — football-data.co.uk's.
         # UCL CSVs and API results name clubs differently ("Atleti",
@@ -889,15 +903,9 @@ async def _run_pipeline():
             *[_mtime(f) for f in glob.glob(os.path.join(FOOTBALL_DATA_DIR, "*.csv"))],
         )
 
-        predictor = LeaguePredictor.load_cache(data_mtime)
-        if predictor is None:
-            predictor = LeaguePredictor()
-            # Seed national team Elo from FIFA rankings BEFORE training
-            # This prevents unknown national teams (Ecuador, Algeria etc.) from
-            # starting at 1500 and looking equal to Germany/France/Brazil
-            predictor.elo.seed_national_teams()
-            predictor.train(combined)
-            predictor.save_cache(data_mtime)
+        # Training takes minutes of CPU. On a worker thread the API keeps
+        # answering (from the previous model) instead of timing out.
+        predictor = await asyncio.to_thread(_load_or_train, combined, data_mtime)
 
         # Make predictor available immediately so card analysis works during API calibration
         global _predictor

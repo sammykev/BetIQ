@@ -40,6 +40,8 @@ export const metadata: Metadata = {
     statusBarStyle: "black",
     title: "BetIQ",
   },
+  // The standard form of apple-mobile-web-app-capable, which Chrome now warns is deprecated
+  other: { "mobile-web-app-capable": "yes" },
   openGraph: {
     title: "BetIQ — AI Football Predictions",
     description: "AI-powered predictions across 9 leagues. Chat to build accumulators, generate SportyBet booking codes instantly.",
