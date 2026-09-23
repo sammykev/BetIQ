@@ -1,7 +1,8 @@
 # BetIQ API. Build from the repository root — the legacy EPL and Champions
 # League CSVs live there:
 #   docker build -f backend/Dockerfile -t betiq-api .
-# Runs on x86 and ARM (Oracle Cloud's free Ampere machines).
+# Runs on x86 and ARM; used by Hugging Face Spaces (deploy/huggingface) and
+# the Oracle Cloud setup (deploy/oracle).
 # If Docker Hub rate-limits you, the same image is on Amazon's mirror:
 #   --build-arg PYTHON_IMAGE=public.ecr.aws/docker/library/python:3.12-slim
 ARG PYTHON_IMAGE=python:3.12-slim
@@ -25,6 +26,11 @@ COPY backend/ .
 # data/ is a persistent volume at runtime. The copy shipped with the code
 # seeds it (see docker-entrypoint.sh).
 RUN cp -a data /app/seed-data && chmod +x docker-entrypoint.sh
+
+# Run as an unprivileged user — Hugging Face Spaces require uid 1000, and
+# the app writes its model and caches under /app/backend/data
+RUN useradd -m -u 1000 betiq && chown -R betiq /app
+USER betiq
 
 EXPOSE 8000
 HEALTHCHECK --interval=60s --timeout=10s --start-period=120s \
