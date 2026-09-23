@@ -1,151 +1,155 @@
-# BetIQ — Design System & Style Guide
+# BetIQ — "Matchday" Design System & Style Guide
 
-The reference for keeping the UI feeling *designed rather than assembled*. Everything
-here already lives in the codebase — this document is the handoff layer that makes it
-reusable. Tokens are defined in `tailwind.config.js` and `app/globals.css`; reach for
-the named token, never a raw hex value in a component.
+A dark, sportsbook-grade identity: near-black navy surfaces, one electric-lime
+accent, and condensed scoreboard type for anything that should read at a
+glance. Everything below already lives in the code — tokens in
+`tailwind.config.js` and `app/globals.css`, fonts in `app/layout.tsx`. Reach for
+the named token or component class, never a raw hex value in a component.
+
+**Matchday is dark-only.** `<html class="dark">` is set permanently, so every
+`dark:` variant always applies. New components don't need `dark:` prefixes;
+write the dark styles directly.
 
 ---
 
 ## 1. Grid & spacing
 
-Layout is built on Tailwind's 4px spacing scale. Consistent alignment is the fastest
-way to make a screen feel intentional, so stick to these rungs and avoid arbitrary
-values (`p-[13px]`).
+Tailwind's 4px spacing scale. Stick to these rungs and avoid arbitrary values.
 
 | Purpose | Token | Value |
 | --- | --- | --- |
 | Page gutters | `px-4 sm:px-6` | 16 → 24px |
-| Max content width | `max-w-6xl mx-auto` | 1152px, centered |
-| Section rhythm | `space-y-6` | 24px between blocks |
+| Max content width | `max-w-6xl mx-auto` | 1152px, centred |
+| Section rhythm | `space-y-5` / `space-y-6` | 20–24px between blocks |
+| Day groups in a list | `space-y-8` | 32px |
 | Card grids | `gap-4` | 16px |
-| In-card stacks | `gap-3` / `gap-3.5` | 12–14px |
-| Inline label ↔ value | `gap-1.5` / `gap-2` | 6–8px |
+| In-card stacks | `gap-3` / `space-y-2.5` | 10–12px |
 
-**Grid.** Card collections use one responsive grid across every page:
-`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4`. The desktop shell reserves a
-fixed `lg:pl-60` sidebar rail; the top bar and main content both inherit that offset so
-nothing drifts out of alignment.
+**Grid.** Card collections use one responsive grid everywhere:
+`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4`. Detail pages (match,
+dashboard) use a main column plus a `360px` right rail on `lg`
+(`grid lg:grid-cols-[1fr_360px]`), with the rail first in the DOM so the key
+number leads on mobile. The desktop shell reserves a fixed `lg:pl-60` sidebar.
 
-**Checking a page against the grid:** every left edge inside the content column should
-line up on the `max-w-6xl` container; every card in a row shares one height (cards flex
-their footer with `mt-auto`); vertical gaps between sibling blocks are a single
-`space-y-*` value, not hand-tuned margins.
+**Mobile first screen.** The first prediction must be visible without
+scrolling on a 390×844 phone. Keep filters to one row each and avoid stat tiles
+above the list.
 
 ---
 
 ## 2. Color
 
-Semantic tokens live in `:root` (light) and a `prefers-color-scheme: dark` override,
-mirrored by the `brand` / `surface` scales in Tailwind.
+| Role | Value | Token |
+| --- | --- | --- |
+| Page background | `#070b14` | `bg-ink` · `--bg` |
+| Card surface | `#0f1729` | `bg-surface` · `.card` |
+| Raised (hover, slip) | `#131d33` | `bg-surface-raised` |
+| Sunken (inputs) | `#0a101d` | `bg-surface-sunken` |
+| Border | `#1a2438` | `border-zinc-800` |
+| Text primary | `#e3e8f0` / white | `text-zinc-100` / `text-white` |
+| Text secondary | `#7d8aa3` | `text-zinc-400` |
+| Text tertiary | `#5f6b82` | `text-zinc-500` |
+| Accent | `#b8f53d` | `brand-400` · `--accent` |
 
-| Role | Light | Dark | Token |
-| --- | --- | --- | --- |
-| Background | `#fafafa` | `#09090b` | `--bg` |
-| Surface (cards) | `#ffffff` | `#101014` | `--surface` / `.card` |
-| Border | `#e4e4e7` | `#26262b` | `--border` |
-| Text primary | `#0f172a` | `#f4f4f5` | `--text-primary` |
-| Text secondary | `#64748b` | `#a1a1aa` | `--text-secondary` |
-| Accent (brand) | `#059669` | `#10b981` | `--accent` / `brand-600` |
+`zinc-*` is re-tinted toward navy in `tailwind.config.js`, so existing zinc
+utilities land on Matchday surfaces automatically.
 
-**Hierarchy.** Three text weights carry the whole UI: primary (`zinc-900`/`white`) for
-values and headings, secondary (`zinc-500`) for supporting copy, tertiary
-(`zinc-400`) for metadata and labels. If everything is bold, nothing is — reserve
-`font-black` for numbers and page titles.
+**One accent, one meaning.** Lime means *the pick / value / go*: the favoured
+outcome, a confident pick, a value edge, the primary action. Never decorative.
+On a lime fill, text is always `text-ink` — **never white on lime**.
 
-**Accent discipline — the "unfinished" mistake.** Brand green means *one* thing:
-the primary action or a positive signal (bankers, value edges, confidence ≥ 65%). It is
-never a decorative fill. Secondary sports/markets borrow a fixed tint set —
-sky, violet, amber, rose, teal — always at `50`/`500-10%` background with a `600` icon,
-never as large color blocks. The most common way a site reads as unfinished is a stray
-default accent (e.g. the browser's blue focus ring on a green product); we override that
-globally — see §5.
+**Signal colours** (used sparingly, never as large fills):
+- **Amber** — a lean pick (50–64% confidence), premium/crown.
+- **Rose** — losses, errors.
+- **Sky** — live data (web search, live odds).
+- **Violet** — "Upset" picks.
 
----
-
-## 3. Iconography
-
-- **One set: [lucide-react](https://lucide.dev).** Every functional icon is a lucide
-  glyph — do not mix in Font Awesome, Heroicons, or default OS emoji for UI affordances.
-- **Sizing.** `14px` inline with text, `16–17px` for nav and buttons, `19px` for
-  mobile bottom-nav. Stroke width is `2` at rest, `2.4` for the active nav item — the
-  weight bump reads as "selected" without a color change alone.
-- **Container.** Feature/stat icons sit in a `w-9 h-9` (or `w-10 h-10`) `rounded-xl`
-  tinted chip, icon centered — this keeps icons optically aligned regardless of their
-  individual glyph proportions.
-- **Emoji exception.** Sport identifiers (⚽ 🏀 🎾 🏓) and playful empty/waking states
-  use emoji deliberately as *content/branding*, not as UI controls. Keep that line
-  crisp: an emoji never stands in for a button icon.
+**Confidence ladder** (cards, tickets, stats): ≥65% solid lime · 50–64% outlined
+amber · <50% muted zinc. The list can be scanned for strength before reading a
+number.
 
 ---
 
-## 4. Loading states
+## 3. Typography
 
-Where they matter, and where they don't:
+| Face | Variable | Use |
+| --- | --- | --- |
+| **Barlow Condensed** 600/700/800 | `font-display` | Page titles, section heads, team names on hero, every "big number" |
+| **Inter** | `font-sans` (default) | Body copy, labels, buttons |
+| **JetBrains Mono** 500/700 | `font-mono` | Kick-off times, odds, booking codes, source domains |
 
-- **Use a skeleton** for the predictions/sport card grids — the layout is known ahead of
-  time, so mirror it. Skeletons use the `.skeleton` utility (a soft left-to-right
-  **shimmer**, not a flat pulse) so waiting content reads as *premium*, not *broken*.
-- **Use a spinner** only for indeterminate, full-screen gates (auth bootstrap).
-- **Use inline motion** for actions in progress — the refresh icon spins
-  (`animate-spin`) while the request is out.
-- **Avoid the flash of blank content:** skeleton cards match the real card's padding,
-  radius, and internal rhythm, so the swap to real data doesn't shift layout.
-- **Don't** skeleton trivially fast or tiny UI (a toggle, a chip) — it's noise.
-
----
-
-## 5. Cursor, hover & focus
-
-Three subtle treatments, no gimmicks:
-
-1. **Card lift** (`.card-interactive`): on hover, `-translate-y-0.5` + `shadow-card-hover`
-   + a slightly darker border; `active:` returns it to rest. Motion is
-   `duration-200` — perceptible, never sluggish.
-2. **Button press** (`.btn-primary` / `.btn-secondary`): `active:scale-[0.98]` gives a
-   tactile "click" with near-zero performance cost.
-3. **Chips & nav**: color/border transitions only (`transition-all`), no transform — a
-   dense row of moving chips would feel gimmicky.
-
-**Focus (accessibility + polish).** A single brand-tinted ring
-(`:focus-visible { outline: 2px solid var(--accent) }`, offset `2px`) is applied globally
-in `globals.css` and only shows for keyboard users, never on mouse click.
-
-**Reduced motion.** `@media (prefers-reduced-motion: reduce)` collapses all decorative
-animation and transition durations. Respect the OS preference rather than overriding it.
-
-**Custom cursors** are intentionally *not* used — on a data/betting product they distract
-from scanning numbers and cost paint performance for no clarity gain.
+- Page title: `.display text-5xl sm:text-6xl` (uppercase, tight leading).
+- Big numbers: `font-display font-extrabold` + `tnum`, with a smaller `%` sign.
+- Small labels above values: `.eyebrow` (11px, uppercase, tracked, zinc-400).
+- `.tnum` is **required** on every changing number so digits align.
 
 ---
 
-## 6. Component vocabulary
+## 4. Iconography
 
-Prefer these composed classes (defined in `globals.css`) over re-declaring utilities:
+- **One set: [lucide-react](https://lucide.dev).** No mixing icon libraries.
+- **Sizes:** 12–14px inline, 15–17px in buttons/nav, 19px mobile bottom nav,
+  20px in empty-state tiles. Active nav: stroke `2.4` and lime; rest `2`.
+- **Containers:** feature/state icons sit in a `rounded-xl`/`rounded-2xl` tile
+  (`bg-brand-400/10 text-brand-400 ring-1 ring-brand-400/20` for features,
+  `bg-zinc-800/70 text-zinc-400` for empty states).
+- **Emoji** only as content (competition flags fallback), never as UI.
+
+---
+
+## 5. Signature components
+
+| Pattern | Where | Notes |
+| --- | --- | --- |
+| **Scoreboard card** | `PredictionCard`, `SportCard`, `ValueBets` | Header strip (competition eyebrow + mono kick-off) · team rows with big condensed % · 1X2 split bar with the favourite lit · pick ticket |
+| **Pick ticket** | card footer, match rail | Confidence ladder styling; `+N% EDGE` tab pinned to the top-right when there's value |
+| **Underline tabs** | sport switcher, dashboard | `font-display` uppercase, 2px lime underline on the active tab |
+| **Tale of the tape** | match page | Home/away values either side of a label, the better side white with a lime bar |
+| **Day groups** | predictions list | "Today", "Tomorrow", "Sat 26 Sep" headings when sorted by kick-off; cards then show time only |
+| **State panel** | empty / error / waking | Dashed `.card`, icon tile, condensed title, one-line help, one action |
+
+Component classes (in `globals.css`):
 
 | Class | Use |
 | --- | --- |
-| `.card` | Any elevated surface (white/zinc-900, `rounded-2xl`, `shadow-card`). |
-| `.card-interactive` | A `.card` that is clickable — adds hover lift + press. |
-| `.chip` + `.chip-active` / `.chip-idle` | Filter/selector pills. |
-| `.btn-primary` / `.btn-secondary` | Actions. Primary = brand fill; secondary = bordered. |
-| `.skeleton` | Shimmer loading placeholder. |
-| `.tnum` | Tabular numerals — **required** on every odds/percentage/stat so digits align. |
-| `.text-gradient` | Brand gradient text, reserved for hero emphasis only. |
+| `.card` / `.card-interactive` | Surfaces; interactive adds lift, raised bg, brighter border |
+| `.chip` + `.chip-active` / `.chip-idle` | Filters — squared `rounded-lg`, lime when active |
+| `.btn-primary` / `.btn-secondary` | Lime fill with ink text + glow on hover / bordered surface |
+| `.eyebrow` / `.display` | Label and headline type |
+| `.skeleton` | Shimmer loading placeholder |
+| `.tnum` | Tabular numerals |
 
-**Radii:** `rounded-xl` (12px) for controls, `rounded-2xl` (16px) for cards,
-`rounded-full` for chips, badges, and avatars.
+**Radii:** `rounded-lg` chips, `rounded-xl` buttons and tickets, `rounded-2xl`
+cards. **Shadows:** `shadow-card` → `shadow-card-hover` → `shadow-pop`
+(overlays); `shadow-glow` only on the single most important lime element.
 
-**Shadows:** `shadow-card` at rest → `shadow-card-hover` on interaction → `shadow-pop`
-for modals/overlays. Elevation only ever increases toward the user's focus.
+---
+
+## 6. Motion, focus & states
+
+- **Hover:** cards lift 2px and brighten; buttons press to `scale(0.98)`.
+- **Focus:** a global 2px lime `:focus-visible` ring (keyboard only).
+- **Reduced motion** collapses animation/transition durations globally.
+- **Loading:** skeletons mirror the real card (same padding, header strip,
+  ticket height) so nothing shifts when data arrives.
+- **Live dot:** pulsing lime dot for "model live", used once per screen.
+
+---
+
+## 7. Responsible gambling
+
+Keep an **18+** marker and "gamble responsibly" copy in the sidebar, landing
+footer and page footers. Predictions are presented as probabilities, never
+guarantees.
 
 ---
 
 ### Handoff checklist
 
-- [ ] No raw hex in components — use `brand-*`, `zinc-*`, or a semantic token.
-- [ ] Numbers carry `.tnum`.
-- [ ] Interactive surfaces use `.card-interactive` / `.btn-*`, not ad-hoc hover styles.
-- [ ] Loading grids use `.skeleton` mirroring the real layout.
-- [ ] Icons are lucide, sized per §3; emoji only as content.
-- [ ] Both light and dark verified.
+- [ ] No raw hex in components; use `ink`, `surface`, `zinc-*`, `brand-*`.
+- [ ] Nothing white-on-lime; lime fills use `text-ink`.
+- [ ] Big numbers use `font-display` + `tnum`; odds/times/codes use `font-mono`.
+- [ ] Confidence follows the ladder (lime / amber / muted).
+- [ ] Loading states use `.skeleton` in the real layout; empty/error states use the state panel.
+- [ ] First prediction visible on a 390×844 screen without scrolling.
+- [ ] Icons are lucide; 18+ copy present.

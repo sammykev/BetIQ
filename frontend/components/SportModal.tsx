@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { X, Star, Loader2, TrendingUp } from "lucide-react";
+import { X, Loader2, TrendingUp } from "lucide-react";
 import clsx from "clsx";
 import { getSportAssets, sportDbSport } from "@/lib/sportsAssets";
 import { useTeamLogo } from "@/lib/useTeamLogo";
@@ -120,7 +120,7 @@ export function SportModal({ prediction: p, onClose }: Props) {
     const timer = setTimeout(() => ctrl.abort(), 20000);  // 20s timeout
     fetch(`${API}/api/sports/${p.sport}/event?${params}`, { signal: ctrl.signal })
       .then(r => { if (!r.ok) throw new Error(r.status.toString()); return r.json(); })
-      .then(d => setDetail(d))
+      .then(d => { if (Array.isArray(d?.markets)) setDetail(d); else setError(true); })
       .catch(() => setError(true))
       .finally(() => { setLoading(false); clearTimeout(timer); });
   }, [p.home, p.away, p.date, p.sport]);
@@ -136,7 +136,7 @@ export function SportModal({ prediction: p, onClose }: Props) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-zinc-950/60 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto"
+    <div className="fixed inset-0 z-50 bg-ink/80 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto"
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="w-full max-w-2xl my-8 card !rounded-3xl shadow-pop overflow-hidden animate-scale-in">
 
@@ -165,15 +165,15 @@ export function SportModal({ prediction: p, onClose }: Props) {
             <div className="flex-1 flex flex-col items-center text-center gap-2">
               <Avatar staticImage={assets.homeImage} color={assets.homeColor} name={p.home} face={assets.isPlayerFace} sport={p.sport} />
               <div>
-                <p className="text-base font-bold text-zinc-900 dark:text-white leading-tight">{p.home}</p>
+                <p className="font-display font-extrabold uppercase text-2xl leading-none text-white">{p.home}</p>
                 <p className="tnum text-[11px] text-zinc-400 dark:text-zinc-500">{Math.round(p.p_home * 100)}% win prob</p>
               </div>
             </div>
-            <div className="text-zinc-300 dark:text-zinc-600 font-black">vs</div>
+            <div className="font-display font-extrabold text-2xl text-zinc-600">VS</div>
             <div className="flex-1 flex flex-col items-center text-center gap-2">
               <Avatar staticImage={assets.awayImage} color={assets.awayColor} name={p.away} face={assets.isPlayerFace} sport={p.sport} />
               <div>
-                <p className="text-base font-bold text-zinc-900 dark:text-white leading-tight">{p.away}</p>
+                <p className="font-display font-extrabold uppercase text-2xl leading-none text-white">{p.away}</p>
                 <p className="tnum text-[11px] text-zinc-400 dark:text-zinc-500">{Math.round(p.p_away * 100)}% win prob</p>
               </div>
             </div>
@@ -185,21 +185,21 @@ export function SportModal({ prediction: p, onClose }: Props) {
 
           {/* Best pick banner */}
           {(detail?.best_pick || p.tip_1x2) && (
-            <div className="bg-brand-50/60 dark:bg-brand-900/15 border border-brand-200 dark:border-brand-800 rounded-2xl p-4 flex items-center gap-4">
-              <div className="w-10 h-10 bg-brand-100 dark:bg-brand-900/40 rounded-full flex items-center justify-center shrink-0">
-                <Star size={18} className="text-brand-600 dark:text-brand-400" />
-              </div>
+            <div className="bg-brand-400 text-ink rounded-2xl p-4 flex items-center gap-4 shadow-glow">
               <div className="flex-1 min-w-0">
-                <p className="text-[10px] text-brand-700 dark:text-brand-400 font-bold uppercase tracking-wider mb-0.5">Best pick</p>
-                <p className="text-zinc-900 dark:text-white font-bold text-base">
+                <p className="font-display font-bold text-xs uppercase tracking-[0.14em] text-ink/60">Best pick</p>
+                <p className="font-display font-extrabold text-2xl uppercase leading-tight truncate">
                   {detail?.best_pick?.label || p.tip_1x2}
                 </p>
-                <p className="tnum text-xs text-zinc-500 dark:text-zinc-400">
+                <p className="text-xs font-semibold text-ink/70">
                   {Math.round((detail?.best_pick?.confidence || p.goals_confidence) * 100)}% confidence
                 </p>
               </div>
               {(detail?.best_pick?.odds) && (
-                <p className="tnum text-2xl font-black text-brand-600 dark:text-brand-400 shrink-0">{detail.best_pick.odds}</p>
+                <div className="text-right shrink-0">
+                  <p className="font-display font-bold text-xs uppercase tracking-[0.14em] text-ink/60">Odds</p>
+                  <p className="font-display font-extrabold text-4xl leading-none tnum">{detail.best_pick.odds}</p>
+                </div>
               )}
             </div>
           )}
@@ -238,16 +238,17 @@ export function SportModal({ prediction: p, onClose }: Props) {
                 </div>
               </div>
             </div>
-          ) : detail?.markets.map(market => {
-            const bestOdds = Math.max(...market.outcomes.map(o => o.implied));
+          ) : (detail?.markets ?? []).map(market => {
+            const outcomes = Array.isArray(market.outcomes) ? market.outcomes : [];
+            const bestOdds = Math.max(...outcomes.map(o => o.implied));
             return (
               <div key={market.id} className="space-y-2">
                 <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-bold text-zinc-800 dark:text-zinc-200">{market.name}</h3>
+                  <h3 className="font-display font-bold text-lg uppercase tracking-[0.06em] text-white">{market.name}</h3>
                   <span className="ml-auto text-[10px] text-zinc-400 dark:text-zinc-600">Best available odds</span>
                 </div>
                 <div className="space-y-2">
-                  {market.outcomes.map(o => (
+                  {outcomes.map(o => (
                     <OddsBar key={o.name} outcome={o} isBest={o.implied === bestOdds} />
                   ))}
                 </div>

@@ -19,8 +19,11 @@ self.addEventListener("fetch", (e) => {
   // Network-first for API calls, cache-first for static assets
   const url = new URL(e.request.url);
   if (url.pathname.startsWith("/api/")) {
+    // 503 (not 200) so callers checking `res.ok` treat it as a failure
+    // instead of trying to render {"error": "offline"} as data.
     e.respondWith(
       fetch(e.request).catch(() => new Response(JSON.stringify({ error: "offline" }), {
+        status: 503,
         headers: { "Content-Type": "application/json" },
       }))
     );

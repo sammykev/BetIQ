@@ -15,25 +15,25 @@ const config: CapacitorConfig = {
 
   ios: {
     contentInset: 'always',
-    backgroundColor: '#0f172a',
+    backgroundColor: '#070b14',
     scrollEnabled: true,
     allowsLinkPreview: false,
   },
   android: {
-    backgroundColor: '#0f172a',
+    backgroundColor: '#070b14',
     allowMixedContent: false,
   },
   plugins: {
     SplashScreen: {
       launchShowDuration: 2000,
-      backgroundColor: '#0f172a',
+      backgroundColor: '#070b14',
       showSpinner: false,
       splashFullScreen: true,
       splashImmersive: true,
     },
     StatusBar: {
       style: 'dark',
-      backgroundColor: '#0f172a',
+      backgroundColor: '#070b14',
     },
   },
 };

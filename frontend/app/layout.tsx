@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Inter } from "next/font/google";
+import { Inter, Barlow_Condensed, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { ClerkProvider } from "@clerk/nextjs";
 import Script from "next/script";
@@ -10,6 +10,22 @@ const inter = Inter({
   variable: "--font-inter",
 });
 
+// Scoreboard face for headings and big numbers
+const display = Barlow_Condensed({
+  subsets: ["latin"],
+  weight: ["600", "700", "800"],
+  display: "swap",
+  variable: "--font-display",
+});
+
+// Kick-off times, odds and booking codes
+const mono = JetBrains_Mono({
+  subsets: ["latin"],
+  weight: ["500", "700"],
+  display: "swap",
+  variable: "--font-mono",
+});
+
 export const metadata: Metadata = {
   metadataBase: new URL("https://predict-withbetiq.vercel.app"),
   title: "BetIQ — AI Football Predictions",
@@ -18,7 +34,7 @@ export const metadata: Metadata = {
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
-    statusBarStyle: "default",
+    statusBarStyle: "black",
     title: "BetIQ",
   },
   openGraph: {
@@ -44,10 +60,8 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#fafafa" },
-    { media: "(prefers-color-scheme: dark)", color: "#09090b" },
-  ],
+  themeColor: "#070b14",
+  colorScheme: "dark",
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
@@ -55,8 +69,27 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <ClerkProvider>
-      <html lang="en" className={inter.variable}>
+    // Clerk's sign-in / sign-up modals, themed to match (Matchday is dark-only)
+    <ClerkProvider
+      appearance={{
+        variables: {
+          colorPrimary: "#b8f53d",
+          colorPrimaryForeground: "#070b14",
+          colorBackground: "#0f1729",
+          colorForeground: "#e3e8f0",
+          colorMuted: "#131d33",
+          colorMutedForeground: "#a3aec3",
+          colorInput: "#0a101d",
+          colorInputForeground: "#e3e8f0",
+          colorNeutral: "#e3e8f0",
+          colorBorder: "#27334b",
+          colorRing: "#b8f53d",
+          colorModalBackdrop: "rgb(7 11 20 / 0.8)",
+          borderRadius: "0.75rem",
+        },
+      }}
+    >
+      <html lang="en" className={`dark ${inter.variable} ${display.variable} ${mono.variable}`}>
         <body className="antialiased">
           {children}
           <Script id="sw-register" strategy="afterInteractive">{`

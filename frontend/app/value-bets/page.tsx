@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/shell/AppShell";
 import { ValueBets } from "@/components/ValueBets";
+import { PageHeader } from "@/components/shell/PageHeader";
 
 export default function ValueBetsPage() {
   const router = useRouter();
@@ -10,14 +11,11 @@ export default function ValueBetsPage() {
   return (
     <AppShell>
       <div className="space-y-6 animate-fade-in">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-zinc-900 dark:text-white">
-            Value Bets
-          </h1>
-          <p className="text-sm text-zinc-400 dark:text-zinc-500 mt-1">
-            Where the model disagrees with the bookmakers — in your favour
-          </p>
-        </div>
+        <PageHeader
+          eyebrow="Model vs bookmakers"
+          title="Value bets"
+          description="Where the model disagrees with the bookmakers — in your favour."
+        />
 
         <ValueBets
           onMatchClick={(home, away) => {

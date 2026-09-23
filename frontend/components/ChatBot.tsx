@@ -342,7 +342,7 @@ export function ChatBot({ predictions }: Props) {
       {!open && (
         <button
           onClick={() => setOpen(true)}
-          className="fixed bottom-20 lg:bottom-6 right-4 lg:right-6 z-50 w-14 h-14 bg-brand-600 hover:bg-brand-700 text-white rounded-full shadow-pop flex items-center justify-center transition-all hover:scale-105 active:scale-95"
+          className="fixed bottom-20 lg:bottom-6 right-4 lg:right-6 z-50 w-14 h-14 bg-brand-400 hover:bg-brand-300 text-ink rounded-full shadow-pop flex items-center justify-center transition-all hover:scale-105 active:scale-95"
           title="BetIQ Assistant"
         >
           <MessageCircle size={24} />
@@ -382,7 +382,7 @@ export function ChatBot({ predictions }: Props) {
                 {messages.map((m, i) =>
                   m.role === "user" ? (
                     <div key={i} className="flex justify-end">
-                      <div className="bg-brand-600 text-white rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm max-w-[80%] whitespace-pre-wrap">
+                      <div className="bg-brand-400 text-ink font-medium rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm max-w-[80%] whitespace-pre-wrap">
                         {m.content}
                       </div>
                     </div>
@@ -430,7 +430,7 @@ export function ChatBot({ predictions }: Props) {
                   <button
                     onClick={() => send()}
                     disabled={!input.trim() || loading}
-                    className="bg-brand-600 hover:bg-brand-700 disabled:opacity-40 text-white rounded-xl px-3 py-2 transition-colors"
+                    className="bg-brand-400 hover:bg-brand-300 disabled:opacity-40 text-ink rounded-xl px-3 py-2 transition-colors"
                   >
                     <Send size={15} />
                   </button>

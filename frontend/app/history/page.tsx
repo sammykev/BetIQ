@@ -10,6 +10,7 @@ import { fetchCalendar, fetchHistory, fetchMatchAnalysis } from "@/lib/api";
 import type { CalendarDay, HistoryPrediction, MatchAnalysis } from "@/lib/api";
 import { MatchCard } from "@/components/MatchCard";
 import { AppShell } from "@/components/shell/AppShell";
+import { PageHeader } from "@/components/shell/PageHeader";
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS = ["January","February","March","April","May","June",
@@ -163,7 +164,7 @@ function DayPanel({ date, onClose }: { date: string; onClose: () => void }) {
   useEffect(() => {
     setLoading(true);
     setExpanded(null);
-    fetchHistory(date).then(setPreds).finally(() => setLoading(false));
+    fetchHistory(date).then(d => setPreds(Array.isArray(d) ? d : [])).catch(() => setPreds([])).finally(() => setLoading(false));
   }, [date]);
 
   const won     = preds.filter(p => p.outcome === "won").length;
@@ -181,18 +182,18 @@ function DayPanel({ date, onClose }: { date: string; onClose: () => void }) {
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-100 dark:border-zinc-800 shrink-0">
         <div>
-          <p className="text-sm font-bold text-zinc-900 dark:text-white">{fmt(date)}</p>
+          <p className="font-display font-bold uppercase tracking-wide text-lg leading-tight text-white">{fmt(date)}</p>
           {accuracy !== null && (
             <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">
               Accuracy: <span className={clsx("tnum font-bold",
-                accuracy >= 60 ? "text-brand-600 dark:text-brand-400" :
-                accuracy >= 40 ? "text-amber-500" : "text-rose-500"
+                accuracy >= 60 ? "text-brand-400" :
+                accuracy >= 40 ? "text-amber-300" : "text-rose-400"
               )}>{accuracy}%</span>
               &nbsp;({won}W / {lost}L / {pending} pending)
             </p>
           )}
         </div>
-        <button onClick={onClose} className="p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-lg text-zinc-400 transition-colors">
+        <button onClick={onClose} className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-white transition-colors">
           <X size={14} />
         </button>
       </div>
@@ -217,8 +218,8 @@ function DayPanel({ date, onClose }: { date: string; onClose: () => void }) {
               onClick={() => setExpanded(expanded === i ? null : i)}
               className={clsx(
                 "!shadow-none",
-                p.outcome === "won"  ? "!border-brand-300 dark:!border-brand-700" :
-                p.outcome === "lost" ? "!border-rose-300 dark:!border-rose-700"   : ""
+                p.outcome === "won"  ? "!border-brand-400/40" :
+                p.outcome === "lost" ? "!border-rose-500/40"   : ""
               )}
             >
               <div className="flex flex-col items-end gap-1">
@@ -259,7 +260,10 @@ export default function HistoryPage() {
 
   useEffect(() => {
     setLoadingCal(true);
-    fetchCalendar(monthStr).then(setSummary).finally(() => setLoadingCal(false));
+    fetchCalendar(monthStr)
+      .then(d => setSummary(d && typeof d === "object" && !Array.isArray(d) && !("error" in d) ? d : {}))
+      .catch(() => setSummary({}))
+      .finally(() => setLoadingCal(false));
   }, [monthStr]);
 
   const prevMonth = () => { if (month === 0) { setYear(y => y-1); setMonth(11); } else setMonth(m => m-1); };
@@ -276,16 +280,34 @@ export default function HistoryPage() {
 
   const todayStr = _localDateStr(now);  // local timezone, not UTC
 
+  const days = Object.values(summary);
+  const monthWon = days.reduce((n, d) => n + (d.won || 0), 0);
+  const monthLost = days.reduce((n, d) => n + (d.lost || 0), 0);
+  const monthAccuracy = !loadingCal && monthWon + monthLost > 0
+    ? Math.round((monthWon / (monthWon + monthLost)) * 100) : null;
+
   return (
     <AppShell>
       <div className="space-y-6 animate-fade-in">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-zinc-900 dark:text-white">
-            History
-          </h1>
-          <p className="text-sm text-zinc-400 dark:text-zinc-500 mt-1">
-            Every past prediction, graded against the real result
-          </p>
+        <PageHeader
+          eyebrow="Track record"
+          title="History"
+          description="Every past prediction, graded against the real result."
+        />
+
+        {/* Month scoreboard */}
+        <div className="grid grid-cols-3 gap-3 max-w-2xl">
+          {[
+            { label: "Accuracy", value: monthAccuracy === null ? "–" : `${monthAccuracy}%`,
+              cls: monthAccuracy === null ? "text-zinc-500" : monthAccuracy >= 60 ? "text-brand-400" : monthAccuracy >= 40 ? "text-amber-300" : "text-rose-400" },
+            { label: "Won", value: loadingCal ? "–" : monthWon, cls: "text-white" },
+            { label: "Lost", value: loadingCal ? "–" : monthLost, cls: "text-zinc-400" },
+          ].map(({ label, value, cls }) => (
+            <div key={label} className="card px-4 py-3">
+              <p className="eyebrow truncate">{label}</p>
+              <p className={clsx("font-display font-extrabold text-3xl leading-none mt-1 tnum", cls)}>{value}</p>
+            </div>
+          ))}
         </div>
 
         <div className={clsx("grid gap-4", selectedDate ? "lg:grid-cols-2" : "grid-cols-1 max-w-2xl")}>
@@ -293,18 +315,18 @@ export default function HistoryPage() {
           <div className="card overflow-hidden">
             {/* Month header */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-100 dark:border-zinc-800">
-              <button onClick={prevMonth} className="p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-lg text-zinc-400 transition-colors">
+              <button onClick={prevMonth} className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-white transition-colors">
                 <ChevronLeft size={16} />
               </button>
               <div className="text-center">
-                <p className="font-bold text-zinc-900 dark:text-white text-base">{MONTHS[month]} {year}</p>
+                <p className="font-display font-extrabold uppercase tracking-wide text-2xl leading-none text-white">{MONTHS[month]} {year}</p>
                 {!loadingCal && (
-                  <p className="text-[10px] text-zinc-400 dark:text-zinc-500">
+                  <p className="text-[11px] text-zinc-500 mt-1">
                     {Object.keys(summary).length} days with predictions
                   </p>
                 )}
               </div>
-              <button onClick={nextMonth} className="p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-lg text-zinc-400 transition-colors">
+              <button onClick={nextMonth} className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-white transition-colors">
                 <ChevronRight size={16} />
               </button>
             </div>
@@ -338,16 +360,17 @@ export default function HistoryPage() {
                         onClick={() => setSelectedDate(isSelected ? null : dStr)}
                         className={clsx(
                           "relative flex flex-col items-center justify-center rounded-xl aspect-square text-sm transition-all border",
-                          isSelected ? "bg-brand-50 dark:bg-brand-900/20 border-brand-300 dark:border-brand-700" :
-                          isToday    ? "bg-zinc-100 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-600" :
-                                       "hover:bg-zinc-50 dark:hover:bg-zinc-800/60 border-transparent",
+                          isSelected ? "bg-brand-400/10 border-brand-400/60" :
+                          isToday    ? "bg-zinc-800 border-zinc-700" :
+                          info       ? "bg-zinc-800/30 hover:bg-zinc-800/70 border-transparent" :
+                                       "border-transparent",
                           info ? "cursor-pointer" : isPast ? "opacity-30 cursor-default" : "cursor-default"
                         )}
                         disabled={!info && isPast}
                       >
                         <span className={clsx(
-                          "tnum text-xs font-medium",
-                          isToday ? "text-zinc-900 dark:text-white font-bold" : "text-zinc-600 dark:text-zinc-300"
+                          "tnum text-sm font-semibold",
+                          isSelected ? "text-brand-300" : isToday ? "text-white font-bold" : info ? "text-zinc-200" : "text-zinc-500"
                         )}>
                           {day}
                         </span>

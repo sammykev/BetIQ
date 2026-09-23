@@ -2,25 +2,16 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── Design tokens ─────────────────────────────────────────────────────── */
+/* ── Design tokens (Matchday, dark-only) ───────────────────────────────── */
+/* Mirrors tailwind.config.js — see STYLE_GUIDE.md. */
 :root {
-  --bg: #fafafa;
-  --surface: #ffffff;
-  --border: #e4e4e7;
-  --text-primary: #0f172a;
-  --text-secondary: #64748b;
-  --accent: #059669;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #09090b;
-    --surface: #101014;
-    --border: #26262b;
-    --text-primary: #f4f4f5;
-    --text-secondary: #a1a1aa;
-    --accent: #10b981;
-  }
+  --bg: #070b14;
+  --surface: #0f1729;
+  --border: #1a2438;
+  --text-primary: #e3e8f0;
+  --text-secondary: #7d8aa3;
+  --accent: #b8f53d;
+  color-scheme: dark; /* native inputs, selects and scrollbars render dark */
 }
 
 * {
@@ -28,19 +19,25 @@
 }
 
 body {
-  @apply bg-[#fafafa] text-slate-900 dark:bg-[#09090b] dark:text-zinc-100;
+  @apply bg-ink text-zinc-100;
   font-family: var(--font-inter), -apple-system, BlinkMacSystemFont, "Segoe UI",
     Roboto, sans-serif;
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  /* A faint floodlight at the top of every page — depth without a busy background */
+  background-image: radial-gradient(
+    ellipse 80% 50% at 50% -10%,
+    rgb(184 245 61 / 0.06),
+    transparent 70%
+  );
+  background-attachment: fixed;
 }
 
 /* ── Focus & selection ─────────────────────────────────────────────────── */
-/* One brand-tinted keyboard focus ring everywhere, replacing the default
-   browser outline (a blue ring on a green-branded UI is the classic
-   "unfinished" tell). :where() keeps specificity at 0 so components can
-   still opt out. Pointer clicks stay ring-free via :focus-visible. */
+/* One accent focus ring everywhere, replacing the default browser outline.
+   :where() keeps specificity at 0 so components can still opt out.
+   Pointer clicks stay ring-free via :focus-visible. */
 :where(a, button, input, textarea, select, summary, [tabindex]):focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -48,7 +45,8 @@ body {
 }
 
 ::selection {
-  background: rgba(5, 150, 105, 0.18);
+  background: rgb(184 245 61 / 0.28);
+  color: #fff;
 }
 
 /* Respect users who ask for less motion — disable the decorative
@@ -78,47 +76,49 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #d4d4d8;
+  background: #27334b;
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #a1a1aa;
-}
-@media (prefers-color-scheme: dark) {
-  ::-webkit-scrollbar-thumb {
-    background: #3f3f46;
-  }
-  ::-webkit-scrollbar-thumb:hover {
-    background: #52525b;
-  }
+  background: #3b4863;
 }
 
 @layer components {
   /* Standard elevated card surface */
   .card {
-    @apply bg-white dark:bg-zinc-900 border border-zinc-200/90 dark:border-zinc-800 rounded-2xl shadow-card;
+    @apply bg-surface border border-zinc-800 rounded-2xl shadow-card;
   }
 
   /* Interactive card */
   .card-interactive {
-    @apply card transition-all duration-200 hover:shadow-card-hover hover:-translate-y-0.5 hover:border-zinc-300 dark:hover:border-zinc-700 cursor-pointer active:translate-y-0 active:shadow-card;
+    @apply card transition-all duration-200 hover:shadow-card-hover hover:-translate-y-0.5 hover:border-zinc-700 hover:bg-surface-raised cursor-pointer active:translate-y-0 active:shadow-card;
   }
 
-  /* Pill-style filter chip */
+  /* Filter chip — squared-off like a sportsbook market button */
   .chip {
-    @apply inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-sm font-medium border transition-all whitespace-nowrap;
+    @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-semibold border transition-all whitespace-nowrap;
   }
   .chip-active {
-    @apply bg-brand-600 text-white border-brand-600 shadow-sm;
+    @apply bg-brand-400 text-ink border-brand-400;
   }
   .chip-idle {
-    @apply bg-white dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 border-zinc-200 dark:border-zinc-800 hover:border-zinc-300 dark:hover:border-zinc-700 hover:text-zinc-900 dark:hover:text-zinc-200;
+    @apply bg-surface text-zinc-300 border-zinc-800 hover:border-zinc-700 hover:text-white;
+  }
+
+  /* Small uppercase label above a value ("BEST PICK", "CONFIDENCE") */
+  .eyebrow {
+    @apply text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-400;
+  }
+
+  /* Condensed scoreboard headline */
+  .display {
+    @apply font-display font-extrabold uppercase leading-[0.95] tracking-[0.01em];
   }
 
   /* Loading placeholder — a soft shimmer sweep reads more "premium"
      than a flat pulse and signals content is coming, not broken. */
   .skeleton {
-    @apply relative overflow-hidden bg-zinc-100 dark:bg-zinc-800/70 rounded-full;
+    @apply relative overflow-hidden bg-zinc-800/70 rounded-full;
   }
   .skeleton::after {
     content: "";
@@ -128,28 +128,18 @@ body {
     background: linear-gradient(
       90deg,
       transparent,
-      rgba(255, 255, 255, 0.55),
+      rgba(255, 255, 255, 0.06),
       transparent
     );
     animation: shimmer 1.6s ease-in-out infinite;
   }
-  @media (prefers-color-scheme: dark) {
-    .skeleton::after {
-      background: linear-gradient(
-        90deg,
-        transparent,
-        rgba(255, 255, 255, 0.06),
-        transparent
-      );
-    }
-  }
 
   /* Primary / secondary buttons */
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 bg-brand-600 hover:bg-brand-700 text-white font-semibold rounded-xl px-5 py-2.5 text-sm transition-all shadow-sm hover:shadow active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none;
+    @apply inline-flex items-center justify-center gap-2 bg-brand-400 hover:bg-brand-300 text-ink font-bold rounded-xl px-5 py-2.5 text-sm transition-all hover:shadow-glow active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none;
   }
   .btn-secondary {
-    @apply inline-flex items-center justify-center gap-2 bg-white dark:bg-zinc-900 hover:bg-zinc-50 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 font-medium rounded-xl px-4 py-2 text-sm border border-zinc-200 dark:border-zinc-800 transition-all active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none;
+    @apply inline-flex items-center justify-center gap-2 bg-surface hover:bg-zinc-800 text-zinc-200 hover:text-white font-semibold rounded-xl px-4 py-2 text-sm border border-zinc-800 hover:border-zinc-700 transition-all active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none;
   }
 }
 
@@ -161,7 +151,7 @@ body {
 
 @layer utilities {
   .text-gradient {
-    background: linear-gradient(135deg, #059669, #0d9488);
+    background: linear-gradient(135deg, #d9f99d, #b8f53d 45%, #4ade80);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
@@ -169,6 +159,6 @@ body {
 
   /* Kept for backwards compatibility with older components */
   .card-glow:hover {
-    box-shadow: 0 0 0 1px rgba(5, 150, 105, 0.15), 0 4px 24px rgba(5, 150, 105, 0.08);
+    box-shadow: 0 0 0 1px rgb(184 245 61 / 0.25), 0 4px 24px rgb(184 245 61 / 0.08);
   }
 }

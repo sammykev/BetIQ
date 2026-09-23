@@ -1,6 +1,8 @@
 /** @type {import('tailwindcss').Config} */
 const config = {
-  darkMode: "media",
+  // Matchday is dark-only: <html class="dark"> is set permanently in
+  // app/layout.tsx, so every existing `dark:` variant always applies.
+  darkMode: "class",
   content: [
     "./pages/**/*.{js,ts,jsx,tsx,mdx}",
     "./components/**/*.{js,ts,jsx,tsx,mdx}",
@@ -17,35 +19,57 @@ const config = {
           "Roboto",
           "sans-serif",
         ],
+        // Condensed scoreboard face for headings, big numbers and labels
+        display: ["var(--font-display)", "Arial Narrow", "sans-serif"],
+        // Kick-off times, odds, booking codes
+        mono: ["var(--font-mono)", "ui-monospace", "SFMono-Regular", "monospace"],
       },
       colors: {
+        // Electric lime — the one accent. Means "pick / value / go".
         brand: {
-          50: "#ecfdf5",
-          100: "#d1fae5",
-          200: "#a7f3d0",
-          300: "#6ee7b7",
-          400: "#34d399",
-          500: "#10b981",
-          600: "#059669",
-          700: "#047857",
-          800: "#065f46",
-          900: "#064e3b",
-          DEFAULT: "#059669",
+          50: "#f7fee7",
+          100: "#ecfccb",
+          200: "#d9f99d",
+          300: "#c8f76a",
+          400: "#b8f53d",
+          500: "#a3e635",
+          600: "#84cc16",
+          700: "#65a30d",
+          800: "#3f6212",
+          900: "#1c2a07",
+          DEFAULT: "#b8f53d",
         },
+        // zinc is re-tinted toward navy so every zinc-* utility in the app
+        // lands on the Matchday surfaces without touching each component.
+        zinc: {
+          50: "#f1f4f9",
+          100: "#e3e8f0",
+          200: "#c6cfdd",
+          300: "#a3aec3",
+          400: "#7d8aa3",
+          500: "#5f6b82",
+          600: "#3b4863",
+          700: "#27334b",
+          800: "#1a2438",
+          900: "#0f1729",
+          950: "#070b14",
+        },
+        ink: "#070b14",
         surface: {
-          DEFAULT: "#ffffff",
-          subtle: "#fafafa",
-          muted: "#f4f4f5",
+          DEFAULT: "#0f1729",
+          raised: "#131d33",
+          sunken: "#0a101d",
         },
         slate: {
           950: "#020617",
         },
       },
       boxShadow: {
-        card: "0 1px 2px 0 rgb(0 0 0 / 0.03), 0 1px 4px -1px rgb(0 0 0 / 0.06)",
+        card: "inset 0 1px 0 0 rgb(255 255 255 / 0.03), 0 1px 2px 0 rgb(0 0 0 / 0.4)",
         "card-hover":
-          "0 4px 8px -2px rgb(0 0 0 / 0.06), 0 12px 24px -6px rgb(0 0 0 / 0.10)",
-        pop: "0 24px 48px -12px rgb(0 0 0 / 0.18)",
+          "inset 0 1px 0 0 rgb(255 255 255 / 0.05), 0 12px 32px -12px rgb(0 0 0 / 0.7)",
+        pop: "0 24px 64px -16px rgb(0 0 0 / 0.8), 0 0 0 1px rgb(255 255 255 / 0.04)",
+        glow: "0 0 0 1px rgb(184 245 61 / 0.35), 0 8px 32px -8px rgb(184 245 61 / 0.35)",
       },
       animation: {
         "pulse-slow": "pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite",

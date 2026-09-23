@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { TrendingUp, Loader2, RefreshCw, Info } from "lucide-react";
+import { TrendingUp, RefreshCw, Info, AlertTriangle } from "lucide-react";
 import { TeamBadge } from "./PredictionCard";
 import { CompetitionBadge } from "./CompetitionBadge";
+import { kickoff } from "@/lib/matchTime";
 import clsx from "clsx";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
@@ -25,69 +26,67 @@ interface ValueBet {
   bookie: string;
 }
 
-function EdgeBadge({ edge }: { edge: number }) {
-  const style =
-    edge >= 15 ? "bg-brand-600 text-white" :
-    edge >= 10 ? "bg-brand-50 dark:bg-brand-900/30 text-brand-700 dark:text-brand-400 border border-brand-200 dark:border-brand-800" :
-                 "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/30";
-  return (
-    <span className={clsx("tnum text-xs font-black px-2.5 py-1 rounded-full shrink-0", style)}>
-      +{edge}%
-    </span>
-  );
-}
-
 function ValueBetCard({ v, onClick }: { v: ValueBet; onClick?: () => void }) {
-  const barModel   = Math.round(v.model_prob);
-  const barImplied = Math.round(v.implied_prob);
+  const model   = Math.round(v.model_prob);
+  const implied = Math.round(v.implied_prob);
+  const big = v.edge >= 10;
 
   return (
-    <article onClick={onClick} className={clsx("card p-4 flex flex-col gap-3", onClick && "card-interactive")}>
-      {/* Header */}
-      <div className="flex items-center justify-between gap-2">
-        <p className="flex items-center gap-1 text-[10px] text-zinc-400 dark:text-zinc-500 font-semibold uppercase tracking-wide truncate">
-          <CompetitionBadge name={v.league_name} fallbackEmoji={v.flag} size={11} />
-          <span className="truncate">
-            {v.league_name} · {v.date}{v.time && v.time !== "TBD" ? ` ${v.time}` : ""}
+    <article onClick={onClick} className={clsx("card overflow-hidden flex flex-col", onClick && "card-interactive")}>
+      {/* Header strip */}
+      <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-zinc-800/80">
+        <span className="flex items-center gap-1.5 min-w-0">
+          <CompetitionBadge name={v.league_name} fallbackEmoji={v.flag} size={13} />
+          <span className="eyebrow truncate">{v.league_name}</span>
+        </span>
+        <span className="font-mono text-[11px] text-zinc-200 uppercase shrink-0">{kickoff(v.date, v.time)}</span>
+      </div>
+
+      <div className="flex-1 flex flex-col gap-3.5 p-4">
+        {/* Fixture */}
+        <div className="space-y-2">
+          {[v.home, v.away].map(team => (
+            <div key={team} className="flex items-center gap-3 min-w-0">
+              <TeamBadge name={team} size={26} />
+              <span className="font-semibold text-[15px] text-white truncate">{team}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Model vs market */}
+        <div className="space-y-2">
+          {[
+            { label: "Model", value: model, cls: "bg-brand-400", text: "text-brand-400" },
+            { label: "Market", value: implied, cls: "bg-zinc-600", text: "text-zinc-400" },
+          ].map(({ label, value, cls, text }) => (
+            <div key={label} className="flex items-center gap-3">
+              <span className="eyebrow w-14 shrink-0">{label}</span>
+              <div className="flex-1 h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                <div className={clsx("h-full rounded-full", cls)} style={{ width: `${value}%` }} />
+              </div>
+              <span className={clsx("font-mono text-xs font-bold w-9 text-right", text)}>{value}%</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Value ticket */}
+        <div className={clsx(
+          "relative mt-auto flex items-center gap-3 rounded-xl px-3.5 py-3",
+          big ? "bg-brand-400 text-ink" : "bg-brand-400/[0.06] border border-brand-400/30 text-white"
+        )}>
+          <span className="absolute -top-2.5 right-3 font-mono text-[10px] font-bold bg-ink text-brand-400 border border-brand-400/70 rounded-md px-1.5 py-0.5">
+            +{v.edge}% EDGE
           </span>
-        </p>
-        <EdgeBadge edge={v.edge} />
-      </div>
-
-      {/* Teams */}
-      <div className="flex items-center gap-2">
-        <TeamBadge name={v.home} size={24} />
-        <span className="font-semibold text-sm text-zinc-900 dark:text-white truncate">{v.home}</span>
-        <span className="text-zinc-300 dark:text-zinc-600 text-xs font-medium shrink-0">vs</span>
-        <TeamBadge name={v.away} size={24} />
-        <span className="font-semibold text-sm text-zinc-900 dark:text-white truncate">{v.away}</span>
-      </div>
-
-      {/* Value pick banner */}
-      <div className="bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-100 dark:border-zinc-800 rounded-xl px-3 py-2.5 flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-[10px] text-brand-700 dark:text-brand-400 uppercase tracking-wider font-bold">Value pick</p>
-          <p className="text-sm font-bold text-zinc-900 dark:text-white truncate">{v.value_label}</p>
-          <p className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-0.5">via {v.bookie}</p>
-        </div>
-        <p className="tnum text-2xl font-black text-brand-600 dark:text-brand-400 shrink-0">{v.value_odds}</p>
-      </div>
-
-      {/* Model vs market bars */}
-      <div className="space-y-1.5">
-        <div className="flex justify-between text-[11px]">
-          <span className="text-zinc-400 dark:text-zinc-500 font-medium">Model probability</span>
-          <span className="tnum text-zinc-900 dark:text-white font-bold">{barModel}%</span>
-        </div>
-        <div className="h-1.5 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden">
-          <div className="h-full bg-brand-500 rounded-full" style={{ width: `${barModel}%` }} />
-        </div>
-        <div className="flex justify-between text-[11px]">
-          <span className="text-zinc-400 dark:text-zinc-500 font-medium">Market implied</span>
-          <span className="tnum text-zinc-500 dark:text-zinc-400 font-semibold">{barImplied}%</span>
-        </div>
-        <div className="h-1.5 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden">
-          <div className="h-full bg-zinc-300 dark:bg-zinc-600 rounded-full" style={{ width: `${barImplied}%` }} />
+          <div className="min-w-0 flex-1">
+            <p className={clsx("font-display font-bold text-[11px] uppercase tracking-[0.14em]", big ? "text-ink/60" : "text-zinc-400")}>Value pick</p>
+            <p className="font-display font-extrabold text-xl uppercase leading-tight truncate">{v.value_label}</p>
+          </div>
+          <div className="text-right shrink-0">
+            <p className={clsx("font-display font-bold text-[11px] uppercase tracking-[0.14em]", big ? "text-ink/60" : "text-zinc-400")}>{v.bookie}</p>
+            <p className={clsx("font-display font-extrabold text-[32px] leading-none tnum", big ? "text-ink" : "text-brand-400")}>
+              {v.value_odds.toFixed(2)}
+            </p>
+          </div>
         </div>
       </div>
     </article>
@@ -122,60 +121,66 @@ export function ValueBets({ onMatchClick }: Props) {
 
   useEffect(() => { load(); }, []);
 
+  const best = bets.reduce((m, b) => Math.max(m, b.edge), 0);
+
   return (
-    <div className="space-y-4">
-      {/* Header row */}
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          {bets.length > 0 && (
-            <span className="tnum text-[11px] bg-brand-50 dark:bg-brand-900/30 text-brand-700 dark:text-brand-400 border border-brand-200 dark:border-brand-800 px-2.5 py-0.5 rounded-full font-bold">
-              {bets.length} found
-            </span>
-          )}
+    <div className="space-y-5">
+      {/* Summary strip */}
+      <div className="flex items-stretch gap-3 flex-wrap">
+        <div className="card px-4 py-3 min-w-[120px]">
+          <p className="eyebrow">Found</p>
+          <p className="font-display font-extrabold text-3xl text-white leading-none mt-1 tnum">{loading ? "–" : bets.length}</p>
+        </div>
+        <div className="card px-4 py-3 min-w-[120px]">
+          <p className="eyebrow">Best edge</p>
+          <p className="font-display font-extrabold text-3xl text-brand-400 leading-none mt-1 tnum">{loading || !best ? "–" : `+${best}%`}</p>
+        </div>
+        <div className="flex-1 min-w-[240px] card px-4 py-3 flex gap-2.5 items-start">
+          <Info size={14} className="text-sky-300 shrink-0 mt-0.5" />
+          <p className="text-xs text-zinc-400 leading-relaxed">
+            A value bet is where the model rates an outcome more likely than the bookmaker&apos;s odds imply.
+            An edge of <span className="text-white font-semibold">+5% or more</span> suggests the price is in your favour.
+          </p>
+        </div>
+        <div className="flex items-center gap-3 ml-auto">
           {lastFetch && (
-            <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+            <span className="text-[11px] text-zinc-500">
               Updated {lastFetch.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
             </span>
           )}
+          <button onClick={load} disabled={loading} className="btn-secondary !px-3 !py-1.5 !text-xs !rounded-lg" title="Refresh">
+            <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
+            Refresh
+          </button>
         </div>
-        <button
-          onClick={load}
-          disabled={loading}
-          className="btn-secondary !px-3 !py-1.5 !text-xs"
-          title="Refresh"
-        >
-          <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
-          Refresh
-        </button>
-      </div>
-
-      {/* Explainer */}
-      <div className="card px-4 py-3 flex gap-2.5">
-        <Info size={14} className="text-sky-500 shrink-0 mt-0.5" />
-        <p className="text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
-          Value bets are where BetIQ&apos;s model gives a higher probability than the bookmaker&apos;s odds imply.
-          A <span className="text-zinc-900 dark:text-white font-semibold">+5% or more edge</span> suggests
-          the odds are mispriced in your favour. Always bet responsibly.
-        </p>
       </div>
 
       {/* Content */}
       {loading ? (
-        <div className="flex items-center justify-center gap-2 py-16 text-zinc-400 dark:text-zinc-500">
-          <Loader2 size={16} className="animate-spin" />
-          <span className="text-sm font-medium">Fetching live odds…</span>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="card p-4 space-y-3.5">
+              <div className="skeleton h-3 w-1/2" />
+              <div className="flex items-center gap-3"><div className="skeleton w-[26px] h-[26px] shrink-0" /><div className="skeleton h-4 flex-1" /></div>
+              <div className="flex items-center gap-3"><div className="skeleton w-[26px] h-[26px] shrink-0" /><div className="skeleton h-4 flex-1" /></div>
+              <div className="skeleton h-1.5 w-full" />
+              <div className="skeleton h-[64px] w-full !rounded-xl" />
+            </div>
+          ))}
         </div>
       ) : error ? (
-        <div className="text-center py-16 text-zinc-400 dark:text-zinc-500 space-y-2">
-          <p className="text-sm font-medium">Couldn&apos;t load live odds right now.</p>
-          <button onClick={load} className="text-xs text-sky-600 dark:text-sky-400 hover:underline font-medium">Try again</button>
+        <div className="card border-dashed text-center py-16 px-6 space-y-3">
+          <AlertTriangle size={22} className="mx-auto text-rose-400" />
+          <p className="font-display font-bold text-xl uppercase text-white">Live odds unavailable</p>
+          <p className="text-sm text-zinc-400">We couldn&apos;t load bookmaker prices right now.</p>
+          <button onClick={load} className="btn-secondary">Try again</button>
         </div>
       ) : bets.length === 0 ? (
-        <div className="text-center py-16 text-zinc-400 dark:text-zinc-500 space-y-2">
-          <TrendingUp size={28} className="mx-auto mb-3 opacity-30" />
-          <p className="text-sm font-medium">No value bets found right now.</p>
-          <p className="text-xs text-zinc-400 dark:text-zinc-600">
-            The model&apos;s picks are in line with the market, or live odds are unavailable.
+        <div className="card border-dashed text-center py-16 px-6 space-y-3">
+          <TrendingUp size={22} className="mx-auto text-zinc-500" />
+          <p className="font-display font-bold text-xl uppercase text-white">No value right now</p>
+          <p className="text-sm text-zinc-400 max-w-sm mx-auto">
+            The model&apos;s picks are in line with the market, or live odds aren&apos;t available yet.
           </p>
         </div>
       ) : (

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { getSportAssets, sportDbSport } from "@/lib/sportsAssets";
 import { useTeamLogo } from "@/lib/useTeamLogo";
 import { CompetitionBadge } from "./CompetitionBadge";
+import { kickoff } from "@/lib/matchTime";
 import clsx from "clsx";
 
 interface SpreadLine {
@@ -36,13 +37,6 @@ export interface SportPrediction {
   pick_type?: "safe" | "upset" | null;
 }
 
-function localTime(date: string, utcTime: string): string {
-  try {
-    const dt = new Date(`${date}T${utcTime}:00Z`);
-    return dt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
-  } catch { return utcTime; }
-}
-
 function spreadLabel(name: string, spread: SpreadLine): string {
   if (spread.point == null) return name;
   return `${name} ${spread.point > 0 ? "+" : ""}${spread.point}`;
@@ -56,7 +50,7 @@ interface Props {
 function InitialsAvatar({ color, name }: { color: string; name: string }) {
   return (
     <span
-      className="inline-flex items-center justify-center w-7 h-7 rounded-full text-white font-bold text-[10px] shrink-0"
+      className="inline-flex items-center justify-center w-[30px] h-[30px] rounded-full text-white font-bold text-[11px] shrink-0 ring-1 ring-white/10"
       style={{ background: color }}
     >
       {name.slice(0, 2).toUpperCase()}
@@ -76,7 +70,7 @@ function Avatar({ staticImage, color, name, face, sport }: {
 
   if (image && !broken) {
     return (
-      <span className="relative inline-flex w-7 h-7 rounded-full bg-zinc-100 dark:bg-zinc-800 ring-1 ring-zinc-200/80 dark:ring-zinc-700 overflow-hidden shrink-0">
+      <span className="relative inline-flex w-[30px] h-[30px] rounded-full bg-zinc-800 ring-1 ring-zinc-700/80 overflow-hidden shrink-0">
         <img
           src={image}
           alt={name}
@@ -92,106 +86,100 @@ function Avatar({ staticImage, color, name, face, sport }: {
 export function SportCard({ prediction: p, onClick }: Props) {
   const assets = getSportAssets(p.home, p.away, p.sport);
   const conf   = Math.round(p.goals_confidence * 100);
-  const timeStr = p.time && p.time !== "TBD" ? ` · ${localTime(p.date, p.time)}` : "";
   const homeStronger = p.p_home >= p.p_away;
+  const strong = conf >= 65;
+  const lean = !strong && conf >= 50;
 
   return (
     <article
       onClick={onClick}
-      className={clsx("card p-4 flex flex-col gap-3.5", onClick && "card-interactive")}
+      className={clsx("card overflow-hidden flex flex-col", onClick && "card-interactive")}
     >
-      {/* Header */}
-      <div className="flex items-center justify-between gap-2">
+      {/* Header strip */}
+      <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-zinc-800/80">
         <div className="flex items-center gap-1.5 min-w-0">
-          <CompetitionBadge name={p.league_name} fallbackEmoji={p.flag} size={12} sport={sportDbSport(p.sport)} />
-          <span className="text-[11px] font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wide truncate">
+          <CompetitionBadge name={p.league_name} fallbackEmoji={p.flag} size={13} sport={sportDbSport(p.sport)} />
+          <span className="eyebrow truncate">
             {p.league_name}{p.surface ? ` · ${p.surface}` : ""}
           </span>
           {p.pick_type === "safe" && (
-            <span className="bg-brand-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full uppercase tracking-wider shrink-0">
+            <span className="font-display font-bold text-[11px] uppercase tracking-wider text-brand-300 bg-brand-400/10 border border-brand-400/30 px-1.5 rounded shrink-0">
               Safe
             </span>
           )}
           {p.pick_type === "upset" && (
-            <span className="bg-violet-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full uppercase tracking-wider shrink-0">
+            <span className="font-display font-bold text-[11px] uppercase tracking-wider text-violet-300 bg-violet-500/10 border border-violet-400/30 px-1.5 rounded shrink-0">
               Upset
             </span>
           )}
         </div>
-        <span className="tnum text-[11px] text-zinc-400 dark:text-zinc-500 font-medium shrink-0">
-          {p.date}{timeStr}
-        </span>
+        <span className="font-mono text-[11px] text-zinc-200 uppercase shrink-0">{kickoff(p.date, p.time)}</span>
       </div>
 
-      {/* Competitors with probability rows */}
-      <div className="space-y-2.5">
-        {[
-          { name: p.home, prob: p.p_home, odds: p.odds_home, image: assets.homeImage, color: assets.homeColor, strong: homeStronger },
-          { name: p.away, prob: p.p_away, odds: p.odds_away, image: assets.awayImage, color: assets.awayColor, strong: !homeStronger },
-        ].map(({ name, prob, odds, image, color, strong }) => (
-          <div key={name} className="space-y-1">
-            <div className="flex items-center gap-2.5 min-w-0">
+      <div className="flex-1 flex flex-col px-4 pt-3.5 pb-4 gap-3">
+        {/* Competitors */}
+        <div className="space-y-2.5">
+          {[
+            { name: p.home, prob: p.p_home, odds: p.odds_home, image: assets.homeImage, color: assets.homeColor, fav: homeStronger },
+            { name: p.away, prob: p.p_away, odds: p.odds_away, image: assets.awayImage, color: assets.awayColor, fav: !homeStronger },
+          ].map(({ name, prob, odds, image, color, fav }) => (
+            <div key={name} className="flex items-center gap-3 min-w-0">
               <Avatar staticImage={image} color={color} name={name} face={assets.isPlayerFace} sport={p.sport} />
-              <span className={clsx(
-                "flex-1 truncate text-sm",
-                strong ? "font-bold text-zinc-900 dark:text-white" : "font-medium text-zinc-600 dark:text-zinc-300"
-              )}>
+              <span className={clsx("flex-1 truncate text-[15px]", fav ? "font-bold text-white" : "font-semibold text-zinc-400")}>
                 {name}
               </span>
-              {odds ? (
-                <span className="tnum text-[11px] font-semibold text-zinc-400 dark:text-zinc-500 bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded-md shrink-0">
-                  {odds}
-                </span>
-              ) : null}
+              {odds ? <span className="font-mono text-[11px] text-zinc-500 shrink-0" title="Bookmaker odds">{odds.toFixed(2)}</span> : null}
               <span className={clsx(
-                "tnum text-sm w-10 text-right shrink-0",
-                strong ? "font-bold text-zinc-900 dark:text-white" : "font-medium text-zinc-400 dark:text-zinc-500"
+                "font-display font-extrabold text-[30px] leading-none w-[3.25rem] text-right shrink-0 tnum",
+                fav ? "text-white" : "text-zinc-600"
               )}>
-                {Math.round(prob * 100)}%
+                {Math.round(prob * 100)}<span className="text-[15px] font-bold text-zinc-500 align-top ml-px">%</span>
               </span>
             </div>
-            <div className="h-1.5 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden ml-[38px]">
-              <div
-                className={clsx("h-full rounded-full", strong ? "bg-brand-500" : "bg-zinc-300 dark:bg-zinc-600")}
-                style={{ width: `${Math.round(prob * 100)}%` }}
-              />
-            </div>
+          ))}
+        </div>
+
+        {/* Head-to-head split */}
+        <div className="flex h-1 rounded-full overflow-hidden gap-0.5">
+          <div className={homeStronger ? "bg-brand-400" : "bg-zinc-600"} style={{ width: `${Math.round(p.p_home * 100)}%` }} />
+          <div className={!homeStronger ? "bg-brand-400" : "bg-zinc-600"} style={{ width: `${Math.round(p.p_away * 100)}%` }} />
+        </div>
+
+        {/* Best pick ticket */}
+        <div className={clsx(
+          "mt-auto flex items-center gap-3 rounded-xl px-3.5 py-3",
+          strong ? "bg-brand-400 text-ink"
+            : lean ? "bg-amber-400/[0.06] border border-amber-400/30 text-white"
+            : "bg-zinc-800/60 border border-zinc-700/60 text-white"
+        )}>
+          <div className="min-w-0 flex-1">
+            <p className={clsx("font-display font-bold text-[11px] uppercase tracking-[0.14em]", strong ? "text-ink/60" : "text-zinc-400")}>Best pick</p>
+            <p className="font-display font-extrabold text-xl uppercase leading-tight truncate">{p.tip_1x2}</p>
+            {p.tip_goals && (
+              <p className={clsx("text-[11px] font-semibold truncate", strong ? "text-ink/70" : "text-zinc-400")}>+ {p.tip_goals}</p>
+            )}
           </div>
-        ))}
-      </div>
-
-      {/* Best pick */}
-      <div className="flex items-center justify-between gap-3 bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-100 dark:border-zinc-800 rounded-xl px-3 py-2.5 mt-auto">
-        <div className="min-w-0">
-          <p className="text-[10px] text-zinc-400 dark:text-zinc-500 uppercase tracking-wider font-semibold">Best pick</p>
-          <p className="text-sm font-bold text-zinc-900 dark:text-white truncate">{p.tip_1x2}</p>
-          {p.tip_goals && (
-            <p className="text-[11px] text-brand-600 dark:text-brand-400 font-medium mt-0.5 truncate">{p.tip_goals}</p>
-          )}
+          <div className="text-right shrink-0">
+            <p className={clsx("font-display font-bold text-[11px] uppercase tracking-[0.14em]", strong ? "text-ink/60" : "text-zinc-400")}>Confidence</p>
+            <p className={clsx("font-display font-extrabold text-[32px] leading-none tnum", strong ? "text-ink" : lean ? "text-amber-300" : "text-zinc-300")}>
+              {conf}%
+            </p>
+          </div>
         </div>
-        <div className="text-right shrink-0">
-          <p className="text-[10px] text-zinc-400 dark:text-zinc-500 uppercase tracking-wider font-semibold">Conf.</p>
-          <p className={clsx(
-            "tnum text-lg font-black leading-tight",
-            conf >= 65 ? "text-brand-600 dark:text-brand-400" : conf >= 50 ? "text-amber-500" : "text-zinc-400"
-          )}>
-            {conf}%
+
+        {/* Point spread — informational market line, not a model pick: the
+            Elo/market blend estimates win probability, not margin of victory. */}
+        {(p.spread_home || p.spread_away) && (
+          <p className="flex items-center justify-between gap-3 text-[11px] text-zinc-500">
+            <span className="eyebrow !text-[10px]">Spread</span>
+            <span className="font-mono text-zinc-400 truncate">
+              {p.spread_home && spreadLabel(p.home, p.spread_home)}
+              {p.spread_home && p.spread_away && "  ·  "}
+              {p.spread_away && spreadLabel(p.away, p.spread_away)}
+            </span>
           </p>
-        </div>
+        )}
       </div>
-
-      {/* Point spread — informational market line, not a model pick: the
-          Elo/market blend estimates win probability, not margin of victory. */}
-      {(p.spread_home || p.spread_away) && (
-        <p className="flex items-center justify-between text-[10px] text-zinc-400 dark:text-zinc-500 px-0.5 -mt-1.5">
-          <span className="font-semibold uppercase tracking-wider">Spread</span>
-          <span className="tnum font-medium text-zinc-500 dark:text-zinc-400">
-            {p.spread_home && spreadLabel(p.home, p.spread_home)}
-            {p.spread_home && p.spread_away && "  ·  "}
-            {p.spread_away && spreadLabel(p.away, p.spread_away)}
-          </span>
-        </p>
-      )}
     </article>
   );
 }

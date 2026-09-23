@@ -67,7 +67,7 @@ export function PaywallModal({ onClose, onSuccess }: Props) {
 
   return (
     <div
-      className="fixed inset-0 z-[60] bg-zinc-950/60 backdrop-blur-sm flex items-center justify-center p-4"
+      className="fixed inset-0 z-[60] bg-ink/80 backdrop-blur-sm flex items-center justify-center p-4"
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div className="w-full max-w-md card !rounded-3xl shadow-pop overflow-hidden animate-scale-in">
@@ -80,9 +80,9 @@ export function PaywallModal({ onClose, onSuccess }: Props) {
           <span className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-amber-100 dark:bg-amber-500/15 mb-3">
             <Crown size={26} className="text-amber-500" />
           </span>
-          <h2 className="text-xl font-black text-zinc-900 dark:text-white">Unlock BetIQ Premium</h2>
+          <h2 className="display text-4xl text-white">Unlock BetIQ Premium</h2>
           <p className="text-zinc-500 dark:text-zinc-400 text-sm mt-1">Everything you need to bet smarter</p>
-          <div className="tnum mt-4 inline-block bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 font-black text-lg px-5 py-1.5 rounded-xl">
+          <div className="tnum mt-4 inline-block font-display font-extrabold text-3xl text-white leading-none">
             {PRICE_LABEL}
           </div>
         </div>
@@ -111,7 +111,7 @@ export function PaywallModal({ onClose, onSuccess }: Props) {
             <button
               onClick={handlePay}
               disabled={loading}
-              className="btn-primary w-full !py-3 !bg-zinc-900 dark:!bg-white hover:!bg-zinc-800 dark:hover:!bg-zinc-100 !text-white dark:!text-zinc-900"
+              className="btn-primary w-full !py-3 !text-base"
             >
               {loading ? <><Loader2 size={16} className="animate-spin" /> Verifying…</> : `Pay ${PRICE_LABEL}`}
             </button>

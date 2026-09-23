@@ -3,13 +3,14 @@
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { fetchMatchAnalysis, fetchExplanation } from "@/lib/api";
-import type { MatchAnalysis, Market, MatchExplanation, Prediction } from "@/lib/api";
+import type { MatchAnalysis, Market, MatchExplanation, Prediction, TeamForm } from "@/lib/api";
+import { kickoff } from "@/lib/matchTime";
 import { TeamBadge } from "@/components/PredictionCard";
 import { CompetitionBadge } from "@/components/CompetitionBadge";
 import { AppShell } from "@/components/shell/AppShell";
 import {
-  ArrowLeft, Star, Clock, Sparkles, ExternalLink, Loader2, Copy, Check, Ticket,
-  Trophy, Gauge, Radio, Search,
+  ArrowLeft, Sparkles, ExternalLink, Loader2, Copy, Check, Ticket,
+  Radio, Search, X,
 } from "lucide-react";
 import clsx from "clsx";
 
@@ -32,74 +33,106 @@ interface SlipItem {
   status:       number;
 }
 
-// ------------------------------------------------------------------ //
-// Elo Gauge
-// ------------------------------------------------------------------ //
-function EloGauge({ elo, home, away }: { elo: MatchAnalysis["elo"]; home: string; away: string }) {
-  const absGap = Math.abs(elo.gap);
-  const cappedGap = Math.min(absGap, elo.gap_out_of);
-  const pct = (cappedGap / elo.gap_out_of) * 100;
-  const homeLeads = elo.gap >= 0;
-
-  const labelColor =
-    absGap < 30 ? "text-zinc-500 dark:text-zinc-400" :
-    absGap < 80 ? "text-sky-600 dark:text-sky-400" :
-    absGap < 150 ? "text-amber-600 dark:text-amber-400" :
-    absGap < 250 ? "text-orange-600 dark:text-orange-400" : "text-rose-600 dark:text-rose-400";
-
-  const barColor =
-    absGap < 30 ? "bg-zinc-300 dark:bg-zinc-600" :
-    absGap < 80 ? "bg-sky-500" :
-    absGap < 150 ? "bg-amber-500" :
-    absGap < 250 ? "bg-orange-500" : "bg-rose-500";
-
+function PanelTitle({ children, right }: { children: React.ReactNode; right?: React.ReactNode }) {
   return (
-    <div className="card p-4 space-y-3">
-      <div className="flex items-center gap-2">
-        <Trophy size={15} className="text-amber-500" />
-        <h3 className="text-sm font-bold text-zinc-800 dark:text-zinc-200">Elo Rating</h3>
-        <span className={clsx("ml-auto text-xs font-bold px-2.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800", labelColor)}>
-          {elo.label}
+    <div className="flex items-center gap-2 mb-3">
+      <h2 className="font-display font-bold text-lg uppercase tracking-[0.06em] text-white">{children}</h2>
+      {right && <div className="ml-auto">{right}</div>}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ //
+// Tale of the tape — Elo, xG and form, side by side
+// ------------------------------------------------------------------ //
+function FormChips({ form }: { form?: string }) {
+  if (!form) return <span className="text-zinc-600">—</span>;
+  return (
+    <span className="inline-flex gap-0.5">
+      {form.split("").map((r, i) => (
+        <span key={i} className={clsx(
+          "font-display font-bold text-[11px] w-[18px] h-[18px] rounded flex items-center justify-center",
+          r === "W" ? "bg-brand-400 text-ink" : r === "D" ? "bg-zinc-600 text-white" : "bg-rose-500/80 text-white"
+        )}>{r}</span>
+      ))}
+    </span>
+  );
+}
+
+/** One comparison row. `better` says which side the stat favours (higher or lower is better). */
+function TapeRow({ label, home, away, better = "higher", format = (v: number) => v.toFixed(2) }: {
+  label: string; home?: number | null; away?: number | null;
+  better?: "higher" | "lower"; format?: (v: number) => string;
+}) {
+  if (home == null && away == null) return null;
+  const h = home ?? 0, a = away ?? 0;
+  const homeWins = home != null && away != null && (better === "higher" ? h > a : h < a);
+  const awayWins = home != null && away != null && (better === "higher" ? a > h : a < h);
+  const total = Math.abs(h) + Math.abs(a) || 1;
+  return (
+    <div className="py-2.5">
+      <div className="flex items-center justify-between text-sm">
+        <span className={clsx("font-display font-bold text-xl tnum", homeWins ? "text-white" : "text-zinc-500")}>
+          {home != null ? format(home) : "—"}
+        </span>
+        <span className="eyebrow">{label}</span>
+        <span className={clsx("font-display font-bold text-xl tnum", awayWins ? "text-white" : "text-zinc-500")}>
+          {away != null ? format(away) : "—"}
         </span>
       </div>
-
-      {/* Team ratings */}
-      <div className="grid grid-cols-3 gap-2 text-center">
-        <div>
-          <p className="text-xs text-zinc-400 dark:text-zinc-500 truncate">{home}</p>
-          <p className="tnum text-lg font-black text-zinc-900 dark:text-zinc-100">{elo.home}</p>
+      <div className="flex gap-1 mt-1.5">
+        <div className="flex-1 flex justify-end h-1 bg-zinc-800 rounded-full overflow-hidden">
+          <div className={homeWins ? "bg-brand-400" : "bg-zinc-600"} style={{ width: `${(Math.abs(h) / total) * 100}%` }} />
         </div>
-        <div className="flex flex-col items-center justify-center">
-          <p className="text-[10px] text-zinc-400 dark:text-zinc-500 uppercase tracking-wide">Gap</p>
-          <p className={clsx("tnum text-base font-black", labelColor)}>
-            {absGap > 0 ? (homeLeads ? "+" : "−") : ""}{absGap}
-          </p>
-        </div>
-        <div>
-          <p className="text-xs text-zinc-400 dark:text-zinc-500 truncate">{away}</p>
-          <p className="tnum text-lg font-black text-zinc-900 dark:text-zinc-100">{elo.away}</p>
+        <div className="flex-1 h-1 bg-zinc-800 rounded-full overflow-hidden">
+          <div className={clsx("h-full", awayWins ? "bg-brand-400" : "bg-zinc-600")} style={{ width: `${(Math.abs(a) / total) * 100}%` }} />
         </div>
       </div>
+    </div>
+  );
+}
 
-      {/* Gap bar */}
-      <div>
-        <div className="h-2 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden">
-          <div className={clsx("h-full rounded-full transition-all duration-700", barColor)} style={{ width: `${pct}%` }} />
-        </div>
-        <p className="text-[10px] text-zinc-400 dark:text-zinc-600 mt-1 text-center">
-          Elo gap scale · {elo.gap_out_of} pts ≈ 91% win probability
-        </p>
+function TaleOfTheTape({ analysis, home, away }: { analysis: MatchAnalysis; home: string; away: string }) {
+  const elo = analysis.elo;
+  const hf: TeamForm | undefined = analysis.team_form?.home;
+  const af: TeamForm | undefined = analysis.team_form?.away;
+  const int = (v: number) => String(Math.round(v));
+
+  return (
+    <div className="card p-4">
+      <PanelTitle
+        right={<span className="text-[11px] font-bold uppercase tracking-wider text-brand-300 bg-brand-400/10 border border-brand-400/25 rounded-md px-2 py-0.5">{elo.label}</span>}
+      >
+        Tale of the tape
+      </PanelTitle>
+
+      <div className="flex items-center justify-between gap-2 pb-2 border-b border-zinc-800">
+        <span className="flex items-center gap-2 min-w-0"><TeamBadge name={home} size={22} /><span className="text-xs font-bold text-white truncate">{home}</span></span>
+        <span className="flex items-center gap-2 min-w-0 flex-row-reverse"><TeamBadge name={away} size={22} /><span className="text-xs font-bold text-white truncate">{away}</span></span>
       </div>
 
-      {/* Implied prob */}
-      <div className="bg-zinc-50 dark:bg-zinc-800/60 rounded-xl px-3 py-2.5">
-        <p className="text-xs text-zinc-600 dark:text-zinc-300 leading-relaxed">
-          <span className="font-semibold text-zinc-900 dark:text-white">{elo.leading}</span> have a{" "}
-          <span className={clsx("tnum font-bold", labelColor)}>{Math.round(elo.implied_win_prob * 100)}%</span>{" "}
-          implied win probability from Elo alone.{" "}
-          <span className="text-zinc-400 dark:text-zinc-500">{elo.description}</span>
-        </p>
+      <div className="divide-y divide-zinc-800/70">
+        <TapeRow label="Elo rating" home={elo.home} away={elo.away} format={int} />
+        <TapeRow label="Model xG" home={analysis.xg_home} away={analysis.xg_away} />
+        {hf?.available && af?.available && <>
+          <TapeRow label="Goals / game" home={hf.goals_scored} away={af.goals_scored} />
+          <TapeRow label="Conceded / game" home={hf.goals_conceded} away={af.goals_conceded} better="lower" />
+          <TapeRow label="xG for" home={hf.xg_for} away={af.xg_for} />
+          <TapeRow label="xG against" home={hf.xg_against} away={af.xg_against} better="lower" />
+          <div className="flex items-center justify-between py-3">
+            <FormChips form={hf.form} />
+            <span className="eyebrow">Last {Math.max(hf.games ?? 0, af.games ?? 0) || 5}</span>
+            <FormChips form={af.form} />
+          </div>
+        </>}
       </div>
+
+      <p className="text-xs text-zinc-400 leading-relaxed bg-zinc-800/40 rounded-lg px-3 py-2.5 mt-1">
+        <span className="font-semibold text-white">{elo.leading}</span> hold a{" "}
+        <span className="font-mono text-brand-300">{Math.abs(elo.gap)}</span>-point Elo edge, worth a{" "}
+        <span className="font-mono text-brand-300">{Math.round(elo.implied_win_prob * 100)}%</span> win chance on ratings alone.{" "}
+        <span className="text-zinc-500">{elo.description}</span>
+      </p>
     </div>
   );
 }
@@ -107,24 +140,6 @@ function EloGauge({ elo, home, away }: { elo: MatchAnalysis["elo"]; home: string
 // ------------------------------------------------------------------ //
 // Market block
 // ------------------------------------------------------------------ //
-function ProbBar({ prob, highlight }: { prob: number; highlight: boolean }) {
-  return (
-    <div className="flex items-center gap-2">
-      <div className="flex-1 h-1.5 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden">
-        <div
-          className={clsx("h-full rounded-full transition-all duration-500",
-            highlight ? "bg-brand-500" : "bg-zinc-300 dark:bg-zinc-600")}
-          style={{ width: `${Math.round(prob * 100)}%` }}
-        />
-      </div>
-      <span className={clsx("tnum text-xs font-semibold w-9 text-right",
-        highlight ? "text-brand-600 dark:text-brand-400" : "text-zinc-400 dark:text-zinc-500")}>
-        {Math.round(prob * 100)}%
-      </span>
-    </div>
-  );
-}
-
 function MarketBlock({
   market, recommendedCode, sbMarket, onSelect, selectedOutcomeId,
 }: {
@@ -147,24 +162,30 @@ function MarketBlock({
   };
 
   return (
-    <div className="card p-4 space-y-3">
-      <div className="flex items-center gap-2">
-        <h3 className="text-sm font-bold text-zinc-800 dark:text-zinc-200">{market.name}</h3>
-        {sbMarket && (
-          <span className="ml-auto inline-flex items-center gap-1 text-[10px] text-brand-600 dark:text-brand-400 font-semibold">
+    <div className="card p-4">
+      <PanelTitle
+        right={sbMarket && (
+          <span className="inline-flex items-center gap-1 text-[10px] text-brand-300 font-bold uppercase tracking-wider">
             <Radio size={10} /> Live odds
           </span>
         )}
-      </div>
+      >
+        {market.name}
+      </PanelTitle>
 
-      <div className="space-y-1.5">
+      <div className="space-y-1">
         {market.options.map((opt) => {
           const sbOut = sbOddsFor(opt.label);
           const isSelected = sbOut ? selectedOutcomeId === sbOut.id : false;
           const canSelect = !!sbOut && !!onSelect;
+          const isBest = opt.code === best.code;
+          const odds = sbOut?.odds || (opt as any).odds;
+          const pct = Math.round(opt.prob * 100);
 
           return (
             <div key={opt.code}
+              role={canSelect ? "button" : undefined}
+              tabIndex={canSelect ? 0 : undefined}
               onClick={() => {
                 if (!canSelect || !sbMarket || !sbOut) return;
                 onSelect({ marketId: sbMarket.id, marketName: sbMarket.name,
@@ -172,36 +193,36 @@ function MarketBlock({
                            outcomeName: sbOut.desc, odds: sbOut.odds, status: 0 });
               }}
               className={clsx(
-                "space-y-1 rounded-lg px-2 py-1.5 transition-all border",
-                canSelect ? "cursor-pointer" : "",
+                "rounded-lg px-2.5 py-2 transition-all border",
+                canSelect && "cursor-pointer",
                 isSelected
-                  ? "bg-brand-50 dark:bg-brand-900/20 border-brand-300 dark:border-brand-700"
-                  : canSelect
-                    ? "hover:bg-zinc-50 dark:hover:bg-zinc-800/60 border-transparent"
-                    : "border-transparent"
+                  ? "bg-brand-400/10 border-brand-400/50"
+                  : canSelect ? "hover:bg-zinc-800/60 border-transparent" : "border-transparent"
               )}
             >
-              <div className="flex items-center gap-1.5">
-                <span className={clsx("text-xs truncate flex-1",
-                  isSelected ? "text-brand-700 dark:text-brand-400 font-semibold" : "text-zinc-600 dark:text-zinc-300")}>
+              <div className="flex items-center gap-2">
+                <span className={clsx("text-[13px] truncate flex-1", isBest || isSelected ? "text-white font-semibold" : "text-zinc-400")}>
                   {opt.label}
                 </span>
-                {(sbOut?.odds || (opt as any).odds) && (
-                  <span className={clsx("tnum text-xs font-bold shrink-0 px-2 py-0.5 rounded-md",
-                    isSelected
-                      ? "bg-brand-600 text-white"
-                      : "bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200")}>
-                    {sbOut?.odds || (opt as any).odds}
-                  </span>
-                )}
                 {opt.code === recommendedCode && !isSelected && (
-                  <span className="flex items-center gap-0.5 bg-brand-50 dark:bg-brand-900/30 text-brand-700 dark:text-brand-400 text-[9px] font-bold px-1.5 py-0.5 rounded-full border border-brand-200 dark:border-brand-800 shrink-0 uppercase tracking-wide">
-                    <Star size={8} /> Top pick
+                  <span className="font-display font-bold text-[10px] uppercase tracking-wider text-ink bg-brand-400 rounded px-1.5 py-px shrink-0">
+                    Top pick
                   </span>
                 )}
-                {isSelected && <Check size={13} className="text-brand-600 dark:text-brand-400 shrink-0" />}
+                {odds && (
+                  <span className={clsx("font-mono text-xs font-bold shrink-0 px-2 py-0.5 rounded-md",
+                    isSelected ? "bg-brand-400 text-ink" : "bg-zinc-800 text-zinc-200")}>
+                    {odds}
+                  </span>
+                )}
+                {isSelected && <Check size={13} className="text-brand-400 shrink-0" />}
+                <span className={clsx("font-display font-bold text-lg w-11 text-right tnum shrink-0", isBest ? "text-brand-400" : "text-zinc-500")}>
+                  {pct}%
+                </span>
               </div>
-              <ProbBar prob={opt.prob} highlight={opt.code === best.code} />
+              <div className="h-1 bg-zinc-800 rounded-full overflow-hidden mt-1.5">
+                <div className={clsx("h-full rounded-full transition-all duration-500", isBest ? "bg-brand-400" : "bg-zinc-600")} style={{ width: `${pct}%` }} />
+              </div>
             </div>
           );
         })}
@@ -216,10 +237,11 @@ function MarketBlock({
 function AIExplanation({ explanation }: { explanation: MatchExplanation | null }) {
   if (!explanation) {
     return (
-      <div className="card p-4 space-y-2 animate-pulse">
-        <div className="h-3 bg-zinc-100 dark:bg-zinc-800 rounded-full w-1/3" />
-        <div className="h-3 bg-zinc-100 dark:bg-zinc-800 rounded-full w-full" />
-        <div className="h-3 bg-zinc-100 dark:bg-zinc-800 rounded-full w-5/6" />
+      <div className="card p-4 space-y-3">
+        <div className="skeleton h-4 w-1/3" />
+        <div className="skeleton h-3 w-full" />
+        <div className="skeleton h-3 w-11/12" />
+        <div className="skeleton h-3 w-4/6" />
       </div>
     );
   }
@@ -230,24 +252,27 @@ function AIExplanation({ explanation }: { explanation: MatchExplanation | null }
   const hasWebSearch = /^(web-search|compound-beta)\+/.test(explanation.model ?? "") && explanation.sources.length > 0;
 
   return (
-    <div className="card p-4 space-y-3">
-      <div className="flex items-center gap-2">
-        <Sparkles size={14} className="text-violet-500 shrink-0" />
-        <span className="text-sm font-bold text-zinc-800 dark:text-zinc-200">AI Analysis</span>
-        <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full font-medium bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-400 border border-sky-200 dark:border-sky-500/25">
-          {hasWebSearch ? "Live web search" : "Stats only"}
-        </span>
-      </div>
-      <p className="text-sm text-zinc-600 dark:text-zinc-300 leading-relaxed">
-        {explanation.explanation}
-      </p>
+    <div className="card p-4 sm:p-5">
+      <PanelTitle
+        right={
+          <span className={clsx(
+            "inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider rounded-md px-2 py-0.5 border",
+            hasWebSearch ? "text-sky-300 bg-sky-400/10 border-sky-400/25" : "text-zinc-400 bg-zinc-800 border-zinc-700"
+          )}>
+            {hasWebSearch ? <><Radio size={10} /> Live web search</> : "Stats only"}
+          </span>
+        }
+      >
+        <span className="inline-flex items-center gap-2"><Sparkles size={15} className="text-brand-400" /> AI analysis</span>
+      </PanelTitle>
+      <p className="text-[15px] text-zinc-300 leading-relaxed">{explanation.explanation}</p>
       {explanation.sources.length > 0 && (
-        <div className="pt-2 border-t border-zinc-100 dark:border-zinc-800 flex flex-wrap gap-3">
+        <div className="pt-3 mt-3 border-t border-zinc-800 flex flex-wrap gap-x-4 gap-y-1.5">
           {explanation.sources.slice(0, 3).map((src, i) => {
             const domain = (() => { try { return new URL(src).hostname.replace("www.", ""); } catch { return src; } })();
             return (
               <a key={i} href={src} target="_blank" rel="noopener noreferrer"
-                className="flex items-center gap-1 text-[11px] text-zinc-400 hover:text-sky-600 dark:hover:text-sky-400 transition-colors">
+                className="flex items-center gap-1 font-mono text-[11px] text-zinc-500 hover:text-sky-300 transition-colors">
                 <ExternalLink size={10} />{domain}
               </a>
             );
@@ -295,7 +320,7 @@ function MatchContent() {
     fetch(`${API}/api/predictions?limit=500`)
       .then(r => r.json())
       .then(d => {
-        const preds: Prediction[] = d.predictions ?? [];
+        const preds: Prediction[] = Array.isArray(d?.predictions) ? d.predictions : [];
         const found = preds.find(p =>
           p.home === home && p.away === away && (!date || p.date === date)
         );
@@ -306,7 +331,7 @@ function MatchContent() {
     // Fetch live SportyBet event for real odds + market IDs
     fetch(`${API}/api/sportybet-event?home=${encodeURIComponent(home)}&away=${encodeURIComponent(away)}&date=${date}`)
       .then(r => r.json())
-      .then(d => { if (d.found) setSbEvent(d); })
+      .then(d => { if (d?.found) setSbEvent(d); })
       .catch(() => {});
   }, [home, away, date]);
 
@@ -353,8 +378,8 @@ function MatchContent() {
 
   if (!home || !away) {
     return (
-      <div className="text-center py-20 space-y-3">
-        <p className="text-zinc-500 dark:text-zinc-400 font-medium">No match selected.</p>
+      <div className="card border-dashed text-center py-16 space-y-4">
+        <p className="font-display font-bold text-xl uppercase text-white">No match selected</p>
         <button onClick={() => router.push("/")} className="btn-secondary">
           <ArrowLeft size={14} /> Back to predictions
         </button>
@@ -362,258 +387,198 @@ function MatchContent() {
     );
   }
 
+  const probs = prediction ? [
+    { key: "1", label: "Home", value: Math.round(prediction.p_home * 100) },
+    { key: "X", label: "Draw", value: Math.round(prediction.p_draw * 100) },
+    { key: "2", label: "Away", value: Math.round(prediction.p_away * 100) },
+  ] : [];
+  const favKey = probs.length ? [...probs].sort((a, b) => b.value - a.value)[0].key : null;
+  const kickoffText = kickoff(date || prediction?.date || "", prediction?.time);
+
   return (
-    <div className={clsx("space-y-4 animate-fade-in", slip.length > 0 && "pb-36")}>
-      {/* Back */}
+    <div className={clsx("space-y-5 animate-fade-in", slip.length > 0 && "pb-40")}>
       <button
         onClick={() => router.back()}
-        className="inline-flex items-center gap-1.5 text-sm font-medium text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors"
+        className="inline-flex items-center gap-1.5 text-sm font-semibold text-zinc-400 hover:text-white transition-colors"
       >
         <ArrowLeft size={15} /> Back
       </button>
 
-      {/* Match header */}
-      <div className="card p-5 sm:p-6">
-        <div className="flex items-center gap-2 text-xs text-zinc-400 dark:text-zinc-500 mb-4">
-          {prediction?.flag && (
-            <CompetitionBadge name={prediction.league_name} fallbackEmoji={prediction.flag} size={13} />
-          )}
-          <span className="font-semibold uppercase tracking-wide">{prediction?.league_name ?? "Match analysis"}</span>
-          <span>·</span>
-          <span className="flex items-center gap-1 tnum">
-            <Clock size={11} /> {date || prediction?.date}
-            {prediction?.time && prediction.time !== "TBD" ? ` · ${prediction.time}` : ""}
+      {/* ── Scoreboard hero ── */}
+      <section className="card relative overflow-hidden">
+        <div className="absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-brand-400/[0.07] to-transparent pointer-events-none" aria-hidden="true" />
+        <div className="relative flex items-center justify-between gap-2 px-4 sm:px-6 py-3 border-b border-zinc-800/80">
+          <span className="flex items-center gap-2 min-w-0">
+            {prediction?.flag && <CompetitionBadge name={prediction.league_name} fallbackEmoji={prediction.flag} size={14} />}
+            <span className="eyebrow truncate">{prediction?.league_name ?? "Match analysis"}</span>
           </span>
+          <span className="font-mono text-[11px] text-zinc-200 uppercase shrink-0">{kickoffText}</span>
         </div>
 
-        <div className="flex items-center gap-4 sm:gap-8">
-          <div className="flex-1 flex flex-col items-center text-center gap-2">
-            <TeamBadge name={home} size={52} />
-            <div>
-              <p className="text-base sm:text-lg font-bold text-zinc-900 dark:text-white leading-tight">{home}</p>
-              <p className="text-[11px] text-zinc-400 dark:text-zinc-500">Home</p>
-            </div>
-          </div>
-          <div className="text-zinc-300 dark:text-zinc-600 font-black text-lg">vs</div>
-          <div className="flex-1 flex flex-col items-center text-center gap-2">
-            <TeamBadge name={away} size={52} />
-            <div>
-              <p className="text-base sm:text-lg font-bold text-zinc-900 dark:text-white leading-tight">{away}</p>
-              <p className="text-[11px] text-zinc-400 dark:text-zinc-500">Away</p>
-            </div>
-          </div>
+        <div className="relative grid grid-cols-[1fr_auto_1fr] items-center gap-3 sm:gap-6 px-4 sm:px-8 pt-6 pb-5">
+          {[{ name: home, side: "Home" }, null, { name: away, side: "Away" }].map((t, i) =>
+            t ? (
+              <div key={t.side} className="flex flex-col items-center text-center gap-3 min-w-0">
+                <TeamBadge name={t.name} size={64} />
+                <div className="min-w-0 w-full">
+                  <p className="font-display font-extrabold uppercase text-2xl sm:text-4xl leading-none text-white break-words">{t.name}</p>
+                  <p className="eyebrow mt-1.5">{t.side}</p>
+                </div>
+              </div>
+            ) : (
+              <span key="vs" className="font-display font-extrabold text-2xl sm:text-3xl text-zinc-600">VS</span>
+            )
+          )}
         </div>
 
-        {/* 1X2 quick stats */}
         {prediction && (
-          <div className="grid grid-cols-3 gap-2 mt-5">
-            {[
-              { label: "Home win", value: Math.round(prediction.p_home * 100), tint: "text-brand-600 dark:text-brand-400" },
-              { label: "Draw",     value: Math.round(prediction.p_draw * 100), tint: "text-zinc-600 dark:text-zinc-300" },
-              { label: "Away win", value: Math.round(prediction.p_away * 100), tint: "text-sky-600 dark:text-sky-400" },
-            ].map(({ label, value, tint }) => (
-              <div key={label} className="bg-zinc-50 dark:bg-zinc-800/60 rounded-xl px-3 py-2.5 text-center">
-                <p className="text-[11px] text-zinc-400 dark:text-zinc-500 font-medium">{label}</p>
-                <p className={clsx("tnum text-lg font-black", tint)}>{value}%</p>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {loadingAnalysis && (
-        <div className="space-y-3">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="card h-28 animate-pulse !bg-zinc-100 dark:!bg-zinc-900" />
-          ))}
-        </div>
-      )}
-      {error && (
-        <p className="text-center py-8 text-zinc-400 dark:text-zinc-500">
-          Could not load analysis. Is the backend running?
-        </p>
-      )}
-      {analysis && (
-        <>
-          {/* Best Pick banner */}
-          {rec && (
-            <div className="card !border-brand-200 dark:!border-brand-800 !bg-brand-50/60 dark:!bg-brand-900/15 p-4 flex items-center gap-4">
-              <div className="w-10 h-10 bg-brand-100 dark:bg-brand-900/40 rounded-full flex items-center justify-center shrink-0">
-                <Star size={18} className="text-brand-600 dark:text-brand-400" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-[10px] text-brand-700 dark:text-brand-400 font-bold uppercase tracking-wider mb-0.5">Best pick</p>
-                <p className="text-zinc-900 dark:text-white font-bold text-base truncate">{rec.label}</p>
-                <p className="text-xs text-zinc-500 dark:text-zinc-400">{rec.market}</p>
-              </div>
-              <p className="tnum text-2xl font-black text-brand-600 dark:text-brand-400 shrink-0">{Math.round(rec.prob * 100)}%</p>
-            </div>
-          )}
-
-          {/* AI Explanation */}
-          <AIExplanation explanation={explanation} />
-
-          {/* Web search model adjustment badge */}
-          {analysis.web_adjustment_reason && (
-            <div className="card !border-orange-200 dark:!border-orange-500/25 !bg-orange-50/60 dark:!bg-orange-500/10 px-4 py-3 flex items-start gap-2.5">
-              <Search size={14} className="text-orange-500 mt-0.5 shrink-0" />
-              <div>
-                <p className="text-xs text-orange-700 dark:text-orange-300 font-semibold">Web search adjusted this prediction</p>
-                <p className="text-xs text-orange-600/80 dark:text-orange-200/70 mt-0.5">{analysis.web_adjustment_reason}</p>
-                {analysis.web_adjustment_flags && analysis.web_adjustment_flags.length > 0 && (
-                  <div className="flex gap-1 flex-wrap mt-1.5">
-                    {analysis.web_adjustment_flags.map(f => (
-                      <span key={f} className="text-[10px] bg-orange-100 dark:bg-orange-500/20 text-orange-700 dark:text-orange-300 px-1.5 py-0.5 rounded-md">
-                        {f.replace(/_/g, " ")}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Live odds badge */}
-          {analysis.live_odds_fetched && (
-            <div className="card !border-sky-200 dark:!border-sky-500/25 !bg-sky-50/60 dark:!bg-sky-500/10 px-4 py-2.5 flex items-center gap-2">
-              <Radio size={14} className="text-sky-500" />
-              <p className="text-xs text-sky-700 dark:text-sky-300 font-medium">
-                Live odds fetched from {analysis.odds_bookie || "market"} — model recalibrated in real time
-              </p>
-            </div>
-          )}
-
-          {/* Team form */}
-          {analysis.team_form && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {[
-                { team: home, form: analysis.team_form.home },
-                { team: away, form: analysis.team_form.away },
-              ].map(({ team, form }) => (
-                <div key={team} className="card px-4 py-3.5 space-y-2.5">
-                  <div className="flex items-center gap-2">
-                    <TeamBadge name={team} size={22} />
-                    <p className="text-xs font-bold text-zinc-700 dark:text-zinc-300 truncate">{team}</p>
-                  </div>
-                  {form?.available ? (
-                    <>
-                      <div className="flex gap-1">
-                        {(form.form || "").split("").map((r, i) => (
-                          <span key={i} className={clsx(
-                            "text-[10px] font-black w-6 h-6 rounded-md flex items-center justify-center",
-                            r === "W" ? "bg-brand-100 dark:bg-brand-500/20 text-brand-700 dark:text-brand-400" :
-                            r === "D" ? "bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400" :
-                                        "bg-rose-100 dark:bg-rose-500/20 text-rose-700 dark:text-rose-400"
-                          )}>{r}</span>
-                        ))}
-                      </div>
-                      <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-zinc-400 dark:text-zinc-500">
-                        {form.goals_scored != null && (
-                          <span>Scored <span className="tnum text-zinc-800 dark:text-zinc-200 font-semibold">{form.goals_scored}/g</span></span>
-                        )}
-                        {form.goals_conceded != null && (
-                          <span>Conceded <span className="tnum text-zinc-800 dark:text-zinc-200 font-semibold">{form.goals_conceded}/g</span></span>
-                        )}
-                        {form.xg_for != null && (
-                          <span>xG for <span className="tnum text-sky-600 dark:text-sky-400 font-semibold">{form.xg_for}</span></span>
-                        )}
-                        {form.xg_against != null && (
-                          <span>xG against <span className="tnum text-orange-600 dark:text-orange-400 font-semibold">{form.xg_against}</span></span>
-                        )}
-                        <span>Elo <span className="tnum text-zinc-800 dark:text-zinc-200 font-semibold">{form.elo}</span></span>
-                        {(form.games ?? 0) > 0 && <span className="tnum">{form.wins}W {form.draws}D {form.losses}L</span>}
-                      </div>
-                    </>
-                  ) : (
-                    <p className="text-[11px] text-zinc-400 dark:text-zinc-600">Form data not yet available</p>
-                  )}
+          <div className="relative px-4 sm:px-8 pb-6">
+            <div className="grid grid-cols-3 gap-2">
+              {probs.map(({ key, label, value }) => (
+                <div key={key} className={clsx(
+                  "rounded-xl px-3 py-2.5 text-center border",
+                  key === favKey ? "bg-brand-400/10 border-brand-400/40" : "bg-zinc-800/40 border-zinc-800"
+                )}>
+                  <p className="eyebrow">{label} · {key}</p>
+                  <p className={clsx("font-display font-extrabold text-3xl sm:text-4xl leading-none mt-1 tnum", key === favKey ? "text-brand-400" : "text-white")}>
+                    {value}%
+                  </p>
                 </div>
               ))}
             </div>
-          )}
-
-          {/* xG row */}
-          <div className="grid grid-cols-2 gap-3">
-            {[
-              { label: `${home} xG`, value: analysis.xg_home },
-              { label: `${away} xG`, value: analysis.xg_away },
-            ].map(({ label, value }) => (
-              <div key={label} className="card px-4 py-3.5 flex items-center gap-3">
-                <span className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-violet-50 dark:bg-violet-500/10 text-violet-600 dark:text-violet-400 shrink-0">
-                  <Gauge size={17} />
-                </span>
-                <div className="min-w-0">
-                  <p className="text-[11px] text-zinc-400 dark:text-zinc-500 font-medium truncate">{label}</p>
-                  <p className="tnum text-lg font-black text-zinc-900 dark:text-zinc-100 leading-tight">{value.toFixed(2)}</p>
-                </div>
-              </div>
-            ))}
           </div>
+        )}
+      </section>
 
-          {/* Elo gauge */}
-          <EloGauge elo={analysis.elo} home={home} away={away} />
-
-          {/* SportyBet hint */}
-          {sbEvent && (
-            <div className="card !border-brand-200 dark:!border-brand-800 !bg-brand-50/60 dark:!bg-brand-900/15 px-4 py-2.5 flex items-center gap-2">
-              <Ticket size={14} className="text-brand-600 dark:text-brand-400" />
-              <p className="text-xs text-brand-700 dark:text-brand-300 font-medium">
-                Live SportyBet odds loaded — tap any outcome to add it to your bet slip
-              </p>
-            </div>
-          )}
-
-          {/* Markets grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {analysis.markets.map((m) => {
-              // Match our analysis market to SportyBet market
-              const sbM = sbEvent?.markets.find(sb => {
-                const sid = sb.id;
-                if (m.id === "1x2" && sid === "1") return true;
-                if (m.id === "btts" && sid === "29") return true;
-                if (m.id === "double_chance" && sid === "10") return true;
-                if (m.id === "goals_ou" && sid === "18" && sb.specifier === "total=2.5") return true;
-                return false;
-              });
-              const selectedId = slip.find(s => s.marketId === sbM?.id && s.matchId === matchId)?.outcomeId;
-              return (
-                <MarketBlock
-                  key={m.id}
-                  market={m}
-                  recommendedCode={rec?.market_id === m.id ? rec.code : undefined}
-                  sbMarket={sbM}
-                  onSelect={sbEvent ? addToSlip(matchId, sbEvent.homeTeam, sbEvent.awayTeam) : undefined}
-                  selectedOutcomeId={selectedId}
-                />
-              );
-            })}
+      {loadingAnalysis && (
+        <div className="grid lg:grid-cols-[1fr_360px] gap-4">
+          <div className="space-y-4">
+            <div className="card p-4 space-y-3"><div className="skeleton h-4 w-1/3" /><div className="skeleton h-3 w-full" /><div className="skeleton h-3 w-5/6" /></div>
+            <div className="card h-48 p-4"><div className="skeleton h-full w-full !rounded-xl" /></div>
           </div>
-        </>
+          <div className="card h-72 p-4"><div className="skeleton h-full w-full !rounded-xl" /></div>
+        </div>
+      )}
+      {error && (
+        <div className="card border-dashed text-center py-12 px-6">
+          <p className="font-display font-bold text-xl uppercase text-white">Analysis unavailable</p>
+          <p className="text-sm text-zinc-400 mt-1">The model couldn&apos;t load this match right now. Try again in a moment.</p>
+        </div>
       )}
 
-      {/* ── Floating Bet Slip ── */}
+      {analysis && (
+        <div className="grid lg:grid-cols-[1fr_360px] gap-4 items-start">
+          {/* Right rail on desktop; first on mobile so the pick leads */}
+          <aside className="space-y-4 lg:order-2 lg:sticky lg:top-24">
+            {rec && (
+              <div className="rounded-2xl bg-brand-400 text-ink p-4 sm:p-5 shadow-glow">
+                <p className="font-display font-bold text-xs uppercase tracking-[0.14em] text-ink/60">Best pick · {rec.market}</p>
+                <div className="flex items-end justify-between gap-3 mt-1">
+                  <p className="font-display font-extrabold text-3xl uppercase leading-none">{rec.label}</p>
+                  <p className="font-display font-extrabold text-5xl leading-none tnum">{Math.round(rec.prob * 100)}%</p>
+                </div>
+                <p className="text-xs font-semibold text-ink/70 mt-2">Model probability for this outcome</p>
+              </div>
+            )}
+            <TaleOfTheTape analysis={analysis} home={home} away={away} />
+          </aside>
+
+          <div className="space-y-4 lg:order-1 min-w-0">
+            <AIExplanation explanation={explanation} />
+
+            {analysis.web_adjustment_reason && (
+              <div className="rounded-2xl border border-amber-400/25 bg-amber-400/[0.05] px-4 py-3 flex items-start gap-3">
+                <Search size={15} className="text-amber-300 mt-0.5 shrink-0" />
+                <div>
+                  <p className="text-sm text-amber-200 font-semibold">Team news adjusted this prediction</p>
+                  <p className="text-sm text-zinc-400 mt-0.5">{analysis.web_adjustment_reason}</p>
+                  {analysis.web_adjustment_flags && analysis.web_adjustment_flags.length > 0 && (
+                    <div className="flex gap-1.5 flex-wrap mt-2">
+                      {analysis.web_adjustment_flags.map(f => (
+                        <span key={f} className="font-mono text-[10px] uppercase text-amber-200/80 bg-amber-400/10 border border-amber-400/20 px-1.5 py-0.5 rounded">
+                          {f.replace(/_/g, " ")}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {(analysis.live_odds_fetched || sbEvent) && (
+              <div className="rounded-2xl border border-sky-400/20 bg-sky-400/[0.05] px-4 py-3 flex items-center gap-3">
+                {sbEvent ? <Ticket size={15} className="text-sky-300 shrink-0" /> : <Radio size={15} className="text-sky-300 shrink-0" />}
+                <p className="text-sm text-zinc-300">
+                  {sbEvent
+                    ? "Live SportyBet odds loaded. Tap any outcome to add it to your bet slip."
+                    : `Live odds from ${analysis.odds_bookie || "the market"}; the model was recalibrated in real time.`}
+                </p>
+              </div>
+            )}
+
+            {/* Markets */}
+            <div>
+              <h2 className="display text-3xl text-white mb-3">Markets</h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {analysis.markets.map((m) => {
+                  // Match our analysis market to SportyBet market
+                  const sbM = sbEvent?.markets.find(sb => {
+                    const sid = sb.id;
+                    if (m.id === "1x2" && sid === "1") return true;
+                    if (m.id === "btts" && sid === "29") return true;
+                    if (m.id === "double_chance" && sid === "10") return true;
+                    if (m.id === "goals_ou" && sid === "18" && sb.specifier === "total=2.5") return true;
+                    return false;
+                  });
+                  const selectedId = slip.find(s => s.marketId === sbM?.id && s.matchId === matchId)?.outcomeId;
+                  return (
+                    <MarketBlock
+                      key={m.id}
+                      market={m}
+                      recommendedCode={rec?.market_id === m.id ? rec.code : undefined}
+                      sbMarket={sbM}
+                      onSelect={sbEvent ? addToSlip(matchId, sbEvent.homeTeam, sbEvent.awayTeam) : undefined}
+                      selectedOutcomeId={selectedId}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Floating bet slip ── */}
       {slip.length > 0 && (
-        <div className="fixed bottom-16 lg:bottom-4 inset-x-3 lg:left-[calc(15rem+1rem)] lg:right-4 z-40 max-w-3xl mx-auto card !rounded-2xl shadow-pop p-4 space-y-3 animate-slide-up">
-          {/* Selections */}
+        <div className="fixed bottom-20 lg:bottom-5 inset-x-3 lg:left-[calc(15rem+1.5rem)] lg:right-6 z-40 max-w-3xl mx-auto rounded-2xl bg-surface-raised border border-zinc-700 shadow-pop p-4 space-y-3 animate-slide-up">
+          <div className="flex items-center justify-between">
+            <p className="font-display font-bold text-sm uppercase tracking-[0.1em] text-white">Bet slip · {slip.length}</p>
+            <button onClick={() => { setSlip([]); setBookingCode(null); }}
+              className="text-xs text-zinc-400 hover:text-white transition-colors font-semibold">
+              Clear
+            </button>
+          </div>
           <div className="space-y-1.5 max-h-28 overflow-y-auto">
             {slip.map((s, i) => (
               <div key={i} className="flex items-center justify-between gap-2 text-xs">
-                <span className="text-zinc-400 dark:text-zinc-500 truncate flex-1">
+                <span className="text-zinc-500 truncate flex-1">
                   {s.marketName}{s.specifier ? ` (${s.specifier})` : ""}
                 </span>
-                <span className="text-zinc-900 dark:text-white font-semibold shrink-0">{s.outcomeName}</span>
-                <span className="tnum text-brand-600 dark:text-brand-400 font-black shrink-0">{s.odds}</span>
+                <span className="text-white font-semibold shrink-0">{s.outcomeName}</span>
+                <span className="font-mono text-brand-400 font-bold shrink-0">{s.odds}</span>
                 <button onClick={() => setSlip(prev => prev.filter((_, j) => j !== i))}
-                  className="text-zinc-300 dark:text-zinc-600 hover:text-rose-500 transition-colors shrink-0 text-base leading-none ml-1">×</button>
+                  aria-label={`Remove ${s.outcomeName}`}
+                  className="text-zinc-500 hover:text-rose-400 transition-colors shrink-0">
+                  <X size={13} />
+                </button>
               </div>
             ))}
           </div>
 
-          {/* Combined odds + actions */}
-          <div className="flex items-center gap-3 pt-1 border-t border-zinc-100 dark:border-zinc-800">
+          <div className="flex items-center gap-3 pt-3 border-t border-zinc-800">
             <div className="flex-1">
-              <p className="text-[10px] text-zinc-400 dark:text-zinc-500 font-medium">Combined odds</p>
-              <p className="tnum text-lg font-black text-brand-600 dark:text-brand-400">
+              <p className="eyebrow">Combined odds</p>
+              <p className="font-display font-extrabold text-2xl leading-none text-brand-400 tnum mt-0.5">
                 {slip.reduce((acc, s) => {
                   const o = parseFloat(s.odds);
                   return isNaN(o) ? acc : +(acc * o).toFixed(2);
@@ -621,23 +586,18 @@ function MatchContent() {
               </p>
             </div>
 
-            <button onClick={() => { setSlip([]); setBookingCode(null); }}
-              className="text-xs text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors px-2 font-medium">
-              Clear
-            </button>
-
             {bookingCode ? (
-              <div className="flex items-center gap-2 bg-brand-50 dark:bg-brand-900/20 border border-brand-200 dark:border-brand-800 rounded-xl px-3 py-2">
-                <span className="text-zinc-900 dark:text-white font-black tracking-widest text-sm font-mono">{bookingCode}</span>
-                <button onClick={copyCode} className="btn-primary !px-2.5 !py-1.5 !text-xs">
+              <div className="flex items-center gap-2 bg-ink border border-brand-400/40 rounded-xl pl-3 pr-1.5 py-1.5">
+                <span className="text-white font-bold tracking-[0.2em] text-sm font-mono">{bookingCode}</span>
+                <button onClick={copyCode} className="btn-primary !px-2.5 !py-1.5 !text-xs !rounded-lg">
                   {codeCopied ? <Check size={11} /> : <Copy size={11} />}
-                  {codeCopied ? "Copied!" : "Copy"}
+                  {codeCopied ? "Copied" : "Copy"}
                 </button>
               </div>
             ) : (
               <button onClick={generateCode} disabled={generating} className="btn-primary">
                 {generating ? <Loader2 size={14} className="animate-spin" /> : <Ticket size={14} />}
-                {generating ? "Generating…" : `Get code (${slip.length})`}
+                {generating ? "Generating…" : "Get booking code"}
               </button>
             )}
           </div>
@@ -653,7 +613,7 @@ export default function MatchPage() {
       <Suspense
         fallback={
           <div className="flex items-center justify-center py-24">
-            <div className="w-8 h-8 border-2 border-brand-600 border-t-transparent rounded-full animate-spin" />
+            <div className="w-8 h-8 border-2 border-brand-400 border-t-transparent rounded-full animate-spin" />
           </div>
         }
       >

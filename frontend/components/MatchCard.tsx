@@ -47,7 +47,7 @@ function TeamName({ name }: { name: string }) {
           {name.slice(0, 2).toUpperCase()}
         </span>
       )}
-      <span className="text-zinc-900 dark:text-white font-semibold text-sm truncate">{name}</span>
+      <span className="text-white font-semibold text-sm truncate">{name}</span>
     </div>
   );
 }
@@ -69,9 +69,10 @@ export function MatchCard({ home, away, date, time, league, flag, children, onCl
               </span>
             </p>
           )}
-          <div className="flex items-center gap-2">
+          {/* Stacked on phones so long names aren't truncated side by side */}
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
             <TeamName name={home} />
-            <span className="text-zinc-300 dark:text-zinc-600 text-xs shrink-0 font-medium">vs</span>
+            <span className="hidden sm:inline text-zinc-600 text-xs shrink-0 font-medium">vs</span>
             <TeamName name={away} />
           </div>
         </div>

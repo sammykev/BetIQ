@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Home, TrendingUp, CalendarDays, LayoutDashboard, ShieldCheck } from "lucide-react";
+import { Home, TrendingUp, CalendarDays, LayoutDashboard } from "lucide-react";
 import { UserMenu } from "@/components/UserMenu";
 import clsx from "clsx";
 import type { ReactNode } from "react";
@@ -23,18 +23,20 @@ interface Props {
   onUpgrade?: () => void;
 }
 
+/** BET·IQ wordmark — condensed caps with the "IQ" in the accent. */
+export function Wordmark({ className }: { className?: string }) {
+  return (
+    <span className={clsx("font-display font-extrabold uppercase tracking-[0.02em] leading-none text-white", className)}>
+      Bet<span className="text-brand-400">IQ</span>
+    </span>
+  );
+}
+
 function Logo() {
   return (
-    <Link href="/" className="flex items-center gap-2.5 min-w-0">
-      <img src="/logo.svg" alt="BetIQ" className="w-8 h-8 rounded-lg shrink-0" />
-      <div className="min-w-0">
-        <p className="text-[15px] font-bold tracking-tight text-zinc-900 dark:text-white leading-none">
-          BetIQ
-        </p>
-        <p className="text-[10px] text-zinc-400 dark:text-zinc-500 leading-none mt-1 truncate">
-          AI Football Predictions
-        </p>
-      </div>
+    <Link href="/" className="flex items-center gap-2.5 min-w-0" aria-label="BetIQ home">
+      <img src="/logo.svg" alt="" className="w-8 h-8 rounded-lg shrink-0 ring-1 ring-zinc-800" />
+      <Wordmark className="text-[26px]" />
     </Link>
   );
 }
@@ -50,42 +52,46 @@ export function AppShell({ children, actions, banner, onUpgrade }: Props) {
       {banner}
 
       {/* ── Desktop sidebar ── */}
-      <aside className="hidden lg:flex fixed inset-y-0 left-0 w-60 flex-col border-r border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 z-30">
-        <div className="px-5 py-5 border-b border-zinc-100 dark:border-zinc-900">
+      <aside className="hidden lg:flex fixed inset-y-0 left-0 w-60 flex-col border-r border-zinc-900 bg-ink/70 backdrop-blur-md z-30">
+        <div className="px-5 h-16 flex items-center">
           <Logo />
         </div>
 
         <nav className="flex-1 px-3 py-4 space-y-1">
-          {NAV.map(({ href, label, icon: Icon }) => (
-            <Link
-              key={href}
-              href={href}
-              className={clsx(
-                "flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all",
-                isActive(href)
-                  ? "bg-brand-50 dark:bg-brand-900/20 text-brand-700 dark:text-brand-400"
-                  : "text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-50 dark:hover:bg-zinc-900"
-              )}
-            >
-              <Icon size={17} strokeWidth={isActive(href) ? 2.4 : 2} />
-              {label}
-            </Link>
-          ))}
+          <p className="eyebrow px-3 pb-2">Menu</p>
+          {NAV.map(({ href, label, icon: Icon }) => {
+            const active = isActive(href);
+            return (
+              <Link
+                key={href}
+                href={href}
+                aria-current={active ? "page" : undefined}
+                className={clsx(
+                  "relative flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-colors",
+                  active
+                    ? "bg-surface text-white"
+                    : "text-zinc-400 hover:text-white hover:bg-surface/60"
+                )}
+              >
+                {active && <span className="absolute left-0 top-2 bottom-2 w-[3px] rounded-r-full bg-brand-400" />}
+                <Icon size={17} strokeWidth={active ? 2.4 : 2} className={active ? "text-brand-400" : undefined} />
+                {label}
+              </Link>
+            );
+          })}
         </nav>
 
-        <div className="px-5 py-4 border-t border-zinc-100 dark:border-zinc-900">
-          <div className="flex items-start gap-2 text-zinc-400 dark:text-zinc-500">
-            <ShieldCheck size={14} className="mt-0.5 shrink-0" />
-            <p className="text-[11px] leading-relaxed">
-              Gamble responsibly. For educational use only.
-            </p>
-          </div>
+        <div className="px-5 py-4 border-t border-zinc-900 flex items-start gap-2.5">
+          <span className="shrink-0 font-display font-bold text-[13px] leading-none text-zinc-300 border border-zinc-700 rounded-md px-1.5 py-1">18+</span>
+          <p className="text-[11px] leading-relaxed text-zinc-500">
+            Predictions are probabilities, not guarantees. Gamble responsibly.
+          </p>
         </div>
       </aside>
 
       {/* ── Top bar ── */}
-      <header className="sticky top-0 z-20 lg:pl-60 border-b border-zinc-200/80 dark:border-zinc-800 bg-white/85 dark:bg-zinc-950/85 backdrop-blur-md">
-        <div className="flex items-center justify-between gap-3 px-4 sm:px-6 h-14">
+      <header className="sticky top-0 z-20 lg:pl-60 border-b border-zinc-900 bg-ink/80 backdrop-blur-md">
+        <div className="flex items-center justify-between gap-3 px-4 sm:px-6 h-14 lg:h-16">
           <div className="lg:hidden">
             <Logo />
           </div>
@@ -98,28 +104,31 @@ export function AppShell({ children, actions, banner, onUpgrade }: Props) {
       </header>
 
       {/* ── Main content ── */}
-      <main className="lg:pl-60 pb-20 lg:pb-8">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6">{children}</div>
+      <main className="lg:pl-60 pb-24 lg:pb-10">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 lg:py-8">{children}</div>
       </main>
 
       {/* ── Mobile bottom nav ── */}
-      <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 border-t border-zinc-200 dark:border-zinc-800 bg-white/95 dark:bg-zinc-950/95 backdrop-blur-md pb-[env(safe-area-inset-bottom)]">
+      <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 border-t border-zinc-900 bg-ink/95 backdrop-blur-md pb-[env(safe-area-inset-bottom)]">
         <div className="grid grid-cols-4">
-          {NAV.map(({ href, label, icon: Icon }) => (
-            <Link
-              key={href}
-              href={href}
-              className={clsx(
-                "flex flex-col items-center gap-1 py-2.5 text-[10px] font-medium transition-colors",
-                isActive(href)
-                  ? "text-brand-600 dark:text-brand-400"
-                  : "text-zinc-400 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300"
-              )}
-            >
-              <Icon size={19} strokeWidth={isActive(href) ? 2.4 : 2} />
-              {label}
-            </Link>
-          ))}
+          {NAV.map(({ href, label, icon: Icon }) => {
+            const active = isActive(href);
+            return (
+              <Link
+                key={href}
+                href={href}
+                aria-current={active ? "page" : undefined}
+                className={clsx(
+                  "relative flex flex-col items-center gap-1 pt-3 pb-2.5 text-[10px] font-semibold transition-colors",
+                  active ? "text-white" : "text-zinc-500 hover:text-zinc-300"
+                )}
+              >
+                {active && <span className="absolute top-0 inset-x-6 h-[2px] rounded-b-full bg-brand-400" />}
+                <Icon size={19} strokeWidth={active ? 2.4 : 2} className={active ? "text-brand-400" : undefined} />
+                {label}
+              </Link>
+            );
+          })}
         </div>
       </nav>
     </div>

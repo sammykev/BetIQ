@@ -4,8 +4,8 @@
   "description": "AI-powered football predictions with SportyBet booking codes",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#020817",
-  "theme_color": "#22c55e",
+  "background_color": "#070b14",
+  "theme_color": "#070b14",
   "orientation": "portrait-primary",
   "categories": ["sports", "entertainment"],
   "icons": [

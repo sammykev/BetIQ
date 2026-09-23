@@ -54,7 +54,7 @@ export function UserMenu({ onUpgrade }: Props) {
         {user.imageUrl ? (
           <img src={user.imageUrl} alt="" className="w-8 h-8 rounded-full object-cover" />
         ) : (
-          <div className="w-8 h-8 rounded-full bg-brand-600 flex items-center justify-center text-white text-xs font-bold">
+          <div className="w-8 h-8 rounded-full bg-brand-400 flex items-center justify-center text-ink text-xs font-bold">
             {user.firstName?.[0] ?? "U"}
           </div>
         )}
