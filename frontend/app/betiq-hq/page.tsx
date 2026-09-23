@@ -9,6 +9,7 @@ import {
   UserPlus, UserMinus, MousePointerClick,
 } from "lucide-react";
 import clsx from "clsx";
+import { TrackRecord } from "@/components/TrackRecord";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
 
@@ -510,6 +511,9 @@ export default function AdminPage() {
           </>
         )}
       </section>
+
+      {/* ── Model backtest ── */}
+      <TrackRecord secret={secret} />
 
       {/* ── AI & Chatbot ── */}
       <section className="bg-slate-900 border border-slate-700 rounded-xl p-5 space-y-4">

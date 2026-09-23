@@ -1695,9 +1695,10 @@ def _archive_past_predictions():
     print(f"[History] Archived {len(past)} predictions across {len(by_date)} dates ({settled_count} dates with results).")
 
 
-@app.get("/api/model/metrics")
-async def model_metrics():
-    """Walk-forward backtest results (generated offline by backtest.py)."""
+@app.get("/api/admin/model-metrics")
+async def model_metrics(secret: str = ""):
+    """Walk-forward backtest results (generated offline by backtest.py). Admin only."""
+    _check_admin(secret)
     from backtest import METRICS_PATH
     try:
         with open(METRICS_PATH) as f:

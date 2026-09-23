@@ -10,7 +10,8 @@ live. Picks come from predictor.pick_tips, the same rules the app uses.
     python backtest.py                      # last season in the data
     python backtest.py --start 2024-08-01 --end 2025-06-30 --out data/model_metrics.json
 
-The JSON it writes is served by /api/model/metrics and shown on History.
+The JSON it writes is served by /api/admin/model-metrics and shown on the
+admin dashboard (/betiq-hq).
 """
 
 import argparse

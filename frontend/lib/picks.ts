@@ -37,7 +37,7 @@ export type Tier = "strong" | "lean" | "weak";
  * How strong a probability is *for that kind of pick*. A straight win at 55%
  * is a solid 1X2 pick (three outcomes); a double chance or goals line at 55%
  * is barely better than a coin flip. Revisit against the backtest's
- * calibration numbers (/api/model/metrics).
+ * calibration numbers (backend/data/model_metrics.json).
  */
 export function confidenceTier(prob: number, kind: PickKind): Tier {
   const [strong, lean] = kind === "single" ? [0.6, 0.45] : kind === "double" ? [0.8, 0.65] : [0.75, 0.6];

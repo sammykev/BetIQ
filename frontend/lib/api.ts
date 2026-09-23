@@ -172,7 +172,7 @@ export async function fetchCalendar(month: string): Promise<Record<string, Calen
   return res.json();
 }
 
-// ── Backtest (backend/backtest.py → /api/model/metrics) ──────────────────────
+// ── Backtest (backend/backtest.py → /api/admin/model-metrics, admin only) ──────────────────────
 
 export interface ProbScores { log_loss: number | null; brier: number | null; accuracy?: number | null }
 export interface PickTierRow { kind: "single" | "double"; tier: "strong" | "lean" | "weak" | "all"; n: number; won: number; hit_rate: number | null; avg_prob: number | null }
@@ -195,9 +195,9 @@ export interface ModelMetrics {
   betting: { all_straight_tips: FlatStake; value_bets: FlatStake; edge_threshold: number };
 }
 
-export async function fetchModelMetrics(): Promise<ModelMetrics | null> {
+export async function fetchModelMetrics(secret: string): Promise<ModelMetrics | null> {
   try {
-    const res = await fetch(`${API_URL}/api/model/metrics`);
+    const res = await fetch(`${API_URL}/api/admin/model-metrics?secret=${encodeURIComponent(secret)}`);
     if (!res.ok) return null;
     const data = await res.json();
     return data && data.available === true && Array.isArray(data.calibration) ? data : null;

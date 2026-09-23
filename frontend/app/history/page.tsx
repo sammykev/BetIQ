@@ -12,7 +12,6 @@ import { MatchCard } from "@/components/MatchCard";
 import { pickProbability } from "@/lib/picks";
 import { AppShell } from "@/components/shell/AppShell";
 import { PageHeader } from "@/components/shell/PageHeader";
-import { TrackRecord } from "@/components/TrackRecord";
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS = ["January","February","March","April","May","June",
@@ -453,8 +452,6 @@ export default function HistoryPage() {
             <DayPanel date={selectedDate} onClose={() => setSelectedDate(null)} />
           )}
         </div>
-
-        <TrackRecord />
       </div>
     </AppShell>
   );
