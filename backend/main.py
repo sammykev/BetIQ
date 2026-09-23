@@ -10,7 +10,7 @@ import asyncio
 import os
 import glob
 import json
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from typing import List, Dict, Any, Optional
 
 import numpy as np
@@ -18,6 +18,7 @@ import pandas as pd
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Request
 from auth import auth_enforced, optional_user, require_user
 from grading import grade_prediction, regrade, to_goals
+from team_names import UCL_ALIASES, TeamResolver
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
@@ -137,8 +138,9 @@ def _predictor_form_summary(team: str) -> Dict:
     if _predictor is None:
         return {}
 
-    stats = _predictor.team_stats.get(team, {})
-    elo   = round(_predictor.elo.get(team))
+    key   = _predictor.canon(team)
+    stats = _predictor.team_stats.get(key, {})
+    elo   = round(_predictor.elo.get(key))
 
     pts = stats.get("pts", [])[-10:]
     # Filter NaN values that can creep in from CSV rows with missing scores
@@ -706,7 +708,7 @@ async def _prefetch_web_forms(predictor, fixtures: list):
             if team in seen:
                 continue
             seen.add(team)
-            local_pts = len(predictor.team_stats.get(team, {}).get("pts", []))
+            local_pts = len(predictor.team_stats.get(predictor.canon(team), {}).get("pts", []))
             # Already have enough local data AND a cached web form → skip
             if local_pts >= 5 and _get_web_form_cache(team):
                 continue
@@ -789,6 +791,32 @@ def _build_predictions(predictor, fixtures: list, live_odds: dict) -> list:
     return predictions
 
 
+# Current-season CSVs from football-data.co.uk (see football_data_sync.py)
+FOOTBALL_DATA_SYNC_HOURS = 20
+_football_sync: Dict[str, Any] = {"at": None, "report": None}
+
+
+async def _sync_football_data(force: bool = False) -> Optional[Dict[str, list]]:
+    """Download this and last season's league CSVs, at most once every
+    FOOTBALL_DATA_SYNC_HOURS. Set FOOTBALL_DATA_SYNC=0 to turn off."""
+    if os.getenv("FOOTBALL_DATA_SYNC", "1") == "0":
+        return None
+    last = _football_sync["at"]
+    if not force and last and (datetime.now(timezone.utc) - last).total_seconds() < FOOTBALL_DATA_SYNC_HOURS * 3600:
+        return None
+    from football_data_sync import sync
+    try:
+        report = await sync(FOOTBALL_DATA_DIR)
+    except Exception as e:
+        print(f"[DataSync] failed: {e}")
+        return None
+    _football_sync.update(at=datetime.now(timezone.utc), report=report)
+    print(f"[DataSync] updated {report['updated'] or 'nothing'}; "
+          f"{len(report['unchanged'])} unchanged, {len(report['skipped'])} not published, "
+          f"failed {report['failed'] or 'none'}")
+    return report
+
+
 async def _run_pipeline():
     global _predictor, _predictions_cache, _last_updated, _is_training
 
@@ -797,6 +825,7 @@ async def _run_pipeline():
     _is_training = True
 
     try:
+        await _sync_football_data()
         print("[Pipeline] Loading CSV data...")
         # Primary: football-data.co.uk CSVs (include Bet365 odds — best for accuracy)
         fd_df = _load_football_data_csvs()
@@ -805,6 +834,16 @@ async def _run_pipeline():
         ucl_df = _load_ucl_csv()
         # International match history (from Kaggle — fixes national team calibration)
         intl_df = _load_international_csv()
+
+        # One naming scheme for club training data — football-data.co.uk's.
+        # UCL CSVs and API results name clubs differently ("Atleti",
+        # "Arsenal FC"); unresolved, each club would train as two teams.
+        club_names: set = set()
+        for df in (fd_df, epl_df):
+            if not df.empty:
+                club_names |= set(df["HomeTeam"].dropna()) | set(df["AwayTeam"].dropna())
+        if not ucl_df.empty and club_names:
+            ucl_df = TeamResolver(club_names, aliases=UCL_ALIASES).resolve_frame(ucl_df)
 
         parts = [df for df in [fd_df, epl_df, ucl_df, intl_df] if not df.empty]
         if not parts:
@@ -827,6 +866,8 @@ async def _run_pipeline():
             try:
                 saved_results = pd.read_csv(RESULTS_CSV, parse_dates=["Date"])
                 saved_results = saved_results[["Date", "HomeTeam", "AwayTeam", "Result", "FTHG", "FTAG"]].dropna()
+                if club_names:
+                    saved_results = TeamResolver(club_names).resolve_frame(saved_results)
                 combined = pd.concat([combined, saved_results], ignore_index=True)
                 combined = combined.drop_duplicates(subset=["Date", "HomeTeam", "AwayTeam"])
                 combined = combined.sort_values("Date").reset_index(drop=True)
@@ -843,7 +884,9 @@ async def _run_pipeline():
         data_mtime = max(
             _mtime(INTERNATIONAL_CSV),
             _mtime(RESULTS_CSV) if os.path.exists(RESULTS_CSV) else 0,
-            *[_mtime(os.path.join(DATA_DIR, f)) for f in os.listdir(DATA_DIR) if f.endswith(".csv")]
+            *[_mtime(os.path.join(DATA_DIR, f)) for f in os.listdir(DATA_DIR) if f.endswith(".csv")],
+            # League CSVs — refreshed daily by _sync_football_data
+            *[_mtime(f) for f in glob.glob(os.path.join(FOOTBALL_DATA_DIR, "*.csv"))],
         )
 
         predictor = LeaguePredictor.load_cache(data_mtime)
@@ -1244,6 +1287,8 @@ def _parse_csv_h2h(home: str, away: str, limit: int = 10) -> Dict:
         return {"meetings": [], "summary": None, "source": "none"}
 
     df = _history_df
+    if _predictor is not None:  # the CSVs use the model's names, not the API's
+        home, away = _predictor.canon(home), _predictor.canon(away)
     mask = (
         ((df["HomeTeam"] == home) & (df["AwayTeam"] == away)) |
         ((df["HomeTeam"] == away) & (df["AwayTeam"] == home))
@@ -1393,25 +1438,27 @@ async def get_match_analysis(home: str, away: str):
     adj_xg_a = 1.0 + adjustments.get("away_attack_modifier", 0.0)
     adj_def_h = 1.0 + adjustments.get("home_defense_modifier", 0.0)
     adj_def_a = 1.0 + adjustments.get("away_defense_modifier", 0.0)
+    # The model's names for these teams (display names stay as given)
+    h_key, a_key = _predictor.canon(home), _predictor.canon(away)
     if adjustments:
-        _predictor._init(home)
-        _predictor._init(away)
+        _predictor._init(h_key)
+        _predictor._init(a_key)
         # Temporarily scale goal lists so Dixon-Coles xG reflects the news adjustment.
         # We scale both overall gf and the venue-specific home_gf/away_gf lists.
-        orig_home_gf      = _predictor.team_stats[home].get("gf", [])
-        orig_home_gf_home = _predictor.team_stats[home].get("home_gf", [])
-        orig_away_gf      = _predictor.team_stats[away].get("gf", [])
-        orig_away_gf_away = _predictor.team_stats[away].get("away_gf", [])
+        orig_home_gf      = _predictor.team_stats[h_key].get("gf", [])
+        orig_home_gf_home = _predictor.team_stats[h_key].get("home_gf", [])
+        orig_away_gf      = _predictor.team_stats[a_key].get("gf", [])
+        orig_away_gf_away = _predictor.team_stats[a_key].get("away_gf", [])
         if adj_xg_h != 1.0:
             if orig_home_gf:
-                _predictor.team_stats[home]["gf"]      = [v * adj_xg_h for v in orig_home_gf]
+                _predictor.team_stats[h_key]["gf"]      = [v * adj_xg_h for v in orig_home_gf]
             if orig_home_gf_home:
-                _predictor.team_stats[home]["home_gf"] = [v * adj_xg_h for v in orig_home_gf_home]
+                _predictor.team_stats[h_key]["home_gf"] = [v * adj_xg_h for v in orig_home_gf_home]
         if adj_xg_a != 1.0:
             if orig_away_gf:
-                _predictor.team_stats[away]["gf"]      = [v * adj_xg_a for v in orig_away_gf]
+                _predictor.team_stats[a_key]["gf"]      = [v * adj_xg_a for v in orig_away_gf]
             if orig_away_gf_away:
-                _predictor.team_stats[away]["away_gf"] = [v * adj_xg_a for v in orig_away_gf_away]
+                _predictor.team_stats[a_key]["away_gf"] = [v * adj_xg_a for v in orig_away_gf_away]
 
     # If live odds available, re-run prediction with them for better accuracy
     if live_odds:
@@ -1427,11 +1474,11 @@ async def get_match_analysis(home: str, away: str):
     # Restore original stats after prediction (don't permanently alter training data)
     if adjustments:
         if adj_xg_h != 1.0:
-            _predictor.team_stats[home]["gf"]      = orig_home_gf
-            _predictor.team_stats[home]["home_gf"] = orig_home_gf_home
+            _predictor.team_stats[h_key]["gf"]      = orig_home_gf
+            _predictor.team_stats[h_key]["home_gf"] = orig_home_gf_home
         if adj_xg_a != 1.0:
-            _predictor.team_stats[away]["gf"]      = orig_away_gf
-            _predictor.team_stats[away]["away_gf"] = orig_away_gf_away
+            _predictor.team_stats[a_key]["gf"]      = orig_away_gf
+            _predictor.team_stats[a_key]["away_gf"] = orig_away_gf_away
 
     # Apply confidence modifier from web search
     conf_mod = adjustments.get("confidence_modifier", 0.0)
@@ -1693,6 +1740,45 @@ def _archive_past_predictions():
                 print(f"[History] Redis error for {d}: {e}")
     settled_count = sum(1 for preds in by_date.values() if any(p.get("outcome") != "pending" for p in preds))
     print(f"[History] Archived {len(past)} predictions across {len(by_date)} dates ({settled_count} dates with results).")
+
+
+@app.get("/api/admin/data-status")
+async def data_status(secret: str = ""):
+    """How fresh the training data is, and which upcoming teams the model
+    knows little or nothing about (a name it couldn't match, or a new club)."""
+    _check_admin(secret)
+    leagues: Dict[str, Dict[str, Any]] = {}
+    for path in sorted(glob.glob(os.path.join(FOOTBALL_DATA_DIR, "*.csv"))):
+        div = os.path.basename(path).split("_")[0]
+        try:
+            dates = pd.to_datetime(pd.read_csv(path, usecols=["Date"])["Date"], dayfirst=True, errors="coerce")
+            latest = dates.max()
+        except Exception:
+            continue
+        if pd.notna(latest) and (div not in leagues or str(latest.date()) > leagues[div]["latest_match"]):
+            leagues[div] = {"latest_match": str(latest.date()), "file": os.path.basename(path)}
+
+    teams: Dict[str, Dict[str, Any]] = {}
+    if _predictor is not None:
+        for p in _predictions_cache:
+            if p.get("sport") not in (None, "football"):
+                continue
+            for name in (p.get("home"), p.get("away")):
+                if not name or name in teams:
+                    continue
+                key = _predictor.canon(name)
+                teams[name] = {"model_name": key, "league": p.get("league", ""),
+                               "matches": len(_predictor.team_stats.get(key, {}).get("pts", []))}
+    thin = sorted(({"team": k, **v} for k, v in teams.items() if v["matches"] < 5),
+                  key=lambda t: (t["matches"], t["team"]))
+    last = _football_sync["at"]
+    return {
+        "leagues": leagues,
+        "last_sync": {"at": last.isoformat() if last else None, "report": _football_sync["report"]},
+        "teams_checked": len(teams),
+        "renamed": {k: v["model_name"] for k, v in sorted(teams.items()) if v["model_name"] != k},
+        "thin_history": thin,
+    }
 
 
 @app.get("/api/admin/model-metrics")
@@ -2199,7 +2285,7 @@ async def debug_team_form(team: str, live: bool = False):
     from llm_service import GROQ_API_KEY
 
     cached = _get_web_form_cache(team)
-    local_pts = len(_predictor.team_stats.get(team, {}).get("pts", [])) if _predictor else None
+    local_pts = len(_predictor.team_stats.get(_predictor.canon(team), {}).get("pts", [])) if _predictor else None
 
     out: Dict = {
         "team": team,

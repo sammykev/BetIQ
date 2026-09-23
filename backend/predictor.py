@@ -16,6 +16,8 @@ import warnings
 import os
 import joblib
 
+from team_names import TeamResolver
+
 warnings.filterwarnings("ignore")
 
 MODEL_CACHE_PATH = os.path.join(os.path.dirname(__file__), "data", "model_cache.joblib")
@@ -232,8 +234,22 @@ class LeaguePredictor:
     # Internal helpers
     # ------------------------------------------------------------------ #
 
+    def canon(self, team: str) -> str:
+        """
+        The name this model knows a live team by ("Manchester United FC" →
+        "Man United"). Training uses the CSV names as-is; everything after
+        training (fixtures, live results, lookups) goes through here.
+        """
+        resolver = getattr(self, "_resolver", None)
+        if resolver is None:
+            resolver = self._resolver = TeamResolver(self.team_stats.keys())
+        return resolver.resolve(team)
+
     def _init(self, team: str):
         if team not in self.team_stats:
+            resolver = getattr(self, "_resolver", None)
+            if resolver is not None:
+                resolver.add(team)
             self.team_stats[team] = {
                 "gf": [], "ga": [], "pts": [],
                 "yc": [],           # card weight (yellow + 2*red)
@@ -250,6 +266,8 @@ class LeaguePredictor:
     def _feats(self, home: str, away: str,
                odds_home: float = 0, odds_draw: float = 0, odds_away: float = 0,
                match_date: str = None, league: str = "") -> Dict:
+        if self._ready:
+            home, away = self.canon(home), self.canon(away)
         self._init(home)
         self._init(away)
         hs, as_ = self.team_stats[home], self.team_stats[away]
@@ -373,6 +391,8 @@ class LeaguePredictor:
         match_date: str = None,
         competition: str = "",
     ):
+        if self._ready:
+            home, away = self.canon(home), self.canon(away)
         self._init(home)
         self._init(away)
         # Reject NaN goals — can come from CSV rows with missing scores
@@ -440,6 +460,8 @@ class LeaguePredictor:
         Required: HomeTeam, AwayTeam, Result (H/D/A), FTHG, FTAG
         Optional: B365H, B365D, B365A (odds — massively improve accuracy)
         """
+        self._ready = False       # names are taken as-is while training
+        self._resolver = None
         self.elo = EloSystem()
         self.team_stats = {}
         self._league_home_goals = []

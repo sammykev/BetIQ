@@ -63,6 +63,7 @@ export default function AdminPage() {
   const [health, setHealth]     = useState<any>(null);
   const [users, setUsers]       = useState<any>(null);
   const [popular, setPopular]   = useState<any>(null);
+  const [dataStatus, setDataStatus] = useState<any>(null);
   // Grant/Revoke
   const [grantEmail, setGrantEmail]   = useState("");
   const [grantAction, setGrantAction] = useState<"grant"|"revoke">("grant");
@@ -112,6 +113,7 @@ export default function AdminPage() {
     fetch(`${API}/api/admin/stats?secret=${encodeURIComponent(secret)}`).then(r => r.json()).then(setStats).catch(() => {});
     fetch(`${API}/api/admin/revenue?secret=${encodeURIComponent(secret)}`).then(r => r.json()).then(setRevenue).catch(() => {});
     fetch(`${API}/api/admin/popular?secret=${encodeURIComponent(secret)}`).then(r => r.json()).then(setPopular).catch(() => {});
+    fetch(`${API}/api/admin/data-status?secret=${encodeURIComponent(secret)}`).then(r => r.ok ? r.json() : null).then(setDataStatus).catch(() => {});
     fetch("/api/admin/subscribers").then(r => r.json()).then(setSubs).catch(() => {});
     fetch(`/api/admin/users?secret=${encodeURIComponent(secret)}`).then(r => r.json()).then(setUsers).catch(() => {});
   }, [secret]);
@@ -511,6 +513,47 @@ export default function AdminPage() {
           </>
         )}
       </section>
+
+      {/* ── Training data ── */}
+      {dataStatus?.leagues && (
+        <section className="bg-slate-900 border border-slate-700 rounded-xl p-5 space-y-4">
+          <div className="flex items-center gap-2">
+            <RefreshCw size={15} className="text-sky-400" />
+            <h2 className="text-white font-semibold text-sm">Training data</h2>
+            <span className="text-slate-500 text-xs ml-auto">
+              {dataStatus.last_sync?.at
+                ? `Synced ${new Date(dataStatus.last_sync.at).toLocaleString()}`
+                : "Not synced since the last restart"}
+            </span>
+          </div>
+          <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+            {Object.entries(dataStatus.leagues as Record<string, { latest_match: string }>).map(([div, l]) => {
+              const days = Math.floor((Date.now() - new Date(l.latest_match).getTime()) / 86400000);
+              return (
+                <div key={div} className="bg-slate-800 rounded-lg px-3 py-2">
+                  <p className="text-slate-400 text-[10px] font-bold">{div}</p>
+                  <p className={clsx("text-xs font-semibold", days > 14 ? "text-amber-400" : "text-white")}>{l.latest_match}</p>
+                </div>
+              );
+            })}
+          </div>
+          {dataStatus.last_sync?.report?.failed?.length > 0 && (
+            <p className="text-xs text-red-400">Sync failed: {dataStatus.last_sync.report.failed.join(" · ")}</p>
+          )}
+          <div className="text-xs text-slate-400 space-y-1">
+            <p>
+              {dataStatus.teams_checked} upcoming teams checked · {Object.keys(dataStatus.renamed ?? {}).length} matched
+              to a different training name · {dataStatus.thin_history?.length ?? 0} with under 5 known matches
+            </p>
+            {dataStatus.thin_history?.length > 0 && (
+              <p className="text-slate-500">
+                Little or no history (new club, or a name to add to backend/team_names.py):{" "}
+                {dataStatus.thin_history.map((t: any) => `${t.team} (${t.matches})`).join(", ")}
+              </p>
+            )}
+          </div>
+        </section>
+      )}
 
       {/* ── Model backtest ── */}
       <TrackRecord secret={secret} />
