@@ -9,6 +9,12 @@ services:
         sync: false
       - key: FRONTEND_URL
         sync: false
+      # Clerk Frontend API URL (Clerk Dashboard → API keys). Set this to make the
+      # user endpoints verify sign-in tokens — see auth.py.
+      - key: CLERK_ISSUER
+        sync: false
+      - key: CLERK_AUTHORIZED_PARTIES
+        sync: false
     disk:
       name: csv-data
       mountPath: /data

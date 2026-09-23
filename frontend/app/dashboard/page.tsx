@@ -1,18 +1,19 @@
 "use client";
 
 import { useUser } from "@clerk/nextjs";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import clsx from "clsx";
 import {
   Star, Ticket, BarChart2, User, Link2, Trophy,
   TrendingUp, TrendingDown, Minus, Plus, Check,
-  Copy, Crown, RefreshCw, Loader2, Share2,
+  Copy, Crown, RefreshCw, Loader2, Share2, Trash2, Undo2,
 } from "lucide-react";
 import { MatchCard } from "@/components/MatchCard";
 import { AppShell } from "@/components/shell/AppShell";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { PREMIUM_PRICE_LABEL } from "@/lib/pricing";
+import { useAuthedFetch } from "@/lib/useAuthedFetch";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
 
@@ -38,9 +39,9 @@ interface Stats {
 }
 
 /** GET a JSON endpoint; anything that isn't a 2xx JSON body comes back as null. */
-async function getJson(url: string): Promise<unknown> {
+async function getJson(doFetch: (url: string) => Promise<Response>, url: string): Promise<unknown> {
   try {
-    const r = await fetch(url);
+    const r = await doFetch(url);
     if (!r.ok) return null;
     return await r.json();
   } catch {
@@ -81,7 +82,10 @@ export default function DashboardPage() {
   const [bets,   setBets]   = useState<Bet[]>([]);
   const [codes,  setCodes]  = useState<Code[]>([]);
   const [refStats, setRefStats] = useState<{ code: string; count: number; link: string } | null>(null);
-  const [leaderboard, setLeaderboard] = useState<{ uid: string; wins: number }[]>([]);
+  // `name`/`you` from the current API; `uid` from the pre-auth API during a rollout
+  const [leaderboard, setLeaderboard] = useState<{ name?: string; you?: boolean; uid?: string; wins: number }[]>([]);
+  const [removed, setRemoved] = useState<{ pred: any; index: number } | null>(null);
+  const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [betForm, setBetForm] = useState({ home: "", away: "", tip: "", stake: "", odds: "", result: "won" as "won"|"lost"|"void" });
   const [betLoading, setBetLoading] = useState(false);
@@ -90,18 +94,20 @@ export default function DashboardPage() {
   const [loadingTab, setLoadingTab] = useState(false);
 
   const uid = user?.id ?? "";
+  const authFetch = useAuthedFetch();
 
   const fetchAll = useCallback(async () => {
     if (!uid) return;
     setLoadingTab(true);
     try {
+      const q = `uid=${encodeURIComponent(uid)}`;
       const [s, sv, b, c, ref, lb] = await Promise.all([
-        getJson(`${API}/api/user/stats?uid=${uid}`),
-        getJson(`${API}/api/user/saves?uid=${uid}`),
-        getJson(`${API}/api/user/bets?uid=${uid}`),
-        getJson(`${API}/api/user/codes?uid=${uid}`),
-        getJson(`${API}/api/referral/stats?uid=${uid}`),
-        getJson(`${API}/api/leaderboard`),
+        getJson(authFetch, `${API}/api/user/stats?${q}`),
+        getJson(authFetch, `${API}/api/user/saves?${q}`),
+        getJson(authFetch, `${API}/api/user/bets?${q}`),
+        getJson(authFetch, `${API}/api/user/codes?${q}`),
+        getJson(authFetch, `${API}/api/referral/stats?${q}`),
+        getJson(authFetch, `${API}/api/leaderboard?${q}`),
       ]);
       // Offline / error replies arrive as objects like {"error": "offline"} —
       // only accept the shapes each view actually renders.
@@ -114,7 +120,7 @@ export default function DashboardPage() {
     } finally {
       setLoadingTab(false);
     }
-  }, [uid]);
+  }, [uid, authFetch]);
 
   useEffect(() => {
     if (isLoaded && !user) router.push("/");
@@ -129,7 +135,7 @@ export default function DashboardPage() {
       ? parseFloat(betForm.stake) * parseFloat(betForm.odds || "1")
       : betForm.result === "void" ? parseFloat(betForm.stake) : 0;
     try {
-      await fetch(`${API}/api/user/bets`, {
+      await authFetch(`${API}/api/user/bets`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ uid, bet: { ...betForm, stake: parseFloat(betForm.stake), odds: parseFloat(betForm.odds || "1"), payout } }),
@@ -139,6 +145,39 @@ export default function DashboardPage() {
     } catch { /* silently fail */ }
     finally { setBetLoading(false); }
   };
+
+  const removeSave = async (pred: any, index: number) => {
+    setSaves(prev => prev.filter((_, i) => i !== index));
+    setRemoved({ pred, index });
+    if (undoTimer.current) clearTimeout(undoTimer.current);
+    undoTimer.current = setTimeout(() => setRemoved(null), 5000);
+    const q = new URLSearchParams({ home: pred.home, away: pred.away, date: pred.date ?? "", uid });
+    try {
+      const res = await authFetch(`${API}/api/user/saves?${q}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(String(res.status));
+    } catch {
+      // Put it back where it was if the server didn't take the delete
+      setSaves(prev => [...prev.slice(0, index), pred, ...prev.slice(index)]);
+      setRemoved(null);
+    }
+  };
+
+  const undoRemove = async () => {
+    if (!removed) return;
+    const { pred, index } = removed;
+    if (undoTimer.current) clearTimeout(undoTimer.current);
+    setRemoved(null);
+    setSaves(prev => [...prev.slice(0, index), pred, ...prev.slice(index)]);
+    try {
+      await authFetch(`${API}/api/user/saves`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ uid, prediction: pred, saved: true }),
+      });
+    } catch { /* the next refresh shows the true state */ }
+  };
+
+  useEffect(() => () => { if (undoTimer.current) clearTimeout(undoTimer.current); }, []);
 
   const copyRef = () => {
     if (!refStats) return;
@@ -274,15 +313,16 @@ export default function DashboardPage() {
                 ? <p className="text-n-400 text-sm py-2">No entries yet. Log your winning bets to appear here.</p>
                 : <ol className="divide-y divide-n-800/70">
                     {leaderboard.slice(0, 10).map((e, i) => {
-                      const you = e.uid === uid;
+                      const you = e.you ?? e.uid === uid;
+                      const name = e.name ?? `#${(e.uid ?? "").slice(-6)}`;
                       return (
-                        <li key={e.uid} className={clsx("flex items-center gap-3 py-2.5", you && "bg-brand-400/[0.07] -mx-2 px-2 rounded-lg")}>
+                        <li key={`${name}-${i}`} className={clsx("flex items-center gap-3 py-2.5", you && "bg-brand-400/[0.07] -mx-2 px-2 rounded-lg")}>
                           <span className={clsx("font-display font-extrabold text-xl w-6 text-center tnum",
                             i === 0 ? "text-warn" : i === 1 ? "text-n-300" : i === 2 ? "text-orange-600 dark:text-orange-400" : "text-n-500")}>
                             {i + 1}
                           </span>
                           <span className={clsx("flex-1 text-sm", you ? "text-n-0 font-semibold" : "text-n-400 font-mono text-xs")}>
-                            {you ? "You" : `#${e.uid.slice(-6)}`}
+                            {you ? "You" : name}
                           </span>
                           <span className="font-display font-bold text-lg text-accent tnum">{e.wins}<span className="text-xs text-n-400 ml-0.5">W</span></span>
                         </li>
@@ -306,6 +346,14 @@ export default function DashboardPage() {
                     <span className="font-display font-bold text-sm uppercase text-accent bg-brand-400/10 border border-brand-400/30 px-2 py-0.5 rounded-md">{p.tip_1x2}</span>
                     <span className="font-mono text-[11px] text-n-500">{Math.round(p.goals_confidence * 100)}% conf.</span>
                   </div>
+                  <button
+                    onClick={e => { e.stopPropagation(); removeSave(p, i); }}
+                    aria-label={`Remove ${p.home} vs ${p.away} from saved`}
+                    title="Remove from saved"
+                    className="ml-1 w-9 h-9 inline-flex items-center justify-center rounded-lg text-n-500 hover:text-danger hover:bg-danger/10 transition-colors"
+                  >
+                    <Trash2 size={16} />
+                  </button>
                 </MatchCard>
               ))}
           </div>
@@ -491,6 +539,18 @@ export default function DashboardPage() {
           </div>
         )}
       </div>
+
+      {/* Undo for a removed saved pick */}
+      {removed && (
+        <div role="status" className="fixed bottom-20 lg:bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-ink text-white rounded-xl shadow-pop pl-4 pr-2 py-2 animate-slide-up max-w-[calc(100vw-2rem)]">
+          <span className="text-sm truncate">
+            Removed <span className="font-semibold">{removed.pred.home} vs {removed.pred.away}</span>
+          </span>
+          <button onClick={undoRemove} className="inline-flex items-center gap-1.5 text-sm font-bold text-brand-400 hover:text-brand-300 px-2 py-1 rounded-lg shrink-0">
+            <Undo2 size={14} /> Undo
+          </button>
+        </div>
+      )}
     </AppShell>
   );
 }

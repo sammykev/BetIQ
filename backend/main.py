@@ -16,6 +16,7 @@ from typing import List, Dict, Any, Optional
 import numpy as np
 import pandas as pd
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Request
+from auth import auth_enforced, optional_user, require_user
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
@@ -59,7 +60,7 @@ app = FastAPI(title="Sport Bet Predictions API", version="2.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[FRONTEND_URL, "http://localhost:3000", "*"],
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
 )
 
@@ -2696,38 +2697,59 @@ def _ukey(uid: str, suffix: str) -> str:
 
 
 @app.get("/api/user/saves")
-async def get_saves(uid: str):
+async def get_saves(request: Request, uid: str = ""):
+    uid = await require_user(request, uid)
     r = _get_redis()
     if not r: return []
     raw = r.get(_ukey(uid, "saves"))
     return json.loads(raw) if raw else []
 
 
-@app.post("/api/user/saves")
-async def toggle_save(body: Dict[str, Any]):
-    uid = body.get("uid", "")
-    pred = body.get("prediction", {})
-    if not uid or not pred: raise HTTPException(status_code=400, detail="Missing uid or prediction")
+def _save_key(p: Dict[str, Any]) -> str:
+    return f"{p.get('home')}:{p.get('away')}:{p.get('date')}"
+
+
+def _set_saved(uid: str, pred: Dict[str, Any], want: Optional[bool]) -> Dict[str, Any]:
+    """Save (want=True), remove (False) or toggle (None) one prediction."""
     r = _get_redis()
     if not r: raise HTTPException(status_code=503, detail="No Redis")
     key = _ukey(uid, "saves")
     raw = r.get(key)
     saves: List[Dict] = json.loads(raw) if raw else []
-    match_key = f"{pred.get('home')}:{pred.get('away')}:{pred.get('date')}"
-    existing = next((i for i, s in enumerate(saves) if f"{s.get('home')}:{s.get('away')}:{s.get('date')}" == match_key), None)
-    if existing is not None:
-        saves.pop(existing)
-        saved = False
-    else:
+    match_key = _save_key(pred)
+    existing = next((i for i, s in enumerate(saves) if _save_key(s) == match_key), None)
+    if want is None:
+        want = existing is None
+    if want and existing is None:
         saves.insert(0, pred)
         saves = saves[:50]
-        saved = True
+    elif not want and existing is not None:
+        saves.pop(existing)
     r.set(key, json.dumps(saves), ex=365 * 86400)
-    return {"saved": saved, "count": len(saves)}
+    return {"saved": want, "count": len(saves)}
+
+
+@app.post("/api/user/saves")
+async def toggle_save(request: Request, body: Dict[str, Any]):
+    """Body: {prediction, saved?}. `saved` true/false sets the state explicitly
+    (idempotent — safe to retry, and what Undo uses); omitted, it toggles."""
+    uid = await require_user(request, body.get("uid", ""))
+    pred = body.get("prediction", {})
+    if not pred: raise HTTPException(status_code=400, detail="Missing prediction")
+    want = body.get("saved")
+    return _set_saved(uid, pred, want if isinstance(want, bool) else None)
+
+
+@app.delete("/api/user/saves")
+async def delete_save(request: Request, home: str, away: str, date: str = "", uid: str = ""):
+    """Remove one saved pick. Idempotent: removing something not saved is a no-op."""
+    uid = await require_user(request, uid)
+    return _set_saved(uid, {"home": home, "away": away, "date": date}, False)
 
 
 @app.get("/api/user/bets")
-async def get_bets(uid: str):
+async def get_bets(request: Request, uid: str = ""):
+    uid = await require_user(request, uid)
     r = _get_redis()
     if not r: return []
     raw = r.get(_ukey(uid, "bets"))
@@ -2735,10 +2757,10 @@ async def get_bets(uid: str):
 
 
 @app.post("/api/user/bets")
-async def log_bet(body: Dict[str, Any]):
-    uid = body.get("uid", "")
+async def log_bet(request: Request, body: Dict[str, Any]):
+    uid = await require_user(request, body.get("uid", ""))
     bet = body.get("bet", {})
-    if not uid or not bet: raise HTTPException(status_code=400, detail="Missing uid or bet")
+    if not bet: raise HTTPException(status_code=400, detail="Missing bet")
     r = _get_redis()
     if not r: raise HTTPException(status_code=503, detail="No Redis")
     key = _ukey(uid, "bets")
@@ -2755,7 +2777,8 @@ async def log_bet(body: Dict[str, Any]):
 
 
 @app.get("/api/user/codes")
-async def get_codes(uid: str):
+async def get_codes(request: Request, uid: str = ""):
+    uid = await require_user(request, uid)
     r = _get_redis()
     if not r: return []
     raw = r.get(_ukey(uid, "codes"))
@@ -2763,10 +2786,10 @@ async def get_codes(uid: str):
 
 
 @app.post("/api/user/codes")
-async def save_code(body: Dict[str, Any]):
-    uid = body.get("uid", "")
+async def save_code(request: Request, body: Dict[str, Any]):
+    uid = await require_user(request, body.get("uid", ""))
     entry = body.get("entry", {})
-    if not uid or not entry: raise HTTPException(status_code=400, detail="Missing uid or entry")
+    if not entry: raise HTTPException(status_code=400, detail="Missing entry")
     r = _get_redis()
     if not r: raise HTTPException(status_code=503, detail="No Redis")
     key = _ukey(uid, "codes")
@@ -2780,7 +2803,8 @@ async def save_code(body: Dict[str, Any]):
 
 
 @app.get("/api/user/stats")
-async def get_user_stats(uid: str):
+async def get_user_stats(request: Request, uid: str = ""):
+    uid = await require_user(request, uid)
     r = _get_redis()
     if not r: return {}
     bets_raw  = r.get(_ukey(uid, "bets"))
@@ -2819,7 +2843,8 @@ async def get_user_stats(uid: str):
 
 
 @app.get("/api/user/prefs")
-async def get_prefs(uid: str):
+async def get_prefs(request: Request, uid: str = ""):
+    uid = await require_user(request, uid)
     r = _get_redis()
     if not r: return {}
     raw = r.get(_ukey(uid, "prefs"))
@@ -2827,9 +2852,8 @@ async def get_prefs(uid: str):
 
 
 @app.post("/api/user/prefs")
-async def set_prefs(body: Dict[str, Any]):
-    uid = body.get("uid", "")
-    if not uid: raise HTTPException(status_code=400, detail="Missing uid")
+async def set_prefs(request: Request, body: Dict[str, Any]):
+    uid = await require_user(request, body.get("uid", ""))
     r = _get_redis()
     if not r: raise HTTPException(status_code=503, detail="No Redis")
     prefs = {k: v for k, v in body.items() if k != "uid"}
@@ -3308,12 +3332,16 @@ async def get_value_bets():
 
 
 @app.get("/api/leaderboard")
-async def get_leaderboard():
+async def get_leaderboard(request: Request, uid: str = ""):
+    """Top predictors. Public, so it never returns user ids (those are what the
+    user endpoints key on); `you` marks the caller's own row when signed in."""
     r = _get_redis()
     if not r: return []
+    # Verified user when auth is enforced; the legacy client uid otherwise
+    me = await optional_user(request) if auth_enforced() else (uid or None)
     try:
         entries = r.zrevrange("betiq:leaderboard", 0, 19, withscores=True)
-        return [{"uid": uid, "wins": int(score)} for uid, score in entries]
+        return [{"name": f"#{uid[-6:]}", "wins": int(score), "you": uid == me} for uid, score in entries]
     except Exception:
         return []
 
@@ -3358,7 +3386,8 @@ async def get_popular(secret: str = ""):
 
 
 @app.get("/api/referral/stats")
-async def get_referral_stats(uid: str):
+async def get_referral_stats(request: Request, uid: str = ""):
+    uid = await require_user(request, uid)
     r = _get_redis()
     if not r: return {"count": 0}
     code = f"ref_{uid[-8:]}"

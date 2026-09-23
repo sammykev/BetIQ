@@ -5,6 +5,7 @@ import { useUser } from "@clerk/nextjs";
 import clsx from "clsx";
 import { X, Send, MessageCircle, Loader2, Copy, Check, Ticket, ChevronDown, ClipboardList } from "lucide-react";
 import type { Prediction } from "@/lib/api";
+import { useAuthedFetch } from "@/lib/useAuthedFetch";
 
 interface Props {
   predictions: Prediction[];
@@ -181,6 +182,7 @@ function AssistantBubble({
   const displayText = stripSelections(content);
   const [booking, setBooking] = useState<BookingResult | null>(null);
   const [loading, setLoading] = useState(false);
+  const authFetch = useAuthedFetch();
 
   const generateCode = async () => {
     if (!selections) return;
@@ -204,7 +206,7 @@ function AssistantBubble({
       setBooking(sanitised);
       // Auto-save to user's accumulator history
       if (sanitised.code && userId) {
-        fetch(`${API_URL}/api/user/codes`, {
+        authFetch(`${API_URL}/api/user/codes`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

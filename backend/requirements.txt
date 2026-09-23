@@ -13,6 +13,7 @@ redis>=5.0.0
 groq>=0.9.0
 joblib>=1.3.0
 pywebpush>=2.0.0
+PyJWT[crypto]>=2.8.0  # verifies Clerk session tokens (auth.py)
 
 # Testing
 pytest>=8.0.0

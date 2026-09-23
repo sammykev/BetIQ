@@ -142,6 +142,8 @@ interface Props {
   onClick?: () => void;
   /** False when the card sits under a day heading — show only the time. */
   showDay?: boolean;
+  /** Called after the star saves/unsaves this pick. */
+  onSaveToggle?: (key: string, saved: boolean) => void;
 }
 
 /** Crest or flag avatar with a monogram fallback. */
@@ -256,7 +258,7 @@ function PickTicket({ pick, market, confidence, edge }: {
   );
 }
 
-export function PredictionCard({ prediction: p, savedKeys, onClick, showDay = true }: Props) {
+export function PredictionCard({ prediction: p, savedKeys, onClick, showDay = true, onSaveToggle }: Props) {
   const emptySet = new Set<string>();
   const gconf = Math.round(p.goals_confidence * 100);
 
@@ -289,7 +291,7 @@ export function PredictionCard({ prediction: p, savedKeys, onClick, showDay = tr
           <span className="font-mono text-[11px] text-n-200 uppercase">
             {showDay ? kickoff(p.date, p.time) : p.time && p.time !== "TBD" ? localTime(p.date, p.time) : "TBD"}
           </span>
-          <SaveButton prediction={p} savedKeys={savedKeys ?? emptySet} size={14} />
+          <SaveButton prediction={p} savedKeys={savedKeys ?? emptySet} onToggle={onSaveToggle} size={14} />
           <button
             onClick={e => { e.stopPropagation(); shareMatch(p); }}
             className="text-n-500 hover:text-n-0 transition-colors"

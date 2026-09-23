@@ -7,6 +7,8 @@ import { LeagueTabs } from "@/components/LeagueTabs";
 import { triggerRefresh } from "@/lib/api";
 import type { Prediction, League } from "@/lib/api";
 import { dayLabel } from "@/lib/matchTime";
+import { predKey } from "@/components/SaveButton";
+import { useAuthedFetch } from "@/lib/useAuthedFetch";
 import {
   RefreshCw, TrendingUp, AlertTriangle, CalendarDays, Percent, Bell,
   Brain, BarChart3, Bot, Ticket, Globe, ArrowRight, SearchX, ChevronDown,
@@ -238,11 +240,12 @@ export default function HomePage() {
   const [sportLoading, setSportLoading] = useState(false);
   const [selectedSportMatch, setSelectedSportMatch] = useState<SportPrediction | null>(null);
   const [showPaywall, setShowPaywall] = useState(false);
-  const [savedKeys] = useState<Set<string>>(new Set());
+  const [savedKeys, setSavedKeys] = useState<Set<string>>(new Set());
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushSupported, setPushSupported] = useState(false);
 
   const { user, isLoaded } = useUser();
+  const authFetch = useAuthedFetch();
   const [paywallActive, setPaywallActive] = useState(true);
   const [maintenanceMode, setMaintenanceMode] = useState(false);
   const [siteBanner, setSiteBanner] = useState("");
@@ -296,6 +299,27 @@ export default function HomePage() {
     setLoading(true);
     load();
   }, [load]);
+
+  // The user's saved picks, so each card's star shows the right state
+  const userId = user?.id;
+  useEffect(() => {
+    if (!userId) return;
+    const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
+    authFetch(`${API}/api/user/saves?uid=${encodeURIComponent(userId)}`)
+      .then(r => (r.ok ? r.json() : []))
+      .then((d: unknown) => {
+        if (Array.isArray(d)) setSavedKeys(new Set(d.map(predKey)));
+      })
+      .catch(() => {});
+  }, [userId, authFetch]);
+
+  const onSaveToggle = useCallback((key: string, saved: boolean) => {
+    setSavedKeys(prev => {
+      const next = new Set(prev);
+      if (saved) next.add(key); else next.delete(key);
+      return next;
+    });
+  }, []);
 
   // Load sport predictions when sport tab changes (non-football)
   useEffect(() => {
@@ -674,6 +698,7 @@ export default function HomePage() {
                         key={`${p.home}-${p.away}-${p.date}-${i}`}
                         prediction={p}
                         savedKeys={savedKeys}
+                        onSaveToggle={onSaveToggle}
                         showDay={!label}
                         onClick={() => openMatch(p)}
                       />

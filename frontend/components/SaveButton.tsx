@@ -2,9 +2,10 @@
 
 import { useUser } from "@clerk/nextjs";
 import { Star } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import clsx from "clsx";
 import type { Prediction } from "@/lib/api";
+import { useAuthedFetch } from "@/lib/useAuthedFetch";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
 
@@ -21,9 +22,15 @@ export function predKey(p: { home: string; away: string; date: string }) {
 
 export function SaveButton({ prediction, savedKeys, onToggle, size = 14 }: Props) {
   const { user } = useUser();
+  const authFetch = useAuthedFetch();
   const key = predKey(prediction);
-  const [saved, setSaved] = useState(() => savedKeys.has(key));
+  // Depend on the boolean, not the Set: parents may pass a new Set each render
+  const savedInParent = savedKeys.has(key);
+  const [saved, setSaved] = useState(savedInParent);
   const [loading, setLoading] = useState(false);
+
+  // The parent's saved list usually arrives after first render
+  useEffect(() => { setSaved(savedInParent); }, [savedInParent]);
 
   const toggle = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -32,11 +39,13 @@ export function SaveButton({ prediction, savedKeys, onToggle, size = 14 }: Props
     const next = !saved;
     setSaved(next); // optimistic
     try {
-      const res = await fetch(`${API}/api/user/saves`, {
+      // Explicit target state (not a toggle), so a retry can't flip it back
+      const res = await authFetch(`${API}/api/user/saves`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ uid: user.id, prediction }),
+        body: JSON.stringify({ uid: user.id, prediction, saved: next }),
       });
+      if (!res.ok) throw new Error(String(res.status));
       const data = await res.json();
       setSaved(data.saved);
       onToggle?.(key, data.saved);
@@ -52,8 +61,10 @@ export function SaveButton({ prediction, savedKeys, onToggle, size = 14 }: Props
   return (
     <button onClick={toggle} disabled={loading}
       title={saved ? "Remove from saved" : "Save pick"}
+      aria-label={saved ? `Remove ${prediction.home} vs ${prediction.away} from saved` : `Save ${prediction.home} vs ${prediction.away}`}
+      aria-pressed={saved}
       className={clsx("transition-all disabled:opacity-50",
-        saved ? "text-yellow-400" : "text-slate-500 hover:text-yellow-400")}>
+        saved ? "text-amber-500 dark:text-yellow-400" : "text-n-500 hover:text-amber-500 dark:hover:text-yellow-400")}>
       <Star size={size} fill={saved ? "currentColor" : "none"} />
     </button>
   );
