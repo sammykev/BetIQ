@@ -151,6 +151,65 @@ FEATURE_COLS = [
 ]
 
 
+def _rounded_probs(p_h: float, p_d: float, p_a: float, p_o15: float, p_o25: float) -> Dict:
+    return {
+        "p_home": round(p_h, 3), "p_draw": round(p_d, 3), "p_away": round(p_a, 3),
+        "p_over15": round(p_o15, 3), "p_over25": round(p_o25, 3),
+    }
+
+
+def pick_tips(p_h: float, p_d: float, p_a: float, p_o15: float, p_o25: float) -> Dict:
+    """
+    The 1X2 / double-chance tip and the goals tip for a set of probabilities.
+    Shared by live predictions and the backtest so both judge the same picks.
+    """
+    p_u25 = 1.0 - p_o25
+
+    # 1x2 tip
+    if p_h > 0.55:
+        tip1x2, code = "Home Win", "1"
+    elif p_a > 0.55:
+        tip1x2, code = "Away Win", "2"
+    elif p_d > 0.33:
+        tip1x2, code = "Draw", "X"
+    elif p_h + p_d > 0.75:
+        tip1x2, code = "Home or Draw", "1X"
+    elif p_a + p_d > 0.75:
+        tip1x2, code = "Away or Draw", "2X"
+    else:
+        tip1x2, code = "Skip", "?"
+
+    # Probability of the 1X2 / double-chance tip itself. goals_confidence
+    # below is the goals tip's probability — a different market.
+    tip_conf = {
+        "1": p_h, "X": p_d, "2": p_a,
+        "1X": p_h + p_d, "2X": p_a + p_d,
+    }.get(code)
+
+    # Goals tip
+    if p_o15 > 0.82:
+        tip_g, gtype, gconf = "Over 1.5 Goals", "Banker", p_o15
+    elif p_o25 > 0.58:
+        tip_g, gtype, gconf = "Over 2.0 (Asian)", "Asian", p_o25
+    elif p_o15 > 0.68:
+        tip_g, gtype, gconf = "Over 1.0 (Asian)", "Asian", p_o15
+    elif p_u25 > 0.62:
+        tip_g, gtype, gconf = "Under 3.0 (Asian)", "Asian", p_u25
+    elif p_h > 0.60:
+        tip_g, gtype, gconf = "Over 1.0 (Asian)", "Asian", p_o15
+    else:
+        tip_g, gtype, gconf = "Skip", "Skip", 0.0
+
+    return {
+        "tip_1x2": tip1x2,
+        "tip_code": code,
+        "tip_confidence": round(tip_conf, 3) if tip_conf is not None else None,
+        "tip_goals": tip_g,
+        "goals_type": gtype,
+        "goals_confidence": round(gconf, 3),
+    }
+
+
 class LeaguePredictor:
     """
     Per-league predictor. Call train() once, then predict_match() for each fixture.
@@ -568,62 +627,17 @@ class LeaguePredictor:
             return None
         f = self._feats(home, away, odds_home, odds_draw, odds_away,
                         match_date=match_date, league=league)
-        X = pd.DataFrame([f])[FEATURE_COLS]
+        probs = self.predict_proba(f)
+        return {**_rounded_probs(*probs), **pick_tips(*probs)}
 
+    def predict_proba(self, feats: Dict) -> tuple:
+        """(p_home, p_draw, p_away, p_over15, p_over25) for one feature row."""
+        X = pd.DataFrame([feats])[FEATURE_COLS]
         wp = self.models["win"].predict_proba(X)[0]
         p_a, p_d, p_h = float(wp[0]), float(wp[1]), float(wp[2])
         p_o15 = float(self.models["o15"].predict_proba(X)[0][1])
         p_o25 = float(self.models["o25"].predict_proba(X)[0][1])
-        p_u25 = 1.0 - p_o25
-
-        # 1x2 tip
-        if p_h > 0.55:
-            tip1x2, code = "Home Win", "1"
-        elif p_a > 0.55:
-            tip1x2, code = "Away Win", "2"
-        elif p_d > 0.33:
-            tip1x2, code = "Draw", "X"
-        elif p_h + p_d > 0.75:
-            tip1x2, code = "Home or Draw", "1X"
-        elif p_a + p_d > 0.75:
-            tip1x2, code = "Away or Draw", "2X"
-        else:
-            tip1x2, code = "Skip", "?"
-
-        # Probability of the 1X2 / double-chance tip itself. goals_confidence
-        # below is the goals tip's probability — a different market.
-        tip_conf = {
-            "1": p_h, "X": p_d, "2": p_a,
-            "1X": p_h + p_d, "2X": p_a + p_d,
-        }.get(code)
-
-        # Goals tip
-        if p_o15 > 0.82:
-            tip_g, gtype, gconf = "Over 1.5 Goals", "Banker", p_o15
-        elif p_o25 > 0.58:
-            tip_g, gtype, gconf = "Over 2.0 (Asian)", "Asian", p_o25
-        elif p_o15 > 0.68:
-            tip_g, gtype, gconf = "Over 1.0 (Asian)", "Asian", p_o15
-        elif p_u25 > 0.62:
-            tip_g, gtype, gconf = "Under 3.0 (Asian)", "Asian", p_u25
-        elif p_h > 0.60:
-            tip_g, gtype, gconf = "Over 1.0 (Asian)", "Asian", p_o15
-        else:
-            tip_g, gtype, gconf = "Skip", "Skip", 0.0
-
-        return {
-            "p_home": round(p_h, 3),
-            "p_draw": round(p_d, 3),
-            "p_away": round(p_a, 3),
-            "p_over15": round(p_o15, 3),
-            "p_over25": round(p_o25, 3),
-            "tip_1x2": tip1x2,
-            "tip_code": code,
-            "tip_confidence": round(tip_conf, 3) if tip_conf is not None else None,
-            "tip_goals": tip_g,
-            "goals_type": gtype,
-            "goals_confidence": round(gconf, 3),
-        }
+        return p_h, p_d, p_a, p_o15, p_o25
 
     def predict_match_full(self, home: str, away: str,
                            odds_home: float = 0, odds_draw: float = 0,

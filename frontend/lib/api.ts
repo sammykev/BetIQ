@@ -172,6 +172,40 @@ export async function fetchCalendar(month: string): Promise<Record<string, Calen
   return res.json();
 }
 
+// ── Backtest (backend/backtest.py → /api/model/metrics) ──────────────────────
+
+export interface ProbScores { log_loss: number | null; brier: number | null; accuracy?: number | null }
+export interface PickTierRow { kind: "single" | "double"; tier: "strong" | "lean" | "weak" | "all"; n: number; won: number; hit_rate: number | null; avg_prob: number | null }
+export interface GoalsTipRow { tip?: string; tier?: string; n: number; won: number; lost: number; push: number; hit_rate: number | null; avg_prob: number | null }
+export interface CalibrationBucket { from: number; to: number; n: number; predicted: number; actual: number }
+export interface FlatStake { bets: number; won: number; profit: number; roi: number | null }
+
+export interface ModelMetrics {
+  available: true;
+  generated_at: string;
+  period: { from: string; to: string } | null;
+  matches: number;
+  leagues: string[];
+  method: string;
+  match_result: { n: number; model: ProbScores; market: ProbScores };
+  over25: { n: number; model: ProbScores; market: ProbScores };
+  calibration: CalibrationBucket[];
+  picks: { by_tier: PickTierRow[]; by_code: (Omit<PickTierRow, "kind" | "tier"> & { code: string })[] };
+  goals_tips: { by_tip: GoalsTipRow[]; by_tier: GoalsTipRow[]; all: GoalsTipRow };
+  betting: { all_straight_tips: FlatStake; value_bets: FlatStake; edge_threshold: number };
+}
+
+export async function fetchModelMetrics(): Promise<ModelMetrics | null> {
+  try {
+    const res = await fetch(`${API_URL}/api/model/metrics`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data && data.available === true && Array.isArray(data.calibration) ? data : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchHistory(date: string): Promise<HistoryPrediction[]> {
   const res = await fetch(`${API_URL}/api/history?date=${date}`, { cache: "no-store" });
   if (!res.ok) return [];

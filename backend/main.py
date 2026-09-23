@@ -481,14 +481,15 @@ def _load_football_data_csvs() -> pd.DataFrame:
             df["FTAG"] = pd.to_numeric(df["FTAG"], errors="coerce")
 
             # Parse odds columns
-            for col in ["B365H", "B365D", "B365A"]:
+            for col in ["B365H", "B365D", "B365A", "B365>2.5", "B365<2.5"]:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors="coerce")
 
             df["league"] = league_code
 
             keep = ["Date", "HomeTeam", "AwayTeam", "Result", "FTHG", "FTAG",
-                    "B365H", "B365D", "B365A", "HY", "AY", "HR", "AR", "league"]
+                    "B365H", "B365D", "B365A", "B365>2.5", "B365<2.5",  # O/U odds: backtest baseline
+                    "HY", "AY", "HR", "AR", "league"]
             df = df[[c for c in keep if c in df.columns]]
             dfs.append(df)
         except Exception as e:
@@ -1692,6 +1693,17 @@ def _archive_past_predictions():
                 print(f"[History] Redis error for {d}: {e}")
     settled_count = sum(1 for preds in by_date.values() if any(p.get("outcome") != "pending" for p in preds))
     print(f"[History] Archived {len(past)} predictions across {len(by_date)} dates ({settled_count} dates with results).")
+
+
+@app.get("/api/model/metrics")
+async def model_metrics():
+    """Walk-forward backtest results (generated offline by backtest.py)."""
+    from backtest import METRICS_PATH
+    try:
+        with open(METRICS_PATH) as f:
+            return {"available": True, **json.load(f)}
+    except (OSError, ValueError):
+        return {"available": False}
 
 
 def _read_history(r, d: str) -> List[Dict]:

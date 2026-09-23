@@ -1,0 +1,441 @@
+{
+ "generated_at": "2026-09-23T06:28:07Z",
+ "period": {
+  "from": "2024-08-02",
+  "to": "2025-05-25"
+ },
+ "matches": 3222,
+ "leagues": [
+  "BL1",
+  "BL2",
+  "DED",
+  "ELC",
+  "FL1",
+  "PD",
+  "PL",
+  "PPL",
+  "SA"
+ ],
+ "method": "Walk-forward: retrained monthly on all earlier matches, predicting each month unseen. Bookmaker = Bet365 odds with the margin removed.",
+ "match_result": {
+  "n": 3222,
+  "model": {
+   "log_loss": 0.9869,
+   "brier": 0.5893,
+   "accuracy": 0.5164
+  },
+  "market": {
+   "log_loss": 0.9804,
+   "brier": 0.5846,
+   "accuracy": 0.5186
+  }
+ },
+ "over25": {
+  "n": 3222,
+  "model": {
+   "log_loss": 0.6834,
+   "brier": 0.2451
+  },
+  "market": {
+   "log_loss": 0.6697,
+   "brier": 0.2385
+  }
+ },
+ "calibration": [
+  {
+   "from": 0.0,
+   "to": 0.1,
+   "n": 424,
+   "predicted": 0.0636,
+   "actual": 0.0684
+  },
+  {
+   "from": 0.1,
+   "to": 0.2,
+   "n": 1035,
+   "predicted": 0.1587,
+   "actual": 0.1527
+  },
+  {
+   "from": 0.2,
+   "to": 0.3,
+   "n": 3941,
+   "predicted": 0.2568,
+   "actual": 0.2644
+  },
+  {
+   "from": 0.3,
+   "to": 0.4,
+   "n": 1510,
+   "predicted": 0.3432,
+   "actual": 0.3338
+  },
+  {
+   "from": 0.4,
+   "to": 0.5,
+   "n": 1251,
+   "predicted": 0.4482,
+   "actual": 0.4309
+  },
+  {
+   "from": 0.5,
+   "to": 0.6,
+   "n": 776,
+   "predicted": 0.5472,
+   "actual": 0.5619
+  },
+  {
+   "from": 0.6,
+   "to": 0.7,
+   "n": 410,
+   "predicted": 0.6436,
+   "actual": 0.6341
+  },
+  {
+   "from": 0.7,
+   "to": 0.8,
+   "n": 204,
+   "predicted": 0.7382,
+   "actual": 0.7598
+  },
+  {
+   "from": 0.8,
+   "to": 0.9,
+   "n": 77,
+   "predicted": 0.8467,
+   "actual": 0.8182
+  },
+  {
+   "from": 0.9,
+   "to": 1.0,
+   "n": 38,
+   "predicted": 0.9327,
+   "actual": 0.9474
+  }
+ ],
+ "picks": {
+  "by_tier": [
+   {
+    "kind": "single",
+    "tier": "strong",
+    "n": 733,
+    "won": 517,
+    "hit_rate": 0.7053,
+    "avg_prob": 0.706
+   },
+   {
+    "kind": "single",
+    "tier": "lean",
+    "n": 351,
+    "won": 210,
+    "hit_rate": 0.5983,
+    "avg_prob": 0.5739
+   },
+   {
+    "kind": "single",
+    "tier": "weak",
+    "n": 47,
+    "won": 8,
+    "hit_rate": 0.1702,
+    "avg_prob": 0.3462
+   },
+   {
+    "kind": "single",
+    "tier": "all",
+    "n": 1131,
+    "won": 735,
+    "hit_rate": 0.6499,
+    "avg_prob": 0.6501
+   },
+   {
+    "kind": "double",
+    "tier": "strong",
+    "n": 119,
+    "won": 97,
+    "hit_rate": 0.8151,
+    "avg_prob": 0.8159
+   },
+   {
+    "kind": "double",
+    "tier": "lean",
+    "n": 521,
+    "won": 415,
+    "hit_rate": 0.7965,
+    "avg_prob": 0.7734
+   },
+   {
+    "kind": "double",
+    "tier": "weak",
+    "n": 0,
+    "won": 0,
+    "hit_rate": null,
+    "avg_prob": null
+   },
+   {
+    "kind": "double",
+    "tier": "all",
+    "n": 640,
+    "won": 512,
+    "hit_rate": 0.8,
+    "avg_prob": 0.7813
+   }
+  ],
+  "by_code": [
+   {
+    "code": "1",
+    "n": 810,
+    "won": 545,
+    "hit_rate": 0.6728,
+    "avg_prob": 0.6696
+   },
+   {
+    "code": "X",
+    "n": 47,
+    "won": 8,
+    "hit_rate": 0.1702,
+    "avg_prob": 0.3462
+   },
+   {
+    "code": "2",
+    "n": 274,
+    "won": 182,
+    "hit_rate": 0.6642,
+    "avg_prob": 0.6445
+   },
+   {
+    "code": "1X",
+    "n": 471,
+    "won": 374,
+    "hit_rate": 0.7941,
+    "avg_prob": 0.7817
+   },
+   {
+    "code": "2X",
+    "n": 169,
+    "won": 138,
+    "hit_rate": 0.8166,
+    "avg_prob": 0.7803
+   }
+  ]
+ },
+ "goals_tips": {
+  "by_tip": [
+   {
+    "tip": "Over 1.0 (Asian)",
+    "n": 1320,
+    "won": 990,
+    "lost": 93,
+    "push": 237,
+    "hit_rate": 0.9141,
+    "avg_prob": 0.7509
+   },
+   {
+    "tip": "Over 1.5 Goals",
+    "n": 1046,
+    "won": 864,
+    "lost": 182,
+    "push": 0,
+    "hit_rate": 0.826,
+    "avg_prob": 0.8654
+   },
+   {
+    "tip": "Over 2.0 (Asian)",
+    "n": 381,
+    "won": 208,
+    "lost": 89,
+    "push": 84,
+    "hit_rate": 0.7003,
+    "avg_prob": 0.6272
+   },
+   {
+    "tip": "Under 3.0 (Asian)",
+    "n": 231,
+    "won": 140,
+    "lost": 37,
+    "push": 54,
+    "hit_rate": 0.791,
+    "avg_prob": 0.6729
+   }
+  ],
+  "by_tier": [
+   {
+    "tier": "strong",
+    "n": 1760,
+    "won": 1402,
+    "lost": 228,
+    "push": 130,
+    "hit_rate": 0.8601,
+    "avg_prob": 0.8321
+   },
+   {
+    "tier": "lean",
+    "n": 1106,
+    "won": 742,
+    "lost": 142,
+    "push": 222,
+    "hit_rate": 0.8394,
+    "avg_prob": 0.6876
+   },
+   {
+    "tier": "weak",
+    "n": 112,
+    "won": 58,
+    "lost": 31,
+    "push": 23,
+    "hit_rate": 0.6517,
+    "avg_prob": 0.5882
+   }
+  ],
+  "all": {
+   "n": 2978,
+   "won": 2202,
+   "lost": 401,
+   "push": 375,
+   "hit_rate": 0.8459,
+   "avg_prob": 0.7693
+  }
+ },
+ "betting": {
+  "all_straight_tips": {
+   "bets": 1131,
+   "won": 735,
+   "profit": -53.12,
+   "roi": -0.047
+  },
+  "value_bets": {
+   "bets": 95,
+   "won": 59,
+   "profit": 2.17,
+   "roi": 0.0228
+  },
+  "edge_threshold": 0.05
+ },
+ "by_league": [
+  {
+   "league": "BL1",
+   "n": 306,
+   "model": {
+    "log_loss": 0.9881,
+    "brier": 0.589,
+    "accuracy": 0.5033
+   },
+   "market": {
+    "log_loss": 0.9883,
+    "brier": 0.5902,
+    "accuracy": 0.5163
+   }
+  },
+  {
+   "league": "BL2",
+   "n": 306,
+   "model": {
+    "log_loss": 1.0632,
+    "brier": 0.6424,
+    "accuracy": 0.4346
+   },
+   "market": {
+    "log_loss": 1.0557,
+    "brier": 0.6373,
+    "accuracy": 0.4379
+   }
+  },
+  {
+   "league": "DED",
+   "n": 306,
+   "model": {
+    "log_loss": 0.9524,
+    "brier": 0.5664,
+    "accuracy": 0.5261
+   },
+   "market": {
+    "log_loss": 0.9494,
+    "brier": 0.5636,
+    "accuracy": 0.5425
+   }
+  },
+  {
+   "league": "ELC",
+   "n": 552,
+   "model": {
+    "log_loss": 1.0315,
+    "brier": 0.6207,
+    "accuracy": 0.4783
+   },
+   "market": {
+    "log_loss": 1.0309,
+    "brier": 0.6199,
+    "accuracy": 0.4801
+   }
+  },
+  {
+   "league": "FL1",
+   "n": 306,
+   "model": {
+    "log_loss": 0.9795,
+    "brier": 0.5798,
+    "accuracy": 0.5392
+   },
+   "market": {
+    "log_loss": 0.9601,
+    "brier": 0.5676,
+    "accuracy": 0.5392
+   }
+  },
+  {
+   "league": "PD",
+   "n": 380,
+   "model": {
+    "log_loss": 0.9706,
+    "brier": 0.5764,
+    "accuracy": 0.5342
+   },
+   "market": {
+    "log_loss": 0.9534,
+    "brier": 0.564,
+    "accuracy": 0.5447
+   }
+  },
+  {
+   "league": "PL",
+   "n": 380,
+   "model": {
+    "log_loss": 0.9728,
+    "brier": 0.5797,
+    "accuracy": 0.5605
+   },
+   "market": {
+    "log_loss": 0.9708,
+    "brier": 0.5787,
+    "accuracy": 0.5395
+   }
+  },
+  {
+   "league": "PPL",
+   "n": 306,
+   "model": {
+    "log_loss": 0.9474,
+    "brier": 0.5642,
+    "accuracy": 0.5425
+   },
+   "market": {
+    "log_loss": 0.9353,
+    "brier": 0.5533,
+    "accuracy": 0.5556
+   }
+  },
+  {
+   "league": "SA",
+   "n": 380,
+   "model": {
+    "log_loss": 0.9557,
+    "brier": 0.5701,
+    "accuracy": 0.5395
+   },
+   "market": {
+    "log_loss": 0.9548,
+    "brier": 0.5684,
+    "accuracy": 0.5289
+   }
+  }
+ ]
+}
