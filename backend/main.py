@@ -1808,6 +1808,31 @@ async def sportybet_check(secret: str = ""):
     return await sportybet.diagnose(upcoming)
 
 
+@app.get("/api/admin/international-check")
+async def international_check(secret: str = ""):
+    """Fetch international fixtures now, report what each source returned,
+    and publish them without waiting for the next pipeline run."""
+    _check_admin(secret)
+    global _predictions_cache, _last_updated
+    fixtures = await _fetch_international_fixtures()
+    published = 0
+    if fixtures and _predictor is not None:
+        cached_odds, _ = _load_cached_live_odds()
+        fresh = _build_predictions(_predictor, fixtures, cached_odds or {})
+        if fresh:
+            _predictions_cache = [p for p in _predictions_cache
+                                  if p.get("league") != intl.LEAGUE_CODE] + fresh
+            _last_updated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+            _save_predictions_cache()
+            published = len(fresh)
+    by_competition: Dict[str, int] = {}
+    for f in fixtures:
+        by_competition[f["league_name"]] = by_competition.get(f["league_name"], 0) + 1
+    return {"fixtures": len(fixtures), "published": published, "model_ready": _predictor is not None,
+            "by_competition": by_competition, "sources": _intl_status["sources"],
+            "errors": _intl_status["errors"]}
+
+
 @app.get("/api/admin/data-status")
 async def data_status(secret: str = ""):
     """How fresh the training data is, and which upcoming teams the model

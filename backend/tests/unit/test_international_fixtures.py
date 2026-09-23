@@ -228,3 +228,87 @@ def test_pipeline_helper_records_what_each_source_found(monkeypatch):
     monkeypatch.setattr(intl, "fetch_international", fake)
     assert asyncio.run(main._fetch_international_fixtures()) == [{"home": "Czechia"}]
     assert main._intl_status["fixtures"] == 1 and main._intl_status["errors"] == ["espn uefa.euroq: HTTP 400"]
+
+
+class TestEspnFallbacks:
+    def run(self, handler):
+        seen = []
+
+        def wrapped(request):
+            seen.append(request)
+            return handler(request)
+        client = httpx.AsyncClient(transport=httpx.MockTransport(wrapped), headers=intl._ESPN_HEADERS)
+        report = asyncio.run(intl.fetch_international(days_ahead=3, client=client, today=date(2026, 9, 23),
+                                                      odds_api_key=""))
+        return report, seen
+
+    @staticmethod
+    def events(*evs):
+        return httpx.Response(200, json={"events": list(evs)})
+
+    def test_range_refused_falls_back_to_single_days(self):
+        def handler(request):
+            if "caf.nations_qual" not in request.url.path:
+                return self.events()
+            dates = request.url.params.get("dates")
+            if dates and "-" in dates:
+                return httpx.Response(400, text='{"code":400,"message":"bad dates"}')
+            if dates == "20260924":
+                return self.events(espn_event("5", "Ivory Coast", "Ghana", when="2026-09-24T16:00Z"))
+            if dates is None:  # current matchday
+                return self.events(espn_event("5", "Ivory Coast", "Ghana", when="2026-09-24T16:00Z"))
+            return self.events()
+
+        report, seen = self.run(handler)
+        assert [(f["home"], f["league_name"]) for f in report["fixtures"]] == [("Ivory Coast", "AFCON Qualifying")]
+        assert report["sources"]["espn"]["caf.nations_qual"] == 1 and report["errors"] == []
+        afcon_days = [r.url.params.get("dates") for r in seen if "caf.nations_qual" in r.url.path]
+        assert afcon_days == ["20260923-20260926", None, "20260923", "20260924", "20260925", "20260926"]
+
+    def test_quiet_competitions_cost_two_requests_and_no_error(self):
+        report, seen = self.run(lambda request: self.events())
+        per_slug = {slug: sum(slug + "/" in r.url.path for r in seen) for slug in intl.ESPN_COMPETITIONS}
+        assert set(per_slug.values()) == {2}
+        assert report["errors"] == [] and report["fixtures"] == []
+
+    def test_errors_carry_the_start_of_the_reply(self):
+        report, _ = self.run(lambda request: httpx.Response(403, text="<html>Access Denied</html>"))
+        assert "espn fifa.friendly: HTTP 403 '<html>Access Denied</html>'" in report["errors"]
+
+    def test_asks_like_a_browser(self):
+        _, seen = self.run(lambda request: self.events())
+        assert "Chrome" in seen[0].headers["user-agent"] and seen[0].headers["referer"] == "https://www.espn.com/"
+
+
+class TestAdminCheck:
+    URL = "/api/admin/international-check"
+
+    @pytest.fixture(autouse=True)
+    def admin(self, monkeypatch):
+        monkeypatch.setattr(main, "ADMIN_SECRET", "s3cret")
+
+    def test_admin_only(self):
+        assert TestClient(main.app).get(self.URL, params={"secret": "nope"}).status_code == 403
+
+    def test_fetches_reports_and_publishes(self, monkeypatch):
+        fx = intl._fixture("espn:5", "Ivory Coast", "Ghana", pd.Timestamp("2026-09-24T16:00Z"), "AFCON Qualifying", None)
+
+        async def fake(**kw):
+            return {"fixtures": [fx], "results": [], "sources": {"espn": {"caf.nations_qual": 1}, "odds_api": {}},
+                    "errors": ["espn uefa.euroq: HTTP 400"]}
+
+        class Model:
+            def predict_match(self, *a, **k):
+                return {"p_home": 0.5, "p_draw": 0.3, "p_away": 0.2, "tip_code": "1X"}
+
+        monkeypatch.setattr(intl, "fetch_international", fake)
+        monkeypatch.setattr(main, "_predictor", Model())
+        monkeypatch.setattr(main, "_predictions_cache", [{"home": "Old", "away": "Game", "league": "INT"},
+                                                         {"home": "Arsenal", "away": "Chelsea", "league": "PL"}])
+        monkeypatch.setattr(main, "_save_predictions_cache", lambda: None)
+        monkeypatch.setattr(main, "_load_cached_live_odds", lambda: ({}, None))
+
+        r = TestClient(main.app).get(self.URL, params={"secret": "s3cret"}).json()
+        assert (r["fixtures"], r["published"]) == (1, 1)
+        assert r["by_competition"] == {"AFCON Qualifying": 1} and r["errors"] == ["espn uefa.euroq: HTTP 400"]
+        assert sorted(p["home"] for p in main._predictions_cache) == ["Arsenal", "Ivory Coast"]

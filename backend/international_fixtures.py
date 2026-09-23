@@ -49,6 +49,18 @@ _ODDS_API_HINTS = (
     "gold_cup", "asian_cup",
 )
 
+# ESPN answers browsers; a bare client can get an error page instead
+_ESPN_HEADERS = {
+    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                   "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"),
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.espn.com/",
+    "Origin": "https://www.espn.com",
+}
+# Longest span fetched day by day when the date-range request fails
+ESPN_DAILY_MAX = 14
+
 # Final scores after extra time or penalties don't grade 90-minute markets
 _NOT_REGULATION = ("AET", "PEN", "EXTRA", "SHOOTOUT")
 
@@ -167,11 +179,40 @@ async def _get_json(client: httpx.AsyncClient, url: str, params: Dict) -> Tuple[
     except httpx.HTTPError as e:
         return None, type(e).__name__
     if r.status_code != 200:
-        return None, f"HTTP {r.status_code}"
+        body = (r.text or "").strip()[:80]
+        return None, f"HTTP {r.status_code}" + (f" {body!r}" if body else "")
     try:
         return r.json(), None
     except ValueError:
         return None, "not JSON"
+
+
+async def _espn_pages(client: httpx.AsyncClient, slug: str,
+                      start: date, end: date) -> Tuple[List[Dict], Optional[str]]:
+    """
+    Scoreboard pages for one competition. One date-range request normally;
+    if that fails or comes back empty, ESPN's default (current matchday)
+    view decides whether the competition is live, and if so each day is
+    fetched on its own. Returns (pages, error when nothing worked).
+    """
+    url = f"{ESPN_BASE}/{slug}/scoreboard"
+    data, err = await _get_json(client, url, {"dates": f"{start:%Y%m%d}-{end:%Y%m%d}", "limit": 500})
+    if not err and (data or {}).get("events"):
+        return [data], None
+
+    current, current_err = await _get_json(client, url, {})
+    if current_err or not (current or {}).get("events"):
+        # A competition with nothing scheduled answers with no events: not an error
+        return ([], None) if not err and not current_err else ([], err or current_err)
+
+    pages, day = [current], start
+    last = min(end, start + timedelta(days=ESPN_DAILY_MAX - 1))
+    while day <= last:
+        page, _ = await _get_json(client, url, {"dates": f"{day:%Y%m%d}", "limit": 200})
+        if (page or {}).get("events"):
+            pages.append(page)
+        day += timedelta(days=1)
+    return pages, None
 
 
 async def fetch_international(days_ahead: int = 21, days_back: int = 0,
@@ -189,20 +230,21 @@ async def fetch_international(days_ahead: int = 21, days_back: int = 0,
     report: Dict = {"fixtures": [], "results": [], "sources": {"espn": {}, "odds_api": {}}, "errors": []}
 
     own_client = client is None
-    client = client or httpx.AsyncClient(timeout=20, headers={"User-Agent": "Mozilla/5.0 BetIQ/1.0"})
+    client = client or httpx.AsyncClient(timeout=20, headers=_ESPN_HEADERS, follow_redirects=True)
     try:
         espn_fixtures: List[Dict] = []
-        dates = f"{start:%Y%m%d}-{end:%Y%m%d}"
         for slug in ESPN_COMPETITIONS:
-            data, err = await _get_json(client, f"{ESPN_BASE}/{slug}/scoreboard",
-                                        {"dates": dates, "limit": 500})
+            pages, err = await _espn_pages(client, slug, start, end)
             if err:
                 report["errors"].append(f"espn {slug}: {err}")
                 continue
-            fixtures, results = parse_espn(data, slug)
-            fixtures = [f for f in fixtures if f["date"] >= today.isoformat()]
+            fixtures: List[Dict] = []
+            for page in pages:
+                found, results = parse_espn(page, slug)
+                fixtures += [f for f in found if today.isoformat() <= f["date"] <= end.isoformat()]
+                report["results"] += results
+            fixtures = merge(fixtures)
             espn_fixtures += fixtures
-            report["results"] += results
             report["sources"]["espn"][slug] = len(fixtures)
 
         odds_fixtures: List[Dict] = []

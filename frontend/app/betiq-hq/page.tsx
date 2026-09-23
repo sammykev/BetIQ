@@ -66,6 +66,8 @@ export default function AdminPage() {
   const [dataStatus, setDataStatus] = useState<any>(null);
   const [sbCheck, setSbCheck] = useState<any>(null);
   const [sbChecking, setSbChecking] = useState(false);
+  const [intlCheck, setIntlCheck] = useState<any>(null);
+  const [intlChecking, setIntlChecking] = useState(false);
   // Grant/Revoke
   const [grantEmail, setGrantEmail]   = useState("");
   const [grantAction, setGrantAction] = useState<"grant"|"revoke">("grant");
@@ -552,6 +554,54 @@ export default function AdminPage() {
                 <span className="text-slate-400 break-words">{st.detail}{st.ms != null && <span className="text-slate-600"> · {st.ms} ms</span>}</span>
               </div>
             ))}
+          </div>
+        )}
+      </section>
+
+      {/* ── International fixtures ── */}
+      <section className="bg-slate-900 border border-slate-700 rounded-xl p-5 space-y-3">
+        <div className="flex items-center gap-2">
+          <RefreshCw size={15} className="text-sky-400" />
+          <h2 className="text-white font-semibold text-sm">International fixtures</h2>
+          <button
+            onClick={async () => {
+              setIntlChecking(true); setIntlCheck(null);
+              try {
+                const r = await fetch(`${API}/api/admin/international-check?secret=${encodeURIComponent(secret)}`);
+                setIntlCheck(r.ok ? await r.json() : { error: `HTTP ${r.status}` });
+              } catch (e) {
+                setIntlCheck({ error: String(e) });
+              } finally { setIntlChecking(false); }
+            }}
+            disabled={intlChecking}
+            className="ml-auto flex items-center gap-1.5 bg-sky-500 hover:bg-sky-400 disabled:opacity-50 text-black font-bold px-3 py-1.5 rounded-lg text-xs"
+          >
+            {intlChecking ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+            {intlChecking ? "Fetching…" : "Fetch now"}
+          </button>
+        </div>
+        <p className="text-slate-500 text-xs">Asks ESPN and The Odds API for this window&apos;s national-team matches, shows what each returned, and publishes them.</p>
+        {intlCheck?.error && <p className="text-xs text-red-400">{intlCheck.error}</p>}
+        {intlCheck && !intlCheck.error && (
+          <div className="text-xs space-y-2">
+            <p className={clsx("font-bold", intlCheck.fixtures > 0 ? "text-green-400" : "text-red-400")}>
+              {intlCheck.fixtures} fixtures found · {intlCheck.published} published
+              {!intlCheck.model_ready && " (model still training; they publish when it's ready)"}
+            </p>
+            {Object.keys(intlCheck.by_competition ?? {}).length > 0 && (
+              <p className="text-slate-300">
+                {Object.entries(intlCheck.by_competition as Record<string, number>).map(([c, n]) => `${c}: ${n}`).join(" · ")}
+              </p>
+            )}
+            <p className="text-slate-400">
+              ESPN — {Object.entries((intlCheck.sources?.espn ?? {}) as Record<string, number>).map(([k, n]) => `${k} ${n}`).join(" · ") || "nothing"}
+            </p>
+            <p className="text-slate-400">
+              The Odds API — {Object.entries((intlCheck.sources?.odds_api ?? {}) as Record<string, number>).map(([k, n]) => `${k} ${n}`).join(" · ") || "nothing (or no ODDS_API_KEY)"}
+            </p>
+            {intlCheck.errors?.length > 0 && (
+              <p className="text-red-400 break-words">Errors: {intlCheck.errors.join(" · ")}</p>
+            )}
           </div>
         )}
       </section>
