@@ -436,7 +436,7 @@ export function ChatBot({ predictions }: Props) {
                   </button>
                 </div>
                 <p className="text-center text-[10px] text-zinc-400 dark:text-zinc-600 mt-2">
-                  Powered by Claude AI · SportyBet Nigeria
+                  Powered by BetIQ AI · SportyBet Nigeria
                 </p>
               </div>
             </>
