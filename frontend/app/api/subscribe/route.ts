@@ -1,7 +1,7 @@
 import { auth, clerkClient } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
 import { PREMIUM_PRICE_KOBO } from "@/lib/pricing";
-import { MAX_STORED_REFERENCES, nextExpiry, paidByUser } from "@/lib/subscription";
+import { MAX_STORED_REFERENCES, isFreshPayment, nextExpiry, paidByUser } from "@/lib/subscription";
 
 export async function POST(req: NextRequest) {
   try {
@@ -40,6 +40,13 @@ export async function POST(req: NextRequest) {
     if (!paidByUser(paid, userId)) {
       console.error(`[subscribe] Reference ${reference} was not paid by ${userId}`);
       return NextResponse.json({ error: "reference_not_yours" }, { status: 403 });
+    }
+
+    // Only redeem recent payments. Old references can't be replayed for free
+    // months, including ones paid before the used-reference list existed.
+    if (!isFreshPayment(paid)) {
+      console.error(`[subscribe] Stale payment ${reference} (paid_at ${paid.paid_at})`);
+      return NextResponse.json({ error: "payment_too_old" }, { status: 409 });
     }
 
     const client = await clerkClient();

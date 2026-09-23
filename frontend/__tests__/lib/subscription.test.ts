@@ -1,4 +1,4 @@
-import { nextExpiry, paidByUser } from "@/lib/subscription";
+import { isFreshPayment, nextExpiry, paidByUser, paymentTime } from "@/lib/subscription";
 import { PREMIUM_PRICE_KOBO, PREMIUM_PRICE_LABEL } from "@/lib/pricing";
 
 describe("pricing", () => {
@@ -52,5 +52,35 @@ describe("nextExpiry", () => {
 
   it("ignores an unparseable expiry", () => {
     expect(days(nextExpiry("not a date", now), now)).toBe(30);
+  });
+});
+
+describe("isFreshPayment", () => {
+  const now = new Date("2026-09-23T12:00:00Z");
+  const hoursAgo = (h: number) => new Date(now.getTime() - h * 3_600_000).toISOString();
+
+  it("accepts a payment made minutes ago", () => {
+    expect(isFreshPayment({ paid_at: hoursAgo(0.1) }, now)).toBe(true);
+  });
+
+  it("rejects a payment older than 24 hours (replayed old reference)", () => {
+    expect(isFreshPayment({ paid_at: hoursAgo(25) }, now)).toBe(false);
+    expect(isFreshPayment({ paid_at: "2026-01-15T09:00:00Z" }, now)).toBe(false);
+  });
+
+  it("falls back to the timestamp in our reference", () => {
+    const fresh = `betiq_user_a_${now.getTime() - 60_000}`;
+    const stale = `betiq_user_a_${now.getTime() - 48 * 3_600_000}`;
+    expect(isFreshPayment({ reference: fresh }, now)).toBe(true);
+    expect(isFreshPayment({ reference: stale }, now)).toBe(false);
+  });
+
+  it("rejects when the payment time can't be determined", () => {
+    expect(isFreshPayment({ reference: "custom-ref" }, now)).toBe(false);
+    expect(paymentTime({ paid_at: "garbage" })).toBeNull();
+  });
+
+  it("rejects timestamps far in the future", () => {
+    expect(isFreshPayment({ paid_at: new Date(now.getTime() + 3_600_000).toISOString() }, now)).toBe(false);
   });
 });
