@@ -193,6 +193,8 @@ export interface ModelMetrics {
   picks: { by_tier: PickTierRow[]; by_code: (Omit<PickTierRow, "kind" | "tier"> & { code: string })[] };
   goals_tips: { by_tip: GoalsTipRow[]; by_tier: GoalsTipRow[]; all: GoalsTipRow };
   betting: { all_straight_tips: FlatStake; value_bets: FlatStake; edge_threshold: number };
+  /** Same matches predicted without odds (fixtures the odds feed missed). */
+  without_odds?: { match_result: { model: ProbScores; market: ProbScores }; straight?: PickTierRow; double?: PickTierRow };
 }
 
 export async function fetchModelMetrics(secret: string): Promise<ModelMetrics | null> {

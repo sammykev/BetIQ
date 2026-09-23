@@ -136,6 +136,15 @@ export function TrackRecord({ secret }: { secret: string }) {
           picked the result {pct(mr.model.accuracy, 1)} of the time vs the Bet365 favourite&apos;s {pct(mr.market.accuracy, 1)}.
           Log loss {mr.model.log_loss?.toFixed(3)} vs {mr.market.log_loss?.toFixed(3)} (lower is better).
         </p>
+        {m.without_odds && (
+          <p>
+            <span className="font-semibold text-n-300">Fixtures without odds:</span>{" "}
+            picked the result {pct(m.without_odds.match_result.model.accuracy, 1)} of the time, log loss{" "}
+            {m.without_odds.match_result.model.log_loss?.toFixed(3)}; straight wins hit {pct(m.without_odds.straight?.hit_rate)}{" "}
+            (said {pct(m.without_odds.straight?.avg_prob)}), double chance {pct(m.without_odds.double?.hit_rate)}{" "}
+            (said {pct(m.without_odds.double?.avg_prob)}).
+          </p>
+        )}
         <p className="text-n-500">Refresh with <code>python backtest.py</code> in backend/, then redeploy.</p>
       </div>
     </section>

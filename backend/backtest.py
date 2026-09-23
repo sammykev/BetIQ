@@ -9,6 +9,7 @@ live. Picks come from predictor.pick_tips, the same rules the app uses.
 
     python backtest.py                      # last season in the data
     python backtest.py --start 2024-08-01 --end 2025-06-30 --out data/model_metrics.json
+    python backtest.py --include-no-odds    # also score fixtures without odds (twice as long)
 
 The JSON it writes is served by /api/admin/model-metrics and shown on the
 admin dashboard (/betiq-hq).
@@ -308,6 +309,15 @@ def summarize(records: List[Dict]) -> Dict[str, Any]:
     }
 
 
+def without_odds_summary(m: Dict[str, Any]) -> Dict[str, Any]:
+    """The headline numbers of a hide_odds run, for the admin dashboard."""
+    tier = {f"{r['kind']}/{r['tier']}": r for r in m["picks"]["by_tier"]}
+    return {
+        "note": "Same matches, predicted as if the odds feed had missed them (the model's no-odds set).",
+        "match_result": m["match_result"], "straight": tier.get("single/all"), "double": tier.get("double/all"),
+    }
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 def _default_window(matches: pd.DataFrame) -> tuple:
@@ -324,6 +334,8 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--out", default=METRICS_PATH)
     ap.add_argument("--records", help="also save per-match records (JSON) to score tip rules without retraining")
     ap.add_argument("--hide-odds", action="store_true", help="predict without bookmaker odds")
+    ap.add_argument("--include-no-odds", action="store_true",
+                    help="add a without_odds section from a second run with odds hidden")
     args = ap.parse_args(argv)
 
     from main import _load_football_data_csvs
@@ -338,6 +350,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         with open(args.records, "w") as f:
             json.dump(records, f)
     metrics = summarize(records)
+    if args.include_no_odds:
+        metrics["without_odds"] = without_odds_summary(summarize(walk_forward(matches, start, end, hide_odds=True)))
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     with open(args.out, "w") as f:
         json.dump(metrics, f, indent=1)

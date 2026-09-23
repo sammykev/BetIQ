@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-23T06:28:07Z",
+ "generated_at": "2026-09-23T08:03:03Z",
  "period": {
   "from": "2024-08-02",
   "to": "2025-05-25"
@@ -33,8 +33,8 @@
  "over25": {
   "n": 3222,
   "model": {
-   "log_loss": 0.6834,
-   "brier": 0.2451
+   "log_loss": 0.6808,
+   "brier": 0.2439
   },
   "market": {
    "log_loss": 0.6697,
@@ -134,33 +134,33 @@
    {
     "kind": "single",
     "tier": "weak",
-    "n": 47,
-    "won": 8,
-    "hit_rate": 0.1702,
-    "avg_prob": 0.3462
+    "n": 0,
+    "won": 0,
+    "hit_rate": null,
+    "avg_prob": null
    },
    {
     "kind": "single",
     "tier": "all",
-    "n": 1131,
-    "won": 735,
-    "hit_rate": 0.6499,
-    "avg_prob": 0.6501
+    "n": 1084,
+    "won": 727,
+    "hit_rate": 0.6707,
+    "avg_prob": 0.6633
    },
    {
     "kind": "double",
     "tier": "strong",
-    "n": 119,
-    "won": 97,
-    "hit_rate": 0.8151,
-    "avg_prob": 0.8159
+    "n": 128,
+    "won": 106,
+    "hit_rate": 0.8281,
+    "avg_prob": 0.8167
    },
    {
     "kind": "double",
     "tier": "lean",
-    "n": 521,
-    "won": 415,
-    "hit_rate": 0.7965,
+    "n": 533,
+    "won": 423,
+    "hit_rate": 0.7936,
     "avg_prob": 0.7734
    },
    {
@@ -174,10 +174,10 @@
    {
     "kind": "double",
     "tier": "all",
-    "n": 640,
-    "won": 512,
-    "hit_rate": 0.8,
-    "avg_prob": 0.7813
+    "n": 661,
+    "won": 529,
+    "hit_rate": 0.8003,
+    "avg_prob": 0.7818
    }
   ],
   "by_code": [
@@ -189,13 +189,6 @@
     "avg_prob": 0.6696
    },
    {
-    "code": "X",
-    "n": 47,
-    "won": 8,
-    "hit_rate": 0.1702,
-    "avg_prob": 0.3462
-   },
-   {
     "code": "2",
     "n": 274,
     "won": 182,
@@ -204,17 +197,17 @@
    },
    {
     "code": "1X",
-    "n": 471,
-    "won": 374,
-    "hit_rate": 0.7941,
-    "avg_prob": 0.7817
+    "n": 487,
+    "won": 388,
+    "hit_rate": 0.7967,
+    "avg_prob": 0.7822
    },
    {
     "code": "2X",
-    "n": 169,
-    "won": 138,
-    "hit_rate": 0.8166,
-    "avg_prob": 0.7803
+    "n": 174,
+    "won": 141,
+    "hit_rate": 0.8103,
+    "avg_prob": 0.7808
    }
   ]
  },
@@ -222,91 +215,91 @@
   "by_tip": [
    {
     "tip": "Over 1.0 (Asian)",
-    "n": 1320,
-    "won": 990,
-    "lost": 93,
-    "push": 237,
-    "hit_rate": 0.9141,
-    "avg_prob": 0.7509
+    "n": 2393,
+    "won": 1786,
+    "lost": 160,
+    "push": 447,
+    "hit_rate": 0.9178,
+    "avg_prob": 0.7565
    },
    {
     "tip": "Over 1.5 Goals",
-    "n": 1046,
-    "won": 864,
-    "lost": 182,
+    "n": 339,
+    "won": 293,
+    "lost": 46,
     "push": 0,
-    "hit_rate": 0.826,
-    "avg_prob": 0.8654
+    "hit_rate": 0.8643,
+    "avg_prob": 0.841
    },
    {
     "tip": "Over 2.0 (Asian)",
-    "n": 381,
-    "won": 208,
-    "lost": 89,
-    "push": 84,
-    "hit_rate": 0.7003,
-    "avg_prob": 0.6272
+    "n": 457,
+    "won": 275,
+    "lost": 86,
+    "push": 96,
+    "hit_rate": 0.7618,
+    "avg_prob": 0.6087
    },
    {
     "tip": "Under 3.0 (Asian)",
-    "n": 231,
-    "won": 140,
-    "lost": 37,
-    "push": 54,
-    "hit_rate": 0.791,
-    "avg_prob": 0.6729
+    "n": 12,
+    "won": 7,
+    "lost": 3,
+    "push": 2,
+    "hit_rate": 0.7,
+    "avg_prob": 0.6609
    }
   ],
   "by_tier": [
    {
     "tier": "strong",
-    "n": 1760,
-    "won": 1402,
-    "lost": 228,
-    "push": 130,
-    "hit_rate": 0.8601,
-    "avg_prob": 0.8321
+    "n": 1688,
+    "won": 1326,
+    "lost": 134,
+    "push": 228,
+    "hit_rate": 0.9082,
+    "avg_prob": 0.7917
    },
    {
     "tier": "lean",
-    "n": 1106,
-    "won": 742,
-    "lost": 142,
-    "push": 222,
-    "hit_rate": 0.8394,
-    "avg_prob": 0.6876
+    "n": 1310,
+    "won": 914,
+    "lost": 121,
+    "push": 275,
+    "hit_rate": 0.8831,
+    "avg_prob": 0.7068
    },
    {
     "tier": "weak",
-    "n": 112,
-    "won": 58,
-    "lost": 31,
-    "push": 23,
-    "hit_rate": 0.6517,
-    "avg_prob": 0.5882
+    "n": 203,
+    "won": 121,
+    "lost": 40,
+    "push": 42,
+    "hit_rate": 0.7516,
+    "avg_prob": 0.5879
    }
   ],
   "all": {
-   "n": 2978,
-   "won": 2202,
-   "lost": 401,
-   "push": 375,
-   "hit_rate": 0.8459,
-   "avg_prob": 0.7693
+   "n": 3201,
+   "won": 2361,
+   "lost": 295,
+   "push": 545,
+   "hit_rate": 0.8889,
+   "avg_prob": 0.744
   }
  },
  "betting": {
   "all_straight_tips": {
-   "bets": 1131,
-   "won": 735,
-   "profit": -53.12,
-   "roi": -0.047
+   "bets": 1084,
+   "won": 727,
+   "profit": -31.92,
+   "roi": -0.0294
   },
   "value_bets": {
-   "bets": 95,
-   "won": 59,
-   "profit": 2.17,
-   "roi": 0.0228
+   "bets": 80,
+   "won": 57,
+   "profit": 9.97,
+   "roi": 0.1246
   },
   "edge_threshold": 0.05
  },
@@ -437,5 +430,37 @@
     "accuracy": 0.5289
    }
   }
- ]
+ ],
+ "without_odds": {
+  "note": "Same matches, predicted as if the odds feed had missed them (the model's no-odds set).",
+  "match_result": {
+   "n": 3222,
+   "model": {
+    "log_loss": 1.0094,
+    "brier": 0.6044,
+    "accuracy": 0.5025
+   },
+   "market": {
+    "log_loss": 0.9804,
+    "brier": 0.5846,
+    "accuracy": 0.5186
+   }
+  },
+  "straight": {
+   "kind": "single",
+   "tier": "all",
+   "n": 950,
+   "won": 607,
+   "hit_rate": 0.6389,
+   "avg_prob": 0.657
+  },
+  "double": {
+   "kind": "double",
+   "tier": "all",
+   "n": 613,
+   "won": 457,
+   "hit_rate": 0.7455,
+   "avg_prob": 0.7766
+  }
+ }
 }

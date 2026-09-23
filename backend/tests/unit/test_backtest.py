@@ -165,3 +165,11 @@ class TestEndpoint:
 
     def test_old_public_path_is_gone(self):
         assert TestClient(main.app).get("/api/model/metrics").status_code == 404
+
+
+def test_without_odds_summary_keeps_the_headline_numbers():
+    m = summarize([rec(result="H"), rec(result="A", score=(0, 1), probs=(0.2, 0.2, 0.6))])
+    w = backtest.without_odds_summary(m)
+    assert w["match_result"] == m["match_result"]
+    assert (w["straight"]["kind"], w["straight"]["tier"]) == ("single", "all")
+    assert w["straight"]["n"] == 2
