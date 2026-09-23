@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# One-time setup for the BetIQ API on an Oracle Cloud Ubuntu machine.
-# Safe to run again. Run from anywhere inside the cloned repository:
-#   bash deploy/oracle/setup.sh
+# One-time setup for the BetIQ API on an Ubuntu server (Google Cloud,
+# Oracle Cloud or any other). Safe to run again:
+#   bash deploy/vm/setup.sh
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -17,20 +17,15 @@ sudo systemctl enable --now docker
 
 echo "==> Firewall: allow web traffic (ports 80 and 443)"
 # Oracle's Ubuntu images reject everything except SSH at the OS level, on
-# top of the cloud security list (see README step 3).
-for port in 80 443; do
-  if ! sudo iptables -C INPUT -p tcp --dport "$port" -j ACCEPT 2>/dev/null; then
-    # Just above the catch-all REJECT rule
-    reject=$(sudo iptables -L INPUT --line-numbers -n | awk '$2 == "REJECT" {print $1; exit}')
-    if [ -n "$reject" ]; then
-      sudo iptables -I INPUT "$reject" -p tcp --dport "$port" -j ACCEPT
-    fi
-  fi
-done
-if command -v netfilter-persistent >/dev/null; then
-  sudo netfilter-persistent save
-else
-  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y iptables-persistent
+# top of the cloud firewall. Other clouds (Google) filter only in the cloud.
+reject=$(sudo iptables -L INPUT --line-numbers -n 2>/dev/null | awk '$2 == "REJECT" {print $1; exit}')
+if [ -n "$reject" ]; then
+  for port in 443 80; do
+    sudo iptables -C INPUT -p tcp --dport "$port" -j ACCEPT 2>/dev/null \
+      || sudo iptables -I INPUT "$reject" -p tcp --dport "$port" -j ACCEPT
+  done
+  command -v netfilter-persistent >/dev/null \
+    || sudo DEBIAN_FRONTEND=noninteractive apt-get install -y iptables-persistent
   sudo netfilter-persistent save
 fi
 
@@ -55,7 +50,7 @@ grep '^DOMAIN=' .env
 
 echo "==> Auto-deploy: check GitHub for new commits every 5 minutes"
 line="*/5 * * * * bash $HERE/update.sh >> $HOME/betiq-deploy.log 2>&1"
-( crontab -l 2>/dev/null | grep -v 'deploy/oracle/update.sh' ; echo "$line" ) | crontab -
+( crontab -l 2>/dev/null | grep -v 'deploy/vm/update.sh' ; echo "$line" ) | crontab -
 
 if grep -q '^FOOTBALL_DATA_API_KEY=$' .env; then
   echo

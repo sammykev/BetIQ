@@ -1,8 +1,8 @@
 # BetIQ API. Build from the repository root — the legacy EPL and Champions
 # League CSVs live there:
 #   docker build -f backend/Dockerfile -t betiq-api .
-# Runs on x86 and ARM; used by Hugging Face Spaces (deploy/huggingface) and
-# the Oracle Cloud setup (deploy/oracle).
+# Runs on x86 and ARM; used by the server setup (deploy/vm: Google Cloud,
+# Oracle Cloud or any Ubuntu machine) and Hugging Face Spaces (deploy/huggingface).
 # If Docker Hub rate-limits you, the same image is on Amazon's mirror:
 #   --build-arg PYTHON_IMAGE=public.ecr.aws/docker/library/python:3.12-slim
 ARG PYTHON_IMAGE=python:3.12-slim

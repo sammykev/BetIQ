@@ -1,6 +1,9 @@
-# Hosting the BetIQ API on Hugging Face Spaces (free)
+# Hosting the BetIQ API on Hugging Face Spaces
 
-A free Space gives the API 2 CPUs and 16 GB of memory, far more than Render's
+**Needs Hugging Face PRO:** Docker Spaces on the basic CPU are no longer
+free (September 2026). The free route is deploy/vm (Google Cloud).
+
+A Space gives the API 2 CPUs and 16 GB of memory, far more than Render's
 free plan, so retraining takes about a minute. Every push to `main` that
 touches the backend runs the tests, then GitHub Actions uploads the backend
 and the Space rebuilds itself.

@@ -1,5 +1,5 @@
-# Deploys the API to the Hugging Face Space on every push to main that
-# touches it. Setup: deploy/huggingface/README.md (needs the HF_TOKEN secret
+# Deploys the API to a Hugging Face Space (needs Hugging Face PRO) on every
+# push to main that touches it. Setup: deploy/huggingface/README.md (needs the HF_TOKEN secret
 # and the HF_SPACE variable; skipped until HF_SPACE is set).
 name: Deploy API to Hugging Face
 
