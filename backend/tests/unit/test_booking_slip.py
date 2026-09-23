@@ -243,7 +243,7 @@ class TestEvents:
         return {"eventId": eid, "homeTeamName": home, "awayTeamName": away, "estimateStartTime": ms(iso)}
 
     def test_collects_grouped_events_near_the_date(self):
-        s = FakeSession({"/factsCenter/getScheduled": ok({"tournaments": [
+        s = FakeSession({"/factsCenter/pcUpcomingEvents": ok({"totalNum": 3, "tournaments": [
             {"events": [self.ev("sr:match:1", "Arsenal", "Chelsea", "2026-09-26T14:00:00"),
                         self.ev("sr:match:2", "Leeds", "Hull", "2026-09-27T23:30:00")]},
             {"events": [self.ev("sr:match:3", "Ajax", "PSV", "2026-10-02T18:00:00")]},
@@ -251,24 +251,37 @@ class TestEvents:
         events = asyncio.run(sportybet.fetch_events_for_date("2026-09-26", session=s))
         assert [e["eventId"] for e in events] == ["sr:match:1", "sr:match:2"]
         assert s.calls[0][2]["params"]["sportId"] == "sr:sport:1"
+        assert len(s.calls) == 1  # totalNum reached: no second page
 
-    def test_falls_back_to_the_catalog(self):
+    def test_pages_through_the_upcoming_list(self):
+        page = lambda eid: ok({"totalNum": 2, "tournaments": [{"events": [
+            self.ev(eid, "A", "B", "2026-09-26T12:00:00")]}]})
+        s = FakeSession({"/factsCenter/pcUpcomingEvents": [page("sr:match:1"), page("sr:match:2")]})
+        events = asyncio.run(sportybet.fetch_events_for_date("2026-09-26", session=s))
+        assert [e["eventId"] for e in events] == ["sr:match:1", "sr:match:2"]
+        assert [c[2]["params"]["pageNum"] for c in s.calls] == [1, 2]
+
+    def test_falls_back_through_the_listings(self):
         s = FakeSession({
-            "/factsCenter/getScheduled": (202, ""),
-            "/factsCenter/commonThumbnailEvents": ok([{"events": [self.ev("sr:match:9", "Inter", "Milan", "2026-09-26T18:45:00")]}]),
+            "/factsCenter/pcUpcomingEvents": (202, ""),
+            "/factsCenter/wapConfigurableUpcomingEvents": (404, '{"message":"Not Found"}'),
+            "/factsCenter/pcEvents": ok([{"events": [self.ev("sr:match:9", "Inter", "Milan", "2026-09-26T18:45:00")]}]),
         })
         events = asyncio.run(sportybet.fetch_events_for_date("2026-09-26", session=s))
         assert [e["eventId"] for e in events] == ["sr:match:9"]
+        body = s.calls[-1][2]["json"]
+        assert body[0]["sportId"] == "sr:sport:1" and ["sr:tournament:17"] in body[0]["tournamentId"]
 
     def test_unreachable_returns_empty(self):
         s = FakeSession({})
         assert asyncio.run(sportybet.fetch_events_for_date("2026-09-26", session=s)) == []
 
     def test_results_are_cached(self):
-        s = FakeSession({"/factsCenter/getScheduled": ok([self.ev("sr:match:1", "A", "B", "2026-09-26T12:00:00")])})
+        s = FakeSession({"/factsCenter/pcUpcomingEvents": ok([self.ev("sr:match:1", "A", "B", "2026-09-26T12:00:00")])})
         asyncio.run(sportybet.fetch_events_for_date("2026-09-26", session=s))
+        first = len(s.calls)
         asyncio.run(sportybet.fetch_events_for_date("2026-09-26", session=s))
-        assert len(s.calls) == 1
+        assert first == 2 and len(s.calls) == first  # page 2 repeated page 1; then cached
 
 
 class TestFindEvent:
@@ -356,18 +369,28 @@ class TestDiagnose:
         return asyncio.run(sportybet.diagnose(list(fixtures), today="2026-09-26")), fake
 
     def test_all_steps_pass(self, monkeypatch):
-        out, fake = self.diagnose(monkeypatch, {"/factsCenter/getScheduled": self.LISTING,
+        out, fake = self.diagnose(monkeypatch, {"/factsCenter/pcUpcomingEvents": self.LISTING,
                                                 "/orders/share": ok({"shareCode": "TEST01"})})
         assert out["ok"] and [s["ok"] for s in out["steps"]] == [True, True, True]
         assert "TEST01" in out["steps"][2]["detail"] and "1 of 1" in out["steps"][1]["detail"]
         assert fake.calls[-1][2]["json"] == {"selections": [{"eventId": "sr:match:7", "marketId": "1", "outcomeId": "1"}]}
 
     def test_stops_at_a_blocked_listing(self, monkeypatch):
-        out, _ = self.diagnose(monkeypatch, {"/factsCenter/getScheduled": (403, "<html>")})
+        out, _ = self.diagnose(monkeypatch, {"/factsCenter/pcUpcomingEvents": (403, "<html>")})
         assert not out["ok"] and len(out["steps"]) == 1 and "firewall" in out["steps"][0]["detail"]
 
+    def test_reports_every_listing_and_the_reply(self, monkeypatch):
+        out, _ = self.diagnose(monkeypatch, {
+            "/factsCenter/pcUpcomingEvents": (404, '{"timestamp":1,"status":404,"error":"Not Found"}'),
+            "/factsCenter/pcEvents": self.LISTING,
+            "/orders/share": ok({"shareCode": "TEST02"})})
+        detail = out["steps"][0]["detail"]
+        assert out["ok"] and "pcUpcomingEvents: GET /factsCenter/pcUpcomingEvents: HTTP 404" in detail
+        assert "Not Found" in detail and "pcEvents: 1 events" in detail
+        assert "wapConfigurableUpcomingEvents: GET" in detail
+
     def test_reports_a_refused_booking(self, monkeypatch):
-        out, _ = self.diagnose(monkeypatch, {"/factsCenter/getScheduled": self.LISTING,
+        out, _ = self.diagnose(monkeypatch, {"/factsCenter/pcUpcomingEvents": self.LISTING,
                                              "/orders/share": (200, {"bizCode": 19000, "message": "Rejected"})})
         assert not out["ok"] and "Rejected" in out["steps"][2]["detail"]
 

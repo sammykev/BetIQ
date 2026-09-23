@@ -15,7 +15,7 @@ Markets and outcomes use Betradar's fixed ids (1X2 is market 1, outcomes
 import asyncio
 import os
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -63,7 +63,8 @@ async def _request(session: AsyncSession, method: str, path: str, **kw) -> Dict[
     text = (r.text or "").strip()
     if r.status_code not in (200, 202) or not text.startswith("{"):
         raise SportyBetError(f"{method} {path}: HTTP {r.status_code}, {len(text)} bytes"
-                             + (" (blocked by SportyBet's firewall)" if r.status_code in (202, 403) else ""))
+                             + (" (blocked by SportyBet's firewall)" if r.status_code in (202, 403) else "")
+                             + (f" — {text[:120]!r}" if text else ""))
     data = r.json()
     if data.get("bizCode") != OK:
         raise SportyBetError(f"{method} {path}: bizCode {data.get('bizCode')} {data.get('message', '')}".strip())
@@ -102,6 +103,89 @@ def _near(day: Optional[str], date_str: str) -> bool:
     return abs((a - b).days) <= 1
 
 
+# Markets the slip books (booking_slip.sportybet_ids) — listed so each event
+# shows which of them SportyBet offers
+MARKETS = "1,18,10,29,11,26,60"
+
+
+def _now_ms() -> int:
+    return int(time.time() * 1000)
+
+
+async def _pc_upcoming(session: AsyncSession) -> List[Dict]:
+    """The desktop site's "Upcoming" football list, page by page."""
+    events: List[Dict] = []
+    for page in range(1, 11):
+        data = (await _request(session, "GET", "/factsCenter/pcUpcomingEvents", params={
+            "sportId": FOOTBALL, "marketId": MARKETS, "pageSize": 100, "pageNum": page,
+            "option": 1, "_t": _now_ms()})).get("data") or {}
+        found: List[Dict] = []
+        _collect_events(data, found)
+        seen = {e["eventId"] for e in events}
+        new = [e for e in found if e["eventId"] not in seen]
+        events += new
+        total = data.get("totalNum") if isinstance(data, dict) else None
+        if not new or (total and len(events) >= int(total)):
+            break
+    return events
+
+
+async def _wap_upcoming(session: AsyncSession) -> List[Dict]:
+    """The mobile site's upcoming list."""
+    data = await _request(session, "GET", "/factsCenter/wapConfigurableUpcomingEvents", params={
+        "sportId": FOOTBALL, "marketId": MARKETS, "pageSize": 100, "pageNum": 1,
+        "option": 1, "_t": _now_ms()})
+    found: List[Dict] = []
+    _collect_events(data.get("data"), found)
+    return found
+
+
+async def _pc_events(session: AsyncSession) -> List[Dict]:
+    """Our main tournaments in one call, the way the site's league filter asks."""
+    data = await _request(session, "POST", "/factsCenter/pcEvents", json=[{
+        "sportId": FOOTBALL, "marketId": MARKETS,
+        "tournamentId": [[tid] for tid in TOURNAMENT_IDS]}])
+    found: List[Dict] = []
+    _collect_events(data.get("data"), found)
+    return found
+
+
+async def _thumbnail(session: AsyncSession) -> List[Dict]:
+    data = await _request(session, "GET", "/factsCenter/commonThumbnailEvents",
+                          params={"sportId": FOOTBALL, "marketId": "1"})
+    found: List[Dict] = []
+    _collect_events(data.get("data"), found)
+    return found
+
+
+# Tried in order. SportyBet has moved listings before (getScheduled now
+# 404s), so the self-test reports each one separately.
+LISTINGS = [
+    ("pcUpcomingEvents", _pc_upcoming),
+    ("wapConfigurableUpcomingEvents", _wap_upcoming),
+    ("pcEvents", _pc_events),
+    ("commonThumbnailEvents", _thumbnail),
+]
+
+
+async def probe_listings(session: AsyncSession, stop_at_first: bool = False) -> Tuple[List[Dict], List[str]]:
+    """Events from the first listing that has any, and one line per listing tried."""
+    events: List[Dict] = []
+    report: List[str] = []
+    for name, fetch in LISTINGS:
+        try:
+            found = await fetch(session)
+            report.append(f"{name}: {len(found)} events")
+        except Exception as e:
+            report.append(f"{name}: {e}")
+            continue
+        if found and not events:
+            events = found
+            if stop_at_first:
+                break
+    return events, report
+
+
 _cache: Dict[str, Tuple[float, List[Dict]]] = {}
 CACHE_SECONDS = 300
 
@@ -116,41 +200,18 @@ async def fetch_events_for_date(date_str: str, session: Optional[AsyncSession] =
     if hit and time.time() - hit[0] < CACHE_SECONDS:
         return hit[1]
 
-    day = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-    start = int((day - timedelta(days=1)).timestamp() * 1000)
-    end = int((day + timedelta(days=2)).timestamp() * 1000)
-
     own = session is None
     session = session or _session()
     events: List[Dict] = []
     try:
-        attempts = [
-            ("GET", "/factsCenter/getScheduled", {"params": {
-                "sportId": FOOTBALL, "startTime": start, "endTime": end, "marketId": "1",
-                "page": 1, "pageSize": 500, "_t": int(time.time() * 1000)}}),
-            ("GET", "/factsCenter/commonThumbnailEvents", {"params": {"sportId": FOOTBALL, "marketId": "1"}}),
-        ]
-        for method, path, kw in attempts:
+        for name, fetch in LISTINGS:
             try:
-                found: List[Dict] = []
-                _collect_events((await _request(session, method, path, **kw)).get("data"), found)
-                events = [e for e in found if _near(_utc_day(e), date_str)]
-                if events:
-                    break
+                events = [e for e in await fetch(session) if _near(_utc_day(e), date_str)]
             except Exception as e:
-                print(f"[SportyBet] {path}: {e}")
-
-        if not events:  # per-tournament listing as a last resort
-            for tid in TOURNAMENT_IDS:
-                try:
-                    found = []
-                    data = await _request(session, "POST", "/factsCenter/pcEvents",
-                                          json={"tournamentId": tid, "sportId": FOOTBALL, "marketId": "1"})
-                    _collect_events(data.get("data"), found)
-                    events += [e for e in found if _near(_utc_day(e), date_str)]
-                except Exception as e:
-                    print(f"[SportyBet] pcEvents {tid}: {e}")
-                await asyncio.sleep(0.15)
+                print(f"[SportyBet] {name}: {e}")
+                continue
+            if events:
+                break
     finally:
         if own:
             await session.close()
@@ -306,16 +367,13 @@ async def diagnose(fixtures: List[Dict[str, str]], today: Optional[str] = None) 
     events: List[Dict] = []
     async with _session() as session:
         async def listing():
-            day = datetime.fromisoformat(today).replace(tzinfo=timezone.utc)
-            data = await _request(session, "GET", "/factsCenter/getScheduled", params={
-                "sportId": FOOTBALL, "startTime": int(day.timestamp() * 1000),
-                "endTime": int((day + timedelta(days=3)).timestamp() * 1000),
-                "marketId": "1", "page": 1, "pageSize": 500, "_t": int(time.time() * 1000)})
-            _collect_events(data.get("data"), events)
+            found, report = await probe_listings(session)
+            events.extend(found)
             if not events:
-                return False, "SportyBet answered but listed no football events"
+                return False, " · ".join(report)
             e = events[0]
-            return True, f"{len(events)} events, e.g. {e['homeTeamName']} vs {e['awayTeamName']} ({e['eventId']})"
+            return True, (f"{len(events)} events, e.g. {e['homeTeamName']} vs {e['awayTeamName']} "
+                          f"({e['eventId']}) — " + " · ".join(report))
 
         async def matching():
             upcoming = [f for f in fixtures if f.get("home") and f.get("away")][:30]
