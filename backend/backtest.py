@@ -68,9 +68,12 @@ def _month_starts(start: pd.Timestamp, end: pd.Timestamp) -> List[pd.Timestamp]:
 def walk_forward(matches: pd.DataFrame, start: str, end: str,
                  min_train: int = 1000,
                  make_model: Callable[[], LeaguePredictor] = LeaguePredictor,
-                 log: Callable[[str], None] = print) -> List[Dict]:
+                 log: Callable[[str], None] = print,
+                 hide_odds: bool = False) -> List[Dict]:
     """One record per test match: the model's probabilities, its picks, the
-    bookmaker's odds and the real score."""
+    bookmaker's odds and the real score. With hide_odds the model predicts
+    without odds (as for a live fixture the odds feed missed); the records
+    still carry the odds so the bookmaker comparison works."""
     matches = matches.dropna(subset=["Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG", "Result"])
     matches = matches.sort_values("Date", kind="stable").reset_index(drop=True)
     start_ts, end_ts = pd.Timestamp(start), pd.Timestamp(end)
@@ -91,7 +94,8 @@ def walk_forward(matches: pd.DataFrame, start: str, end: str,
             day = str(r["Date"].date())
             league = str(r.get("league", "") or "")
             oh, od, oa = _odds(r.get("B365H")), _odds(r.get("B365D")), _odds(r.get("B365A"))
-            feats = model._feats(r["HomeTeam"], r["AwayTeam"], oh, od, oa, match_date=day, league=league)
+            feats = model._feats(r["HomeTeam"], r["AwayTeam"], *((0, 0, 0) if hide_odds else (oh, od, oa)),
+                                 match_date=day, league=league)
             p_h, p_d, p_a, p_o15, p_o25 = model.predict_proba(feats)
             records.append({
                 "date": day, "league": league,
@@ -318,6 +322,8 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--start", help="first test date (default: start of the latest season)")
     ap.add_argument("--end", help="last test date (default: latest match)")
     ap.add_argument("--out", default=METRICS_PATH)
+    ap.add_argument("--records", help="also save per-match records (JSON) to score tip rules without retraining")
+    ap.add_argument("--hide-odds", action="store_true", help="predict without bookmaker odds")
     args = ap.parse_args(argv)
 
     from main import _load_football_data_csvs
@@ -327,7 +333,10 @@ def main(argv: Optional[List[str]] = None) -> None:
     start, end = _default_window(matches)
     start, end = args.start or start, args.end or end
 
-    records = walk_forward(matches, start, end)
+    records = walk_forward(matches, start, end, hide_odds=args.hide_odds)
+    if args.records:
+        with open(args.records, "w") as f:
+            json.dump(records, f)
     metrics = summarize(records)
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     with open(args.out, "w") as f:
