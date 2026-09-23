@@ -64,6 +64,8 @@ export default function AdminPage() {
   const [users, setUsers]       = useState<any>(null);
   const [popular, setPopular]   = useState<any>(null);
   const [dataStatus, setDataStatus] = useState<any>(null);
+  const [sbCheck, setSbCheck] = useState<any>(null);
+  const [sbChecking, setSbChecking] = useState(false);
   // Grant/Revoke
   const [grantEmail, setGrantEmail]   = useState("");
   const [grantAction, setGrantAction] = useState<"grant"|"revoke">("grant");
@@ -511,6 +513,46 @@ export default function AdminPage() {
               </div>
             </div>
           </>
+        )}
+      </section>
+
+      {/* ── SportyBet booking check ── */}
+      <section className="bg-slate-900 border border-slate-700 rounded-xl p-5 space-y-3">
+        <div className="flex items-center gap-2">
+          <Zap size={15} className="text-green-400" />
+          <h2 className="text-white font-semibold text-sm">SportyBet booking</h2>
+          <button
+            onClick={async () => {
+              setSbChecking(true); setSbCheck(null);
+              try {
+                const r = await fetch(`${API}/api/admin/sportybet-check?secret=${encodeURIComponent(secret)}`);
+                setSbCheck(r.ok ? await r.json() : { ok: false, steps: [{ step: "Request", ok: false, detail: `HTTP ${r.status}` }] });
+              } catch (e) {
+                setSbCheck({ ok: false, steps: [{ step: "Request", ok: false, detail: String(e) }] });
+              } finally { setSbChecking(false); }
+            }}
+            disabled={sbChecking}
+            className="ml-auto flex items-center gap-1.5 bg-green-500 hover:bg-green-400 disabled:opacity-50 text-black font-bold px-3 py-1.5 rounded-lg text-xs"
+          >
+            {sbChecking ? <Loader2 size={12} className="animate-spin" /> : <Zap size={12} />}
+            {sbChecking ? "Testing…" : "Test live booking"}
+          </button>
+        </div>
+        <p className="text-slate-500 text-xs">Books a real one-pick code from the server — codes only load a betslip, nothing is staked.</p>
+        {sbCheck && (
+          <div className="space-y-1.5">
+            <p className={clsx("text-sm font-bold", sbCheck.ok ? "text-green-400" : "text-red-400")}>
+              {sbCheck.ok ? "Booking works" : "Booking is failing"}
+              {sbCheck.impersonate && <span className="text-slate-500 font-normal text-xs ml-2">({sbCheck.impersonate}, {sbCheck.country})</span>}
+            </p>
+            {(sbCheck.steps ?? []).map((st: any) => (
+              <div key={st.step} className="flex items-start gap-2 text-xs">
+                {st.ok ? <CheckCircle2 size={13} className="text-green-400 mt-px shrink-0" /> : <AlertTriangle size={13} className="text-red-400 mt-px shrink-0" />}
+                <span className="text-slate-300 font-semibold shrink-0">{st.step}</span>
+                <span className="text-slate-400 break-words">{st.detail}{st.ms != null && <span className="text-slate-600"> · {st.ms} ms</span>}</span>
+              </div>
+            ))}
+          </div>
         )}
       </section>
 

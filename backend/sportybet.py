@@ -1,459 +1,343 @@
 """
-SportyBet integration — reverse-engineered internal web API.
-Creates shareable booking codes from a list of predicted fixtures.
+SportyBet — upcoming events and booking codes, through the same public web
+API sportybet.com's own pages call (no account or key; a booking code only
+loads selections into a betslip, it never places a bet).
 
-Endpoint base: https://www.sportybet.com/api/ng/
-All requests are unauthenticated (booking codes are public/shareable by design).
+SportyBet's firewall fingerprints the TLS handshake and challenges anything
+that isn't a real browser — plain Python HTTP clients (httpx, requests) get an
+empty 202 or a 403. curl_cffi performs the handshake exactly like Chrome, so
+every request here goes through it.
+
+Markets and outcomes use Betradar's fixed ids (1X2 is market 1, outcomes
+1/2/3), so booking needs only the event id — see booking_slip.py.
 """
 
 import asyncio
-import httpx
-from datetime import datetime
+import os
+import time
+from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-BASE = "https://www.sportybet.com/api/ng"
-HOME = "https://www.sportybet.com/ng/sport/football"
+from curl_cffi.requests import AsyncSession
+
+from team_names import normalise
+
+COUNTRY = os.getenv("SPORTYBET_COUNTRY", "ng")
+BASE = f"https://www.sportybet.com/api/{COUNTRY}"
+SITE = f"https://www.sportybet.com/{COUNTRY}/"
+IMPERSONATE = os.getenv("SPORTYBET_IMPERSONATE", "chrome131")
+# Optional, e.g. http://user:pass@ng.proxy.example:8000 — only if SportyBet
+# starts refusing this server's IP (the self-test's first step says so)
+PROXY = os.getenv("SPORTYBET_PROXY") or None
+FOOTBALL = "sr:sport:1"
+OK = 10000  # SportyBet's bizCode for success
 
 _HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
-    ),
     "Accept": "application/json, text/plain, */*",
     "Accept-Language": "en-US,en;q=0.9",
     "Origin": "https://www.sportybet.com",
-    "Referer": HOME,
+    "Referer": SITE,
 }
 
-_session_cookies: dict = {}
-
-async def _warm_session(client: httpx.AsyncClient) -> None:
-    """
-    Visit SportyBet homepage to pick up session cookies before API calls.
-    Without cookies the API returns 202 with empty body (cookie challenge).
-    """
-    global _session_cookies
-    if _session_cookies:
-        return
-    try:
-        r = await client.get(HOME, headers={
-            "User-Agent": _HEADERS["User-Agent"],
-            "Accept": "text/html,application/xhtml+xml,*/*",
-            "Accept-Language": "en-US,en;q=0.9",
-        }, timeout=15, follow_redirects=True)
-        _session_cookies = dict(r.cookies)
-        print(f"[SportyBet] Session warmed — {len(_session_cookies)} cookies")
-    except Exception as e:
-        print(f"[SportyBet] Session warm error: {e}")
-
-MARKET_1X2 = "1_18"
-
-# Normalise team name before fuzzy comparison
-_REPLACE = [
-    (" FC", ""), (" AFC", ""), (" SC", ""), (" CF", ""),
-    ("Manchester", "Man"), ("United", "Utd"), ("Borussia", ""),
-    ("Internazionale", "Inter"), ("Paris Saint-Germain", "PSG"),
-    ("Atletico", "Atlético"), (" City", " City"),
-]
-
-def _norm(name: str) -> str:
-    n = name.strip()
-    for old, new in _REPLACE:
-        n = n.replace(old, new)
-    return n.lower().strip()
-
-def _sim(a: str, b: str) -> float:
-    return SequenceMatcher(None, _norm(a), _norm(b)).ratio()
-
-
-# ------------------------------------------------------------------ #
-# Fetch SportyBet matches for a calendar date
-# ------------------------------------------------------------------ #
-
-async def _get(client: httpx.AsyncClient, url: str) -> Optional[Any]:
-    try:
-        r = await client.get(url, headers=_HEADERS, cookies=_session_cookies,
-                             timeout=20, follow_redirects=True)
-        body = r.text.strip()
-        if r.status_code in (200, 202) and body and body.startswith("{"):
-            data = r.json()
-            if data.get("bizCode") == 10000:
-                return data
-            print(f"[SportyBet] bizCode={data.get('bizCode')} msg={data.get('message','')}")
-        else:
-            print(f"[SportyBet] GET {r.status_code} len={len(body)} body={body[:120]!r}")
-    except Exception as e:
-        print(f"[SportyBet] GET error: {e}")
-    return None
-
-
 TOURNAMENT_IDS = [
-    # Club leagues
-    "sr:tournament:17",   # Premier League
-    "sr:tournament:23",   # Serie A
-    "sr:tournament:35",   # Bundesliga
-    "sr:tournament:8",    # La Liga
-    "sr:tournament:34",   # Ligue 1
-    "sr:tournament:7",    # Champions League
-    "sr:tournament:679",  # Europa League
-    "sr:tournament:238",  # Primeira Liga
-    "sr:tournament:37",   # Eredivisie
-    "sr:tournament:44",   # Bundesliga 2
-    # International competitions
-    "sr:tournament:1091", # UEFA Nations League A
-    "sr:tournament:1090", # UEFA Nations League B
-    "sr:tournament:133",  # Copa America
-    "sr:tournament:1049", # AFCON
-    "sr:tournament:42",   # FIFA World Cup Qualifiers Africa
-    "sr:tournament:143",  # FIFA World Cup Qualifiers Europe
-    "sr:tournament:203",  # Algerian Ligue Pro
-    "sr:tournament:68",   # Africa Cup of Nations Qualifiers
-    "sr:tournament:191",  # International Friendlies
+    "sr:tournament:17", "sr:tournament:23", "sr:tournament:35", "sr:tournament:8",
+    "sr:tournament:34", "sr:tournament:7", "sr:tournament:679", "sr:tournament:238",
+    "sr:tournament:37", "sr:tournament:44", "sr:tournament:18",  # … Championship
+    "sr:tournament:1091", "sr:tournament:1090", "sr:tournament:133", "sr:tournament:1049",
+    "sr:tournament:42", "sr:tournament:143", "sr:tournament:68", "sr:tournament:191",
 ]
 
 
-async def fetch_events_for_date(date_str: str) -> List[Dict]:
+class SportyBetError(Exception):
+    """A request SportyBet refused or answered with something unusable."""
+
+
+def _session() -> AsyncSession:
+    return AsyncSession(impersonate=IMPERSONATE, timeout=20, headers=_HEADERS, proxy=PROXY)
+
+
+async def _request(session: AsyncSession, method: str, path: str, **kw) -> Dict[str, Any]:
+    """One API call. Returns the parsed body when bizCode is 10000, raises otherwise."""
+    r = await session.request(method, f"{BASE}{path}", **kw)
+    text = (r.text or "").strip()
+    if r.status_code not in (200, 202) or not text.startswith("{"):
+        raise SportyBetError(f"{method} {path}: HTTP {r.status_code}, {len(text)} bytes"
+                             + (" (blocked by SportyBet's firewall)" if r.status_code in (202, 403) else ""))
+    data = r.json()
+    if data.get("bizCode") != OK:
+        raise SportyBetError(f"{method} {path}: bizCode {data.get('bizCode')} {data.get('message', '')}".strip())
+    return data
+
+
+# ------------------------------------------------------------------ #
+# Events
+# ------------------------------------------------------------------ #
+
+def _collect_events(node: Any, out: List[Dict]) -> None:
+    """Every event dict in a response, however it is grouped (tournaments, pages…)."""
+    if isinstance(node, dict):
+        if node.get("eventId") and node.get("homeTeamName") and node.get("awayTeamName"):
+            out.append(node)
+            return
+        for v in node.values():
+            _collect_events(v, out)
+    elif isinstance(node, list):
+        for v in node:
+            _collect_events(v, out)
+
+
+def _utc_day(ev: Dict) -> Optional[str]:
+    try:
+        return datetime.fromtimestamp(int(ev["estimateStartTime"]) / 1000, timezone.utc).date().isoformat()
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _near(day: Optional[str], date_str: str) -> bool:
+    """Same UTC day, or the next/previous one (late kick-offs cross midnight)."""
+    if not day:
+        return True
+    a, b = datetime.fromisoformat(day), datetime.fromisoformat(date_str)
+    return abs((a - b).days) <= 1
+
+
+_cache: Dict[str, Tuple[float, List[Dict]]] = {}
+CACHE_SECONDS = 300
+
+
+async def fetch_events_for_date(date_str: str, session: Optional[AsyncSession] = None) -> List[Dict]:
     """
-    Fetch all football events from SportyBet for a given date (YYYY-MM-DD).
-    Uses pcEvents (POST) which is what their website actually calls, then falls
-    back to getScheduled GET endpoints.
+    Upcoming football events around a date (YYYY-MM-DD), each with eventId,
+    homeTeamName, awayTeamName, estimateStartTime and the listed markets.
+    Returns [] when SportyBet can't be reached (logged, never raised).
     """
-    dt = datetime.strptime(date_str, "%Y-%m-%d")
-    start_ms = int(dt.replace(hour=0, minute=0, second=0).timestamp() * 1000)
-    end_ms   = int(dt.replace(hour=23, minute=59, second=59).timestamp() * 1000)
-    ts = start_ms
+    hit = _cache.get(date_str)
+    if hit and time.time() - hit[0] < CACHE_SECONDS:
+        return hit[1]
 
-    async with httpx.AsyncClient(timeout=25, follow_redirects=True) as client:
-        # Warm session to get cookies — SportyBet returns 202 empty without them
-        await _warm_session(client)
+    day = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    start = int((day - timedelta(days=1)).timestamp() * 1000)
+    end = int((day + timedelta(days=2)).timestamp() * 1000)
 
-        # ── Strategy 1: getScheduled GET — date-based, covers ALL tournaments ──
-        # This is the best approach for value bets since it's not tournament-specific
-        for url in [
-            f"{BASE}/factsCenter/getScheduled?sportId=sr%3Asport%3A1&startTime={start_ms}&endTime={end_ms}&marketId=1&page=1&pageSize=500&_t={ts}",
-            f"{BASE}/factsCenter/getScheduled?sportId=sr%3Asport%3A1&startTime={start_ms}&endTime={end_ms}&marketId={MARKET_1X2}&page=1&pageSize=500&_t={ts}",
-            f"{BASE}/factsCenter/getScheduled?sportId=sr%3Asport%3A1&startTime={start_ms}&endTime={end_ms}&page=1&pageSize=500&_t={ts}",
-        ]:
-            data = await _get(client, url)
-            if not data:
-                continue
-            inner = data.get("data") or data
-            events = (
-                inner.get("events") or inner.get("matches") or
-                inner.get("items") or
-                (inner if isinstance(inner, list) else [])
-            )
-            if events:
-                print(f"[SportyBet] getScheduled: {len(events)} events for {date_str}")
-                return events
-
-        # ── Strategy 2: pcEvents POST per tournament — server ignores date params,
-        # so collect ALL events then filter client-side by estimateStartTime
-        all_evs: List[Dict] = []
-        for tid in TOURNAMENT_IDS:
+    own = session is None
+    session = session or _session()
+    events: List[Dict] = []
+    try:
+        attempts = [
+            ("GET", "/factsCenter/getScheduled", {"params": {
+                "sportId": FOOTBALL, "startTime": start, "endTime": end, "marketId": "1",
+                "page": 1, "pageSize": 500, "_t": int(time.time() * 1000)}}),
+            ("GET", "/factsCenter/commonThumbnailEvents", {"params": {"sportId": FOOTBALL, "marketId": "1"}}),
+        ]
+        for method, path, kw in attempts:
             try:
-                r = await client.post(f"{BASE}/factsCenter/pcEvents", json={
-                    "tournamentId": tid,
-                    "sportId": "sr:sport:1",
-                    "marketId": "1",
-                }, headers={**_HEADERS, "Content-Type": "application/json"})
-                if r.status_code == 200:
-                    data = r.json()
-                    if data.get("bizCode") == 10000:
-                        for t in (data.get("data") or []):
-                            for ev in (t.get("events") or []):
-                                ev_ts = ev.get("estimateStartTime", 0)
-                                if start_ms <= int(ev_ts) <= end_ms:
-                                    all_evs.append(ev)
+                found: List[Dict] = []
+                _collect_events((await _request(session, method, path, **kw)).get("data"), found)
+                events = [e for e in found if _near(_utc_day(e), date_str)]
+                if events:
+                    break
             except Exception as e:
-                print(f"[SportyBet] pcEvents {tid}: {e}")
-            await asyncio.sleep(0.1)
+                print(f"[SportyBet] {path}: {e}")
 
-        if all_evs:
-            print(f"[SportyBet] pcEvents: {len(all_evs)} events for {date_str}")
-            return all_evs
+        if not events:  # per-tournament listing as a last resort
+            for tid in TOURNAMENT_IDS:
+                try:
+                    found = []
+                    data = await _request(session, "POST", "/factsCenter/pcEvents",
+                                          json={"tournamentId": tid, "sportId": FOOTBALL, "marketId": "1"})
+                    _collect_events(data.get("data"), found)
+                    events += [e for e in found if _near(_utc_day(e), date_str)]
+                except Exception as e:
+                    print(f"[SportyBet] pcEvents {tid}: {e}")
+                await asyncio.sleep(0.15)
+    finally:
+        if own:
+            await session.close()
 
-    print(f"[SportyBet] No events found for {date_str}")
-    return []
+    print(f"[SportyBet] {len(events)} events around {date_str}")
+    if events:
+        _cache[date_str] = (time.time(), events)
+    return events
 
 
 # ------------------------------------------------------------------ #
-# Match our fixture names to a SportyBet event
+# Matching our fixtures to SportyBet events
 # ------------------------------------------------------------------ #
 
-def _event_teams(ev: Dict):
-    home = (
-        ev.get("homeTeamName") or
-        ev.get("home", {}).get("name") or
-        ev.get("teams", {}).get("home", {}).get("name") or ""
-    )
-    away = (
-        ev.get("awayTeamName") or
-        ev.get("away", {}).get("name") or
-        ev.get("teams", {}).get("away", {}).get("name") or ""
-    )
-    return home, away
+# Names Betradar writes differently from football-data.org / our CSVs
+_SB_ALIASES = {
+    "man utd": "manchester united", "man united": "manchester united", "man city": "manchester city",
+    "psg": "paris saint germain", "paris sg": "paris saint germain", "inter": "internazionale",
+    "atletico madrid": "atletico madrid", "ath madrid": "atletico madrid", "atleti": "atletico madrid",
+    "bayern munich": "bayern munchen", "wolves": "wolverhampton wanderers",
+    "spurs": "tottenham hotspur", "nottm forest": "nottingham forest",
+    "internazionale milano": "internazionale", "inter milan": "internazionale",
+    "cologne": "koln", "olympique lyonnais": "lyon", "olympique lyon": "lyon",
+    "sporting lisbon": "sporting", "sporting portugal": "sporting", "sp lisbon": "sporting",
+    "rasenballsport leipzig": "rb leipzig", "stade rennais": "rennes", "stade brestois": "brest",
+    "saint etienne": "st etienne", "az": "az alkmaar", "nec": "nec nijmegen", "nijmegen": "nec nijmegen",
+    # "Paris FC" normalises to "paris", which is inside "Paris Saint-Germain"
+    "paris": "paris fc",
+}
 
 
-def find_event(home: str, away: str, events: List[Dict]) -> Optional[Dict]:
+def _key(name: str) -> str:
+    n = normalise(name)
+    return _SB_ALIASES.get(n, n)
+
+
+def team_similarity(a: str, b: str) -> float:
+    """
+    0–1. Full credit when one name's words are all in the other's
+    ("Brighton" / "Brighton & Hove Albion"). Names that share words are
+    compared on the words that differ, so "Manchester City" and
+    "Manchester United" (or Real / Atlético Madrid) come out far apart.
+    """
+    ka, kb = _key(a), _key(b)
+    if not ka or not kb:
+        return 0.0
+    if ka == kb:
+        return 1.0
+    wa, wb = set(ka.split()), set(kb.split())
+    shared = wa & wb
+    if (wa <= wb or wb <= wa) and max(len(w) for w in shared or {""}) >= 3:
+        return 0.95
+    if shared:
+        return SequenceMatcher(None, " ".join(sorted(wa - shared)), " ".join(sorted(wb - shared))).ratio()
+    return SequenceMatcher(None, ka, kb).ratio()
+
+
+def find_event(home: str, away: str, events: Iterable[Dict]) -> Optional[Dict]:
+    """The event for this fixture: each team must match its own side, clearly."""
     best, best_score = None, 0.0
     for ev in events:
-        sb_home, sb_away = _event_teams(ev)
-        if not sb_home or not sb_away:
+        h, a = ev.get("homeTeamName") or "", ev.get("awayTeamName") or ""
+        sh, sa = team_similarity(home, h), team_similarity(away, a)
+        if min(sh, sa) < 0.8:
             continue
-        score = (_sim(home, sb_home) + _sim(away, sb_away)) / 2
-        if score > best_score:
-            best_score = score
-            best = ev
-    return best if best_score >= 0.55 else None
-
-
-# ------------------------------------------------------------------ #
-# Build a selection dict from a matched event
-# ------------------------------------------------------------------ #
-
-def build_selection(event: Dict, tip_code: str) -> Optional[Dict]:
-    """
-    Extract market/outcome IDs from a SportyBet event dict and build a
-    selection payload item compatible with their /orders/share endpoint.
-    tip_code: "1" (home), "X" (draw), "2" (away)
-    """
-    try:
-        match_id = (
-            event.get("eventId") or event.get("matchId") or
-            event.get("id") or event.get("matchInfo", {}).get("id")
-        )
-
-        # Find the 1X2 market in the event's market list
-        markets = (
-            event.get("markets") or event.get("betOptions") or
-            event.get("marketList") or []
-        )
-        market = None
-        for m in markets:
-            mid = str(m.get("id", "") or m.get("marketId", ""))
-            mname = (m.get("name") or m.get("marketName") or "").lower()
-            if mid == MARKET_1X2 or "1x2" in mname or "match result" in mname:
-                market = m
-                break
-
-        if not market and markets:
-            market = markets[0]     # take first market as fallback
-
-        if not market:
-            print(f"[SportyBet] No 1X2 market found for event {match_id}")
-            return None
-
-        market_id = str(market.get("id") or market.get("marketId") or MARKET_1X2)
-        outcomes = market.get("outcomes") or market.get("options") or market.get("selections") or []
-
-        # Map tip_code → expected outcome name
-        name_map = {"1": ["home", "1", "win"], "X": ["draw", "x", "tie"], "2": ["away", "2"]}
-        target_names = name_map.get(tip_code, [])
-
-        outcome = None
-        for o in outcomes:
-            oname = (o.get("name") or o.get("outcomeName") or "").lower().strip()
-            if any(t in oname for t in target_names) or oname == tip_code.lower():
-                outcome = o
-                break
-
-        if not outcome and outcomes:
-            idx = {"1": 0, "X": 1, "2": 2}.get(tip_code, 0)
-            outcome = outcomes[min(idx, len(outcomes) - 1)]
-
-        if not outcome:
-            return None
-
-        outcome_id = str(outcome.get("id") or outcome.get("outcomeId") or "")
-        odds = str(outcome.get("odds") or outcome.get("value") or outcome.get("price") or "1.00")
-
-        sb_home, sb_away = _event_teams(event)
-
-        return {
-            "matchId":     str(match_id),
-            "marketId":    market_id,
-            "outcomeId":   outcome_id,
-            "specifiers":  market.get("specifiers") or "",
-            "marketName":  market.get("name") or "1X2",
-            "outcomeName": outcome.get("name") or tip_code,
-            "homeTeamName": sb_home,
-            "awayTeamName": sb_away,
-            "odds":         odds,
-            "status":       0,
-        }
-    except Exception as e:
-        print(f"[SportyBet] build_selection error: {e}")
-        return None
-
-
-# ------------------------------------------------------------------ #
-# POST booking code
-# ------------------------------------------------------------------ #
-
-async def post_booking(selections: List[Dict]) -> Optional[str]:
-    """POST selections to SportyBet and return the booking code string."""
-    url = f"{BASE}/orders/share"
-    payload = {"betType": "1", "betList": selections}
-
-    try:
-        async with httpx.AsyncClient(timeout=25, follow_redirects=True) as client:
-            await _warm_session(client)
-            r = await client.post(url, json=payload, cookies=_session_cookies, headers={
-                **_HEADERS,
-                "Content-Type": "application/json",
-            })
-            print(f"[SportyBet] POST /orders/share → {r.status_code}: {r.text[:300]}")
-            if r.status_code in (200, 202):
-                data = r.json()
-                inner = data.get("data") or data
-                return (
-                    inner.get("bookingCode") or
-                    inner.get("code") or
-                    inner.get("shareCode") or
-                    inner.get("betCode")
-                )
-    except Exception as e:
-        print(f"[SportyBet] post_booking error: {e}")
-    return None
-
-
-# ------------------------------------------------------------------ #
-# Public entry point
-# ------------------------------------------------------------------ #
-
-async def generate_booking_code(predictions: List[Dict]) -> Dict:
-    """
-    Given a list of BetIQ prediction dicts, match them to SportyBet events
-    and generate a booking code.
-
-    Returns:
-        {
-            code: str | None,
-            matched: [{game, tip, odds}],
-            unmatched: [str],
-            total_odds: float | None,
-            error: str | None,
-        }
-    """
-    matched_games = []
-    unmatched_games = []
-    selections = []
-    total_odds = 1.0
-
-    # Fetch SportyBet events per unique date (batched)
-    dates = list({p["date"] for p in predictions})
-    sb_by_date: Dict[str, List] = {}
-
-    async with httpx.AsyncClient() as _:       # warm connection pool context
-        for d in dates:
-            sb_by_date[d] = await fetch_events_for_date(d)
-            await asyncio.sleep(0.4)
-
-    for pred in predictions:
-        tip_code = pred.get("tip_code", "?")
-
-        # Only book clean 1X2 tips
-        if tip_code not in ("1", "X", "2"):
-            unmatched_games.append(
-                f"{pred['home']} vs {pred['away']} (tip '{tip_code}' not bookable as 1X2)"
-            )
+        # A reversed fixture matches better crossed over — that's a different match
+        if team_similarity(home, a) > sh or team_similarity(away, h) > sa:
             continue
-
-        events = sb_by_date.get(pred["date"], [])
-        event = find_event(pred["home"], pred["away"], events)
-
-        if not event:
-            unmatched_games.append(f"{pred['home']} vs {pred['away']} (not found on SportyBet)")
-            continue
-
-        sel = build_selection(event, tip_code)
-        if not sel:
-            unmatched_games.append(f"{pred['home']} vs {pred['away']} (market extraction failed)")
-            continue
-
-        selections.append(sel)
-        matched_games.append({
-            "game": f"{sel['homeTeamName']} vs {sel['awayTeamName']}",
-            "tip":  sel["outcomeName"],
-            "odds": sel["odds"],
-        })
-        try:
-            total_odds *= float(sel["odds"])
-        except Exception:
-            pass
-
-    if not selections:
-        return {
-            "code": None,
-            "matched": matched_games,
-            "unmatched": unmatched_games,
-            "total_odds": None,
-            "error": "None of the selected games were found on SportyBet for today.",
-        }
-
-    code = await post_booking(selections)
-    return {
-        "code": code,
-        "matched": matched_games,
-        "unmatched": unmatched_games,
-        "total_odds": round(total_odds, 2) if matched_games else None,
-        "error": None if code else "SportyBet returned no booking code — their API may have changed.",
-    }
+        if sh + sa > best_score:
+            best, best_score = ev, sh + sa
+    return best
 
 
 # ------------------------------------------------------------------ #
-# Share a slip of id triples (used by the bet slip — booking_slip.py)
+# Booking codes
 # ------------------------------------------------------------------ #
 
-SHARE_URL = "https://www.sportybet.com/?shareCode={code}&c=ng"
+SHARE_URL = "https://www.sportybet.com/?shareCode={code}&c=" + COUNTRY
 
 
-def _share_code(data: Any) -> Optional[str]:
-    if not isinstance(data, dict):
-        return None
-    inner = data.get("data") if isinstance(data.get("data"), dict) else data
-    code = inner.get("shareCode") or inner.get("bookingCode") or inner.get("code")
-    return str(code) if code else None
+def _outcome_keys(node: Any, event_id: str = "", market: Optional[Dict] = None) -> Iterable[Tuple[Tuple[str, str, str], Dict]]:
+    """(eventId, marketId, outcomeId) for each outcome in a share response, flat or nested."""
+    if isinstance(node, list):
+        for v in node:
+            yield from _outcome_keys(v, event_id, market)
+    elif isinstance(node, dict):
+        event_id = str(node.get("eventId") or event_id)
+        if "markets" in node:
+            for m in node.get("markets") or []:
+                yield from _outcome_keys(m.get("outcomes") or [], event_id, m)
+        elif node.get("outcomeId") and node.get("marketId"):
+            yield (event_id, str(node["marketId"]), str(node["outcomeId"])), node
+        elif market is not None and node.get("id"):
+            yield (event_id, str(market.get("id")), str(node["id"])), node
 
 
 async def share_selections(selections: List[Dict[str, str]],
-                           client: Optional[httpx.AsyncClient] = None) -> Optional[Dict[str, str]]:
+                           session: Optional[AsyncSession] = None) -> Dict[str, Any]:
     """
-    Create a booking code from {eventId, marketId, specifier, outcomeId}
-    selections. Returns {"code", "url"} or None.
+    Create a booking code for {eventId, marketId, specifier, outcomeId}
+    selections. Returns {"code", "url", "odds": {(event, market, outcome): float},
+    "unavailable": {(event, market, outcome), …}}. Raises SportyBetError.
     """
-    payloads = [
-        # What sportybet.com's own "Book bet" sends
-        {"selections": [{"eventId": s["eventId"], "marketId": s["marketId"],
-                         "specifier": s.get("specifier") or None, "outcomeId": s["outcomeId"]}
-                        for s in selections]},
-        # Older shape, kept as a fallback
-        {"betType": "1", "betList": [{"matchId": s["eventId"], "marketId": s["marketId"],
-                                      "specifiers": s.get("specifier") or "",
-                                      "outcomeId": s["outcomeId"], "status": 0}
-                                     for s in selections]},
-    ]
-    own = client is None
-    client = client or httpx.AsyncClient(timeout=25, follow_redirects=True)
+    payload = {"selections": [
+        {"eventId": s["eventId"], "marketId": s["marketId"], "outcomeId": s["outcomeId"],
+         **({"specifier": s["specifier"]} if s.get("specifier") else {})}
+        for s in selections
+    ]}
+    own = session is None
+    session = session or _session()
     try:
-        await _warm_session(client)
-        for payload in payloads:
-            try:
-                r = await client.post(f"{BASE}/orders/share", json=payload, cookies=_session_cookies,
-                                      headers={**_HEADERS, "Content-Type": "application/json"})
-                print(f"[SportyBet] share → {r.status_code}: {r.text[:200]}")
-                if r.status_code in (200, 202) and r.text.strip().startswith("{"):
-                    data = r.json()
-                    code = _share_code(data)
-                    if code:
-                        inner = data.get("data") if isinstance(data.get("data"), dict) else {}
-                        return {"code": code, "url": inner.get("shareURL") or SHARE_URL.format(code=code)}
-            except Exception as e:
-                print(f"[SportyBet] share error: {e}")
+        data = (await _request(session, "POST", "/orders/share", json=payload)).get("data") or {}
     finally:
         if own:
-            await client.aclose()
-    return None
+            await session.close()
+
+    code = data.get("shareCode")
+    if not code:
+        raise SportyBetError("SportyBet accepted the request but returned no share code")
+    odds: Dict[Tuple[str, str, str], float] = {}
+    for key, o in _outcome_keys(data.get("outcomes") or []):
+        try:
+            odds[key] = float(o.get("odds"))
+        except (TypeError, ValueError):
+            pass
+    unavailable = {key for key, _ in _outcome_keys(data.get("unavailableOutcomes") or [])}
+    return {"code": str(code), "url": data.get("shareURL") or SHARE_URL.format(code=code),
+            "odds": odds, "unavailable": unavailable}
+
+
+# ------------------------------------------------------------------ #
+# Live self-test (admin dashboard)
+# ------------------------------------------------------------------ #
+
+async def diagnose(fixtures: List[Dict[str, str]], today: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Run the whole booking path against the real SportyBet and report each
+    step: list events, match our upcoming fixtures, book a one-pick code.
+    Nothing is cached or stored; a booking code places no bet.
+    """
+    steps: List[Dict[str, Any]] = []
+    today = today or datetime.now(timezone.utc).date().isoformat()
+
+    async def step(name, fn):
+        t = time.perf_counter()
+        try:
+            ok, detail = await fn()
+        except Exception as e:
+            ok, detail = False, f"{type(e).__name__}: {e}"
+        steps.append({"step": name, "ok": ok, "detail": detail, "ms": round((time.perf_counter() - t) * 1000)})
+        return ok
+
+    events: List[Dict] = []
+    async with _session() as session:
+        async def listing():
+            day = datetime.fromisoformat(today).replace(tzinfo=timezone.utc)
+            data = await _request(session, "GET", "/factsCenter/getScheduled", params={
+                "sportId": FOOTBALL, "startTime": int(day.timestamp() * 1000),
+                "endTime": int((day + timedelta(days=3)).timestamp() * 1000),
+                "marketId": "1", "page": 1, "pageSize": 500, "_t": int(time.time() * 1000)})
+            _collect_events(data.get("data"), events)
+            if not events:
+                return False, "SportyBet answered but listed no football events"
+            e = events[0]
+            return True, f"{len(events)} events, e.g. {e['homeTeamName']} vs {e['awayTeamName']} ({e['eventId']})"
+
+        async def matching():
+            upcoming = [f for f in fixtures if f.get("home") and f.get("away")][:30]
+            if not upcoming:
+                return True, "No upcoming fixtures to check yet"
+            found = [f for f in upcoming if find_event(f["home"], f["away"], events)]
+            missing = [f"{f['home']} vs {f['away']}" for f in upcoming if f not in found][:8]
+            return len(found) > 0, (f"{len(found)} of {len(upcoming)} upcoming fixtures found on SportyBet"
+                                    + (f"; not found: {', '.join(missing)}" if missing else ""))
+
+        async def booking():
+            ev = next((e for e in events if any(str(m.get("id")) == "1" for m in e.get("markets") or [])), events[0])
+            data = (await _request(session, "POST", "/orders/share", json={"selections": [
+                {"eventId": ev["eventId"], "marketId": "1", "outcomeId": "1"}]})).get("data") or {}
+            code = data.get("shareCode")
+            if not code:
+                return False, f"No share code in the reply: {str(data)[:200]}"
+            return True, f"Booked {ev['homeTeamName']} to win → code {code}"
+
+        if await step("List SportyBet events", listing):
+            await step("Match our fixtures", matching)
+            await step("Create a booking code", booking)
+
+    return {"ok": all(s["ok"] for s in steps) and len(steps) == 3, "impersonate": IMPERSONATE,
+            "country": COUNTRY, "proxy": bool(PROXY), "steps": steps}

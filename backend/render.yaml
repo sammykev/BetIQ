@@ -15,6 +15,12 @@ services:
         sync: false
       - key: CLERK_AUTHORIZED_PARTIES
         sync: false
+      # SportyBet booking (sportybet.py). Defaults work; set SPORTYBET_PROXY only
+      # if the admin "Test live booking" check shows SportyBet refusing this server.
+      - key: SPORTYBET_COUNTRY
+        value: ng
+      - key: SPORTYBET_PROXY
+        sync: false
     disk:
       name: csv-data
       mountPath: /data

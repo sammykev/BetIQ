@@ -10,7 +10,7 @@ platform means finding the match there and translating the market:
 SportyBet prices football through Betradar, whose market and outcome ids are
 fixed (1X2 is market 1, outcomes 1/2/3), so a selection maps to an id
 triple without guessing; only the event has to be found by name and date.
-Markets outside SPORTYBET_MARKETS are reported as unsupported rather than
+Markets without a mapping in sportybet_ids are reported as unsupported rather than
 approximated.
 """
 
@@ -93,15 +93,16 @@ async def to_sportybet(
     selections: List[Dict[str, Any]],
     fetch_events: Callable[[str], Awaitable[List[Dict]]],
     find_event: Callable[[str, str, List[Dict]], Optional[Dict]],
-    post_share: Callable[[List[Dict]], Awaitable[Optional[Dict[str, str]]]],
+    post_share: Callable[[List[Dict]], Awaitable[Dict[str, Any]]],
 ) -> Dict[str, Any]:
     """
     Book the slip on SportyBet. Every selection comes back with a status:
-    "booked", "unsupported" (market SportyBet can't take from us) or
-    "not_found" (match not listed on SportyBet for that date).
+    "booked"; "matched" (found, but no code was made); "unavailable" (SportyBet refused it — suspended or started);
+    "unsupported" (a market SportyBet codes can't take from us); or
+    "not_found" (match not listed on SportyBet around that date).
     """
     picks: List[Dict[str, Any]] = []
-    booked: List[Dict[str, str]] = []
+    to_book: List[Tuple[int, Dict[str, str], Dict]] = []  # (pick index, ids, event)
     events_by_date: Dict[str, List[Dict]] = {}
 
     for s in selections:
@@ -110,33 +111,49 @@ async def to_sportybet(
         ids = sportybet_ids(s["market"], s["code"])
         if not ids:
             picks.append({**pick, "status": "unsupported",
-                          "reason": "This market can't be booked on SportyBet automatically"})
+                          "reason": "SportyBet codes can't include this market"})
             continue
         if s["date"] not in events_by_date:
             events_by_date[s["date"]] = await fetch_events(s["date"])
         event = find_event(s["home"], s["away"], events_by_date[s["date"]])
-        event_id = event and str(event.get("eventId") or event.get("id") or "")
+        event_id = event and str(event.get("eventId") or "")
         if not event_id:
             picks.append({**pick, "status": "not_found", "reason": "Match not found on SportyBet"})
             continue
-        booked.append({"eventId": event_id, **ids})
-        picks.append({**pick, "status": "booked", "odds": _event_odds(event, ids)})
+        to_book.append((len(picks), {"eventId": event_id, **ids}, event))
+        picks.append({**pick, "status": "matched"})  # found; "booked" once SportyBet accepts it
 
     result: Dict[str, Any] = {"platform": "sportybet", "code": None, "share_url": None,
                               "picks": picks, "total_odds": None, "error": None}
-    if not booked:
-        result["error"] = "None of these picks could be booked on SportyBet."
+    if not to_book:
+        result["error"] = ("SportyBet isn't listing any of these matches right now."
+                           if any(p["status"] == "not_found" for p in picks)
+                           else "None of these picks can go in a SportyBet code.")
         return result
 
-    share = await post_share(booked)
-    if not share or not share.get("code"):
+    try:
+        share = await post_share([ids for _, ids, _ in to_book])
+    except Exception as e:
+        print(f"[Booking] SportyBet share failed: {e}")
         result["error"] = "SportyBet didn't return a booking code. Try again in a minute."
         return result
 
-    odds = [p["odds"] for p in picks if p["status"] == "booked"]
+    booked_odds: List[Optional[float]] = []
+    for i, ids, event in to_book:
+        key = (ids["eventId"], ids["marketId"], ids["outcomeId"])
+        if key in share.get("unavailable", set()):
+            picks[i].update(status="unavailable", reason="SportyBet isn't offering this pick right now")
+            continue
+        picks[i]["status"] = "booked"
+        picks[i]["odds"] = share.get("odds", {}).get(key) or _event_odds(event, ids)
+        booked_odds.append(picks[i]["odds"])
+
+    if not booked_odds:
+        result["error"] = "SportyBet rejected every pick (suspended or already started)."
+        return result
     total = 1.0
-    for o in odds:
-        total *= o if o else 1.0
+    for o in booked_odds:
+        total *= o or 1.0
     result.update(code=share["code"], share_url=share.get("url"),
-                  total_odds=round(total, 2) if all(odds) else None)
+                  total_odds=round(total, 2) if all(booked_odds) else None)
     return result

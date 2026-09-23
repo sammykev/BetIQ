@@ -1742,6 +1742,17 @@ def _archive_past_predictions():
     print(f"[History] Archived {len(past)} predictions across {len(by_date)} dates ({settled_count} dates with results).")
 
 
+@app.get("/api/admin/sportybet-check")
+async def sportybet_check(secret: str = ""):
+    """Book a real one-pick SportyBet code from this server and report each step."""
+    _check_admin(secret)
+    import sportybet
+    today = date.today().isoformat()
+    upcoming = [{"home": p.get("home"), "away": p.get("away")} for p in _predictions_cache
+                if p.get("date", "") >= today and p.get("sport") in (None, "football")]
+    return await sportybet.diagnose(upcoming)
+
+
 @app.get("/api/admin/data-status")
 async def data_status(secret: str = ""):
     """How fresh the training data is, and which upcoming teams the model
@@ -3619,88 +3630,6 @@ async def get_sportybet_event(home: str, away: str, date: str):
     except Exception as e:
         print(f"[SportyBet Event] {home} vs {away}: {e}")
         return {"found": False, "markets": [], "error": str(e)}
-
-
-@app.post("/api/booking")
-async def create_booking(body: Dict[str, Any]):
-    """
-    Generate a SportyBet booking code.
-    Mode A (direct): body = { "selections": [{matchId, marketId, outcomeId, ...}] }
-               — uses real IDs from /api/sportybet-event, skips fuzzy matching
-    Mode B (predictions): body = { "predictions": [{home, away, date, tip_code, ...}] }
-               — does fuzzy matching via sportybet.py then falls back to 1xBet
-    """
-    from sportybet import post_booking, generate_booking_code as sportybet_code
-    from onexbet import generate_booking_code as onexbet_code
-
-    # ── Mode A: direct selections with real SportyBet IDs ─────────────────
-    direct_selections = body.get("selections", [])
-    if direct_selections:
-        code = await post_booking(direct_selections)
-        matched = [
-            {"game": f"{s.get('homeTeamName','?')} vs {s.get('awayTeamName','?')}",
-             "tip":  s.get("outcomeName", ""),
-             "odds": s.get("odds", "")}
-            for s in direct_selections
-        ]
-        picks = [{"home": s.get("homeTeamName",""), "away": s.get("awayTeamName",""),
-                  "tip": s.get("outcomeName",""), "tip_code": "", "date": "", "league": ""}
-                 for s in direct_selections]
-        total_odds = None
-        try:
-            from functools import reduce
-            total_odds = round(reduce(lambda a, b: a * b,
-                [float(s.get("odds","1")) for s in direct_selections if s.get("odds")]), 2)
-        except Exception:
-            pass
-        return {"code": code, "bookie": "sportybet", "matched": matched,
-                "unmatched": [], "total_odds": total_odds, "picks": picks,
-                "error": None if code else "SportyBet did not return a code — paste the copy card instead."}
-
-    predictions = body.get("predictions", [])
-    if not predictions:
-        raise HTTPException(status_code=400, detail="No predictions provided")
-
-    # Always include raw picks so frontend can show copy card regardless of code result
-    picks = [
-        {
-            "home": p.get("home", ""),
-            "away": p.get("away", ""),
-            "tip": p.get("tip_1x2", p.get("tip_code", "?")),
-            "tip_code": p.get("tip_code", "?"),
-            "date": p.get("date", ""),
-            "league": p.get("league_name", ""),
-        }
-        for p in predictions
-        if p.get("tip_code") in ("1", "X", "2")
-    ]
-
-    # 1. Try SportyBet
-    try:
-        result = await sportybet_code(predictions)
-        if result.get("code"):
-            return {**result, "bookie": "sportybet", "picks": picks}
-    except Exception as e:
-        print(f"[Booking] SportyBet error: {e}")
-
-    # 2. Try 1xBet
-    try:
-        result = await onexbet_code(predictions)
-        if result.get("code"):
-            return {**result, "bookie": "1xbet", "picks": picks}
-    except Exception as e:
-        print(f"[Booking] 1xBet error: {e}")
-
-    # 3. No code from either — return picks for copy-card
-    return {
-        "code": None,
-        "bookie": None,
-        "matched": [],
-        "unmatched": [f"{p['home']} vs {p['away']}" for p in predictions],
-        "total_odds": None,
-        "picks": picks,
-        "error": "Booking APIs unavailable — use the copy card below to add picks manually.",
-    }
 
 
 @app.post("/api/booking/convert")

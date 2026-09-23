@@ -5,6 +5,7 @@ numpy>=2.4.6
 xgboost>=3.3.0
 scikit-learn>=1.9.0
 httpx>=0.28.1
+curl_cffi>=0.7  # Chrome TLS fingerprint — SportyBet blocks plain HTTP clients
 apscheduler>=3.11.2
 python-dotenv>=1.2.2
 beautifulsoup4>=4.12.0

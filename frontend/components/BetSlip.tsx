@@ -18,7 +18,7 @@ type Platform = "sportybet" | "other";
 
 interface PickResult {
   key: string;
-  status: "booked" | "not_found" | "unsupported";
+  status: "booked" | "matched" | "not_found" | "unsupported" | "unavailable";
   reason?: string;
   odds: number | null;
 }
@@ -64,7 +64,7 @@ export function SlipButton() {
 }
 
 function SlipRow({ s, result, onRemove }: { s: SlipSelection; result?: PickResult; onRemove: () => void }) {
-  const blocked = result && result.status !== "booked";
+  const blocked = result && result.status !== "booked" && result.status !== "matched";
   return (
     <li className={clsx("rounded-xl border px-3 py-2.5", blocked ? "border-amber-400/40 bg-amber-400/[0.05]" : "border-n-800 bg-surface-raised")}>
       <div className="flex items-start gap-2">
