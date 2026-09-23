@@ -14,6 +14,7 @@ import { AppShell } from "@/components/shell/AppShell";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { PREMIUM_PRICE_LABEL } from "@/lib/pricing";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
+import { headlinePick } from "@/lib/picks";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
 
@@ -344,7 +345,9 @@ export default function DashboardPage() {
                   onClick={() => router.push(`/match?${new URLSearchParams({ home: p.home, away: p.away, date: p.date ?? "" })}`)}>
                   <div className="flex flex-col items-end gap-1">
                     <span className="font-display font-bold text-sm uppercase text-accent bg-brand-400/10 border border-brand-400/30 px-2 py-0.5 rounded-md">{p.tip_1x2}</span>
-                    <span className="font-mono text-[11px] text-n-500">{Math.round(p.goals_confidence * 100)}% conf.</span>
+                    {headlinePick(p).prob !== null && (
+                      <span className="font-mono text-[11px] text-n-500">{Math.round(headlinePick(p).prob! * 100)}% prob.</span>
+                    )}
                   </div>
                   <button
                     onClick={e => { e.stopPropagation(); removeSave(p, i); }}

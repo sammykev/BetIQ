@@ -590,6 +590,13 @@ class LeaguePredictor:
         else:
             tip1x2, code = "Skip", "?"
 
+        # Probability of the 1X2 / double-chance tip itself. goals_confidence
+        # below is the goals tip's probability — a different market.
+        tip_conf = {
+            "1": p_h, "X": p_d, "2": p_a,
+            "1X": p_h + p_d, "2X": p_a + p_d,
+        }.get(code)
+
         # Goals tip
         if p_o15 > 0.82:
             tip_g, gtype, gconf = "Over 1.5 Goals", "Banker", p_o15
@@ -612,6 +619,7 @@ class LeaguePredictor:
             "p_over25": round(p_o25, 3),
             "tip_1x2": tip1x2,
             "tip_code": code,
+            "tip_confidence": round(tip_conf, 3) if tip_conf is not None else None,
             "tip_goals": tip_g,
             "goals_type": gtype,
             "goals_confidence": round(gconf, 3),

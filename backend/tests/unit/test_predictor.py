@@ -392,3 +392,25 @@ class TestLeaguePredictorImpliedOdds:
         )
         assert feats["Impl_Home"] > feats["Impl_Draw"]
         assert feats["Impl_Home"] > feats["Impl_Away"]
+
+
+class TestTipConfidence:
+    """tip_confidence is the probability of the 1X2 tip itself — not the goals tip's."""
+
+    def test_matches_the_tipped_outcome(self, trained_predictor):
+        res = trained_predictor.predict_match("Arsenal", "Chelsea")
+        expected = {
+            "1": res["p_home"], "X": res["p_draw"], "2": res["p_away"],
+            "1X": res["p_home"] + res["p_draw"], "2X": res["p_away"] + res["p_draw"],
+        }.get(res["tip_code"])
+        if expected is None:
+            assert res["tip_confidence"] is None
+        else:
+            assert abs(res["tip_confidence"] - expected) < 0.002
+
+    def test_is_independent_of_goals_confidence(self, trained_predictor):
+        for home, away in [("Arsenal", "Chelsea"), ("Liverpool", "Everton"), ("Man City", "Tottenham")]:
+            res = trained_predictor.predict_match(home, away)
+            assert "tip_confidence" in res
+            if res["tip_confidence"] is not None:
+                assert 0.0 <= res["tip_confidence"] <= 1.0

@@ -9,6 +9,7 @@ import clsx from "clsx";
 import { fetchCalendar, fetchHistory, fetchMatchAnalysis } from "@/lib/api";
 import type { CalendarDay, HistoryPrediction, MatchAnalysis } from "@/lib/api";
 import { MatchCard } from "@/components/MatchCard";
+import { pickProbability } from "@/lib/picks";
 import { AppShell } from "@/components/shell/AppShell";
 import { PageHeader } from "@/components/shell/PageHeader";
 
@@ -100,17 +101,14 @@ function MatchDetailPanel({ p, onClose }: { p: HistoryPrediction; onClose: () =>
           ))}
         </div>
         <div className="flex gap-2 flex-wrap text-[11px]">
-          <span className="bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 px-2 py-0.5 rounded-md font-medium">
-            1X2: {p.tip_1x2}
+          <span className="tnum bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 px-2 py-0.5 rounded-md font-medium">
+            1X2: {p.tip_1x2}{pickProbability(p) !== null && ` · ${Math.round(pickProbability(p)! * 100)}%`}
           </span>
           {p.tip_goals && p.tip_goals !== "Skip" && (
-            <span className="bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 px-2 py-0.5 rounded-md font-medium">
-              Goals: {p.tip_goals}
+            <span className="tnum bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 px-2 py-0.5 rounded-md font-medium">
+              Goals: {p.tip_goals} · {Math.round(p.goals_confidence * 100)}%
             </span>
           )}
-          <span className="tnum bg-zinc-100 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-500 px-2 py-0.5 rounded-md">
-            {Math.round(p.goals_confidence * 100)}% confidence
-          </span>
         </div>
       </div>
 

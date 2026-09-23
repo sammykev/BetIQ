@@ -7,6 +7,7 @@ import { CompetitionBadge } from "./CompetitionBadge";
 import { MatchBleed } from "./MatchBleed";
 import type { Prediction } from "@/lib/api";
 import { kickoff, localTime } from "@/lib/matchTime";
+import { confidenceTier, headlinePick, pickProbability, type HeadlinePick } from "@/lib/picks";
 import { Share2 } from "lucide-react";
 import clsx from "clsx";
 
@@ -128,7 +129,9 @@ export function getTeamAssets(name: string): { imageUrl: string; isFlag: boolean
 }
 
 function shareMatch(p: Prediction) {
-  const text = `⚽ ${p.home} vs ${p.away}\n🎯 Tip: ${p.tip_1x2} (${Math.round(p.goals_confidence * 100)}% confidence)\n\nvia BetIQ — AI Football Predictions\n${BASE}`;
+  const prob = pickProbability(p);
+  const tip = prob !== null ? `${p.tip_1x2} (${Math.round(prob * 100)}% probability)` : p.tip_1x2;
+  const text = `⚽ ${p.home} vs ${p.away}\n🎯 Tip: ${tip}\n\nvia BetIQ — AI Football Predictions\n${BASE}`;
   if (navigator.share) {
     navigator.share({ title: "BetIQ Pick", text, url: BASE }).catch(() => {});
   } else {
@@ -213,15 +216,17 @@ function TeamRow({ name, prob, odds, favourite }: {
 }
 
 /**
- * The model's pick, styled as a bet ticket. Solid lime when the model is
- * confident (≥65%), outlined amber for a lean (50–64%), muted below that —
- * so the list can be scanned for strength before reading a single number.
+ * The model's pick, styled as a bet ticket. Solid lime for a strong pick,
+ * outlined amber for a lean, muted below that — judged for the kind of pick
+ * (a 55% straight win is strong; a 55% double chance isn't). The number is
+ * the probability of *this* pick; the goals tip, if any, sits underneath
+ * with its own probability.
  */
-function PickTicket({ pick, market, confidence, edge }: {
-  pick: string; market?: string; confidence: number; edge?: number | null;
-}) {
-  const strong = confidence >= 65;
-  const lean = !strong && confidence >= 50;
+function PickTicket({ pick, edge }: { pick: HeadlinePick; edge?: number | null }) {
+  const pct = pick.prob === null ? null : Math.round(pick.prob * 100);
+  const tier = pick.prob === null ? "weak" : confidenceTier(pick.prob, pick.kind);
+  const strong = tier === "strong";
+  const lean = tier === "lean";
   return (
     <div className={clsx(
       "relative flex items-center gap-3 rounded-xl px-3.5 py-3",
@@ -238,29 +243,33 @@ function PickTicket({ pick, market, confidence, edge }: {
         <p className={clsx("font-display font-bold text-[11px] uppercase tracking-[0.14em]", strong ? "text-ink/60" : "text-n-400")}>
           Best pick
         </p>
-        <p className="font-display font-extrabold text-xl uppercase leading-tight truncate">{pick}</p>
-        {market && market !== "Skip" && (
-          <p className={clsx("text-[11px] font-semibold truncate", strong ? "text-ink/70" : "text-n-400")}>+ {market}</p>
+        <p className="font-display font-extrabold text-xl uppercase leading-tight truncate">{pick.label}</p>
+        {pick.secondary && (
+          <p className={clsx("text-[11px] font-semibold truncate", strong ? "text-ink/70" : "text-n-400")}>
+            + {pick.secondary.label} · <span className="tnum">{Math.round(pick.secondary.prob * 100)}%</span>
+          </p>
         )}
       </div>
-      <div className="text-right shrink-0">
-        <p className={clsx("font-display font-bold text-[11px] uppercase tracking-[0.14em]", strong ? "text-ink/60" : "text-n-400")}>
-          Confidence
-        </p>
-        <p className={clsx(
-          "font-display font-extrabold text-[32px] leading-none tnum",
-          strong ? "text-ink" : lean ? "text-warn" : "text-n-300"
-        )}>
-          {confidence}%
-        </p>
-      </div>
+      {pct !== null && (
+        <div className="text-right shrink-0">
+          <p className={clsx("font-display font-bold text-[11px] uppercase tracking-[0.14em]", strong ? "text-ink/60" : "text-n-400")}>
+            Probability
+          </p>
+          <p className={clsx(
+            "font-display font-extrabold text-[32px] leading-none tnum",
+            strong ? "text-ink" : lean ? "text-warn" : "text-n-300"
+          )}>
+            {pct}%
+          </p>
+        </div>
+      )}
     </div>
   );
 }
 
 export function PredictionCard({ prediction: p, savedKeys, onClick, showDay = true, onSaveToggle }: Props) {
   const emptySet = new Set<string>();
-  const gconf = Math.round(p.goals_confidence * 100);
+  const headline = headlinePick(p);
 
   const h = Math.round(p.p_home * 100);
   const d = Math.round(p.p_draw * 100);
@@ -331,7 +340,7 @@ export function PredictionCard({ prediction: p, savedKeys, onClick, showDay = tr
         </div>
 
         <div className="mt-auto pt-1">
-          <PickTicket pick={p.tip_1x2} market={p.tip_goals} confidence={gconf} edge={p.is_value_bet ? p.value_edge : null} />
+          <PickTicket pick={headline} edge={p.is_value_bet ? p.value_edge : null} />
         </div>
       </div>
     </article>

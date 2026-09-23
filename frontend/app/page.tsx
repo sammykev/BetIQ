@@ -7,6 +7,7 @@ import { LeagueTabs } from "@/components/LeagueTabs";
 import { triggerRefresh } from "@/lib/api";
 import type { Prediction, League } from "@/lib/api";
 import { dayLabel } from "@/lib/matchTime";
+import { confidenceTier, headlinePick } from "@/lib/picks";
 import { predKey } from "@/components/SaveButton";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
 import {
@@ -33,12 +34,15 @@ type Sport = (typeof SPORTS)[number]["key"];
 
 type Quick = "all" | "bankers" | "value" | "high";
 
+// Minimum probability of the headline pick
 const CONFIDENCE_FILTERS = [
-  { label: "Any confidence", value: 0 },
-  { label: "60%+ confidence", value: 0.6 },
-  { label: "70%+ confidence", value: 0.7 },
-  { label: "80%+ confidence", value: 0.8 },
+  { label: "Any probability", value: 0 },
+  { label: "50%+ probability", value: 0.5 },
+  { label: "60%+ probability", value: 0.6 },
+  { label: "70%+ probability", value: 0.7 },
 ];
+
+const headlineProb = (p: Prediction) => headlinePick(p).prob ?? 0;
 
 const FEATURES = [
   { icon: Brain,        title: "AI predictions",  desc: "XGBoost + Elo ratings across 9 leagues, retrained on every refresh." },
@@ -53,8 +57,8 @@ const FEATURES = [
 const SAMPLE: Prediction = {
   home: "Arsenal", away: "Chelsea", date: new Date().toISOString().slice(0, 10), time: "16:30",
   league: "PL", league_name: "Premier League", flag: "🏴",
-  p_home: 0.54, p_draw: 0.24, p_away: 0.22, p_over15: 0.78, p_over25: 0.56,
-  tip_1x2: "Arsenal Win", tip_code: "1", tip_goals: "Over 2.5", goals_type: "Banker", goals_confidence: 0.81,
+  p_home: 0.64, p_draw: 0.21, p_away: 0.15, p_over15: 0.81, p_over25: 0.58,
+  tip_1x2: "Arsenal Win", tip_code: "1", tip_goals: "Over 1.5", goals_type: "Banker", goals_confidence: 0.81,
   odds_home: 1.85, odds_draw: 3.6, odds_away: 4.2, value_edge: 0.08, is_value_bet: true,
 };
 
@@ -418,13 +422,13 @@ export default function HomePage() {
   // League + confidence narrow the pool; the quick chips then slice it
   const pool = validPredictions
     .filter((p) => selectedLeague === "ALL" || p.league === selectedLeague)
-    .filter((p) => minConf === 0 || p.goals_confidence >= minConf);
+    .filter((p) => minConf === 0 || headlineProb(p) >= minConf);
 
   const QUICK: { key: Quick; label: string; test: (p: Prediction) => boolean }[] = [
     { key: "all",     label: "All picks",       test: () => true },
     { key: "bankers", label: "Bankers",         test: (p) => p.goals_type === "Banker" },
     { key: "value",   label: "Value bets",      test: (p) => !!p.is_value_bet },
-    { key: "high",    label: "75%+ confidence", test: (p) => p.goals_confidence >= 0.75 },
+    { key: "high",    label: "Strong picks",    test: (p) => { const h = headlinePick(p); return h.prob !== null && confidenceTier(h.prob, h.kind) === "strong"; } },
   ];
   const predictions = pool.filter(QUICK.find(q => q.key === quick)!.test);
 
@@ -434,7 +438,7 @@ export default function HomePage() {
       const vb = b.value_edge ?? -1;
       return vb - va;
     }
-    if (sortBy === "confidence") return b.goals_confidence - a.goals_confidence;
+    if (sortBy === "confidence") return headlineProb(b) - headlineProb(a);
     return a.date.localeCompare(b.date) || a.time.localeCompare(b.time);
   });
 
@@ -614,7 +618,7 @@ export default function HomePage() {
             <div className="flex items-center gap-2 justify-between flex-wrap">
               {/* Minimum confidence */}
               <label className="relative inline-flex items-center">
-                <span className="sr-only">Minimum confidence</span>
+                <span className="sr-only">Minimum probability</span>
                 <select
                   value={minConf}
                   onChange={e => setMinConf(Number(e.target.value))}

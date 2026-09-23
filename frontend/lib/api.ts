@@ -17,7 +17,10 @@ export interface Prediction {
   tip_code: string;
   tip_goals: string;
   goals_type: string;
+  /** Probability of the goals tip (tip_goals), not of tip_1x2. */
   goals_confidence: number;
+  /** Probability of the 1X2 / double-chance tip. Newer API only — use pickProbability(). */
+  tip_confidence?: number | null;
   odds_home?: number;
   odds_draw?: number;
   odds_away?: number;

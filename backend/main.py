@@ -737,6 +737,13 @@ async def _prefetch_web_forms(predictor, fixtures: list):
 
 # ------------------------------------------------------------------ #
 
+def _pick_confidence(p: Dict) -> float:
+    """Probability of a prediction's 1X2 tip; the goals tip's for older cached
+    predictions that predate tip_confidence."""
+    tc = p.get("tip_confidence")
+    return float(tc) if isinstance(tc, (int, float)) else float(p.get("goals_confidence", 0) or 0)
+
+
 def _build_predictions(predictor, fixtures: list, live_odds: dict) -> list:
     """Turn upcoming fixtures + live odds into prediction dicts (with value-bet flags)."""
     predictions = []
@@ -1145,10 +1152,10 @@ async def get_predictions(
         data = [p for p in data if p.get("date") == date_str]
 
     if min_confidence > 0:
-        data = [p for p in data if p.get("goals_confidence", 0) >= min_confidence]
+        data = [p for p in data if _pick_confidence(p) >= min_confidence]
 
     # Sort by confidence desc, then date
-    data = sorted(data, key=lambda x: (-x.get("goals_confidence", 0), x.get("date", "")))
+    data = sorted(data, key=lambda x: (-_pick_confidence(x), x.get("date", "")))
 
     return {
         "predictions": data[:limit],

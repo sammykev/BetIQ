@@ -1,11 +1,13 @@
 import Groq from "groq-sdk";
 import { NextRequest, NextResponse } from "next/server";
+import { pickProbability } from "@/lib/picks";
+import type { Prediction } from "@/lib/api";
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 const SYSTEM = `You are BetIQ's AI betting assistant. Help users build football accumulators from AI-predicted matches and generate SportyBet booking codes.
 
-Each prediction has: home, away, date, tip_code ("1"=home win, "X"=draw, "2"=away win, "1X"/"X2"/"12"=double chance, "?"/"Skip"=no tip), tip_1x2, goals_type ("Banker"/"Asian"/"Skip"), goals_confidence (0–1), league, flag.
+Each prediction has: home, away, date, tip_code ("1"=home win, "X"=draw, "2"=away win, "1X"/"X2"/"12"=double chance, "?"/"Skip"=no tip), tip_1x2, goals_type ("Banker"/"Asian"/"Skip"), conf (the model's probability that tip_code wins), league, flag.
 
 RULES:
 1. ONLY pick games where tip_code is exactly "1", "X", or "2". Never pick "1X", "X2", "12", "?", or "Skip" — these cannot be booked on SportyBet. If a game's tip_code is not "1", "X", or "2", skip it entirely.
@@ -36,9 +38,11 @@ export async function POST(req: NextRequest) {
         tip_code: p.tip_code,
         tip_1x2: p.tip_1x2,
         goals_type: p.goals_type,
-        conf: typeof p.goals_confidence === "number"
-          ? Math.round((p.goals_confidence as number) * 100) + "%"
-          : "—",
+        // Probability of the tip itself — not goals_confidence, which is the goals tip's
+        conf: (() => {
+          const prob = pickProbability(p as unknown as Prediction);
+          return prob === null ? "—" : Math.round(prob * 100) + "%";
+        })(),
         league: p.league,
         flag: p.flag,
       }));
