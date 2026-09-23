@@ -226,7 +226,8 @@ function AIExplanation({ explanation }: { explanation: MatchExplanation | null }
 
   if (!explanation.explanation) return null;
 
-  const hasWebSearch = !!explanation.model?.startsWith("compound-beta") && explanation.sources.length > 0;
+  // "compound-beta+" is the pre-Sep-2026 tag, still present on cached explanations.
+  const hasWebSearch = /^(web-search|compound-beta)\+/.test(explanation.model ?? "") && explanation.sources.length > 0;
 
   return (
     <div className="card p-4 space-y-3">

@@ -670,7 +670,7 @@ def _apply_web_form(predictor, team: str, form: dict) -> None:
 
 async def _prefetch_web_forms(predictor, fixtures: list):
     """
-    Background task: fetch last-10-match form + xG via compound-beta web
+    Background task: fetch last-10-match form + xG via Groq web
     search for every team in upcoming fixtures that doesn't already have a
     cached web form, and cache it in Redis for 24 hours.
 
@@ -1043,7 +1043,7 @@ async def _fetch_and_save_results():
 async def _web_search_missing_results():
     """
     For past predictions still marked 'pending' in Redis history,
-    use web search (compound-beta) to find the actual result,
+    use Groq web search to find the actual result,
     then update the history and feed into the live model.
     """
     from llm_service import GROQ_API_KEY, fetch_missing_results
@@ -2158,7 +2158,7 @@ async def debug_team_form(team: str, live: bool = False):
     goals-based Dixon-Coles estimate, not real shot-based xG.
 
     By default reads whatever is cached (no Groq spend). Pass live=true to
-    force a fresh compound-beta web search + extraction right now — useful
+    force a fresh Groq web search + extraction right now — useful
     to check whether the pathway works at all for a given team, or to see
     a fresh error, but costs one Groq call.
 

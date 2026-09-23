@@ -1,8 +1,8 @@
 """
 LLM routing for match analysis:
-- Groq (compound-beta)             → live web search / news fetching
-- Groq (see _GROQ_TEXT_MODELS)     → fast match explanations / extraction
-- DeepSeek API (deepseek-reasoner) → analytical stat → number extraction
+- Groq (_GROQ_MODELS + browser_search) → live web search / news fetching
+- Groq (_GROQ_MODELS)                  → fast match explanations / extraction
+- DeepSeek API (deepseek-reasoner)     → analytical stat → number extraction
 """
 
 import os
@@ -23,13 +23,27 @@ DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions"
 # fell through to whatever fallback existed (often none). Trying a short list
 # means a single future deprecation degrades gracefully instead of going dark
 # across the board again.
-_GROQ_TEXT_MODELS = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
+#
+# It happened again in 2026: Groq retired llama-3.3-70b-versatile and
+# llama-3.1-8b-instant (Aug 16) and its compound / compound-beta web-search
+# systems (Sep 21). The GPT-OSS models are Groq's documented replacements, and
+# web search now runs through their built-in browser_search tool instead of a
+# separate search model.
+_GROQ_MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]
+
+# GPT-OSS models reason before answering, and those reasoning tokens count
+# against the completion cap. Callers pass the length of answer they want;
+# _call adds this headroom so a short cap doesn't come back as empty content.
+_REASONING_HEADROOM = 1024
+# Groq recommends 3000–4000 completion tokens when a built-in tool runs, since
+# the search steps spend from the same budget.
+_SEARCH_TOKEN_BUDGET = 3500
 
 
 async def _call_groq_text(messages: list, max_tokens: int = 400) -> Dict:
-    """Try each model in _GROQ_TEXT_MODELS in order; return the first success."""
+    """Try each model in _GROQ_MODELS in order; return the first success."""
     errors = []
-    for model in _GROQ_TEXT_MODELS:
+    for model in _GROQ_MODELS:
         try:
             return await _call(model, messages, max_tokens=max_tokens)
         except Exception as e:
@@ -37,17 +51,48 @@ async def _call_groq_text(messages: list, max_tokens: int = 400) -> Dict:
     raise RuntimeError("; ".join(errors))
 
 
-async def _call(model: str, messages: list, max_tokens: int = 400) -> Dict:
-    """Raw Groq API call. Returns parsed JSON or raises."""
-    async with httpx.AsyncClient(timeout=25) as client:
+async def _call(model: str, messages: list, max_tokens: int = 400, web_search: bool = False) -> Dict:
+    """Raw Groq API call. Returns parsed JSON or raises.
+
+    web_search=True lets the model run Groq's built-in browser_search tool.
+    """
+    payload: Dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "temperature": 0.3,
+        "reasoning_effort": "low",
+        "max_completion_tokens": _SEARCH_TOKEN_BUDGET if web_search else max_tokens + _REASONING_HEADROOM,
+    }
+    if web_search:
+        payload["tools"] = [{"type": "browser_search"}]
+    async with httpx.AsyncClient(timeout=45 if web_search else 25) as client:
         r = await client.post(
             GROQ_URL,
             headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
-            json={"model": model, "messages": messages, "max_tokens": max_tokens, "temperature": 0.3},
+            json=payload,
         )
     if r.status_code != 200:
         raise RuntimeError(f"{model} {r.status_code}: {r.text[:120]}")
     return r.json()
+
+
+def _content(data: Dict) -> str:
+    """The reply text; empty (not None) if the model spent its budget reasoning."""
+    return (data["choices"][0]["message"].get("content") or "").strip()
+
+
+def _search_sources(data: Dict, per_tool: int = 3) -> List[str]:
+    """URLs the built-in search visited, read from message.executed_tools."""
+    urls: List[str] = []
+    for tool in data["choices"][0]["message"].get("executed_tools") or []:
+        found = tool.get("search_results") or {}
+        if isinstance(found, dict):
+            found = found.get("results") or []
+        for res in list(found)[:per_tool] + list(tool.get("results") or [])[:per_tool]:
+            url = res.get("url") or res.get("link") if isinstance(res, dict) else None
+            if url and url not in urls:
+                urls.append(url)
+    return urls
 
 
 async def _call_deepseek(messages: list, max_tokens: int = 400) -> Dict:
@@ -65,26 +110,22 @@ async def _call_deepseek(messages: list, max_tokens: int = 400) -> Dict:
 
 async def _fetch_news(home: str, away: str) -> tuple[str, List[str]]:
     """
-    Step 1 — use compound-beta to fetch live team news.
-    Tries compound-beta-mini first (smaller, fewer 413s), then compound-beta.
+    Step 1 — web-search live team news (Groq browser_search).
+    Tries each model in _GROQ_MODELS; a 413 moves on to the next one.
     Returns (news_text, source_urls). Silent on failure.
     """
-    prompt = f"{home} vs {away} team news?"  # absolute minimum to avoid 413
+    # Kept minimal: the search pulls page content into the model's own
+    # context, so a bigger prompt makes a 413 more likely, not less.
+    prompt = f"{home} vs {away} team news? Answer in under 100 words."
 
-    for model in ("compound-beta-mini", "compound-beta"):
+    for model in _GROQ_MODELS:
         try:
             data = await _call(model, [
                 {"role": "user", "content": prompt}
-            ], max_tokens=150)
-            text = data["choices"][0]["message"]["content"].strip()
-            sources: List[str] = []
-            for tool in data["choices"][0]["message"].get("executed_tools", []):
-                for res in tool.get("results", [])[:3]:
-                    url = res.get("url") or res.get("link")
-                    if url:
-                        sources.append(url)
+            ], web_search=True)
+            text = _content(data)
             if text:
-                return text, sources
+                return text, _search_sources(data)
         except Exception as e:
             err = str(e)
             if "413" in err or "request_too_large" in err:
@@ -175,7 +216,7 @@ Rules:
     if GROQ_API_KEY:
         try:
             data = await _call_groq_text([{"role": "user", "content": prompt}], max_tokens=300)
-            text = data["choices"][0]["message"]["content"].strip()
+            text = _content(data)
             adj = await _parse_adj(text)
             if adj:
                 print(f"[LLM/Groq] Adjustments for {home} vs {away}: {adj.get('reasoning','')}")
@@ -188,7 +229,7 @@ Rules:
 
 async def fetch_team_form_web(team: str, competition: str = "", debug: bool = False) -> Dict[str, Any]:
     """
-    Use compound-beta web search + R1 extraction to fetch a team's
+    Use Groq web search + R1 extraction to fetch a team's
     last 10 results with goals and xG (when available).
 
     `competition` (e.g. "FIFA World Cup", "AFCON") narrows the search when
@@ -225,17 +266,17 @@ async def fetch_team_form_web(team: str, competition: str = "", debug: bool = Fa
 
     comp_hint = f" {competition}" if competition else ""
 
-    # compound-beta performs its own web search + page fetching internally,
-    # and stuffs the retrieved content into its own context before replying
-    # — a 413 here means THAT internal context got too large, not that our
-    # outgoing prompt did (it's tiny either way). A team that's in heavy,
-    # high-volume current coverage (e.g. mid-tournament) triggers this far
-    # more than a quiet club team, since the search pulls in more/longer
-    # pages. _fetch_news() above hit the exact same issue and fixed it by
-    # keeping the prompt as minimal as possible — same approach here, plus
-    # a genuinely shorter last-resort retry (not just cycling models on an
-    # unchanged prompt, which fails identically since the prompt is the
-    # actual variable that controls how much compound-beta goes and fetches).
+    # The search tool runs server-side and stuffs the retrieved pages into the
+    # model's own context before it replies — a 413 here means THAT internal
+    # context got too large, not that our outgoing prompt did (it's tiny
+    # either way). A team that's in heavy, high-volume current coverage (e.g.
+    # mid-tournament) triggers this far more than a quiet club team, since the
+    # search pulls in more/longer pages. _fetch_news() above hit the exact
+    # same issue and fixed it by keeping the prompt as minimal as possible —
+    # same approach here, plus a genuinely shorter last-resort retry (not just
+    # cycling models on an unchanged prompt, which fails identically since the
+    # prompt is the actual variable that controls how much gets fetched).
+    # (Learned under Groq's compound-beta; kept for browser_search.)
     prompt_tiers = [
         f"{team}{comp_hint} last 5 matches xG?",
         f"{team} xG?",  # minimal fallback if the above still 413s
@@ -246,10 +287,10 @@ async def fetch_team_form_web(team: str, competition: str = "", debug: bool = Fa
     for prompt in prompt_tiers:
         if search_text:
             break
-        for model in ("compound-beta-mini", "compound-beta"):
+        for model in _GROQ_MODELS:
             try:
-                data = await _call(model, [{"role": "user", "content": prompt}], max_tokens=300)
-                text = data["choices"][0]["message"]["content"].strip()
+                data = await _call(model, [{"role": "user", "content": prompt}], web_search=True)
+                text = _content(data)
                 if text:
                     search_text = text
                     break
@@ -262,7 +303,7 @@ async def fetch_team_form_web(team: str, competition: str = "", debug: bool = Fa
                 break
 
     if not search_text:
-        detail = "; ".join(search_errors) if search_errors else "both compound-beta models returned empty content"
+        detail = "; ".join(search_errors) if search_errors else "every Groq search model returned empty content"
         return _fail("search", detail)
 
     extract_prompt = f"""Extract {team}'s last 10 football match results from this text.
@@ -322,7 +363,7 @@ Rules:
     if GROQ_API_KEY:
         try:
             data = await _call_groq_text([{"role": "user", "content": extract_prompt}], max_tokens=600)
-            raw = data["choices"][0]["message"]["content"]
+            raw = _content(data)
             result = await _try_parse(raw)
             if result:
                 print(f"[WebForm/Groq] {team}: {len(result['matches'])} matches, "
@@ -347,10 +388,10 @@ async def fetch_missing_results(home: str, away: str, date: str) -> Dict[str, An
 
     prompt = f"What was the final score of {home} vs {away} on {date}? Reply with ONLY the score like '2-1' or 'not played yet'."
 
-    for model in ("compound-beta-mini", "compound-beta"):
+    for model in _GROQ_MODELS:
         try:
-            data = await _call(model, [{"role": "user", "content": prompt}], max_tokens=50)
-            text = data["choices"][0]["message"]["content"].strip()
+            data = await _call(model, [{"role": "user", "content": prompt}], web_search=True)
+            text = _content(data)
             import re
             m = re.search(r'(\d+)\s*[-–]\s*(\d+)', text)
             if m:
@@ -376,7 +417,7 @@ async def explain_match(
     if not GROQ_API_KEY and not DEEPSEEK_API_KEY:
         return {"explanation": None, "sources": [], "model": None, "error": "no_key"}
 
-    # Step 1 — fetch live news (small compound-beta call)
+    # Step 1 — fetch live news (small web-search call)
     news_text, sources = await _fetch_news(home, away)
 
     # Step 2 — generate the full explanation with llama
@@ -421,13 +462,16 @@ async def explain_match(
     )
 
     used_web = bool(sources)
-    label_prefix = "compound-beta+" if used_web else ""
+    # The match page shows its "live web search" badge off this prefix.
+    label_prefix = "web-search+" if used_web else ""
 
     # Primary: Groq — fast reasoning for match previews
     if GROQ_API_KEY:
         try:
             data = await _call_groq_text([{"role": "user", "content": prompt}], max_tokens=350)
-            text = data["choices"][0]["message"]["content"].strip()
+            text = _content(data)
+            if not text:
+                raise RuntimeError("empty reply")
             model_tag = f"{label_prefix}groq"
             print(f"[LLM] Explained {home} vs {away} ({model_tag}, {len(sources)} sources)")
             return {"explanation": text, "sources": sources, "model": model_tag, "error": None}

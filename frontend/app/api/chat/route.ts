@@ -75,10 +75,14 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({ query: (lastMessage?.content ?? "").slice(0, 200) }),
     }).catch(() => {});
 
+    // Groq retired llama-3.3-70b-versatile on 2026-08-16; gpt-oss-120b is its
+    // documented replacement. It reasons before replying and those tokens count
+    // toward the cap, hence low effort and headroom above the ~1500 we need.
     const completion = await groq.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
+      model: "openai/gpt-oss-120b",
       messages: groqMessages,
-      max_tokens: 1500,
+      max_completion_tokens: 2500,
+      reasoning_effort: "low",
       temperature: 0.4,
     });
 
