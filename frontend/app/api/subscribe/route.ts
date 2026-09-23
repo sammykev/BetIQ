@@ -1,6 +1,7 @@
 import { auth, clerkClient } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
 import { PREMIUM_PRICE_KOBO } from "@/lib/pricing";
+import { MAX_STORED_REFERENCES, nextExpiry, paidByUser } from "@/lib/subscription";
 
 export async function POST(req: NextRequest) {
   try {
@@ -34,17 +35,35 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "amount_mismatch" }, { status: 400 });
     }
 
-    // Calculate expiry (30 days from now)
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 30);
+    // A successful reference must belong to this account and count once —
+    // otherwise one payment could unlock (or keep extending) any account.
+    if (!paidByUser(paid, userId)) {
+      console.error(`[subscribe] Reference ${reference} was not paid by ${userId}`);
+      return NextResponse.json({ error: "reference_not_yours" }, { status: 403 });
+    }
 
-    // Update Clerk user metadata
     const client = await clerkClient();
+    const user = await client.users.getUser(userId);
+    const used = Array.isArray(user.privateMetadata?.paystack_references)
+      ? (user.privateMetadata.paystack_references as string[])
+      : [];
+    // paystack_reference covers the last payment made before this list existed
+    if (used.includes(reference) || user.publicMetadata?.paystack_reference === reference) {
+      return NextResponse.json({ error: "reference_already_used" }, { status: 409 });
+    }
+
+    // Renewals extend from the current expiry when it's still in the future,
+    // so paying early never loses days already paid for.
+    const expiresAt = nextExpiry(user.publicMetadata?.subscription_expires);
+
     await client.users.updateUserMetadata(userId, {
       publicMetadata: {
         subscription: "premium",
         subscription_expires: expiresAt.toISOString(),
         paystack_reference: reference,
+      },
+      privateMetadata: {
+        paystack_references: [...used, reference].slice(-MAX_STORED_REFERENCES),
       },
     });
 
