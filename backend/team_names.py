@@ -3,7 +3,9 @@ Match live team names to the names the model was trained on.
 
 Fixtures and results come from football-data.org ("Manchester United FC",
 "FC Bayern München"); the training CSVs come from football-data.co.uk
-("Man United", "Bayern Munich"). The model keys every team's Elo, form and
+("Man United", "Bayern Munich"). National teams come from ESPN and The Odds
+API ("USA", "Czechia") and train under the international results CSV's names
+("United States", "Czech Republic"). The model keys every team's Elo, form and
 head-to-head record by name, so an unmatched name is a brand-new team with
 default ratings — its prediction rests on the odds alone.
 
@@ -77,6 +79,37 @@ _ALIAS_SOURCE = {
     "Vitória SC": "Guimaraes",
     "FC Paços de Ferreira": "Pacos Ferreira",
     "Clube de Futebol Estrela da Amadora": "Estrela",
+    # National teams: ESPN / The Odds API / FIFA name → international results CSV name
+    "USA": "United States",
+    "United States of America": "United States",
+    "Korea Republic": "South Korea",
+    "Republic of Korea": "South Korea",
+    "Korea DPR": "North Korea",
+    "DPR Korea": "North Korea",
+    "Côte d'Ivoire": "Ivory Coast",
+    "Congo DR": "DR Congo",
+    "Democratic Republic of the Congo": "DR Congo",
+    "Czechia": "Czech Republic",
+    "Ireland": "Republic of Ireland",
+    "Türkiye": "Turkey",
+    "Turkiye": "Turkey",
+    "Cabo Verde": "Cape Verde",
+    "Cape Verde Islands": "Cape Verde",
+    "China PR": "China",
+    "IR Iran": "Iran",
+    "Kyrgyz Republic": "Kyrgyzstan",
+    "UAE": "United Arab Emirates",
+    "St Kitts and Nevis": "Saint Kitts and Nevis",
+    "St Vincent and the Grenadines": "Saint Vincent and the Grenadines",
+    "St Lucia": "Saint Lucia",
+    "US Virgin Islands": "United States Virgin Islands",
+    "Macao": "Macau",
+    "Viet Nam": "Vietnam",
+    "Lao PDR": "Laos",
+    "Swaziland": "Eswatini",
+    "East Timor": "Timor-Leste",
+    "FYR Macedonia": "North Macedonia",
+    "Holland": "Netherlands",
 }
 
 

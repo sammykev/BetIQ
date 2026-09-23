@@ -582,6 +582,20 @@ export default function AdminPage() {
           {dataStatus.last_sync?.report?.failed?.length > 0 && (
             <p className="text-xs text-red-400">Sync failed: {dataStatus.last_sync.report.failed.join(" · ")}</p>
           )}
+          {dataStatus.international?.at && (
+            <div className="text-xs text-slate-400 space-y-1">
+              <p>
+                <span className="text-slate-300 font-semibold">Internationals:</span>{" "}
+                {dataStatus.international.fixtures} upcoming fixtures · ESPN{" "}
+                {Object.values(dataStatus.international.sources?.espn ?? {}).reduce((a: number, n) => a + (n as number), 0)}
+                {" "}· The Odds API{" "}
+                {Object.values(dataStatus.international.sources?.odds_api ?? {}).reduce((a: number, n) => a + (n as number), 0)}
+              </p>
+              {dataStatus.international.errors?.length > 0 && (
+                <p className="text-slate-500">Source errors: {dataStatus.international.errors.join(" · ")}</p>
+              )}
+            </div>
+          )}
           <div className="text-xs text-slate-400 space-y-1">
             <p>
               {dataStatus.teams_checked} upcoming teams checked · {Object.keys(dataStatus.renamed ?? {}).length} matched

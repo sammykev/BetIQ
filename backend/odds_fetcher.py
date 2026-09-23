@@ -70,6 +70,11 @@ def _sport_keys_for_predictions(predictions: List[Dict]) -> List[str]:
     """
     keys = set()
     for p in predictions:
+        # International fixtures say which sport key (if any) prices them
+        if "odds_sport" in p:
+            if p["odds_sport"]:
+                keys.add(p["odds_sport"])
+            continue
         league = (p.get("league_name") or p.get("league") or "").lower()
         matched = False
         for keyword, sport_key in LEAGUE_TO_SPORT.items():

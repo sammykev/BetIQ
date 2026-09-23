@@ -84,3 +84,24 @@ def test_old_cached_models_without_the_no_odds_set_still_predict(model, monkeypa
     for name in ("win_noodds", "o15_noodds", "o25_noodds"):
         monkeypatch.delitem(model.models, name)
     assert model.predict_match("Arsenal", "Chelsea") is not None
+
+
+def test_missing_card_data_is_skipped_not_recorded():
+    # International and UCL results carry no cards: pandas hands over NaN
+    m = LeaguePredictor()
+    m._update("Spain", "Italy", "H", 2, 1, hyc=float("nan"), ayc=float("nan"), match_date="2026-06-01")
+    assert m.team_stats["Spain"]["yc"] == []
+    assert m._feats("Spain", "Italy")["Home_Cards_Avg"] == 1.5
+    m._update("Spain", "Italy", "D", 1, 1, hyc=2, ayc=3, hrc=float("nan"), arc=1, match_date="2026-06-05")
+    assert (m.team_stats["Spain"]["yc"], m.team_stats["Italy"]["yc"]) == ([2], [5])
+
+
+def test_matches_without_card_data_still_train():
+    # Before the fix every row here had a NaN cards feature and was dropped
+    nations = season(teams=("Spain", "Italy", "France", "Brazil", "Japan", "Chile"), seed=2)
+    nations = nations.assign(league="INT", HY=np.nan, AY=np.nan, B365H=np.nan, B365D=np.nan, B365A=np.nan)
+    m = LeaguePredictor()
+    m.train(nations)
+    assert all(np.isfinite(v) for k, v in m._feats("Spain", "Italy").items() if k in FEATURE_COLS)
+    p = m.predict_match("Spain", "Italy", league="INT")
+    assert 0.1 < p["p_draw"] < 0.5

@@ -1,0 +1,230 @@
+"""
+International fixtures: ESPN and The Odds API parsing, merging the two,
+national-team names, the results CSV refresh, and the pipeline/endpoint wiring.
+Both APIs are replaced by canned responses.
+"""
+
+import asyncio
+import json
+from datetime import date
+
+import httpx
+import pandas as pd
+import pytest
+from fastapi.testclient import TestClient
+
+import football_data_sync as fds
+import international_fixtures as intl
+import main
+import odds_fetcher
+from team_names import TeamResolver
+
+
+def espn_event(eid, home, away, when="2026-09-24T18:45Z", state="pre", completed=False,
+               status="STATUS_SCHEDULED", score=(None, None)):
+    return {
+        "id": eid, "date": when,
+        "competitions": [{
+            "competitors": [
+                {"homeAway": "home", "score": score[0],
+                 "team": {"displayName": home, "logo": f"https://flags/{home}.png"}},
+                {"homeAway": "away", "score": score[1],
+                 "team": {"displayName": away, "logo": f"https://flags/{away}.png"}},
+            ],
+            "status": {"type": {"state": state, "completed": completed, "name": status}},
+        }],
+    }
+
+
+NATIONS = {"events": [
+    espn_event("1", "Czechia", "USA"),
+    espn_event("2", "Spain", "Italy", when="2026-09-21T18:45Z", state="post", completed=True,
+               status="STATUS_FULL_TIME", score=("2", "1")),
+    espn_event("3", "France", "Germany", when="2026-09-21T19:00Z", state="post", completed=True,
+               status="STATUS_FINAL_AET", score=("1", "0")),
+    espn_event("4", "TBD", "England"),
+]}
+
+
+class TestEspn:
+    def test_upcoming_fixture(self):
+        fixtures, _ = intl.parse_espn(NATIONS, "uefa.nations")
+        [f] = fixtures
+        assert (f["home"], f["away"], f["date"], f["time"]) == ("Czechia", "USA", "2026-09-24", "18:45")
+        assert (f["league"], f["league_name"], f["odds_sport"]) == ("INT", "UEFA Nations League", "soccer_uefa_nations_league")
+        assert f["home_crest"] == "https://flags/Czechia.png" and f["match_id"] == "espn:1"
+
+    def test_results_are_regulation_time_only(self):
+        _, results = intl.parse_espn(NATIONS, "uefa.nations")
+        assert results == [{"Date": "2026-09-21", "HomeTeam": "Spain", "AwayTeam": "Italy",
+                            "Result": "H", "FTHG": 2, "FTAG": 1, "league": "INT"}]
+
+    def test_empty_or_odd_payloads(self):
+        assert intl.parse_espn({}, "fifa.friendly") == ([], [])
+        assert intl.parse_espn({"events": [{"id": "x"}]}, "fifa.friendly") == ([], [])
+
+
+class TestOddsApi:
+    SPORTS = [
+        {"key": "soccer_uefa_nations_league", "group": "Soccer", "title": "UEFA Nations League", "active": True, "has_outrights": False},
+        {"key": "soccer_fifa_world_cup_winner", "group": "Soccer", "title": "World Cup Winner", "active": True, "has_outrights": True},
+        {"key": "soccer_epl", "group": "Soccer", "title": "EPL", "active": True, "has_outrights": False},
+        {"key": "basketball_nba", "group": "Basketball", "title": "NBA", "active": True, "has_outrights": False},
+    ]
+
+    def test_only_national_team_competitions(self):
+        assert intl.international_sport_keys(self.SPORTS) == {"soccer_uefa_nations_league": "UEFA Nations League"}
+
+    def test_events_within_the_window(self):
+        events = [
+            {"id": "a", "commence_time": "2026-09-24T18:45:00Z", "home_team": "Czech Republic", "away_team": "United States"},
+            {"id": "b", "commence_time": "2026-12-01T18:45:00Z", "home_team": "Wales", "away_team": "Iceland"},
+        ]
+        [f] = intl.parse_odds_events(events, "soccer_uefa_nations_league", "UEFA Nations League",
+                                     date(2026, 9, 23), date(2026, 10, 14))
+        assert (f["home"], f["odds_sport"], f["match_id"]) == ("Czech Republic", "soccer_uefa_nations_league", "odds:a")
+
+
+class TestMerge:
+    def test_same_match_from_both_sources_appears_once(self):
+        espn = intl._fixture("espn:1", "Czechia", "USA", pd.Timestamp("2026-09-24T18:45Z"), "Friendly", None)
+        odds = intl._fixture("odds:a", "Czech Republic", "United States", pd.Timestamp("2026-09-24T18:45Z"),
+                             "Friendlies", "soccer_international_friendlies")
+        other = intl._fixture("odds:b", "Wales", "Iceland", pd.Timestamp("2026-09-24T16:00Z"), "Friendlies", None)
+        merged = intl.merge([espn, odds, other])
+        assert [f["match_id"] for f in merged] == ["odds:b", "espn:1"]
+        assert merged[1]["odds_sport"] == "soccer_international_friendlies"
+
+    @pytest.mark.parametrize("a,b", [("USA", "United States"), ("Korea Republic", "South Korea"),
+                                     ("Türkiye", "Turkey"), ("Côte d'Ivoire", "Ivory Coast"),
+                                     ("Bosnia-Herzegovina", "Bosnia and Herzegovina"), ("Congo DR", "DR Congo")])
+    def test_team_key(self, a, b):
+        assert intl.team_key(a) == intl.team_key(b)
+
+
+class TestNationalTeamNames:
+    KNOWN = ["United States", "South Korea", "North Korea", "Czech Republic", "Republic of Ireland",
+             "Northern Ireland", "Turkey", "DR Congo", "Congo", "Ivory Coast", "Arsenal", "Chelsea"]
+
+    @pytest.mark.parametrize("live,trained", [
+        ("USA", "United States"), ("Korea Republic", "South Korea"), ("Czechia", "Czech Republic"),
+        ("Ireland", "Republic of Ireland"), ("Northern Ireland", "Northern Ireland"),
+        ("Türkiye", "Turkey"), ("Congo DR", "DR Congo"), ("Congo", "Congo"),
+        ("Côte d'Ivoire", "Ivory Coast"), ("Arsenal FC", "Arsenal"),
+    ])
+    def test_resolves_to_the_training_name(self, live, trained):
+        assert TeamResolver(self.KNOWN).resolve(live) == trained
+
+
+def mock_client(routes):
+    """routes: {url path substring: (status, json body)}; records requested URLs."""
+    seen = []
+
+    def handler(request):
+        seen.append(str(request.url))
+        for part, (status, body) in routes.items():
+            if part in request.url.path:
+                return httpx.Response(status, content=json.dumps(body).encode())
+        return httpx.Response(404)
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler)), seen
+
+
+class TestFetch:
+    def test_both_sources_merged_with_counts_and_errors(self):
+        client, seen = mock_client({
+            "uefa.nations/scoreboard": (200, NATIONS),
+            "fifa.friendly/scoreboard": (200, {"events": [espn_event("9", "Nigeria", "Ghana", when="2026-09-25T17:00Z")]}),
+            "/v4/sports/soccer_uefa_nations_league/events": (200, [
+                {"id": "a", "commence_time": "2026-09-24T18:45:00Z", "home_team": "Czech Republic", "away_team": "United States"},
+                {"id": "b", "commence_time": "2026-09-26T18:45:00Z", "home_team": "Wales", "away_team": "Iceland"},
+            ]),
+            "/v4/sports": (200, TestOddsApi.SPORTS),
+        })
+        report = asyncio.run(intl.fetch_international(days_ahead=21, client=client, today=date(2026, 9, 23),
+                                                      odds_api_key="k"))
+        assert [(f["home"], f["away"]) for f in report["fixtures"]] == [
+            ("Czechia", "USA"), ("Nigeria", "Ghana"), ("Wales", "Iceland")]
+        assert report["sources"]["espn"]["uefa.nations"] == 1
+        assert report["sources"]["odds_api"] == {"soccer_uefa_nations_league": 2}
+        assert "espn fifa.worldq.uefa: HTTP 404" in report["errors"]
+        assert [r["HomeTeam"] for r in report["results"]] == ["Spain"]
+        assert any("dates=20260923-20261014" in u for u in seen)
+
+    def test_no_odds_key_means_espn_only(self):
+        client, seen = mock_client({"uefa.nations/scoreboard": (200, NATIONS)})
+        report = asyncio.run(intl.fetch_international(client=client, today=date(2026, 9, 23), odds_api_key=""))
+        assert len(report["fixtures"]) == 1 and report["sources"]["odds_api"] == {}
+        assert not any("the-odds-api" in u for u in seen)
+
+    def test_past_fixtures_are_not_upcoming(self):
+        # ESPN still lists a match as "pre" after a postponement; it isn't upcoming
+        client, _ = mock_client({"uefa.nations/scoreboard": (200, {"events": [
+            espn_event("1", "Czechia", "USA", when="2026-09-20T18:45Z")]})})
+        report = asyncio.run(intl.fetch_international(days_back=5, client=client, today=date(2026, 9, 23),
+                                                      odds_api_key=""))
+        assert report["fixtures"] == []
+
+
+class TestOddsSportKeys:
+    def test_fixture_sport_key_wins_over_the_league_name(self):
+        keys = odds_fetcher._sport_keys_for_predictions([
+            {"league_name": "International Friendly", "odds_sport": None},
+            {"league_name": "UEFA Nations League", "odds_sport": "soccer_uefa_nations_league"},
+            {"league_name": "Premier League"},
+        ])
+        assert sorted(keys) == ["soccer_epl", "soccer_uefa_nations_league"]
+
+
+class TestResultsCsvSync:
+    HEADER = "date,home_team,away_team,home_score,away_score,tournament,city,country,neutral\n"
+
+    def rows(self, n):
+        return self.HEADER + "".join(f"2026-08-{d:02d},Spain,Italy,1,0,Friendly,Madrid,Spain,FALSE\n"
+                                     for d in range(1, n + 1))
+
+    def run(self, path, status, body):
+        client = httpx.AsyncClient(transport=httpx.MockTransport(
+            lambda r: httpx.Response(status, content=body.encode())))
+        return asyncio.run(fds.sync_international(str(path), client=client))
+
+    def test_stores_a_longer_file(self, tmp_path):
+        path = tmp_path / "intl.csv"
+        path.write_text(self.rows(2))
+        assert self.run(path, 200, self.rows(3))["updated"] == ["intl.csv"]
+        assert path.read_text() == self.rows(3)
+
+    @pytest.mark.parametrize("status,body", [(200, "<html>rate limited</html>"), (500, ""), (200, "")])
+    def test_never_replaces_good_data_with_a_bad_download(self, tmp_path, status, body):
+        path = tmp_path / "intl.csv"
+        path.write_text(self.rows(3))
+        assert self.run(path, status, body)["failed"]
+        assert path.read_text() == self.rows(3)
+
+    def test_never_replaces_with_fewer_matches(self, tmp_path):
+        path = tmp_path / "intl.csv"
+        path.write_text(self.rows(3))
+        assert self.run(path, 200, self.rows(2))["failed"]
+
+
+def test_international_training_rows_share_the_fixture_league(tmp_path, monkeypatch):
+    path = tmp_path / "intl.csv"
+    path.write_text(TestResultsCsvSync.HEADER
+                    + "2024-06-01,Spain,Italy,1,0,Friendly,Madrid,Spain,FALSE\n"
+                    + "2026-06-27,Panama,England,NA,NA,FIFA World Cup,East Rutherford,United States,TRUE\n")
+    monkeypatch.setattr(main, "INTERNATIONAL_CSV", str(path))
+    df = main._load_international_csv()
+    assert len(df) == 1 and list(df["league"]) == [intl.LEAGUE_CODE]
+
+
+def test_leagues_endpoint_lists_internationals_first():
+    leagues = TestClient(main.app).get("/api/leagues").json()
+    assert leagues[0] == {"code": "INT", "name": "Internationals", "country": "World", "flag": "🌍"}
+
+
+def test_pipeline_helper_records_what_each_source_found(monkeypatch):
+    async def fake(**kw):
+        return {"fixtures": [{"home": "Czechia"}], "results": [],
+                "sources": {"espn": {"uefa.nations": 1}, "odds_api": {}}, "errors": ["espn uefa.euroq: HTTP 400"]}
+    monkeypatch.setattr(intl, "fetch_international", fake)
+    assert asyncio.run(main._fetch_international_fixtures()) == [{"home": "Czechia"}]
+    assert main._intl_status["fixtures"] == 1 and main._intl_status["errors"] == ["espn uefa.euroq: HTTP 400"]

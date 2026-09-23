@@ -8,6 +8,8 @@ Key upgrades over original:
 - Attack vs Defence matchup features
 """
 
+import math
+
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional
@@ -21,7 +23,7 @@ from team_names import TeamResolver
 warnings.filterwarnings("ignore")
 
 MODEL_CACHE_PATH = os.path.join(os.path.dirname(__file__), "data", "model_cache.joblib")
-MODEL_CACHE_VERSION = 4  # bump when FEATURE_COLS or saved fields change
+MODEL_CACHE_VERSION = 5  # bump when FEATURE_COLS or saved fields change
 
 
 # ── FIFA ranking-calibrated starting Elo for national teams ───────────────
@@ -113,6 +115,14 @@ class EloSystem:
         delta = k * (actual - exp)
         self.ratings[home] = self.get(home) + delta
         self.ratings[away] = self.get(away) - delta
+
+
+def _known(x) -> bool:
+    """A real number, not None/NaN."""
+    try:
+        return x is not None and not math.isnan(float(x))
+    except (TypeError, ValueError):
+        return False
 
 
 def _ewm(values: List[float], alpha: float = 0.25) -> float:
@@ -451,9 +461,15 @@ class LeaguePredictor:
         self.team_stats[home]["pts"].append(pts[0])
         self.team_stats[away]["pts"].append(pts[1])
 
-        # Cards (yellow + 2*red = total card weight)
-        h_cards = (hyc or 0) + (hrc or 0) * 2
-        a_cards = (ayc or 0) + (arc or 0) * 2
+        # Cards (yellow + 2*red = total card weight). Sources without card
+        # data (international and UCL results) pass NaN: skip rather than
+        # record it — a NaN in the window made the feature NaN for the next
+        # 12 games, and training drops rows with any NaN feature, so those
+        # matches never trained the model.
+        if not _known(hyc) or not _known(ayc):
+            hyc = ayc = None
+        h_cards = hyc + (hrc if _known(hrc) else 0) * 2 if hyc is not None else 0
+        a_cards = ayc + (arc if _known(arc) else 0) * 2 if ayc is not None else 0
         if hyc is not None:
             self.team_stats[home]["yc"].append(h_cards)
             self.team_stats[away]["yc"].append(a_cards)

@@ -25,6 +25,7 @@ from dotenv import load_dotenv
 
 from predictor import LeaguePredictor
 from data_fetcher import FootballDataClient, LEAGUES, API_BASE
+import international_fixtures as intl
 from scrapers.fbref import load_cards, load_corners, refresh as scrape_fbref, CORNERS_CSV, CARDS_CSV
 
 load_dotenv()
@@ -629,6 +630,8 @@ def _load_international_csv() -> pd.DataFrame:
             "Result":   df["Result"],
             "FTHG":     df["home_score"].astype(float),
             "FTAG":     df["away_score"].astype(float),
+            # Same league tag as live international fixtures (international_fixtures.py)
+            "league":   intl.LEAGUE_CODE,
         }).dropna(subset=["Date", "HomeTeam", "AwayTeam", "Result", "FTHG", "FTAG"])
 
         print(f"[CSV] International results: {len(result)} matches (post-2010)")
@@ -797,16 +800,18 @@ _football_sync: Dict[str, Any] = {"at": None, "report": None}
 
 
 async def _sync_football_data(force: bool = False) -> Optional[Dict[str, list]]:
-    """Download this and last season's league CSVs, at most once every
-    FOOTBALL_DATA_SYNC_HOURS. Set FOOTBALL_DATA_SYNC=0 to turn off."""
+    """Download this and last season's league CSVs and the international
+    results, at most once every FOOTBALL_DATA_SYNC_HOURS. Set FOOTBALL_DATA_SYNC=0 to turn off."""
     if os.getenv("FOOTBALL_DATA_SYNC", "1") == "0":
         return None
     last = _football_sync["at"]
     if not force and last and (datetime.now(timezone.utc) - last).total_seconds() < FOOTBALL_DATA_SYNC_HOURS * 3600:
         return None
-    from football_data_sync import sync
+    from football_data_sync import sync, sync_international
     try:
         report = await sync(FOOTBALL_DATA_DIR)
+        for key, items in (await sync_international(INTERNATIONAL_CSV)).items():
+            report[key] += items
     except Exception as e:
         print(f"[DataSync] failed: {e}")
         return None
@@ -815,6 +820,24 @@ async def _sync_football_data(force: bool = False) -> Optional[Dict[str, list]]:
           f"{len(report['unchanged'])} unchanged, {len(report['skipped'])} not published, "
           f"failed {report['failed'] or 'none'}")
     return report
+
+
+_intl_status: Dict[str, Any] = {"at": None, "fixtures": 0, "sources": {}, "errors": []}
+
+
+async def _fetch_international_fixtures() -> list:
+    """Upcoming national-team fixtures; [] when every source fails."""
+    try:
+        report = await intl.fetch_international(days_ahead=21)
+    except Exception as e:
+        print(f"[International] fetch failed: {e}")
+        _intl_status.update(at=datetime.now(timezone.utc), fixtures=0, sources={}, errors=[str(e)])
+        return []
+    _intl_status.update(at=datetime.now(timezone.utc), fixtures=len(report["fixtures"]),
+                        sources=report["sources"], errors=report["errors"])
+    print(f"[International] {len(report['fixtures'])} fixtures — ESPN {report['sources']['espn']}, "
+          f"Odds API {report['sources']['odds_api']}; errors {report['errors'] or 'none'}")
+    return report["fixtures"]
 
 
 def _load_or_train(combined: pd.DataFrame, data_mtime: float) -> LeaguePredictor:
@@ -856,6 +879,9 @@ async def _run_pipeline():
         for df in (fd_df, epl_df):
             if not df.empty:
                 club_names |= set(df["HomeTeam"].dropna()) | set(df["AwayTeam"].dropna())
+        nation_names: set = set()
+        if not intl_df.empty:
+            nation_names = set(intl_df["HomeTeam"].dropna()) | set(intl_df["AwayTeam"].dropna())
         if not ucl_df.empty and club_names:
             ucl_df = TeamResolver(club_names, aliases=UCL_ALIASES).resolve_frame(ucl_df)
 
@@ -880,8 +906,8 @@ async def _run_pipeline():
             try:
                 saved_results = pd.read_csv(RESULTS_CSV, parse_dates=["Date"])
                 saved_results = saved_results[["Date", "HomeTeam", "AwayTeam", "Result", "FTHG", "FTAG"]].dropna()
-                if club_names:
-                    saved_results = TeamResolver(club_names).resolve_frame(saved_results)
+                if club_names or nation_names:
+                    saved_results = TeamResolver(club_names | nation_names).resolve_frame(saved_results)
                 combined = pd.concat([combined, saved_results], ignore_index=True)
                 combined = combined.drop_duplicates(subset=["Date", "HomeTeam", "AwayTeam"])
                 combined = combined.sort_values("Date").reset_index(drop=True)
@@ -918,6 +944,21 @@ async def _run_pipeline():
 
         predictions = []
         fixtures: list = []  # pre-init so the block below is safe when API_KEY is unset
+
+        # ── International fixtures (ESPN + The Odds API, no football-data key needed) ──
+        # First, so an international break shows up within seconds.
+        fixtures.extend(await _fetch_international_fixtures())
+        if fixtures:
+            for fx in fixtures:
+                _cache_team_crest(fx["home"], fx.get("home_crest"))
+                _cache_team_crest(fx["away"], fx.get("away_crest"))
+            predictions = _build_predictions(predictor, fixtures, {})
+            _predictions_cache = predictions
+            _last_updated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+            _save_predictions_cache()
+            print(f"[Pipeline] +INT: {len(fixtures)} international fixtures — "
+                  f"{len(predictions)} predictions published.")
+
         if API_KEY:
             client = FootballDataClient(API_KEY)
 
@@ -973,7 +1014,8 @@ async def _run_pipeline():
             if fixtures:
                 try:
                     stubs = [{"home": fx["home"], "away": fx["away"],
-                              "date": fx.get("date",""), "league_name": fx.get("league_name","")}
+                              "date": fx.get("date",""), "league_name": fx.get("league_name",""),
+                              **({"odds_sport": fx.get("odds_sport")} if "odds_sport" in fx else {})}
                              for fx in fixtures]
                     live_odds = await _get_live_odds_throttled(stubs)
                     print(f"[Pipeline] Got live odds for {len(live_odds)}/{len(fixtures)} fixtures")
@@ -1045,16 +1087,21 @@ async def _fetch_and_save_results():
     """
     Fetch finished match results from football-data.org for the past 30 days,
     append to results CSV, and apply to the live model's Elo/form state so
-    predictions stay fresh between full retrains.
+    predictions stay fresh between full retrains. International results come
+    from ESPN (international_fixtures.py) and need no key.
     """
-    if not API_KEY:
-        return
-
     print("[Results] Fetching recent finished results...")
-    client = FootballDataClient(API_KEY)
     all_rows: List[pd.DataFrame] = []
+    try:
+        intl_report = await intl.fetch_international(days_ahead=0, days_back=10)
+        if intl_report["results"]:
+            all_rows.append(pd.DataFrame(intl_report["results"]).assign(Date=lambda d: pd.to_datetime(d["Date"])))
+            print(f"[Results] {len(intl_report['results'])} international results.")
+    except Exception as e:
+        print(f"[Results] International results error: {e}")
 
-    for code in LEAGUES:
+    client = FootballDataClient(API_KEY) if API_KEY else None
+    for code in (LEAGUES if client else []):
         try:
             df = await client.fetch_recent_results(code, days_back=30)
             if not df.empty:
@@ -1183,7 +1230,7 @@ async def health():
 
 @app.get("/api/leagues")
 async def get_leagues():
-    return [
+    return [{"code": intl.LEAGUE_CODE, **intl.LEAGUE_INFO}] + [
         {"code": code, **info}
         for code, info in LEAGUES.items()
     ]
@@ -1797,6 +1844,7 @@ async def data_status(secret: str = ""):
         "teams_checked": len(teams),
         "renamed": {k: v["model_name"] for k, v in sorted(teams.items()) if v["model_name"] != k},
         "thin_history": thin,
+        "international": {**_intl_status, "at": _intl_status["at"].isoformat() if _intl_status["at"] else None},
     }
 
 
