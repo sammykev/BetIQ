@@ -2,15 +2,74 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── Design tokens (Matchday, dark-only) ───────────────────────────────── */
-/* Mirrors tailwind.config.js — see STYLE_GUIDE.md. */
+/* ── Design tokens (Matchday) ──────────────────────────────────────────── */
+/* RGB channels so Tailwind opacity modifiers work (bg-n-800/60). Consumed by
+   tailwind.config.js — see STYLE_GUIDE.md. Light is the base; html.dark
+   swaps in the original Matchday dark values. */
 :root {
-  --bg: #070b14;
-  --surface: #0f1729;
-  --border: #1a2438;
-  --text-primary: #e3e8f0;
-  --text-secondary: #7d8aa3;
-  --accent: #b8f53d;
+  /* Neutral scale, mirrored: n-0 is primary text, n-800 borders/tracks */
+  --n-0: 11 18 32;        /* #0b1220 */
+  --n-50: 17 26 43;
+  --n-100: 26 36 56;
+  --n-200: 39 51 75;
+  --n-300: 59 72 99;      /* body text */
+  --n-400: 86 98 122;     /* secondary text, labels */
+  --n-500: 107 119 143;   /* tertiary text */
+  --n-600: 151 162 184;   /* dimmed numbers */
+  --n-700: 207 214 226;   /* hover borders */
+  --n-800: 227 232 240;   /* borders, tracks, muted fills */
+  --n-900: 233 237 243;   /* hairlines */
+  --n-950: 241 244 249;
+
+  --canvas: 245 247 251;
+  --surface: 255 255 255;
+  --surface-raised: 251 252 254;
+  --surface-sunken: 238 242 247;
+
+  --accent: 77 124 15;    /* deep lime — readable on white */
+  --warn: 180 83 9;
+  --danger: 225 29 72;
+  --info: 3 105 161;
+
+  --shadow-card: 0 1px 2px 0 rgb(15 23 41 / 0.05), 0 1px 3px -1px rgb(15 23 41 / 0.08);
+  --shadow-card-hover: 0 4px 8px -2px rgb(15 23 41 / 0.08), 0 16px 32px -12px rgb(15 23 41 / 0.18);
+  --shadow-pop: 0 24px 64px -16px rgb(15 23 41 / 0.3), 0 0 0 1px rgb(15 23 41 / 0.06);
+  --shimmer: rgb(255 255 255 / 0.7);
+  --floodlight: rgb(132 204 22 / 0.08);
+  --scrollbar: 199 207 221;
+  color-scheme: light;
+}
+
+html.dark {
+  --n-0: 255 255 255;
+  --n-50: 241 244 249;
+  --n-100: 227 232 240;
+  --n-200: 198 207 221;
+  --n-300: 163 174 195;
+  --n-400: 125 138 163;
+  --n-500: 95 107 130;
+  --n-600: 59 72 99;
+  --n-700: 39 51 75;
+  --n-800: 26 36 56;
+  --n-900: 15 23 41;
+  --n-950: 7 11 20;
+
+  --canvas: 7 11 20;
+  --surface: 15 23 41;
+  --surface-raised: 19 29 51;
+  --surface-sunken: 10 16 29;
+
+  --accent: 184 245 61;   /* electric lime */
+  --warn: 252 211 77;
+  --danger: 251 113 133;
+  --info: 125 211 252;
+
+  --shadow-card: inset 0 1px 0 0 rgb(255 255 255 / 0.03), 0 1px 2px 0 rgb(0 0 0 / 0.4);
+  --shadow-card-hover: inset 0 1px 0 0 rgb(255 255 255 / 0.05), 0 12px 32px -12px rgb(0 0 0 / 0.7);
+  --shadow-pop: 0 24px 64px -16px rgb(0 0 0 / 0.8), 0 0 0 1px rgb(255 255 255 / 0.04);
+  --shimmer: rgb(255 255 255 / 0.06);
+  --floodlight: rgb(184 245 61 / 0.06);
+  --scrollbar: 39 51 75;
   color-scheme: dark; /* native inputs, selects and scrollbars render dark */
 }
 
@@ -19,7 +78,7 @@
 }
 
 body {
-  @apply bg-ink text-zinc-100;
+  @apply bg-canvas text-n-100;
   font-family: var(--font-inter), -apple-system, BlinkMacSystemFont, "Segoe UI",
     Roboto, sans-serif;
   min-height: 100vh;
@@ -28,7 +87,7 @@ body {
   /* A faint floodlight at the top of every page — depth without a busy background */
   background-image: radial-gradient(
     ellipse 80% 50% at 50% -10%,
-    rgb(184 245 61 / 0.06),
+    var(--floodlight),
     transparent 70%
   );
   background-attachment: fixed;
@@ -39,14 +98,13 @@ body {
    :where() keeps specificity at 0 so components can still opt out.
    Pointer clicks stay ring-free via :focus-visible. */
 :where(a, button, input, textarea, select, summary, [tabindex]):focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid rgb(var(--accent));
   outline-offset: 2px;
   border-radius: 6px;
 }
 
 ::selection {
-  background: rgb(184 245 61 / 0.28);
-  color: #fff;
+  background: rgb(184 245 61 / 0.35);
 }
 
 /* Respect users who ask for less motion — disable the decorative
@@ -76,22 +134,22 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #27334b;
+  background: rgb(var(--scrollbar));
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #3b4863;
+  background: rgb(var(--n-600));
 }
 
 @layer components {
   /* Standard elevated card surface */
   .card {
-    @apply bg-surface border border-zinc-800 rounded-2xl shadow-card;
+    @apply bg-surface border border-n-800 rounded-2xl shadow-card;
   }
 
   /* Interactive card */
   .card-interactive {
-    @apply card transition-all duration-200 hover:shadow-card-hover hover:-translate-y-0.5 hover:border-zinc-700 hover:bg-surface-raised cursor-pointer active:translate-y-0 active:shadow-card;
+    @apply card transition-all duration-200 hover:shadow-card-hover hover:-translate-y-0.5 hover:border-n-700 hover:bg-surface-raised cursor-pointer active:translate-y-0 active:shadow-card;
   }
 
   /* Filter chip — squared-off like a sportsbook market button */
@@ -102,12 +160,12 @@ body {
     @apply bg-brand-400 text-ink border-brand-400;
   }
   .chip-idle {
-    @apply bg-surface text-zinc-300 border-zinc-800 hover:border-zinc-700 hover:text-white;
+    @apply bg-surface text-n-300 border-n-800 hover:border-n-700 hover:text-n-0;
   }
 
   /* Small uppercase label above a value ("BEST PICK", "CONFIDENCE") */
   .eyebrow {
-    @apply text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-400;
+    @apply text-[11px] font-semibold uppercase tracking-[0.08em] text-n-400;
   }
 
   /* Condensed scoreboard headline */
@@ -118,7 +176,7 @@ body {
   /* Loading placeholder — a soft shimmer sweep reads more "premium"
      than a flat pulse and signals content is coming, not broken. */
   .skeleton {
-    @apply relative overflow-hidden bg-zinc-800/70 rounded-full;
+    @apply relative overflow-hidden bg-n-800/70 rounded-full;
   }
   .skeleton::after {
     content: "";
@@ -128,7 +186,7 @@ body {
     background: linear-gradient(
       90deg,
       transparent,
-      rgba(255, 255, 255, 0.06),
+      var(--shimmer),
       transparent
     );
     animation: shimmer 1.6s ease-in-out infinite;
@@ -139,7 +197,7 @@ body {
     @apply inline-flex items-center justify-center gap-2 bg-brand-400 hover:bg-brand-300 text-ink font-bold rounded-xl px-5 py-2.5 text-sm transition-all hover:shadow-glow active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none;
   }
   .btn-secondary {
-    @apply inline-flex items-center justify-center gap-2 bg-surface hover:bg-zinc-800 text-zinc-200 hover:text-white font-semibold rounded-xl px-4 py-2 text-sm border border-zinc-800 hover:border-zinc-700 transition-all active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none;
+    @apply inline-flex items-center justify-center gap-2 bg-surface hover:bg-n-800 text-n-200 hover:text-n-0 font-semibold rounded-xl px-4 py-2 text-sm border border-n-800 hover:border-n-700 transition-all active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none;
   }
 }
 
@@ -151,7 +209,7 @@ body {
 
 @layer utilities {
   .text-gradient {
-    background: linear-gradient(135deg, #d9f99d, #b8f53d 45%, #4ade80);
+    background: linear-gradient(135deg, rgb(var(--accent)), #4ade80);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;

@@ -49,12 +49,12 @@ async function getJson(url: string): Promise<unknown> {
 }
 const asList = <T,>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
 
-function StatCard({ label, value, color = "text-white", sub }: { label: string; value: React.ReactNode; color?: string; sub?: string }) {
+function StatCard({ label, value, color = "text-n-0", sub }: { label: string; value: React.ReactNode; color?: string; sub?: string }) {
   return (
     <div className="card px-4 py-3.5">
       <p className="eyebrow">{label}</p>
       <p className={clsx("font-display font-extrabold text-4xl leading-none mt-1.5 tnum", color)}>{value}</p>
-      {sub && <p className="text-[11px] text-zinc-500 mt-1 capitalize">{sub}</p>}
+      {sub && <p className="text-[11px] text-n-500 mt-1 capitalize">{sub}</p>}
     </div>
   );
 }
@@ -62,9 +62,9 @@ function StatCard({ label, value, color = "text-white", sub }: { label: string; 
 function EmptyState({ icon, title, body }: { icon: React.ReactNode; title: string; body: string }) {
   return (
     <div className="card border-dashed text-center py-14 px-6 space-y-2">
-      <div className="mx-auto w-11 h-11 rounded-2xl bg-zinc-800/70 flex items-center justify-center text-zinc-400">{icon}</div>
-      <p className="font-display font-bold text-xl uppercase tracking-wide text-white pt-1">{title}</p>
-      <p className="text-sm text-zinc-400">{body}</p>
+      <div className="mx-auto w-11 h-11 rounded-2xl bg-n-800/70 flex items-center justify-center text-n-400">{icon}</div>
+      <p className="font-display font-bold text-xl uppercase tracking-wide text-n-0 pt-1">{title}</p>
+      <p className="text-sm text-n-400">{body}</p>
     </div>
   );
 }
@@ -178,7 +178,7 @@ export default function DashboardPage() {
     </button>
   );
 
-  const inputCls = "bg-surface-sunken border border-zinc-800 text-white rounded-lg px-3 py-2.5 text-sm outline-none focus:border-brand-400/70 focus:ring-2 focus:ring-brand-400/15 transition-all placeholder:text-zinc-500";
+  const inputCls = "bg-surface-sunken border border-n-800 text-n-0 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-brand-400/70 focus:ring-2 focus:ring-brand-400/15 transition-all placeholder:text-n-500";
   const profit = stats ? stats.total_return - stats.total_stake : 0;
 
   return (
@@ -189,26 +189,26 @@ export default function DashboardPage() {
           title="Dashboard"
           description="Your record, saved picks, bets and booking codes."
           right={isPremium && (
-            <span className="inline-flex items-center gap-1.5 font-display font-bold text-sm uppercase tracking-wider text-amber-300 bg-amber-400/10 border border-amber-400/30 px-3 py-1 rounded-lg">
+            <span className="inline-flex items-center gap-1.5 font-display font-bold text-sm uppercase tracking-wider text-warn bg-amber-400/10 border border-amber-400/30 px-3 py-1 rounded-lg">
               <Crown size={13} /> Premium
             </span>
           )}
         />
 
         {/* Tabs */}
-        <div role="tablist" className="flex gap-6 border-b border-zinc-800 overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+        <div role="tablist" className="flex gap-6 border-b border-n-800 overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
           {TABS.map(t => {
             const active = tab === t.id;
             return (
               <button key={t.id} role="tab" aria-selected={active} onClick={() => setTab(t.id)}
                 className={clsx(
                   "relative shrink-0 inline-flex items-center gap-1.5 pb-3 font-display font-bold text-[16px] uppercase tracking-[0.06em] transition-colors",
-                  active ? "text-white" : "text-zinc-500 hover:text-zinc-300"
+                  active ? "text-n-0" : "text-n-500 hover:text-n-300"
                 )}>
-                <span className={active ? "text-brand-400" : undefined}>{t.icon}</span>
+                <span className={active ? "text-accent" : undefined}>{t.icon}</span>
                 {t.label}
-                {t.count != null && t.count > 0 && <span className="font-sans text-[11px] font-bold text-zinc-500 tnum">{t.count}</span>}
-                {active && <span className="absolute left-0 right-0 -bottom-px h-[2px] bg-brand-400 rounded-full" />}
+                {t.count != null && t.count > 0 && <span className="font-sans text-[11px] font-bold text-n-500 tnum">{t.count}</span>}
+                {active && <span className="absolute left-0 right-0 -bottom-px h-[2px] bg-accent rounded-full" />}
               </button>
             );
           })}
@@ -222,34 +222,34 @@ export default function DashboardPage() {
                 <>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                     <StatCard label="Accuracy" value={`${stats.accuracy}%`}
-                      color={stats.accuracy >= 60 ? "text-brand-400" : stats.accuracy >= 45 ? "text-amber-300" : "text-rose-400"} />
+                      color={stats.accuracy >= 60 ? "text-accent" : stats.accuracy >= 45 ? "text-warn" : "text-danger"} />
                     <StatCard label="ROI" value={`${stats.roi > 0 ? "+" : ""}${stats.roi}%`}
-                      color={stats.roi > 0 ? "text-brand-400" : "text-rose-400"} />
+                      color={stats.roi > 0 ? "text-accent" : "text-danger"} />
                     <StatCard label="Streak" value={stats.streak || "—"}
-                      color={stats.streak_type === "won" ? "text-brand-400" : stats.streak_type === "lost" ? "text-rose-400" : "text-zinc-400"}
+                      color={stats.streak_type === "won" ? "text-accent" : stats.streak_type === "lost" ? "text-danger" : "text-n-400"}
                       sub={stats.streak_type ? `${stats.streak_type} streak` : undefined} />
                     <StatCard label="Profit / loss" value={`${profit < 0 ? "−" : "+"}${naira(profit)}`}
-                      color={profit >= 0 ? "text-brand-400" : "text-rose-400"} />
+                      color={profit >= 0 ? "text-accent" : "text-danger"} />
                   </div>
                   <div className="card px-4 py-4">
                     <div className="flex items-center justify-between">
                       <p className="eyebrow">Settled bets</p>
-                      <p className="text-xs text-zinc-500 tnum">{stats.won + stats.lost + stats.void} total</p>
+                      <p className="text-xs text-n-500 tnum">{stats.won + stats.lost + stats.void} total</p>
                     </div>
                     {/* Won / lost / void split */}
-                    <div className="flex h-2 rounded-full overflow-hidden gap-0.5 mt-3 bg-zinc-800">
+                    <div className="flex h-2 rounded-full overflow-hidden gap-0.5 mt-3 bg-n-800">
                       {[
-                        { n: stats.won, cls: "bg-brand-400" },
+                        { n: stats.won, cls: "bg-accent" },
                         { n: stats.lost, cls: "bg-rose-500/80" },
-                        { n: stats.void, cls: "bg-zinc-600" },
+                        { n: stats.void, cls: "bg-n-600" },
                       ].map(({ n, cls }, i) => n > 0 && (
                         <div key={i} className={cls} style={{ flexGrow: n }} />
                       ))}
                     </div>
                     <div className="flex gap-5 mt-3 text-sm">
-                      <span className="text-zinc-400"><span className="font-display font-bold text-xl text-brand-400 tnum mr-1">{stats.won}</span>won</span>
-                      <span className="text-zinc-400"><span className="font-display font-bold text-xl text-rose-400 tnum mr-1">{stats.lost}</span>lost</span>
-                      <span className="text-zinc-400"><span className="font-display font-bold text-xl text-zinc-300 tnum mr-1">{stats.void}</span>void</span>
+                      <span className="text-n-400"><span className="font-display font-bold text-xl text-accent tnum mr-1">{stats.won}</span>won</span>
+                      <span className="text-n-400"><span className="font-display font-bold text-xl text-danger tnum mr-1">{stats.lost}</span>lost</span>
+                      <span className="text-n-400"><span className="font-display font-bold text-xl text-n-300 tnum mr-1">{stats.void}</span>void</span>
                     </div>
                   </div>
                 </>
@@ -267,24 +267,24 @@ export default function DashboardPage() {
             {/* Leaderboard */}
             <div className="card p-4">
               <div className="flex items-center gap-2 mb-2">
-                <Trophy size={15} className="text-amber-300" />
-                <h2 className="font-display font-bold text-lg uppercase tracking-[0.06em] text-white">Top predictors</h2>
+                <Trophy size={15} className="text-warn" />
+                <h2 className="font-display font-bold text-lg uppercase tracking-[0.06em] text-n-0">Top predictors</h2>
               </div>
               {leaderboard.length === 0
-                ? <p className="text-zinc-400 text-sm py-2">No entries yet. Log your winning bets to appear here.</p>
-                : <ol className="divide-y divide-zinc-800/70">
+                ? <p className="text-n-400 text-sm py-2">No entries yet. Log your winning bets to appear here.</p>
+                : <ol className="divide-y divide-n-800/70">
                     {leaderboard.slice(0, 10).map((e, i) => {
                       const you = e.uid === uid;
                       return (
                         <li key={e.uid} className={clsx("flex items-center gap-3 py-2.5", you && "bg-brand-400/[0.07] -mx-2 px-2 rounded-lg")}>
                           <span className={clsx("font-display font-extrabold text-xl w-6 text-center tnum",
-                            i === 0 ? "text-amber-300" : i === 1 ? "text-zinc-300" : i === 2 ? "text-orange-400" : "text-zinc-600")}>
+                            i === 0 ? "text-warn" : i === 1 ? "text-n-300" : i === 2 ? "text-orange-600 dark:text-orange-400" : "text-n-500")}>
                             {i + 1}
                           </span>
-                          <span className={clsx("flex-1 text-sm", you ? "text-white font-semibold" : "text-zinc-400 font-mono text-xs")}>
+                          <span className={clsx("flex-1 text-sm", you ? "text-n-0 font-semibold" : "text-n-400 font-mono text-xs")}>
                             {you ? "You" : `#${e.uid.slice(-6)}`}
                           </span>
-                          <span className="font-display font-bold text-lg text-brand-400 tnum">{e.wins}<span className="text-xs text-zinc-500 ml-0.5">W</span></span>
+                          <span className="font-display font-bold text-lg text-accent tnum">{e.wins}<span className="text-xs text-n-400 ml-0.5">W</span></span>
                         </li>
                       );
                     })}
@@ -303,8 +303,8 @@ export default function DashboardPage() {
                   league={p.league_name} flag={p.flag} date={p.date}
                   onClick={() => router.push(`/match?${new URLSearchParams({ home: p.home, away: p.away, date: p.date ?? "" })}`)}>
                   <div className="flex flex-col items-end gap-1">
-                    <span className="font-display font-bold text-sm uppercase text-brand-300 bg-brand-400/10 border border-brand-400/30 px-2 py-0.5 rounded-md">{p.tip_1x2}</span>
-                    <span className="font-mono text-[11px] text-zinc-500">{Math.round(p.goals_confidence * 100)}% conf.</span>
+                    <span className="font-display font-bold text-sm uppercase text-accent bg-brand-400/10 border border-brand-400/30 px-2 py-0.5 rounded-md">{p.tip_1x2}</span>
+                    <span className="font-mono text-[11px] text-n-500">{Math.round(p.goals_confidence * 100)}% conf.</span>
                   </div>
                 </MatchCard>
               ))}
@@ -316,8 +316,8 @@ export default function DashboardPage() {
           <div className="grid lg:grid-cols-[360px_1fr] gap-4 items-start">
             {/* Log form */}
             <div className="card p-4 space-y-3 lg:sticky lg:top-24">
-              <h3 className="font-display font-bold text-lg uppercase tracking-[0.06em] text-white flex items-center gap-2">
-                <Plus size={15} className="text-brand-400" /> Log a bet
+              <h3 className="font-display font-bold text-lg uppercase tracking-[0.06em] text-n-0 flex items-center gap-2">
+                <Plus size={15} className="text-accent" /> Log a bet
               </h3>
               <div className="grid grid-cols-2 gap-2">
                 {[
@@ -357,12 +357,12 @@ export default function DashboardPage() {
                       className={b.result === "won" ? "!border-brand-400/40" : b.result === "lost" ? "!border-rose-500/40" : ""}>
                       <div className="flex flex-col items-end gap-1 text-xs">
                         <span className={clsx("font-display font-bold text-sm uppercase tracking-wide flex items-center gap-1",
-                          b.result === "won" ? "text-brand-400" : b.result === "lost" ? "text-rose-400" : "text-zinc-400")}>
+                          b.result === "won" ? "text-accent" : b.result === "lost" ? "text-danger" : "text-n-400")}>
                           {b.result === "won" ? <TrendingUp size={12}/> : b.result === "lost" ? <TrendingDown size={12}/> : <Minus size={12}/>}
                           {b.result}
                         </span>
-                        <span className="font-mono text-zinc-400">{b.tip} @ {b.odds}</span>
-                        <span className={clsx("font-mono font-bold", p > 0 ? "text-brand-400" : p < 0 ? "text-rose-400" : "text-zinc-400")}>
+                        <span className="font-mono text-n-400">{b.tip} @ {b.odds}</span>
+                        <span className={clsx("font-mono font-bold", p > 0 ? "text-accent" : p < 0 ? "text-danger" : "text-n-400")}>
                           {p > 0 ? "+" : p < 0 ? "−" : ""}{naira(p)}
                         </span>
                       </div>
@@ -383,24 +383,24 @@ export default function DashboardPage() {
                   <div className="flex items-center justify-between gap-3 p-4 bg-gradient-to-r from-brand-400/[0.08] to-transparent">
                     <div>
                       <p className="eyebrow">Booking code</p>
-                      <p className="font-mono text-2xl font-bold text-white tracking-[0.2em] mt-1">{c.code}</p>
+                      <p className="font-mono text-2xl font-bold text-n-0 tracking-[0.2em] mt-1">{c.code}</p>
                     </div>
                     <div className="text-right">
                       <p className="eyebrow">Total odds</p>
-                      <p className="font-display font-extrabold text-3xl text-brand-400 leading-none mt-1 tnum">{c.total_odds}x</p>
+                      <p className="font-display font-extrabold text-3xl text-accent leading-none mt-1 tnum">{c.total_odds}x</p>
                     </div>
                   </div>
-                  <div className="px-4 py-2 border-t border-dashed border-zinc-700 divide-y divide-zinc-800/70">
+                  <div className="px-4 py-2 border-t border-dashed border-n-700 divide-y divide-n-800/70">
                     {(Array.isArray(c.games) ? c.games : []).map((g, j) => (
                       <div key={j} className="flex items-center gap-2 text-sm py-2">
-                        <span className="truncate flex-1 text-zinc-300">{g.game}</span>
-                        <span className="text-white font-semibold">{g.tip}</span>
-                        <span className="font-mono text-xs text-zinc-500 w-10 text-right">{g.odds}</span>
+                        <span className="truncate flex-1 text-n-300">{g.game}</span>
+                        <span className="text-n-0 font-semibold">{g.tip}</span>
+                        <span className="font-mono text-xs text-n-500 w-10 text-right">{g.odds}</span>
                       </div>
                     ))}
                   </div>
-                  <div className="flex items-center justify-between px-4 py-3 border-t border-zinc-800">
-                    <span className="font-mono text-[11px] text-zinc-500">{c.date}</span>
+                  <div className="flex items-center justify-between px-4 py-3 border-t border-n-800">
+                    <span className="font-mono text-[11px] text-n-500">{c.date}</span>
                     <button onClick={() => copyBooking(c.code)} className="btn-primary !px-3 !py-1.5 !text-xs !rounded-lg">
                       {copiedCode === c.code ? <Check size={12} /> : <Copy size={12} />}
                       {copiedCode === c.code ? "Copied" : "Copy code"}
@@ -415,19 +415,19 @@ export default function DashboardPage() {
         {tab === "referral" && (
           <div className="card p-6 space-y-5 max-w-lg">
             <div>
-              <span className="inline-flex items-center justify-center w-11 h-11 rounded-xl bg-brand-400/10 text-brand-400 ring-1 ring-brand-400/20">
+              <span className="inline-flex items-center justify-center w-11 h-11 rounded-xl bg-brand-400/10 text-accent ring-1 ring-brand-400/20">
                 <Link2 size={20} />
               </span>
-              <h2 className="display text-4xl text-white mt-4">Invite friends</h2>
-              <p className="text-zinc-400 text-sm mt-2">
-                When a friend signs up and subscribes, you both get <span className="text-brand-400 font-semibold">30 days of premium free</span>.
+              <h2 className="display text-4xl text-n-0 mt-4">Invite friends</h2>
+              <p className="text-n-400 text-sm mt-2">
+                When a friend signs up and subscribes, you both get <span className="text-accent font-semibold">30 days of premium free</span>.
               </p>
             </div>
             {refStats ? (
               <>
-                <div className="bg-surface-sunken border border-zinc-800 rounded-xl px-4 py-3">
+                <div className="bg-surface-sunken border border-n-800 rounded-xl px-4 py-3">
                   <p className="eyebrow mb-1">Your referral link</p>
-                  <p className="text-brand-300 text-sm font-mono break-all">{refStats.link}</p>
+                  <p className="text-accent text-sm font-mono break-all">{refStats.link}</p>
                 </div>
                 <div className="flex gap-3">
                   <button onClick={copyRef} className="btn-primary flex-1">
@@ -441,13 +441,13 @@ export default function DashboardPage() {
                     <Share2 size={14} /> Share on WhatsApp
                   </button>
                 </div>
-                <div className="flex items-baseline justify-between border-t border-zinc-800 pt-4">
+                <div className="flex items-baseline justify-between border-t border-n-800 pt-4">
                   <p className="eyebrow">Friends who signed up</p>
-                  <p className="font-display font-extrabold text-4xl text-white leading-none tnum">{refStats.count}</p>
+                  <p className="font-display font-extrabold text-4xl text-n-0 leading-none tnum">{refStats.count}</p>
                 </div>
               </>
             ) : (
-              <p className="text-sm text-zinc-500">Your referral link isn&apos;t available right now. Try refreshing.</p>
+              <p className="text-sm text-n-500">Your referral link isn&apos;t available right now. Try refreshing.</p>
             )}
           </div>
         )}
@@ -459,28 +459,28 @@ export default function DashboardPage() {
               <p className="eyebrow">Profile</p>
               <div className="flex items-center gap-4">
                 {user?.imageUrl
-                  ? <img src={user.imageUrl} alt="" className="w-14 h-14 rounded-full ring-2 ring-zinc-800" />
+                  ? <img src={user.imageUrl} alt="" className="w-14 h-14 rounded-full ring-2 ring-n-800" />
                   : <div className="w-14 h-14 bg-brand-400 rounded-full flex items-center justify-center text-ink text-2xl font-display font-extrabold">{user?.firstName?.[0]}</div>}
                 <div className="min-w-0">
-                  <p className="text-white font-semibold truncate">{user?.fullName || "—"}</p>
-                  <p className="text-zinc-400 text-sm truncate">{user?.emailAddresses[0]?.emailAddress}</p>
+                  <p className="text-n-0 font-semibold truncate">{user?.fullName || "—"}</p>
+                  <p className="text-n-400 text-sm truncate">{user?.emailAddresses[0]?.emailAddress}</p>
                 </div>
               </div>
             </div>
 
             <div className="card p-5 space-y-3">
-              <p className="eyebrow flex items-center gap-1.5"><Crown size={12} className="text-amber-300" /> Subscription</p>
+              <p className="eyebrow flex items-center gap-1.5"><Crown size={12} className="text-warn" /> Subscription</p>
               {isPremium ? (
                 <div className="space-y-2">
-                  <p className="font-display font-extrabold text-3xl uppercase text-amber-300 leading-none">Premium</p>
-                  <p className="text-zinc-400 text-sm">
+                  <p className="font-display font-extrabold text-3xl uppercase text-warn leading-none">Premium</p>
+                  <p className="text-n-400 text-sm">
                     Active until {new Date((user?.publicMetadata as any)?.subscription_expires).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}
                   </p>
-                  <p className="text-zinc-500 text-xs">Renewing extends from your current expiry date.</p>
+                  <p className="text-n-500 text-xs">Renewing extends from your current expiry date.</p>
                 </div>
               ) : (
                 <div className="space-y-3">
-                  <p className="font-display font-extrabold text-3xl uppercase text-white leading-none">Free plan</p>
+                  <p className="font-display font-extrabold text-3xl uppercase text-n-0 leading-none">Free plan</p>
                   <button onClick={() => router.push("/")}
                     className="w-full bg-amber-400 hover:bg-amber-300 text-ink font-bold py-2.5 rounded-xl text-sm transition-all flex items-center justify-center gap-2 active:scale-[0.98]">
                     <Crown size={14} /> Upgrade to Premium · {PREMIUM_PRICE_LABEL}

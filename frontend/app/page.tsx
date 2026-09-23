@@ -17,6 +17,7 @@ import { SportModal } from "@/components/SportModal";
 import { PaywallModal } from "@/components/PaywallModal";
 import { AnnouncementBanner } from "@/components/AnnouncementBanner";
 import { AppShell, Wordmark } from "@/components/shell/AppShell";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { useUser, SignInButton, SignUpButton } from "@clerk/nextjs";
 import clsx from "clsx";
 
@@ -69,8 +70,8 @@ function ago(iso: string): string {
 function LiveDot() {
   return (
     <span className="relative flex h-2 w-2 shrink-0">
-      <span className="absolute inline-flex h-full w-full rounded-full bg-brand-400 opacity-60 animate-ping" />
-      <span className="relative inline-flex h-2 w-2 rounded-full bg-brand-400" />
+      <span className="absolute inline-flex h-full w-full rounded-full bg-accent opacity-60 animate-ping" />
+      <span className="relative inline-flex h-2 w-2 rounded-full bg-accent" />
     </span>
   );
 }
@@ -80,9 +81,9 @@ function StatePanel({ icon, title, body, action }: {
 }) {
   return (
     <div className="card border-dashed text-center px-6 py-16 space-y-3">
-      <div className="mx-auto w-12 h-12 rounded-2xl bg-zinc-800/70 flex items-center justify-center text-zinc-400">{icon}</div>
-      <p className="font-display font-bold text-xl uppercase tracking-wide text-white">{title}</p>
-      {body && <p className="text-sm text-zinc-400 max-w-sm mx-auto">{body}</p>}
+      <div className="mx-auto w-12 h-12 rounded-2xl bg-n-800/70 flex items-center justify-center text-n-400">{icon}</div>
+      <p className="font-display font-bold text-xl uppercase tracking-wide text-n-0">{title}</p>
+      {body && <p className="text-sm text-n-400 max-w-sm mx-auto">{body}</p>}
       {action && <div className="pt-2">{action}</div>}
     </div>
   );
@@ -107,7 +108,7 @@ function WakingUp({ onRetry }: { onRetry: () => void }) {
 function SkeletonCard() {
   return (
     <div className="card overflow-hidden">
-      <div className="flex justify-between px-4 py-3 border-b border-zinc-800/80">
+      <div className="flex justify-between px-4 py-3 border-b border-n-800/80">
         <div className="skeleton h-3 w-28" />
         <div className="skeleton h-3 w-20" />
       </div>
@@ -132,27 +133,30 @@ function AuthGate() {
       {/* Nav */}
       <header className="px-5 sm:px-8 h-16 flex items-center justify-between max-w-6xl mx-auto w-full">
         <div className="flex items-center gap-2.5">
-          <img src="/logo.svg" alt="" className="w-8 h-8 rounded-lg ring-1 ring-zinc-800" />
+          <img src="/logo.svg" alt="" className="w-8 h-8 rounded-lg ring-1 ring-n-800" />
           <Wordmark className="text-[26px]" />
         </div>
-        <SignInButton mode="modal">
-          <button className="btn-secondary !py-1.5">Sign in</button>
-        </SignInButton>
+        <div className="flex items-center gap-2">
+          <ThemeToggle />
+          <SignInButton mode="modal">
+            <button className="btn-secondary !py-1.5">Sign in</button>
+          </SignInButton>
+        </div>
       </header>
 
       <main className="flex-1 w-full max-w-6xl mx-auto px-5 sm:px-8">
         {/* Hero */}
         <section className="grid lg:grid-cols-[1.3fr_1fr] gap-12 lg:gap-14 items-center pt-10 pb-16 sm:pt-16 lg:pt-20 lg:pb-24">
           <div>
-            <p className="inline-flex items-center gap-2 text-xs font-semibold text-zinc-300 bg-surface border border-zinc-800 rounded-full pl-2.5 pr-3 py-1.5">
+            <p className="inline-flex items-center gap-2 text-xs font-semibold text-n-300 bg-surface border border-n-800 rounded-full pl-2.5 pr-3 py-1.5">
               <LiveDot /> XGBoost + Elo model · 9 leagues · updated every 6h
             </p>
-            <h1 className="display text-[52px] sm:text-7xl lg:text-[76px] text-white mt-6">
+            <h1 className="display text-[52px] sm:text-7xl lg:text-[76px] text-n-0 mt-6">
               Football predictions,
               <br />
-              <span className="text-brand-400 sm:whitespace-nowrap">engineered by AI.</span>
+              <span className="text-accent sm:whitespace-nowrap">engineered by AI.</span>
             </h1>
-            <p className="text-zinc-400 text-lg leading-relaxed max-w-lg mt-6">
+            <p className="text-n-400 text-lg leading-relaxed max-w-lg mt-6">
               Machine-learned probabilities across 9 leagues and 11 markets.
               Chat to build your slip and get a SportyBet booking code in one tap.
             </p>
@@ -166,7 +170,7 @@ function AuthGate() {
                 <button className="btn-secondary !px-7 !py-3.5 !text-base">Sign in</button>
               </SignInButton>
             </div>
-            <p className="text-zinc-500 text-xs mt-4">Free to sign up · No card required · 18+ only</p>
+            <p className="text-n-500 text-xs mt-4">Free to sign up · No card required · 18+ only</p>
           </div>
 
           {/* Product preview: the real prediction card */}
@@ -175,19 +179,19 @@ function AuthGate() {
             <div className="relative pointer-events-none select-none">
               <PredictionCard prediction={SAMPLE} />
             </div>
-            <p className="relative text-center text-[11px] text-zinc-500 mt-3">Example prediction card</p>
+            <p className="relative text-center text-[11px] text-n-500 mt-3">Example prediction card</p>
           </div>
         </section>
 
         {/* Stat strip */}
-        <section className="grid grid-cols-3 border-y border-zinc-900 divide-x divide-zinc-900">
+        <section className="grid grid-cols-3 border-y border-n-900 divide-x divide-n-900">
           {[
             { value: "9", label: "Leagues covered" },
             { value: "11+", label: "Betting markets" },
             { value: "6h", label: "Refresh cycle" },
           ].map(({ value, label }) => (
             <div key={label} className="py-6 sm:py-8 text-center">
-              <p className="font-display font-extrabold text-4xl sm:text-5xl text-white tnum">{value}</p>
+              <p className="font-display font-extrabold text-4xl sm:text-5xl text-n-0 tnum">{value}</p>
               <p className="eyebrow mt-1.5">{label}</p>
             </div>
           ))}
@@ -195,22 +199,22 @@ function AuthGate() {
 
         {/* Feature grid */}
         <section className="py-16 sm:py-20">
-          <h2 className="display text-4xl sm:text-5xl text-white">Everything on one slip</h2>
+          <h2 className="display text-4xl sm:text-5xl text-n-0">Everything on one slip</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-8">
             {FEATURES.map(({ icon: Icon, title, desc }) => (
               <div key={title} className="card p-5">
-                <span className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-brand-400/10 text-brand-400 ring-1 ring-brand-400/20">
+                <span className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-brand-400/10 text-accent ring-1 ring-brand-400/20">
                   <Icon size={19} />
                 </span>
-                <p className="font-display font-bold text-xl uppercase tracking-wide text-white mt-4">{title}</p>
-                <p className="text-zinc-400 text-sm leading-relaxed mt-1">{desc}</p>
+                <p className="font-display font-bold text-xl uppercase tracking-wide text-n-0 mt-4">{title}</p>
+                <p className="text-n-400 text-sm leading-relaxed mt-1">{desc}</p>
               </div>
             ))}
           </div>
         </section>
       </main>
 
-      <footer className="border-t border-zinc-900 py-6 text-center text-xs text-zinc-500">
+      <footer className="border-t border-n-900 py-6 text-center text-xs text-n-500">
         BetIQ · AI football predictions · 18+ · Gamble responsibly · For educational use only
       </footer>
     </div>
@@ -452,8 +456,8 @@ export default function HomePage() {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-4 text-center p-6">
         <Wordmark className="text-4xl" />
-        <h1 className="display text-5xl text-white mt-4">Back soon</h1>
-        <p className="text-zinc-400 max-w-sm">
+        <h1 className="display text-5xl text-n-0 mt-4">Back soon</h1>
+        <p className="text-n-400 max-w-sm">
           BetIQ is undergoing scheduled maintenance. We&apos;ll be back shortly with fresh predictions.
         </p>
       </div>
@@ -469,8 +473,8 @@ export default function HomePage() {
           className={clsx(
             "hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all",
             pushEnabled
-              ? "bg-brand-400/10 border-brand-400/40 text-brand-300"
-              : "bg-surface border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-700"
+              ? "bg-brand-400/10 border-brand-400/40 text-accent"
+              : "bg-surface border-n-800 text-n-400 hover:text-n-0 hover:border-n-700"
           )}
         >
           <Bell size={12} />
@@ -501,15 +505,15 @@ export default function HomePage() {
       <div className="space-y-5">
         {/* Page heading */}
         <div>
-          <p className="flex items-center gap-2 text-xs font-medium text-zinc-400">
+          <p className="flex items-center gap-2 text-xs font-medium text-n-400">
             <LiveDot />
             {lastUpdated ? <>Model live · updated {ago(lastUpdated)}</> : "AI picks across 9 leagues"}
           </p>
-          <h1 className="display text-5xl sm:text-6xl text-white mt-2">Predictions</h1>
+          <h1 className="display text-5xl sm:text-6xl text-n-0 mt-2">Predictions</h1>
         </div>
 
         {/* Sport tabs */}
-        <div role="tablist" aria-label="Sport" className="flex gap-6 border-b border-zinc-800 overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+        <div role="tablist" aria-label="Sport" className="flex gap-6 border-b border-n-800 overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
           {SPORTS.map(({ key, label }) => {
             const active = activeSport === key;
             return (
@@ -520,11 +524,11 @@ export default function HomePage() {
                 onClick={() => setActiveSport(key)}
                 className={clsx(
                   "relative shrink-0 pb-3 font-display font-bold text-[17px] uppercase tracking-[0.06em] transition-colors",
-                  active ? "text-white" : "text-zinc-500 hover:text-zinc-300"
+                  active ? "text-n-0" : "text-n-500 hover:text-n-300"
                 )}
               >
                 {label}
-                {active && <span className="absolute left-0 right-0 -bottom-px h-[2px] bg-brand-400 rounded-full" />}
+                {active && <span className="absolute left-0 right-0 -bottom-px h-[2px] bg-accent rounded-full" />}
               </button>
             );
           })}
@@ -533,7 +537,7 @@ export default function HomePage() {
         {/* Other sports */}
         {activeSport !== "football" && (
           <div className="space-y-4">
-            {sportSummary && <p className="text-sm text-zinc-400">{sportSummary}</p>}
+            {sportSummary && <p className="text-sm text-n-400">{sportSummary}</p>}
             {sportLoading ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)}
@@ -570,7 +574,7 @@ export default function HomePage() {
                     className={clsx("chip shrink-0", active ? "chip-active" : "chip-idle")}
                   >
                     {label}
-                    <span className={clsx("tnum text-[11px] font-bold", active ? "text-ink/60" : "text-zinc-500")}>{n}</span>
+                    <span className={clsx("tnum text-[11px] font-bold", active ? "text-ink/60" : "text-n-500")}>{n}</span>
                   </button>
                 );
               })}
@@ -590,17 +594,17 @@ export default function HomePage() {
                 <select
                   value={minConf}
                   onChange={e => setMinConf(Number(e.target.value))}
-                  className="appearance-none bg-surface border border-zinc-800 hover:border-zinc-700 text-zinc-300 text-xs font-semibold rounded-lg pl-3 pr-7 py-2 outline-none cursor-pointer transition-colors"
+                  className="appearance-none bg-surface border border-n-800 hover:border-n-700 text-n-300 text-xs font-semibold rounded-lg pl-3 pr-7 py-2 outline-none cursor-pointer transition-colors"
                 >
                   {CONFIDENCE_FILTERS.map(({ label, value }) => (
                     <option key={value} value={value}>{label}</option>
                   ))}
                 </select>
-                <ChevronDown size={13} className="absolute right-2.5 text-zinc-500 pointer-events-none" />
+                <ChevronDown size={13} className="absolute right-2.5 text-n-500 pointer-events-none" />
               </label>
 
               {/* Sort */}
-              <div className="flex items-center gap-0.5 bg-surface border border-zinc-800 rounded-lg p-0.5" role="group" aria-label="Sort by">
+              <div className="flex items-center gap-0.5 bg-surface border border-n-800 rounded-lg p-0.5" role="group" aria-label="Sort by">
                 {([
                   { key: "date",       label: "Kick-off",   icon: CalendarDays },
                   { key: "confidence", label: "Confidence", icon: Percent },
@@ -613,11 +617,11 @@ export default function HomePage() {
                     className={clsx(
                       "flex items-center gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-md text-xs font-semibold transition-all",
                       sortBy === key
-                        ? "bg-zinc-800 text-white"
-                        : "text-zinc-500 hover:text-zinc-200"
+                        ? "bg-n-800 text-n-0"
+                        : "text-n-500 hover:text-n-200"
                     )}
                   >
-                    <Icon size={12} className={clsx("hidden sm:block", sortBy === key && "text-brand-400")} />
+                    <Icon size={12} className={clsx("hidden sm:block", sortBy === key && "text-accent")} />
                     {label}
                   </button>
                 ))}
@@ -634,7 +638,7 @@ export default function HomePage() {
             <WakingUp onRetry={retry} />
           ) : error ? (
             <StatePanel
-              icon={<AlertTriangle size={20} className="text-rose-400" />}
+              icon={<AlertTriangle size={20} className="text-danger" />}
               title="Can't reach the model"
               body="The prediction server didn't respond. Check your connection and try again."
               action={<button onClick={retry} className="btn-secondary">Retry</button>}
@@ -659,9 +663,9 @@ export default function HomePage() {
                 <section key={label || "all"} className="space-y-3">
                   {label && (
                     <div className="flex items-baseline gap-3">
-                      <h2 className="font-display font-extrabold text-2xl uppercase tracking-wide text-white">{label}</h2>
-                      <span className="text-xs font-semibold text-zinc-500 tnum">{items.length} {items.length === 1 ? "match" : "matches"}</span>
-                      <span className="flex-1 h-px bg-zinc-800 self-center" />
+                      <h2 className="font-display font-extrabold text-2xl uppercase tracking-wide text-n-0">{label}</h2>
+                      <span className="text-xs font-semibold text-n-500 tnum">{items.length} {items.length === 1 ? "match" : "matches"}</span>
+                      <span className="flex-1 h-px bg-n-800 self-center" />
                     </div>
                   )}
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -682,7 +686,7 @@ export default function HomePage() {
         </>}
 
         {/* Footer note */}
-        <p className="text-center text-xs text-zinc-500 pt-8">
+        <p className="text-center text-xs text-n-500 pt-8">
           Powered by XGBoost + Elo ratings · football-data.org · Updated every 6 hours · 18+ · Gamble responsibly
         </p>
       </div>

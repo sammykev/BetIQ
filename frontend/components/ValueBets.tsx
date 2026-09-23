@@ -34,12 +34,12 @@ function ValueBetCard({ v, onClick }: { v: ValueBet; onClick?: () => void }) {
   return (
     <article onClick={onClick} className={clsx("card overflow-hidden flex flex-col", onClick && "card-interactive")}>
       {/* Header strip */}
-      <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-zinc-800/80">
+      <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-n-800/80">
         <span className="flex items-center gap-1.5 min-w-0">
           <CompetitionBadge name={v.league_name} fallbackEmoji={v.flag} size={13} />
           <span className="eyebrow truncate">{v.league_name}</span>
         </span>
-        <span className="font-mono text-[11px] text-zinc-200 uppercase shrink-0">{kickoff(v.date, v.time)}</span>
+        <span className="font-mono text-[11px] text-n-200 uppercase shrink-0">{kickoff(v.date, v.time)}</span>
       </div>
 
       <div className="flex-1 flex flex-col gap-3.5 p-4">
@@ -48,7 +48,7 @@ function ValueBetCard({ v, onClick }: { v: ValueBet; onClick?: () => void }) {
           {[v.home, v.away].map(team => (
             <div key={team} className="flex items-center gap-3 min-w-0">
               <TeamBadge name={team} size={26} />
-              <span className="font-semibold text-[15px] text-white truncate">{team}</span>
+              <span className="font-semibold text-[15px] text-n-0 truncate">{team}</span>
             </div>
           ))}
         </div>
@@ -56,12 +56,12 @@ function ValueBetCard({ v, onClick }: { v: ValueBet; onClick?: () => void }) {
         {/* Model vs market */}
         <div className="space-y-2">
           {[
-            { label: "Model", value: model, cls: "bg-brand-400", text: "text-brand-400" },
-            { label: "Market", value: implied, cls: "bg-zinc-600", text: "text-zinc-400" },
+            { label: "Model", value: model, cls: "bg-accent", text: "text-accent" },
+            { label: "Market", value: implied, cls: "bg-n-600", text: "text-n-400" },
           ].map(({ label, value, cls, text }) => (
             <div key={label} className="flex items-center gap-3">
               <span className="eyebrow w-14 shrink-0">{label}</span>
-              <div className="flex-1 h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+              <div className="flex-1 h-1.5 bg-n-800 rounded-full overflow-hidden">
                 <div className={clsx("h-full rounded-full", cls)} style={{ width: `${value}%` }} />
               </div>
               <span className={clsx("font-mono text-xs font-bold w-9 text-right", text)}>{value}%</span>
@@ -72,18 +72,18 @@ function ValueBetCard({ v, onClick }: { v: ValueBet; onClick?: () => void }) {
         {/* Value ticket */}
         <div className={clsx(
           "relative mt-auto flex items-center gap-3 rounded-xl px-3.5 py-3",
-          big ? "bg-brand-400 text-ink" : "bg-brand-400/[0.06] border border-brand-400/30 text-white"
+          big ? "bg-brand-400 text-ink" : "bg-brand-400/[0.06] border border-brand-400/30 text-n-0"
         )}>
           <span className="absolute -top-2.5 right-3 font-mono text-[10px] font-bold bg-ink text-brand-400 border border-brand-400/70 rounded-md px-1.5 py-0.5">
             +{v.edge}% EDGE
           </span>
           <div className="min-w-0 flex-1">
-            <p className={clsx("font-display font-bold text-[11px] uppercase tracking-[0.14em]", big ? "text-ink/60" : "text-zinc-400")}>Value pick</p>
+            <p className={clsx("font-display font-bold text-[11px] uppercase tracking-[0.14em]", big ? "text-ink/60" : "text-n-400")}>Value pick</p>
             <p className="font-display font-extrabold text-xl uppercase leading-tight truncate">{v.value_label}</p>
           </div>
           <div className="text-right shrink-0">
-            <p className={clsx("font-display font-bold text-[11px] uppercase tracking-[0.14em]", big ? "text-ink/60" : "text-zinc-400")}>{v.bookie}</p>
-            <p className={clsx("font-display font-extrabold text-[32px] leading-none tnum", big ? "text-ink" : "text-brand-400")}>
+            <p className={clsx("font-display font-bold text-[11px] uppercase tracking-[0.14em]", big ? "text-ink/60" : "text-n-400")}>{v.bookie}</p>
+            <p className={clsx("font-display font-extrabold text-[32px] leading-none tnum", big ? "text-ink" : "text-accent")}>
               {v.value_odds.toFixed(2)}
             </p>
           </div>
@@ -129,22 +129,22 @@ export function ValueBets({ onMatchClick }: Props) {
       <div className="flex items-stretch gap-3 flex-wrap">
         <div className="card px-4 py-3 min-w-[120px]">
           <p className="eyebrow">Found</p>
-          <p className="font-display font-extrabold text-3xl text-white leading-none mt-1 tnum">{loading ? "–" : bets.length}</p>
+          <p className="font-display font-extrabold text-3xl text-n-0 leading-none mt-1 tnum">{loading ? "–" : bets.length}</p>
         </div>
         <div className="card px-4 py-3 min-w-[120px]">
           <p className="eyebrow">Best edge</p>
-          <p className="font-display font-extrabold text-3xl text-brand-400 leading-none mt-1 tnum">{loading || !best ? "–" : `+${best}%`}</p>
+          <p className="font-display font-extrabold text-3xl text-accent leading-none mt-1 tnum">{loading || !best ? "–" : `+${best}%`}</p>
         </div>
         <div className="flex-1 min-w-[240px] card px-4 py-3 flex gap-2.5 items-start">
-          <Info size={14} className="text-sky-300 shrink-0 mt-0.5" />
-          <p className="text-xs text-zinc-400 leading-relaxed">
+          <Info size={14} className="text-info shrink-0 mt-0.5" />
+          <p className="text-xs text-n-400 leading-relaxed">
             A value bet is where the model rates an outcome more likely than the bookmaker&apos;s odds imply.
-            An edge of <span className="text-white font-semibold">+5% or more</span> suggests the price is in your favour.
+            An edge of <span className="text-n-0 font-semibold">+5% or more</span> suggests the price is in your favour.
           </p>
         </div>
         <div className="flex items-center gap-3 ml-auto">
           {lastFetch && (
-            <span className="text-[11px] text-zinc-500">
+            <span className="text-[11px] text-n-500">
               Updated {lastFetch.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
             </span>
           )}
@@ -170,16 +170,16 @@ export function ValueBets({ onMatchClick }: Props) {
         </div>
       ) : error ? (
         <div className="card border-dashed text-center py-16 px-6 space-y-3">
-          <AlertTriangle size={22} className="mx-auto text-rose-400" />
-          <p className="font-display font-bold text-xl uppercase text-white">Live odds unavailable</p>
-          <p className="text-sm text-zinc-400">We couldn&apos;t load bookmaker prices right now.</p>
+          <AlertTriangle size={22} className="mx-auto text-danger" />
+          <p className="font-display font-bold text-xl uppercase text-n-0">Live odds unavailable</p>
+          <p className="text-sm text-n-400">We couldn&apos;t load bookmaker prices right now.</p>
           <button onClick={load} className="btn-secondary">Try again</button>
         </div>
       ) : bets.length === 0 ? (
         <div className="card border-dashed text-center py-16 px-6 space-y-3">
-          <TrendingUp size={22} className="mx-auto text-zinc-500" />
-          <p className="font-display font-bold text-xl uppercase text-white">No value right now</p>
-          <p className="text-sm text-zinc-400 max-w-sm mx-auto">
+          <TrendingUp size={22} className="mx-auto text-n-500" />
+          <p className="font-display font-bold text-xl uppercase text-n-0">No value right now</p>
+          <p className="text-sm text-n-400 max-w-sm mx-auto">
             The model&apos;s picks are in line with the market, or live odds aren&apos;t available yet.
           </p>
         </div>

@@ -182,18 +182,18 @@ function DayPanel({ date, onClose }: { date: string; onClose: () => void }) {
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-100 dark:border-zinc-800 shrink-0">
         <div>
-          <p className="font-display font-bold uppercase tracking-wide text-lg leading-tight text-white">{fmt(date)}</p>
+          <p className="font-display font-bold uppercase tracking-wide text-lg leading-tight text-n-0">{fmt(date)}</p>
           {accuracy !== null && (
             <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">
               Accuracy: <span className={clsx("tnum font-bold",
-                accuracy >= 60 ? "text-brand-400" :
-                accuracy >= 40 ? "text-amber-300" : "text-rose-400"
+                accuracy >= 60 ? "text-accent" :
+                accuracy >= 40 ? "text-warn" : "text-danger"
               )}>{accuracy}%</span>
               &nbsp;({won}W / {lost}L / {pending} pending)
             </p>
           )}
         </div>
-        <button onClick={onClose} className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-white transition-colors">
+        <button onClick={onClose} className="p-2 hover:bg-n-800 rounded-lg text-n-400 hover:text-n-0 transition-colors">
           <X size={14} />
         </button>
       </div>
@@ -299,8 +299,8 @@ export default function HistoryPage() {
         <div className="grid grid-cols-3 gap-3 max-w-2xl">
           {[
             { label: "Accuracy", value: monthAccuracy === null ? "–" : `${monthAccuracy}%`,
-              cls: monthAccuracy === null ? "text-zinc-500" : monthAccuracy >= 60 ? "text-brand-400" : monthAccuracy >= 40 ? "text-amber-300" : "text-rose-400" },
-            { label: "Won", value: loadingCal ? "–" : monthWon, cls: "text-white" },
+              cls: monthAccuracy === null ? "text-zinc-500" : monthAccuracy >= 60 ? "text-accent" : monthAccuracy >= 40 ? "text-warn" : "text-danger" },
+            { label: "Won", value: loadingCal ? "–" : monthWon, cls: "text-n-0" },
             { label: "Lost", value: loadingCal ? "–" : monthLost, cls: "text-zinc-400" },
           ].map(({ label, value, cls }) => (
             <div key={label} className="card px-4 py-3">
@@ -315,18 +315,18 @@ export default function HistoryPage() {
           <div className="card overflow-hidden">
             {/* Month header */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-100 dark:border-zinc-800">
-              <button onClick={prevMonth} className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-white transition-colors">
+              <button onClick={prevMonth} className="p-2 hover:bg-n-800 rounded-lg text-n-400 hover:text-n-0 transition-colors">
                 <ChevronLeft size={16} />
               </button>
               <div className="text-center">
-                <p className="font-display font-extrabold uppercase tracking-wide text-2xl leading-none text-white">{MONTHS[month]} {year}</p>
+                <p className="font-display font-extrabold uppercase tracking-wide text-2xl leading-none text-n-0">{MONTHS[month]} {year}</p>
                 {!loadingCal && (
                   <p className="text-[11px] text-zinc-500 mt-1">
                     {Object.keys(summary).length} days with predictions
                   </p>
                 )}
               </div>
-              <button onClick={nextMonth} className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-white transition-colors">
+              <button onClick={nextMonth} className="p-2 hover:bg-n-800 rounded-lg text-n-400 hover:text-n-0 transition-colors">
                 <ChevronRight size={16} />
               </button>
             </div>
@@ -361,8 +361,8 @@ export default function HistoryPage() {
                         className={clsx(
                           "relative flex flex-col items-center justify-center rounded-xl aspect-square text-sm transition-all border",
                           isSelected ? "bg-brand-400/10 border-brand-400/60" :
-                          isToday    ? "bg-zinc-800 border-zinc-700" :
-                          info       ? "bg-zinc-800/30 hover:bg-zinc-800/70 border-transparent" :
+                          isToday    ? "bg-n-800 border-n-700" :
+                          info       ? "bg-n-800/40 hover:bg-n-800/80 border-transparent" :
                                        "border-transparent",
                           info ? "cursor-pointer" : isPast ? "opacity-30 cursor-default" : "cursor-default"
                         )}
@@ -370,7 +370,7 @@ export default function HistoryPage() {
                       >
                         <span className={clsx(
                           "tnum text-sm font-semibold",
-                          isSelected ? "text-brand-300" : isToday ? "text-white font-bold" : info ? "text-zinc-200" : "text-zinc-500"
+                          isSelected ? "text-accent" : isToday ? "text-n-0 font-bold" : info ? "text-n-200" : "text-n-500"
                         )}>
                           {day}
                         </span>

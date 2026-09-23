@@ -1,7 +1,7 @@
 /** @type {import('tailwindcss').Config} */
 const config = {
-  // Matchday is dark-only: <html class="dark"> is set permanently in
-  // app/layout.tsx, so every existing `dark:` variant always applies.
+  // Theme is a class on <html>: "dark" (default when the OS prefers dark or
+  // the user chose it) or absent for light. See components/ThemeToggle.tsx.
   darkMode: "class",
   content: [
     "./pages/**/*.{js,ts,jsx,tsx,mdx}",
@@ -33,14 +33,15 @@ const config = {
           300: "#c8f76a",
           400: "#b8f53d",
           500: "#a3e635",
-          600: "#84cc16",
-          700: "#65a30d",
-          800: "#3f6212",
+          // 600+ are dark enough to read as text on white (light mode)
+          600: "#4d7c0f",
+          700: "#3f6212",
+          800: "#365314",
           900: "#1c2a07",
           DEFAULT: "#b8f53d",
         },
-        // zinc is re-tinted toward navy so every zinc-* utility in the app
-        // lands on the Matchday surfaces without touching each component.
+        // Static navy-tinted greys. Components that pair light and dark
+        // variants (`text-zinc-900 dark:text-white`) use these.
         zinc: {
           50: "#f1f4f9",
           100: "#e3e8f0",
@@ -54,21 +55,36 @@ const config = {
           900: "#0f1729",
           950: "#070b14",
         },
-        ink: "#070b14",
+        // Theme-aware neutrals: the same class reads correctly in both themes
+        // (n-0 = primary text, n-800 = borders/tracks, …). Values live in
+        // globals.css; dark matches the zinc scale above, light mirrors it.
+        n: Object.fromEntries(
+          ["0", "50", "100", "200", "300", "400", "500", "600", "700", "800", "900", "950"]
+            .map(k => [k, `rgb(var(--n-${k}) / <alpha-value>)`])
+        ),
+        // Page background. Not "base": that would collide with the text-base font size.
+        canvas: "rgb(var(--canvas) / <alpha-value>)",
         surface: {
-          DEFAULT: "#0f1729",
-          raised: "#131d33",
-          sunken: "#0a101d",
+          DEFAULT: "rgb(var(--surface) / <alpha-value>)",
+          raised: "rgb(var(--surface-raised) / <alpha-value>)",
+          sunken: "rgb(var(--surface-sunken) / <alpha-value>)",
         },
+        // Lime for text and thin indicators: bright on dark, deep on light.
+        // Filled lime (tickets, buttons) stays brand-400 with ink text.
+        accent: "rgb(var(--accent) / <alpha-value>)",
+        warn: "rgb(var(--warn) / <alpha-value>)",
+        danger: "rgb(var(--danger) / <alpha-value>)",
+        info: "rgb(var(--info) / <alpha-value>)",
+        // Always near-black: text on lime fills, dark badges and backdrops
+        ink: "#070b14",
         slate: {
           950: "#020617",
         },
       },
       boxShadow: {
-        card: "inset 0 1px 0 0 rgb(255 255 255 / 0.03), 0 1px 2px 0 rgb(0 0 0 / 0.4)",
-        "card-hover":
-          "inset 0 1px 0 0 rgb(255 255 255 / 0.05), 0 12px 32px -12px rgb(0 0 0 / 0.7)",
-        pop: "0 24px 64px -16px rgb(0 0 0 / 0.8), 0 0 0 1px rgb(255 255 255 / 0.04)",
+        card: "var(--shadow-card)",
+        "card-hover": "var(--shadow-card-hover)",
+        pop: "var(--shadow-pop)",
         glow: "0 0 0 1px rgb(184 245 61 / 0.35), 0 8px 32px -8px rgb(184 245 61 / 0.35)",
       },
       animation: {

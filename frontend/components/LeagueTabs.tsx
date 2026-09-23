@@ -39,7 +39,7 @@ export function LeagueTabs({ leagues, selected, onSelect, counts }: Props) {
                     "tnum text-[10px] px-1.5 py-0.5 rounded-full font-semibold",
                     active
                       ? "bg-ink/15 text-ink"
-                      : "bg-zinc-800 text-zinc-400"
+                      : "bg-n-800 text-n-400"
                   )}
                 >
                   {count}

@@ -36,7 +36,7 @@ interface SlipItem {
 function PanelTitle({ children, right }: { children: React.ReactNode; right?: React.ReactNode }) {
   return (
     <div className="flex items-center gap-2 mb-3">
-      <h2 className="font-display font-bold text-lg uppercase tracking-[0.06em] text-white">{children}</h2>
+      <h2 className="font-display font-bold text-lg uppercase tracking-[0.06em] text-n-0">{children}</h2>
       {right && <div className="ml-auto">{right}</div>}
     </div>
   );
@@ -46,13 +46,13 @@ function PanelTitle({ children, right }: { children: React.ReactNode; right?: Re
 // Tale of the tape — Elo, xG and form, side by side
 // ------------------------------------------------------------------ //
 function FormChips({ form }: { form?: string }) {
-  if (!form) return <span className="text-zinc-600">—</span>;
+  if (!form) return <span className="text-n-600">—</span>;
   return (
     <span className="inline-flex gap-0.5">
       {form.split("").map((r, i) => (
         <span key={i} className={clsx(
           "font-display font-bold text-[11px] w-[18px] h-[18px] rounded flex items-center justify-center",
-          r === "W" ? "bg-brand-400 text-ink" : r === "D" ? "bg-zinc-600 text-white" : "bg-rose-500/80 text-white"
+          r === "W" ? "bg-brand-400 text-ink" : r === "D" ? "bg-zinc-500 text-white" : "bg-rose-500 text-white"
         )}>{r}</span>
       ))}
     </span>
@@ -72,20 +72,20 @@ function TapeRow({ label, home, away, better = "higher", format = (v: number) =>
   return (
     <div className="py-2.5">
       <div className="flex items-center justify-between text-sm">
-        <span className={clsx("font-display font-bold text-xl tnum", homeWins ? "text-white" : "text-zinc-500")}>
+        <span className={clsx("font-display font-bold text-xl tnum", homeWins ? "text-n-0" : "text-n-500")}>
           {home != null ? format(home) : "—"}
         </span>
         <span className="eyebrow">{label}</span>
-        <span className={clsx("font-display font-bold text-xl tnum", awayWins ? "text-white" : "text-zinc-500")}>
+        <span className={clsx("font-display font-bold text-xl tnum", awayWins ? "text-n-0" : "text-n-500")}>
           {away != null ? format(away) : "—"}
         </span>
       </div>
       <div className="flex gap-1 mt-1.5">
-        <div className="flex-1 flex justify-end h-1 bg-zinc-800 rounded-full overflow-hidden">
-          <div className={homeWins ? "bg-brand-400" : "bg-zinc-600"} style={{ width: `${(Math.abs(h) / total) * 100}%` }} />
+        <div className="flex-1 flex justify-end h-1 bg-n-800 rounded-full overflow-hidden">
+          <div className={homeWins ? "bg-accent" : "bg-n-600"} style={{ width: `${(Math.abs(h) / total) * 100}%` }} />
         </div>
-        <div className="flex-1 h-1 bg-zinc-800 rounded-full overflow-hidden">
-          <div className={clsx("h-full", awayWins ? "bg-brand-400" : "bg-zinc-600")} style={{ width: `${(Math.abs(a) / total) * 100}%` }} />
+        <div className="flex-1 h-1 bg-n-800 rounded-full overflow-hidden">
+          <div className={clsx("h-full", awayWins ? "bg-accent" : "bg-n-600")} style={{ width: `${(Math.abs(a) / total) * 100}%` }} />
         </div>
       </div>
     </div>
@@ -101,17 +101,17 @@ function TaleOfTheTape({ analysis, home, away }: { analysis: MatchAnalysis; home
   return (
     <div className="card p-4">
       <PanelTitle
-        right={<span className="text-[11px] font-bold uppercase tracking-wider text-brand-300 bg-brand-400/10 border border-brand-400/25 rounded-md px-2 py-0.5">{elo.label}</span>}
+        right={<span className="text-[11px] font-bold uppercase tracking-wider text-accent bg-brand-400/10 border border-brand-400/25 rounded-md px-2 py-0.5">{elo.label}</span>}
       >
         Tale of the tape
       </PanelTitle>
 
-      <div className="flex items-center justify-between gap-2 pb-2 border-b border-zinc-800">
-        <span className="flex items-center gap-2 min-w-0"><TeamBadge name={home} size={22} /><span className="text-xs font-bold text-white truncate">{home}</span></span>
-        <span className="flex items-center gap-2 min-w-0 flex-row-reverse"><TeamBadge name={away} size={22} /><span className="text-xs font-bold text-white truncate">{away}</span></span>
+      <div className="flex items-center justify-between gap-2 pb-2 border-b border-n-800">
+        <span className="flex items-center gap-2 min-w-0"><TeamBadge name={home} size={22} /><span className="text-xs font-bold text-n-0 truncate">{home}</span></span>
+        <span className="flex items-center gap-2 min-w-0 flex-row-reverse"><TeamBadge name={away} size={22} /><span className="text-xs font-bold text-n-0 truncate">{away}</span></span>
       </div>
 
-      <div className="divide-y divide-zinc-800/70">
+      <div className="divide-y divide-n-800/70">
         <TapeRow label="Elo rating" home={elo.home} away={elo.away} format={int} />
         <TapeRow label="Model xG" home={analysis.xg_home} away={analysis.xg_away} />
         {hf?.available && af?.available && <>
@@ -127,11 +127,11 @@ function TaleOfTheTape({ analysis, home, away }: { analysis: MatchAnalysis; home
         </>}
       </div>
 
-      <p className="text-xs text-zinc-400 leading-relaxed bg-zinc-800/40 rounded-lg px-3 py-2.5 mt-1">
-        <span className="font-semibold text-white">{elo.leading}</span> hold a{" "}
-        <span className="font-mono text-brand-300">{Math.abs(elo.gap)}</span>-point Elo edge, worth a{" "}
-        <span className="font-mono text-brand-300">{Math.round(elo.implied_win_prob * 100)}%</span> win chance on ratings alone.{" "}
-        <span className="text-zinc-500">{elo.description}</span>
+      <p className="text-xs text-n-400 leading-relaxed bg-n-800/40 rounded-lg px-3 py-2.5 mt-1">
+        <span className="font-semibold text-n-0">{elo.leading}</span> hold a{" "}
+        <span className="font-mono text-accent">{Math.abs(elo.gap)}</span>-point Elo edge, worth a{" "}
+        <span className="font-mono text-accent">{Math.round(elo.implied_win_prob * 100)}%</span> win chance on ratings alone.{" "}
+        <span className="text-n-500">{elo.description}</span>
       </p>
     </div>
   );
@@ -165,7 +165,7 @@ function MarketBlock({
     <div className="card p-4">
       <PanelTitle
         right={sbMarket && (
-          <span className="inline-flex items-center gap-1 text-[10px] text-brand-300 font-bold uppercase tracking-wider">
+          <span className="inline-flex items-center gap-1 text-[10px] text-accent font-bold uppercase tracking-wider">
             <Radio size={10} /> Live odds
           </span>
         )}
@@ -197,11 +197,11 @@ function MarketBlock({
                 canSelect && "cursor-pointer",
                 isSelected
                   ? "bg-brand-400/10 border-brand-400/50"
-                  : canSelect ? "hover:bg-zinc-800/60 border-transparent" : "border-transparent"
+                  : canSelect ? "hover:bg-n-800/60 border-transparent" : "border-transparent"
               )}
             >
               <div className="flex items-center gap-2">
-                <span className={clsx("text-[13px] truncate flex-1", isBest || isSelected ? "text-white font-semibold" : "text-zinc-400")}>
+                <span className={clsx("text-[13px] truncate flex-1", isBest || isSelected ? "text-n-0 font-semibold" : "text-n-400")}>
                   {opt.label}
                 </span>
                 {opt.code === recommendedCode && !isSelected && (
@@ -211,17 +211,17 @@ function MarketBlock({
                 )}
                 {odds && (
                   <span className={clsx("font-mono text-xs font-bold shrink-0 px-2 py-0.5 rounded-md",
-                    isSelected ? "bg-brand-400 text-ink" : "bg-zinc-800 text-zinc-200")}>
+                    isSelected ? "bg-brand-400 text-ink" : "bg-n-800 text-n-200")}>
                     {odds}
                   </span>
                 )}
-                {isSelected && <Check size={13} className="text-brand-400 shrink-0" />}
-                <span className={clsx("font-display font-bold text-lg w-11 text-right tnum shrink-0", isBest ? "text-brand-400" : "text-zinc-500")}>
+                {isSelected && <Check size={13} className="text-accent shrink-0" />}
+                <span className={clsx("font-display font-bold text-lg w-11 text-right tnum shrink-0", isBest ? "text-accent" : "text-n-500")}>
                   {pct}%
                 </span>
               </div>
-              <div className="h-1 bg-zinc-800 rounded-full overflow-hidden mt-1.5">
-                <div className={clsx("h-full rounded-full transition-all duration-500", isBest ? "bg-brand-400" : "bg-zinc-600")} style={{ width: `${pct}%` }} />
+              <div className="h-1 bg-n-800 rounded-full overflow-hidden mt-1.5">
+                <div className={clsx("h-full rounded-full transition-all duration-500", isBest ? "bg-accent" : "bg-n-600")} style={{ width: `${pct}%` }} />
               </div>
             </div>
           );
@@ -257,22 +257,22 @@ function AIExplanation({ explanation }: { explanation: MatchExplanation | null }
         right={
           <span className={clsx(
             "inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider rounded-md px-2 py-0.5 border",
-            hasWebSearch ? "text-sky-300 bg-sky-400/10 border-sky-400/25" : "text-zinc-400 bg-zinc-800 border-zinc-700"
+            hasWebSearch ? "text-info bg-sky-400/10 border-sky-400/25" : "text-n-400 bg-n-800 border-n-700"
           )}>
             {hasWebSearch ? <><Radio size={10} /> Live web search</> : "Stats only"}
           </span>
         }
       >
-        <span className="inline-flex items-center gap-2"><Sparkles size={15} className="text-brand-400" /> AI analysis</span>
+        <span className="inline-flex items-center gap-2"><Sparkles size={15} className="text-accent" /> AI analysis</span>
       </PanelTitle>
-      <p className="text-[15px] text-zinc-300 leading-relaxed">{explanation.explanation}</p>
+      <p className="text-[15px] text-n-300 leading-relaxed">{explanation.explanation}</p>
       {explanation.sources.length > 0 && (
-        <div className="pt-3 mt-3 border-t border-zinc-800 flex flex-wrap gap-x-4 gap-y-1.5">
+        <div className="pt-3 mt-3 border-t border-n-800 flex flex-wrap gap-x-4 gap-y-1.5">
           {explanation.sources.slice(0, 3).map((src, i) => {
             const domain = (() => { try { return new URL(src).hostname.replace("www.", ""); } catch { return src; } })();
             return (
               <a key={i} href={src} target="_blank" rel="noopener noreferrer"
-                className="flex items-center gap-1 font-mono text-[11px] text-zinc-500 hover:text-sky-300 transition-colors">
+                className="flex items-center gap-1 font-mono text-[11px] text-n-500 hover:text-info transition-colors">
                 <ExternalLink size={10} />{domain}
               </a>
             );
@@ -379,7 +379,7 @@ function MatchContent() {
   if (!home || !away) {
     return (
       <div className="card border-dashed text-center py-16 space-y-4">
-        <p className="font-display font-bold text-xl uppercase text-white">No match selected</p>
+        <p className="font-display font-bold text-xl uppercase text-n-0">No match selected</p>
         <button onClick={() => router.push("/")} className="btn-secondary">
           <ArrowLeft size={14} /> Back to predictions
         </button>
@@ -399,7 +399,7 @@ function MatchContent() {
     <div className={clsx("space-y-5 animate-fade-in", slip.length > 0 && "pb-40")}>
       <button
         onClick={() => router.back()}
-        className="inline-flex items-center gap-1.5 text-sm font-semibold text-zinc-400 hover:text-white transition-colors"
+        className="inline-flex items-center gap-1.5 text-sm font-semibold text-n-400 hover:text-n-0 transition-colors"
       >
         <ArrowLeft size={15} /> Back
       </button>
@@ -407,12 +407,12 @@ function MatchContent() {
       {/* ── Scoreboard hero ── */}
       <section className="card relative overflow-hidden">
         <div className="absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-brand-400/[0.07] to-transparent pointer-events-none" aria-hidden="true" />
-        <div className="relative flex items-center justify-between gap-2 px-4 sm:px-6 py-3 border-b border-zinc-800/80">
+        <div className="relative flex items-center justify-between gap-2 px-4 sm:px-6 py-3 border-b border-n-800/80">
           <span className="flex items-center gap-2 min-w-0">
             {prediction?.flag && <CompetitionBadge name={prediction.league_name} fallbackEmoji={prediction.flag} size={14} />}
             <span className="eyebrow truncate">{prediction?.league_name ?? "Match analysis"}</span>
           </span>
-          <span className="font-mono text-[11px] text-zinc-200 uppercase shrink-0">{kickoffText}</span>
+          <span className="font-mono text-[11px] text-n-200 uppercase shrink-0">{kickoffText}</span>
         </div>
 
         <div className="relative grid grid-cols-[1fr_auto_1fr] items-center gap-3 sm:gap-6 px-4 sm:px-8 pt-6 pb-5">
@@ -421,12 +421,12 @@ function MatchContent() {
               <div key={t.side} className="flex flex-col items-center text-center gap-3 min-w-0">
                 <TeamBadge name={t.name} size={64} />
                 <div className="min-w-0 w-full">
-                  <p className="font-display font-extrabold uppercase text-2xl sm:text-4xl leading-none text-white break-words">{t.name}</p>
+                  <p className="font-display font-extrabold uppercase text-2xl sm:text-4xl leading-none text-n-0 break-words">{t.name}</p>
                   <p className="eyebrow mt-1.5">{t.side}</p>
                 </div>
               </div>
             ) : (
-              <span key="vs" className="font-display font-extrabold text-2xl sm:text-3xl text-zinc-600">VS</span>
+              <span key="vs" className="font-display font-extrabold text-2xl sm:text-3xl text-n-500">VS</span>
             )
           )}
         </div>
@@ -437,10 +437,10 @@ function MatchContent() {
               {probs.map(({ key, label, value }) => (
                 <div key={key} className={clsx(
                   "rounded-xl px-3 py-2.5 text-center border",
-                  key === favKey ? "bg-brand-400/10 border-brand-400/40" : "bg-zinc-800/40 border-zinc-800"
+                  key === favKey ? "bg-brand-400/10 border-brand-400/40" : "bg-n-800/40 border-n-800"
                 )}>
                   <p className="eyebrow">{label} · {key}</p>
-                  <p className={clsx("font-display font-extrabold text-3xl sm:text-4xl leading-none mt-1 tnum", key === favKey ? "text-brand-400" : "text-white")}>
+                  <p className={clsx("font-display font-extrabold text-3xl sm:text-4xl leading-none mt-1 tnum", key === favKey ? "text-accent" : "text-n-0")}>
                     {value}%
                   </p>
                 </div>
@@ -461,8 +461,8 @@ function MatchContent() {
       )}
       {error && (
         <div className="card border-dashed text-center py-12 px-6">
-          <p className="font-display font-bold text-xl uppercase text-white">Analysis unavailable</p>
-          <p className="text-sm text-zinc-400 mt-1">The model couldn&apos;t load this match right now. Try again in a moment.</p>
+          <p className="font-display font-bold text-xl uppercase text-n-0">Analysis unavailable</p>
+          <p className="text-sm text-n-400 mt-1">The model couldn&apos;t load this match right now. Try again in a moment.</p>
         </div>
       )}
 
@@ -488,14 +488,14 @@ function MatchContent() {
 
             {analysis.web_adjustment_reason && (
               <div className="rounded-2xl border border-amber-400/25 bg-amber-400/[0.05] px-4 py-3 flex items-start gap-3">
-                <Search size={15} className="text-amber-300 mt-0.5 shrink-0" />
+                <Search size={15} className="text-warn mt-0.5 shrink-0" />
                 <div>
-                  <p className="text-sm text-amber-200 font-semibold">Team news adjusted this prediction</p>
-                  <p className="text-sm text-zinc-400 mt-0.5">{analysis.web_adjustment_reason}</p>
+                  <p className="text-sm text-warn font-semibold">Team news adjusted this prediction</p>
+                  <p className="text-sm text-n-400 mt-0.5">{analysis.web_adjustment_reason}</p>
                   {analysis.web_adjustment_flags && analysis.web_adjustment_flags.length > 0 && (
                     <div className="flex gap-1.5 flex-wrap mt-2">
                       {analysis.web_adjustment_flags.map(f => (
-                        <span key={f} className="font-mono text-[10px] uppercase text-amber-200/80 bg-amber-400/10 border border-amber-400/20 px-1.5 py-0.5 rounded">
+                        <span key={f} className="font-mono text-[10px] uppercase text-warn/80 bg-amber-400/10 border border-amber-400/20 px-1.5 py-0.5 rounded">
                           {f.replace(/_/g, " ")}
                         </span>
                       ))}
@@ -507,8 +507,8 @@ function MatchContent() {
 
             {(analysis.live_odds_fetched || sbEvent) && (
               <div className="rounded-2xl border border-sky-400/20 bg-sky-400/[0.05] px-4 py-3 flex items-center gap-3">
-                {sbEvent ? <Ticket size={15} className="text-sky-300 shrink-0" /> : <Radio size={15} className="text-sky-300 shrink-0" />}
-                <p className="text-sm text-zinc-300">
+                {sbEvent ? <Ticket size={15} className="text-info shrink-0" /> : <Radio size={15} className="text-info shrink-0" />}
+                <p className="text-sm text-n-300">
                   {sbEvent
                     ? "Live SportyBet odds loaded. Tap any outcome to add it to your bet slip."
                     : `Live odds from ${analysis.odds_bookie || "the market"}; the model was recalibrated in real time.`}
@@ -518,7 +518,7 @@ function MatchContent() {
 
             {/* Markets */}
             <div>
-              <h2 className="display text-3xl text-white mb-3">Markets</h2>
+              <h2 className="display text-3xl text-n-0 mb-3">Markets</h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {analysis.markets.map((m) => {
                   // Match our analysis market to SportyBet market
@@ -550,35 +550,35 @@ function MatchContent() {
 
       {/* ── Floating bet slip ── */}
       {slip.length > 0 && (
-        <div className="fixed bottom-20 lg:bottom-5 inset-x-3 lg:left-[calc(15rem+1.5rem)] lg:right-6 z-40 max-w-3xl mx-auto rounded-2xl bg-surface-raised border border-zinc-700 shadow-pop p-4 space-y-3 animate-slide-up">
+        <div className="fixed bottom-20 lg:bottom-5 inset-x-3 lg:left-[calc(15rem+1.5rem)] lg:right-6 z-40 max-w-3xl mx-auto rounded-2xl bg-surface-raised border border-n-700 shadow-pop p-4 space-y-3 animate-slide-up">
           <div className="flex items-center justify-between">
-            <p className="font-display font-bold text-sm uppercase tracking-[0.1em] text-white">Bet slip · {slip.length}</p>
+            <p className="font-display font-bold text-sm uppercase tracking-[0.1em] text-n-0">Bet slip · {slip.length}</p>
             <button onClick={() => { setSlip([]); setBookingCode(null); }}
-              className="text-xs text-zinc-400 hover:text-white transition-colors font-semibold">
+              className="text-xs text-n-400 hover:text-n-0 transition-colors font-semibold">
               Clear
             </button>
           </div>
           <div className="space-y-1.5 max-h-28 overflow-y-auto">
             {slip.map((s, i) => (
               <div key={i} className="flex items-center justify-between gap-2 text-xs">
-                <span className="text-zinc-500 truncate flex-1">
+                <span className="text-n-500 truncate flex-1">
                   {s.marketName}{s.specifier ? ` (${s.specifier})` : ""}
                 </span>
-                <span className="text-white font-semibold shrink-0">{s.outcomeName}</span>
-                <span className="font-mono text-brand-400 font-bold shrink-0">{s.odds}</span>
+                <span className="text-n-0 font-semibold shrink-0">{s.outcomeName}</span>
+                <span className="font-mono text-accent font-bold shrink-0">{s.odds}</span>
                 <button onClick={() => setSlip(prev => prev.filter((_, j) => j !== i))}
                   aria-label={`Remove ${s.outcomeName}`}
-                  className="text-zinc-500 hover:text-rose-400 transition-colors shrink-0">
+                  className="text-n-500 hover:text-danger transition-colors shrink-0">
                   <X size={13} />
                 </button>
               </div>
             ))}
           </div>
 
-          <div className="flex items-center gap-3 pt-3 border-t border-zinc-800">
+          <div className="flex items-center gap-3 pt-3 border-t border-n-800">
             <div className="flex-1">
               <p className="eyebrow">Combined odds</p>
-              <p className="font-display font-extrabold text-2xl leading-none text-brand-400 tnum mt-0.5">
+              <p className="font-display font-extrabold text-2xl leading-none text-accent tnum mt-0.5">
                 {slip.reduce((acc, s) => {
                   const o = parseFloat(s.odds);
                   return isNaN(o) ? acc : +(acc * o).toFixed(2);
@@ -587,8 +587,8 @@ function MatchContent() {
             </div>
 
             {bookingCode ? (
-              <div className="flex items-center gap-2 bg-ink border border-brand-400/40 rounded-xl pl-3 pr-1.5 py-1.5">
-                <span className="text-white font-bold tracking-[0.2em] text-sm font-mono">{bookingCode}</span>
+              <div className="flex items-center gap-2 bg-surface-sunken border border-brand-400/40 rounded-xl pl-3 pr-1.5 py-1.5">
+                <span className="text-n-0 font-bold tracking-[0.2em] text-sm font-mono">{bookingCode}</span>
                 <button onClick={copyCode} className="btn-primary !px-2.5 !py-1.5 !text-xs !rounded-lg">
                   {codeCopied ? <Check size={11} /> : <Copy size={11} />}
                   {codeCopied ? "Copied" : "Copy"}

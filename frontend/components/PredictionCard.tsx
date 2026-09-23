@@ -160,7 +160,7 @@ export function TeamBadge({ name, size = 28 }: { name: string; size?: number }) 
   if (image && !broken) {
     return (
       <span
-        className="relative inline-flex items-center justify-center rounded-full bg-zinc-800 ring-1 ring-zinc-700/80 overflow-hidden shrink-0"
+        className="relative inline-flex items-center justify-center rounded-full bg-n-800 ring-1 ring-n-700/80 overflow-hidden shrink-0"
         style={{ width: size, height: size }}
       >
         <img
@@ -191,20 +191,20 @@ function TeamRow({ name, prob, odds, favourite }: {
       <TeamBadge name={name} size={30} />
       <span className={clsx(
         "flex-1 truncate text-[15px]",
-        favourite ? "font-bold text-white" : "font-semibold text-zinc-400"
+        favourite ? "font-bold text-n-0" : "font-semibold text-n-400"
       )}>
         {name}
       </span>
       {odds != null && odds > 0 && (
-        <span className="font-mono text-[11px] text-zinc-500 shrink-0" title="Bookmaker odds">
+        <span className="font-mono text-[11px] text-n-500 shrink-0" title="Bookmaker odds">
           {odds.toFixed(2)}
         </span>
       )}
       <span className={clsx(
         "font-display font-extrabold text-[30px] leading-none w-[3.25rem] text-right shrink-0 tnum",
-        favourite ? "text-white" : "text-zinc-600"
+        favourite ? "text-n-0" : "text-n-500"
       )}>
-        {Math.round(prob * 100)}<span className="text-[15px] font-bold text-zinc-500 align-top ml-px">%</span>
+        {Math.round(prob * 100)}<span className="text-[15px] font-bold text-n-500 align-top ml-px">%</span>
       </span>
     </div>
   );
@@ -224,8 +224,8 @@ function PickTicket({ pick, market, confidence, edge }: {
     <div className={clsx(
       "relative flex items-center gap-3 rounded-xl px-3.5 py-3",
       strong ? "bg-brand-400 text-ink"
-        : lean ? "bg-amber-400/[0.06] border border-amber-400/30 text-white"
-        : "bg-zinc-800/60 border border-zinc-700/60 text-white"
+        : lean ? "bg-amber-400/[0.06] border border-amber-400/30 text-n-0"
+        : "bg-n-800/60 border border-n-700/60 text-n-0"
     )}>
       {edge != null && edge > 0.05 && (
         <span className="absolute -top-2.5 right-3 font-mono text-[10px] font-bold bg-ink text-brand-400 border border-brand-400/70 rounded-md px-1.5 py-0.5">
@@ -233,21 +233,21 @@ function PickTicket({ pick, market, confidence, edge }: {
         </span>
       )}
       <div className="min-w-0 flex-1">
-        <p className={clsx("font-display font-bold text-[11px] uppercase tracking-[0.14em]", strong ? "text-ink/60" : "text-zinc-400")}>
+        <p className={clsx("font-display font-bold text-[11px] uppercase tracking-[0.14em]", strong ? "text-ink/60" : "text-n-400")}>
           Best pick
         </p>
         <p className="font-display font-extrabold text-xl uppercase leading-tight truncate">{pick}</p>
         {market && market !== "Skip" && (
-          <p className={clsx("text-[11px] font-semibold truncate", strong ? "text-ink/70" : "text-zinc-400")}>+ {market}</p>
+          <p className={clsx("text-[11px] font-semibold truncate", strong ? "text-ink/70" : "text-n-400")}>+ {market}</p>
         )}
       </div>
       <div className="text-right shrink-0">
-        <p className={clsx("font-display font-bold text-[11px] uppercase tracking-[0.14em]", strong ? "text-ink/60" : "text-zinc-400")}>
+        <p className={clsx("font-display font-bold text-[11px] uppercase tracking-[0.14em]", strong ? "text-ink/60" : "text-n-400")}>
           Confidence
         </p>
         <p className={clsx(
           "font-display font-extrabold text-[32px] leading-none tnum",
-          strong ? "text-ink" : lean ? "text-amber-300" : "text-zinc-300"
+          strong ? "text-ink" : lean ? "text-warn" : "text-n-300"
         )}>
           {confidence}%
         </p>
@@ -280,19 +280,19 @@ export function PredictionCard({ prediction: p, savedKeys, onClick, showDay = tr
       <MatchBleed home={p.home} away={p.away} />
 
       {/* Header strip: competition + kick-off */}
-      <div className="relative z-10 flex items-center justify-between gap-2 px-4 py-2.5 border-b border-zinc-800/80">
+      <div className="relative z-10 flex items-center justify-between gap-2 px-4 py-2.5 border-b border-n-800/80">
         <div className="flex items-center gap-1.5 min-w-0">
           <CompetitionBadge name={p.league_name} fallbackEmoji={p.flag} size={14} className="text-sm" />
           <span className="eyebrow truncate">{p.league_name}</span>
         </div>
         <div className="flex items-center gap-2.5 shrink-0">
-          <span className="font-mono text-[11px] text-zinc-200 uppercase">
+          <span className="font-mono text-[11px] text-n-200 uppercase">
             {showDay ? kickoff(p.date, p.time) : p.time && p.time !== "TBD" ? localTime(p.date, p.time) : "TBD"}
           </span>
           <SaveButton prediction={p} savedKeys={savedKeys ?? emptySet} size={14} />
           <button
             onClick={e => { e.stopPropagation(); shareMatch(p); }}
-            className="text-zinc-500 hover:text-white transition-colors"
+            className="text-n-500 hover:text-n-0 transition-colors"
             title="Share this pick"
             aria-label={`Share ${p.home} vs ${p.away}`}
           >
@@ -314,14 +314,14 @@ export function PredictionCard({ prediction: p, savedKeys, onClick, showDay = tr
             {segments.map(s => (
               <div
                 key={s.key}
-                className={s.key === fav ? "bg-brand-400" : s.key === "X" ? "bg-zinc-700" : "bg-zinc-600"}
+                className={s.key === fav ? "bg-accent" : s.key === "X" ? "bg-n-700" : "bg-n-600"}
                 style={{ width: `${s.width}%` }}
               />
             ))}
           </div>
-          <div className="flex justify-between mt-1.5 font-mono text-[10px] text-zinc-500 tnum">
+          <div className="flex justify-between mt-1.5 font-mono text-[10px] text-n-500 tnum">
             {segments.map(s => (
-              <span key={s.key} className={s.key === fav ? "text-brand-400" : undefined}>
+              <span key={s.key} className={s.key === fav ? "text-accent" : undefined}>
                 {s.key} · {s.width}
               </span>
             ))}

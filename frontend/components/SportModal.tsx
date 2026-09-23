@@ -165,15 +165,15 @@ export function SportModal({ prediction: p, onClose }: Props) {
             <div className="flex-1 flex flex-col items-center text-center gap-2">
               <Avatar staticImage={assets.homeImage} color={assets.homeColor} name={p.home} face={assets.isPlayerFace} sport={p.sport} />
               <div>
-                <p className="font-display font-extrabold uppercase text-2xl leading-none text-white">{p.home}</p>
+                <p className="font-display font-extrabold uppercase text-2xl leading-none text-n-0">{p.home}</p>
                 <p className="tnum text-[11px] text-zinc-400 dark:text-zinc-500">{Math.round(p.p_home * 100)}% win prob</p>
               </div>
             </div>
-            <div className="font-display font-extrabold text-2xl text-zinc-600">VS</div>
+            <div className="font-display font-extrabold text-2xl text-n-600">VS</div>
             <div className="flex-1 flex flex-col items-center text-center gap-2">
               <Avatar staticImage={assets.awayImage} color={assets.awayColor} name={p.away} face={assets.isPlayerFace} sport={p.sport} />
               <div>
-                <p className="font-display font-extrabold uppercase text-2xl leading-none text-white">{p.away}</p>
+                <p className="font-display font-extrabold uppercase text-2xl leading-none text-n-0">{p.away}</p>
                 <p className="tnum text-[11px] text-zinc-400 dark:text-zinc-500">{Math.round(p.p_away * 100)}% win prob</p>
               </div>
             </div>
@@ -244,7 +244,7 @@ export function SportModal({ prediction: p, onClose }: Props) {
             return (
               <div key={market.id} className="space-y-2">
                 <div className="flex items-center gap-2">
-                  <h3 className="font-display font-bold text-lg uppercase tracking-[0.06em] text-white">{market.name}</h3>
+                  <h3 className="font-display font-bold text-lg uppercase tracking-[0.06em] text-n-0">{market.name}</h3>
                   <span className="ml-auto text-[10px] text-zinc-400 dark:text-zinc-600">Best available odds</span>
                 </div>
                 <div className="space-y-2">

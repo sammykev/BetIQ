@@ -78,9 +78,9 @@ export function PaywallModal({ onClose, onSuccess }: Props) {
           <span className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-amber-100 dark:bg-amber-500/15 mb-3">
             <Crown size={26} className="text-amber-500" />
           </span>
-          <h2 className="display text-4xl text-white">Unlock BetIQ Premium</h2>
+          <h2 className="display text-4xl text-n-0">Unlock BetIQ Premium</h2>
           <p className="text-zinc-500 dark:text-zinc-400 text-sm mt-1">Everything you need to bet smarter</p>
-          <div className="tnum mt-4 inline-block font-display font-extrabold text-3xl text-white leading-none">
+          <div className="tnum mt-4 inline-block font-display font-extrabold text-3xl text-n-0 leading-none">
             {PRICE_LABEL}
           </div>
         </div>

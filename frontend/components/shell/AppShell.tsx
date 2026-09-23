@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Home, TrendingUp, CalendarDays, LayoutDashboard } from "lucide-react";
 import { UserMenu } from "@/components/UserMenu";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import clsx from "clsx";
 import type { ReactNode } from "react";
 
@@ -26,8 +27,8 @@ interface Props {
 /** BET·IQ wordmark — condensed caps with the "IQ" in the accent. */
 export function Wordmark({ className }: { className?: string }) {
   return (
-    <span className={clsx("font-display font-extrabold uppercase tracking-[0.02em] leading-none text-white", className)}>
-      Bet<span className="text-brand-400">IQ</span>
+    <span className={clsx("font-display font-extrabold uppercase tracking-[0.02em] leading-none text-n-0", className)}>
+      Bet<span className="text-accent">IQ</span>
     </span>
   );
 }
@@ -35,7 +36,7 @@ export function Wordmark({ className }: { className?: string }) {
 function Logo() {
   return (
     <Link href="/" className="flex items-center gap-2.5 min-w-0" aria-label="BetIQ home">
-      <img src="/logo.svg" alt="" className="w-8 h-8 rounded-lg shrink-0 ring-1 ring-zinc-800" />
+      <img src="/logo.svg" alt="" className="w-8 h-8 rounded-lg shrink-0 ring-1 ring-n-800" />
       <Wordmark className="text-[26px]" />
     </Link>
   );
@@ -52,7 +53,7 @@ export function AppShell({ children, actions, banner, onUpgrade }: Props) {
       {banner}
 
       {/* ── Desktop sidebar ── */}
-      <aside className="hidden lg:flex fixed inset-y-0 left-0 w-60 flex-col border-r border-zinc-900 bg-ink/70 backdrop-blur-md z-30">
+      <aside className="hidden lg:flex fixed inset-y-0 left-0 w-60 flex-col border-r border-n-900 bg-canvas/70 backdrop-blur-md z-30">
         <div className="px-5 h-16 flex items-center">
           <Logo />
         </div>
@@ -69,28 +70,28 @@ export function AppShell({ children, actions, banner, onUpgrade }: Props) {
                 className={clsx(
                   "relative flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-colors",
                   active
-                    ? "bg-surface text-white"
-                    : "text-zinc-400 hover:text-white hover:bg-surface/60"
+                    ? "bg-surface text-n-0"
+                    : "text-n-400 hover:text-n-0 hover:bg-surface/60"
                 )}
               >
-                {active && <span className="absolute left-0 top-2 bottom-2 w-[3px] rounded-r-full bg-brand-400" />}
-                <Icon size={17} strokeWidth={active ? 2.4 : 2} className={active ? "text-brand-400" : undefined} />
+                {active && <span className="absolute left-0 top-2 bottom-2 w-[3px] rounded-r-full bg-accent" />}
+                <Icon size={17} strokeWidth={active ? 2.4 : 2} className={active ? "text-accent" : undefined} />
                 {label}
               </Link>
             );
           })}
         </nav>
 
-        <div className="px-5 py-4 border-t border-zinc-900 flex items-start gap-2.5">
-          <span className="shrink-0 font-display font-bold text-[13px] leading-none text-zinc-300 border border-zinc-700 rounded-md px-1.5 py-1">18+</span>
-          <p className="text-[11px] leading-relaxed text-zinc-500">
+        <div className="px-5 py-4 border-t border-n-900 flex items-start gap-2.5">
+          <span className="shrink-0 font-display font-bold text-[13px] leading-none text-n-300 border border-n-700 rounded-md px-1.5 py-1">18+</span>
+          <p className="text-[11px] leading-relaxed text-n-500">
             Predictions are probabilities, not guarantees. Gamble responsibly.
           </p>
         </div>
       </aside>
 
       {/* ── Top bar ── */}
-      <header className="sticky top-0 z-20 lg:pl-60 border-b border-zinc-900 bg-ink/80 backdrop-blur-md">
+      <header className="sticky top-0 z-20 lg:pl-60 border-b border-n-900 bg-canvas/80 backdrop-blur-md">
         <div className="flex items-center justify-between gap-3 px-4 sm:px-6 h-14 lg:h-16">
           <div className="lg:hidden">
             <Logo />
@@ -98,6 +99,7 @@ export function AppShell({ children, actions, banner, onUpgrade }: Props) {
           <div className="hidden lg:block" />
           <div className="flex items-center gap-2">
             {actions}
+            <ThemeToggle />
             <UserMenu onUpgrade={onUpgrade ?? (() => {})} />
           </div>
         </div>
@@ -109,7 +111,7 @@ export function AppShell({ children, actions, banner, onUpgrade }: Props) {
       </main>
 
       {/* ── Mobile bottom nav ── */}
-      <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 border-t border-zinc-900 bg-ink/95 backdrop-blur-md pb-[env(safe-area-inset-bottom)]">
+      <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 border-t border-n-900 bg-canvas/95 backdrop-blur-md pb-[env(safe-area-inset-bottom)]">
         <div className="grid grid-cols-4">
           {NAV.map(({ href, label, icon: Icon }) => {
             const active = isActive(href);
@@ -120,11 +122,11 @@ export function AppShell({ children, actions, banner, onUpgrade }: Props) {
                 aria-current={active ? "page" : undefined}
                 className={clsx(
                   "relative flex flex-col items-center gap-1 pt-3 pb-2.5 text-[10px] font-semibold transition-colors",
-                  active ? "text-white" : "text-zinc-500 hover:text-zinc-300"
+                  active ? "text-n-0" : "text-n-500 hover:text-n-300"
                 )}
               >
-                {active && <span className="absolute top-0 inset-x-6 h-[2px] rounded-b-full bg-brand-400" />}
-                <Icon size={19} strokeWidth={active ? 2.4 : 2} className={active ? "text-brand-400" : undefined} />
+                {active && <span className="absolute top-0 inset-x-6 h-[2px] rounded-b-full bg-accent" />}
+                <Icon size={19} strokeWidth={active ? 2.4 : 2} className={active ? "text-accent" : undefined} />
                 {label}
               </Link>
             );

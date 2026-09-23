@@ -70,7 +70,7 @@ function Avatar({ staticImage, color, name, face, sport }: {
 
   if (image && !broken) {
     return (
-      <span className="relative inline-flex w-[30px] h-[30px] rounded-full bg-zinc-800 ring-1 ring-zinc-700/80 overflow-hidden shrink-0">
+      <span className="relative inline-flex w-[30px] h-[30px] rounded-full bg-n-800 ring-1 ring-n-700/80 overflow-hidden shrink-0">
         <img
           src={image}
           alt={name}
@@ -96,24 +96,24 @@ export function SportCard({ prediction: p, onClick }: Props) {
       className={clsx("card overflow-hidden flex flex-col", onClick && "card-interactive")}
     >
       {/* Header strip */}
-      <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-zinc-800/80">
+      <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-n-800/80">
         <div className="flex items-center gap-1.5 min-w-0">
           <CompetitionBadge name={p.league_name} fallbackEmoji={p.flag} size={13} sport={sportDbSport(p.sport)} />
           <span className="eyebrow truncate">
             {p.league_name}{p.surface ? ` · ${p.surface}` : ""}
           </span>
           {p.pick_type === "safe" && (
-            <span className="font-display font-bold text-[11px] uppercase tracking-wider text-brand-300 bg-brand-400/10 border border-brand-400/30 px-1.5 rounded shrink-0">
+            <span className="font-display font-bold text-[11px] uppercase tracking-wider text-accent bg-brand-400/10 border border-brand-400/30 px-1.5 rounded shrink-0">
               Safe
             </span>
           )}
           {p.pick_type === "upset" && (
-            <span className="font-display font-bold text-[11px] uppercase tracking-wider text-violet-300 bg-violet-500/10 border border-violet-400/30 px-1.5 rounded shrink-0">
+            <span className="font-display font-bold text-[11px] uppercase tracking-wider text-violet-700 dark:text-violet-300 bg-violet-500/10 border border-violet-400/30 px-1.5 rounded shrink-0">
               Upset
             </span>
           )}
         </div>
-        <span className="font-mono text-[11px] text-zinc-200 uppercase shrink-0">{kickoff(p.date, p.time)}</span>
+        <span className="font-mono text-[11px] text-n-200 uppercase shrink-0">{kickoff(p.date, p.time)}</span>
       </div>
 
       <div className="flex-1 flex flex-col px-4 pt-3.5 pb-4 gap-3">
@@ -125,15 +125,15 @@ export function SportCard({ prediction: p, onClick }: Props) {
           ].map(({ name, prob, odds, image, color, fav }) => (
             <div key={name} className="flex items-center gap-3 min-w-0">
               <Avatar staticImage={image} color={color} name={name} face={assets.isPlayerFace} sport={p.sport} />
-              <span className={clsx("flex-1 truncate text-[15px]", fav ? "font-bold text-white" : "font-semibold text-zinc-400")}>
+              <span className={clsx("flex-1 truncate text-[15px]", fav ? "font-bold text-n-0" : "font-semibold text-n-400")}>
                 {name}
               </span>
-              {odds ? <span className="font-mono text-[11px] text-zinc-500 shrink-0" title="Bookmaker odds">{odds.toFixed(2)}</span> : null}
+              {odds ? <span className="font-mono text-[11px] text-n-500 shrink-0" title="Bookmaker odds">{odds.toFixed(2)}</span> : null}
               <span className={clsx(
                 "font-display font-extrabold text-[30px] leading-none w-[3.25rem] text-right shrink-0 tnum",
-                fav ? "text-white" : "text-zinc-600"
+                fav ? "text-n-0" : "text-n-500"
               )}>
-                {Math.round(prob * 100)}<span className="text-[15px] font-bold text-zinc-500 align-top ml-px">%</span>
+                {Math.round(prob * 100)}<span className="text-[15px] font-bold text-n-500 align-top ml-px">%</span>
               </span>
             </div>
           ))}
@@ -141,27 +141,27 @@ export function SportCard({ prediction: p, onClick }: Props) {
 
         {/* Head-to-head split */}
         <div className="flex h-1 rounded-full overflow-hidden gap-0.5">
-          <div className={homeStronger ? "bg-brand-400" : "bg-zinc-600"} style={{ width: `${Math.round(p.p_home * 100)}%` }} />
-          <div className={!homeStronger ? "bg-brand-400" : "bg-zinc-600"} style={{ width: `${Math.round(p.p_away * 100)}%` }} />
+          <div className={homeStronger ? "bg-accent" : "bg-n-600"} style={{ width: `${Math.round(p.p_home * 100)}%` }} />
+          <div className={!homeStronger ? "bg-accent" : "bg-n-600"} style={{ width: `${Math.round(p.p_away * 100)}%` }} />
         </div>
 
         {/* Best pick ticket */}
         <div className={clsx(
           "mt-auto flex items-center gap-3 rounded-xl px-3.5 py-3",
           strong ? "bg-brand-400 text-ink"
-            : lean ? "bg-amber-400/[0.06] border border-amber-400/30 text-white"
-            : "bg-zinc-800/60 border border-zinc-700/60 text-white"
+            : lean ? "bg-amber-400/[0.06] border border-amber-400/30 text-n-0"
+            : "bg-n-800/60 border border-n-700/60 text-n-0"
         )}>
           <div className="min-w-0 flex-1">
-            <p className={clsx("font-display font-bold text-[11px] uppercase tracking-[0.14em]", strong ? "text-ink/60" : "text-zinc-400")}>Best pick</p>
+            <p className={clsx("font-display font-bold text-[11px] uppercase tracking-[0.14em]", strong ? "text-ink/60" : "text-n-400")}>Best pick</p>
             <p className="font-display font-extrabold text-xl uppercase leading-tight truncate">{p.tip_1x2}</p>
             {p.tip_goals && (
-              <p className={clsx("text-[11px] font-semibold truncate", strong ? "text-ink/70" : "text-zinc-400")}>+ {p.tip_goals}</p>
+              <p className={clsx("text-[11px] font-semibold truncate", strong ? "text-ink/70" : "text-n-400")}>+ {p.tip_goals}</p>
             )}
           </div>
           <div className="text-right shrink-0">
-            <p className={clsx("font-display font-bold text-[11px] uppercase tracking-[0.14em]", strong ? "text-ink/60" : "text-zinc-400")}>Confidence</p>
-            <p className={clsx("font-display font-extrabold text-[32px] leading-none tnum", strong ? "text-ink" : lean ? "text-amber-300" : "text-zinc-300")}>
+            <p className={clsx("font-display font-bold text-[11px] uppercase tracking-[0.14em]", strong ? "text-ink/60" : "text-n-400")}>Confidence</p>
+            <p className={clsx("font-display font-extrabold text-[32px] leading-none tnum", strong ? "text-ink" : lean ? "text-warn" : "text-n-300")}>
               {conf}%
             </p>
           </div>
@@ -170,9 +170,9 @@ export function SportCard({ prediction: p, onClick }: Props) {
         {/* Point spread — informational market line, not a model pick: the
             Elo/market blend estimates win probability, not margin of victory. */}
         {(p.spread_home || p.spread_away) && (
-          <p className="flex items-center justify-between gap-3 text-[11px] text-zinc-500">
+          <p className="flex items-center justify-between gap-3 text-[11px] text-n-500">
             <span className="eyebrow !text-[10px]">Spread</span>
-            <span className="font-mono text-zinc-400 truncate">
+            <span className="font-mono text-n-400 truncate">
               {p.spread_home && spreadLabel(p.home, p.spread_home)}
               {p.spread_home && p.spread_away && "  ·  "}
               {p.spread_away && spreadLabel(p.away, p.spread_away)}

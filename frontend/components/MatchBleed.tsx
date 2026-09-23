@@ -29,14 +29,14 @@ export function MatchBleed({ home, away }: { home: string; away: string }) {
   return (
     <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
       <div
-        className="absolute inset-0 opacity-[0.07]"
+        className="absolute inset-0 opacity-[0.035] dark:opacity-[0.07]"
         style={{
           background: `linear-gradient(90deg, ${h.color} 0%, transparent 48%, transparent 52%, ${a.color} 100%)`,
         }}
       />
       {h.image && (
         <div
-          className="absolute inset-y-0 left-0 w-2/3 opacity-[0.05]"
+          className="absolute inset-y-0 left-0 w-2/3 opacity-[0.03] dark:opacity-[0.05]"
           style={{
             backgroundImage: `url(${h.image})`,
             backgroundSize: h.isFlag ? "cover" : "45%",
@@ -49,7 +49,7 @@ export function MatchBleed({ home, away }: { home: string; away: string }) {
       )}
       {a.image && (
         <div
-          className="absolute inset-y-0 right-0 w-2/3 opacity-[0.05]"
+          className="absolute inset-y-0 right-0 w-2/3 opacity-[0.03] dark:opacity-[0.05]"
           style={{
             backgroundImage: `url(${a.image})`,
             backgroundSize: a.isFlag ? "cover" : "45%",

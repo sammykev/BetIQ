@@ -3,6 +3,8 @@ import { Inter, Barlow_Condensed, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { ClerkProvider } from "@clerk/nextjs";
 import Script from "next/script";
+import { themeInitScript } from "@/lib/theme";
+import { ThemeSync } from "@/components/ThemeToggle";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -60,8 +62,11 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#070b14",
-  colorScheme: "dark",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f5f7fb" },
+    { media: "(prefers-color-scheme: dark)", color: "#070b14" },
+  ],
+  colorScheme: "light dark",
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
@@ -69,7 +74,8 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    // Clerk's sign-in / sign-up modals, themed to match (Matchday is dark-only)
+    // Clerk's sign-in / sign-up modals, themed to the Matchday dark palette in
+    // both themes (a dark dialog reads fine over the light pages too)
     <ClerkProvider
       appearance={{
         variables: {
@@ -89,8 +95,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         },
       }}
     >
-      <html lang="en" className={`dark ${inter.variable} ${display.variable} ${mono.variable}`}>
+      {/* The "dark" class is set before paint by themeInitScript; the server
+          default is dark, so suppress the expected class mismatch. */}
+      <html lang="en" className={`dark ${inter.variable} ${display.variable} ${mono.variable}`} suppressHydrationWarning>
+        <head>
+          <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+        </head>
         <body className="antialiased">
+          <ThemeSync />
           {children}
           <Script id="sw-register" strategy="afterInteractive">{`
             if ('serviceWorker' in navigator) {
