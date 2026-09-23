@@ -21,7 +21,7 @@ from team_names import TeamResolver
 warnings.filterwarnings("ignore")
 
 MODEL_CACHE_PATH = os.path.join(os.path.dirname(__file__), "data", "model_cache.joblib")
-MODEL_CACHE_VERSION = 3  # bump when FEATURE_COLS or saved fields change
+MODEL_CACHE_VERSION = 4  # bump when FEATURE_COLS or saved fields change
 
 
 # ── FIFA ranking-calibrated starting Elo for national teams ───────────────
@@ -152,6 +152,11 @@ FEATURE_COLS = [
     "League_Avg_Goals", "League_Home_WinRate",
 ]
 
+# For fixtures without bookmaker odds. The main models learn from Impl_* and
+# never saw the league-average stand-in during training, so a separate set
+# trained without them predicts those fixtures from team strength alone.
+NO_ODDS_COLS = [c for c in FEATURE_COLS if not c.startswith("Impl_")]
+
 
 def _rounded_probs(p_h: float, p_d: float, p_a: float, p_o15: float, p_o25: float) -> Dict:
     return {
@@ -172,8 +177,8 @@ def pick_tips(p_h: float, p_d: float, p_a: float, p_o15: float, p_o25: float) ->
         tip1x2, code = "Home Win", "1"
     elif p_a > 0.55:
         tip1x2, code = "Away Win", "2"
-    elif p_d > 0.33:
-        tip1x2, code = "Draw", "X"
+    # No straight draw tip: above ~33% the model overrates draws (backtest:
+    # said 34%, happened 18%), so those matches go to double chance instead.
     elif p_h + p_d > 0.75:
         tip1x2, code = "Home or Draw", "1X"
     elif p_a + p_d > 0.75:
@@ -210,6 +215,30 @@ def pick_tips(p_h: float, p_d: float, p_a: float, p_o15: float, p_o25: float) ->
         "goals_type": gtype,
         "goals_confidence": round(gconf, 3),
     }
+
+
+_XGB_BASE = dict(
+    n_estimators=400, max_depth=4, learning_rate=0.04,
+    subsample=0.8, colsample_bytree=0.8,
+    random_state=42, verbosity=0,
+)
+
+
+def _fit_calibrated(X: pd.DataFrame, y: pd.Series, multiclass: bool = False):
+    """XGBoost with 3-fold isotonic calibration (plain XGBoost when data is too
+    thin to calibrate). The goals models used to skip calibration and ran
+    overconfident — Over 1.5 said 86% and hit 83% in the 2024-25 backtest."""
+    params = ({**_XGB_BASE, "num_class": 3, "objective": "multi:softprob", "eval_metric": "mlogloss"}
+              if multiclass else {**_XGB_BASE, "objective": "binary:logistic", "eval_metric": "logloss"})
+    if len(X) >= 200:
+        try:
+            from sklearn.calibration import CalibratedClassifierCV
+            model = CalibratedClassifierCV(xgb.XGBClassifier(**params), method="isotonic", cv=3)
+            model.fit(X, y)
+            return model
+        except Exception as e:
+            print(f"[Predictor] Calibration failed (using raw XGBoost): {e}")
+    return xgb.XGBClassifier(**params).fit(X, y)
 
 
 class LeaguePredictor:
@@ -286,7 +315,8 @@ class LeaguePredictor:
         a_yc = _ewm(as_["yc"]) if as_["yc"] else 1.5
 
         # Convert raw odds to overround-adjusted implied probabilities
-        if odds_home > 1 and odds_draw > 1 and odds_away > 1:
+        has_odds = odds_home > 1 and odds_draw > 1 and odds_away > 1
+        if has_odds:
             raw = {"H": 1/odds_home, "D": 1/odds_draw, "A": 1/odds_away}
             overround = sum(raw.values())
             impl_h = raw["H"] / overround
@@ -381,6 +411,7 @@ class LeaguePredictor:
             "H2H_Draw_Rate":  round(h2h_draw_rate, 4),
             "League_Avg_Goals":   round(league_avg_goals, 4),
             "League_Home_WinRate": round(league_home_wr, 4),
+            "_has_odds": has_odds,  # routes predict_proba; not a model feature
         }
 
     def _update(
@@ -549,41 +580,15 @@ class LeaguePredictor:
         df = pd.DataFrame(rows).dropna(subset=FEATURE_COLS)
         X = df[FEATURE_COLS]
 
-        xgb_base = dict(
-            n_estimators=400, max_depth=4, learning_rate=0.04,
-            subsample=0.8, colsample_bytree=0.8,
-            random_state=42, verbosity=0,
-        )
-
-        self.models["win"] = xgb.XGBClassifier(
-            **xgb_base, num_class=3,
-            objective="multi:softprob", eval_metric="mlogloss",
-        )
         y_win = df["Result"].map({"A": 0, "D": 1, "H": 2})
-        self.models["win"].fit(X, y_win)
-
-        # Calibrate probabilities using isotonic regression (fixes overconfidence).
-        # cv="prefit" was removed in sklearn 1.6; use cv=5 for cross-validated calibration.
-        try:
-            from sklearn.calibration import CalibratedClassifierCV
-            if len(X) >= 200:  # need enough data for calibration
-                _cal = CalibratedClassifierCV(
-                    xgb.XGBClassifier(**xgb_base, num_class=3,
-                                      objective="multi:softprob", eval_metric="mlogloss"),
-                    method="isotonic", cv=3,
-                )
-                _cal.fit(X, y_win)
-                self.models["win"] = _cal
-                print("[Predictor] Win model calibrated with 3-fold isotonic regression")
-        except Exception as _e:
-            print(f"[Predictor] Calibration failed (using raw XGBoost): {_e}")
-
-        bin_params = {**xgb_base, "objective": "binary:logistic", "eval_metric": "logloss"}
-        self.models["o15"] = xgb.XGBClassifier(**bin_params)
-        self.models["o15"].fit(X, (df["TotalGoals"] >= 2).astype(int))
-
-        self.models["o25"] = xgb.XGBClassifier(**bin_params)
-        self.models["o25"].fit(X, (df["TotalGoals"] >= 3).astype(int))
+        y_o15 = (df["TotalGoals"] >= 2).astype(int)
+        y_o25 = (df["TotalGoals"] >= 3).astype(int)
+        for suffix, cols in (("", FEATURE_COLS), ("_noodds", NO_ODDS_COLS)):
+            X = df[cols]
+            self.models["win" + suffix] = _fit_calibrated(X, y_win, multiclass=True)
+            self.models["o15" + suffix] = _fit_calibrated(X, y_o15)
+            self.models["o25" + suffix] = _fit_calibrated(X, y_o25)
+        print("[Predictor] Trained calibrated result + goals models, with and without odds")
 
         self._ready = True
 
@@ -653,12 +658,15 @@ class LeaguePredictor:
         return {**_rounded_probs(*probs), **pick_tips(*probs)}
 
     def predict_proba(self, feats: Dict) -> tuple:
-        """(p_home, p_draw, p_away, p_over15, p_over25) for one feature row."""
-        X = pd.DataFrame([feats])[FEATURE_COLS]
-        wp = self.models["win"].predict_proba(X)[0]
+        """(p_home, p_draw, p_away, p_over15, p_over25) for one feature row.
+        Fixtures without odds use the models trained without odds features."""
+        no_odds = not feats.get("_has_odds", True) and "win_noodds" in self.models
+        suffix, cols = ("_noodds", NO_ODDS_COLS) if no_odds else ("", FEATURE_COLS)
+        X = pd.DataFrame([feats])[cols]
+        wp = self.models["win" + suffix].predict_proba(X)[0]
         p_a, p_d, p_h = float(wp[0]), float(wp[1]), float(wp[2])
-        p_o15 = float(self.models["o15"].predict_proba(X)[0][1])
-        p_o25 = float(self.models["o25"].predict_proba(X)[0][1])
+        p_o15 = float(self.models["o15" + suffix].predict_proba(X)[0][1])
+        p_o25 = float(self.models["o25" + suffix].predict_proba(X)[0][1])
         return p_h, p_d, p_a, p_o15, p_o25
 
     def predict_match_full(self, home: str, away: str,
@@ -669,13 +677,7 @@ class LeaguePredictor:
             return None
 
         f = self._feats(home, away, odds_home, odds_draw, odds_away)
-        X = pd.DataFrame([f])[FEATURE_COLS]
-
-        # XGBoost probabilities
-        wp = self.models["win"].predict_proba(X)[0]
-        p_a, p_d, p_h = float(wp[0]), float(wp[1]), float(wp[2])
-        p_o15 = float(self.models["o15"].predict_proba(X)[0][1])
-        p_o25 = float(self.models["o25"].predict_proba(X)[0][1])
+        p_h, p_d, p_a, p_o15, p_o25 = self.predict_proba(f)
 
         # Dixon-Coles expected goals (venue-adjusted attack vs defense)
         xg_h = f["xG_Home"]
