@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Request
 from auth import auth_enforced, optional_user, require_user
+from grading import grade_prediction, regrade, to_goals
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
@@ -1085,11 +1086,11 @@ async def _web_search_missing_results():
                 try:
                     res = await fetch_missing_results(pred["home"], pred["away"], d)
                     if res.get("found"):
-                        pred["actual_result"] = res["result"]
-                        pred["score"] = f"{res['home_goals']}-{res['away_goals']}"
-                        tip_map = {"1": "H", "X": "D", "2": "A"}
-                        expected = tip_map.get(pred.get("tip_code",""), "")
-                        pred["outcome"] = "won" if res["result"] == expected else "lost"
+                        pred.update(grade_prediction(
+                            pred, result=res["result"],
+                            home_goals=to_goals(res.get("home_goals")),
+                            away_goals=to_goals(res.get("away_goals")),
+                        ))
                         pred["source"] = "web_search"
                         changed = True
                         searched += 1
@@ -1100,7 +1101,7 @@ async def _web_search_missing_results():
                                 pred["home"], pred["away"], res["result"],
                                 res["home_goals"], res["away_goals"]
                             )
-                        print(f"[WebResults] Found via web: {pred['home']} {pred['score']} {pred['away']} → {pred['outcome']}")
+                        print(f"[WebResults] Found via web: {pred['home']} {pred.get('score', res['result'])} {pred['away']} → {pred['outcome']}")
                     await asyncio.sleep(1)
                 except Exception:
                     pass
@@ -1647,32 +1648,31 @@ def _archive_past_predictions():
         except Exception:
             pass
 
-    TIP_TO_RESULT = {"1": "H", "X": "D", "2": "A"}
     by_date: Dict[str, List] = {}
 
     for pred in past:
         d = pred.get("date", "")
-        outcome, actual_result = "pending", None
-        tip_code = pred.get("tip_code", "")
+        entry = grade_prediction(pred)  # pending until a result matches
 
-        if not results_df.empty and tip_code in TIP_TO_RESULT:
+        if not results_df.empty:
             day = results_df[results_df["Date"].dt.date.astype(str) == d]
             for _, res in day.iterrows():
                 if (_sim_name(pred.get("home",""), str(res.get("HomeTeam",""))) and
                         _sim_name(pred.get("away",""), str(res.get("AwayTeam","")))):
-                    actual_result = str(res.get("Result",""))
-                    expected = TIP_TO_RESULT[tip_code]
-                    outcome = "won" if actual_result == expected else "lost"
+                    entry = grade_prediction(
+                        pred, result=str(res.get("Result", "")),
+                        home_goals=to_goals(res.get("FTHG")),
+                        away_goals=to_goals(res.get("FTAG")),
+                    )
                     break
 
-        entry = {**pred, "outcome": outcome, "actual_result": actual_result}
         by_date.setdefault(d, []).append(entry)
 
     r = _get_redis()
     for d, preds in by_date.items():
         if r:
             try:
-                has_settled = any(p.get("outcome") in ("won", "lost") for p in preds)
+                has_settled = any(p.get("outcome") != "pending" for p in preds)
                 existing_raw = r.get(f"betiq:history:{d}")
 
                 if not existing_raw:
@@ -1690,19 +1690,27 @@ def _archive_past_predictions():
                     r.set(f"betiq:history:{d}", json.dumps(list(result_map.values())), ex=90 * 86400)
             except Exception as e:
                 print(f"[History] Redis error for {d}: {e}")
-    settled_count = sum(1 for preds in by_date.values() if any(p.get("outcome") in ("won","lost") for p in preds))
+    settled_count = sum(1 for preds in by_date.values() if any(p.get("outcome") != "pending" for p in preds))
     print(f"[History] Archived {len(past)} predictions across {len(by_date)} dates ({settled_count} dates with results).")
+
+
+def _read_history(r, d: str) -> List[Dict]:
+    """A date's archived predictions, re-settled so entries graded by older
+    code (1X/2X always lost, no goals verdict) read correctly."""
+    raw = r.get(f"betiq:history:{d}")
+    return [regrade(p) for p in json.loads(raw)] if raw else []
 
 
 @app.get("/api/history")
 async def get_history(date: str):
-    """Return predictions for a specific date with outcomes (won/lost/pending)."""
+    """Return predictions for a specific date with outcomes (won/lost/pending/void)
+    and goals_outcome (won/lost/push/half_won/half_lost/None)."""
     r = _get_redis()
     if r:
         try:
-            raw = r.get(f"betiq:history:{date}")
-            if raw:
-                return json.loads(raw)
+            data = _read_history(r, date)
+            if data:
+                return data
         except Exception:
             pass
     # Fall back to current predictions cache (works for today + upcoming)
@@ -1741,9 +1749,7 @@ async def get_calendar(month: str = ""):
 
         if r:
             try:
-                raw = r.get(f"betiq:history:{d}")
-                if raw:
-                    data = json.loads(raw)
+                data = _read_history(r, d)
             except Exception:
                 pass
 
@@ -1758,7 +1764,13 @@ async def get_calendar(month: str = ""):
             won     = sum(1 for p in data if p.get("outcome") == "won")
             lost    = sum(1 for p in data if p.get("outcome") == "lost")
             pending = sum(1 for p in data if p.get("outcome") == "pending")
-            summary[d] = {"total": len(data), "won": won, "lost": lost, "pending": pending}
+            # Goals tips: half results count with their side; pushes are refunds
+            goals = [p.get("goals_outcome") for p in data]
+            summary[d] = {
+                "total": len(data), "won": won, "lost": lost, "pending": pending,
+                "goals_won":  sum(1 for g in goals if g in ("won", "half_won")),
+                "goals_lost": sum(1 for g in goals if g in ("lost", "half_lost")),
+            }
 
     print(f"[Calendar] {month}: returning {len(summary)} days with data")
     return summary
@@ -1787,17 +1799,15 @@ async def submit_match_result(body: Dict[str, Any]):
             raw = r.get(f"betiq:history:{date_s}")
             if raw:
                 preds = json.loads(raw)
-                TIP_TO_RESULT = {"1": "H", "X": "D", "2": "A"}
                 updated = 0
                 for p in preds:
                     h_sim = _sim_name(p.get("home",""), home)
                     a_sim = _sim_name(p.get("away",""), away)
                     if h_sim and a_sim:
-                        p["actual_result"] = result
-                        expected = TIP_TO_RESULT.get(p.get("tip_code",""), "")
-                        p["outcome"] = "won" if result == expected else "lost"
-                        if home_s is not None and away_s is not None:
-                            p["score"] = f"{home_s}-{away_s}"
+                        p.update(grade_prediction(
+                            p, result=result,
+                            home_goals=to_goals(home_s), away_goals=to_goals(away_s),
+                        ))
                         updated += 1
                 if updated:
                     r.set(f"betiq:history:{date_s}", json.dumps(preds), ex=90*86400)
@@ -2495,10 +2505,9 @@ async def admin_stats(secret: str = ""):
     for i in range(30):
         d = (today - timedelta(days=i)).isoformat()
         try:
-            raw = r.get(f"betiq:history:{d}")
-            if not raw:
+            preds = _read_history(r, d)
+            if not preds:
                 continue
-            preds = json.loads(raw)
             won     = sum(1 for p in preds if p.get("outcome") == "won")
             lost    = sum(1 for p in preds if p.get("outcome") == "lost")
             pending = sum(1 for p in preds if p.get("outcome") == "pending")

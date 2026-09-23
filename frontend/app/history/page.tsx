@@ -2,12 +2,12 @@
 
 import { useEffect, useState } from "react";
 import {
-  ChevronLeft, ChevronRight, Loader2, CheckCircle2, XCircle, Clock,
+  ChevronLeft, ChevronRight, Loader2, CheckCircle2, XCircle, Clock, MinusCircle,
   ChevronDown, ChevronUp, X,
 } from "lucide-react";
 import clsx from "clsx";
 import { fetchCalendar, fetchHistory, fetchMatchAnalysis } from "@/lib/api";
-import type { CalendarDay, HistoryPrediction, MatchAnalysis } from "@/lib/api";
+import type { CalendarDay, GoalsOutcome, HistoryPrediction, MatchAnalysis } from "@/lib/api";
 import { MatchCard } from "@/components/MatchCard";
 import { pickProbability } from "@/lib/picks";
 import { AppShell } from "@/components/shell/AppShell";
@@ -29,12 +29,37 @@ function dotColor(day: CalendarDay): string {
 function OutcomeIcon({ outcome }: { outcome: string }) {
   if (outcome === "won")  return <CheckCircle2 size={14} className="text-brand-500 shrink-0" />;
   if (outcome === "lost") return <XCircle      size={14} className="text-rose-500 shrink-0" />;
+  if (outcome === "void") return <MinusCircle  size={14} className="text-n-500 shrink-0" aria-label="No 1X2 pick" />;
   return                         <Clock        size={14} className="text-zinc-400 shrink-0" />;
 }
 
-function ResultBadge({ result }: { result: string | null }) {
+const GOALS_VERDICT: Record<GoalsOutcome, { label: string; cls: string }> = {
+  won:       { label: "Won",       cls: "text-brand-700 dark:text-brand-400 bg-brand-50 dark:bg-brand-900/30 border-brand-200 dark:border-brand-800" },
+  half_won:  { label: "Half won",  cls: "text-brand-700 dark:text-brand-400 bg-brand-50 dark:bg-brand-900/30 border-brand-200 dark:border-brand-800" },
+  push:      { label: "Push · stake back", cls: "text-zinc-600 dark:text-zinc-300 bg-zinc-50 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700" },
+  half_lost: { label: "Half lost", cls: "text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-500/10 border-rose-200 dark:border-rose-500/30" },
+  lost:      { label: "Lost",      cls: "text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-500/10 border-rose-200 dark:border-rose-500/30" },
+};
+
+/** The goals tip with its verdict once the score is in. */
+function GoalsBadge({ tip, outcome }: { tip: string; outcome?: GoalsOutcome | null }) {
+  const v = outcome ? GOALS_VERDICT[outcome] : null;
+  return (
+    <span
+      className={clsx("text-[10px] font-semibold px-1.5 py-0.5 rounded-md border whitespace-nowrap",
+        v ? v.cls : "text-zinc-500 dark:text-zinc-400 border-zinc-200 dark:border-zinc-700")}
+      title={v ? `Goals tip: ${v.label}` : "Goals tip: pending"}
+    >
+      {tip}{v && ` · ${outcome === "push" ? "Push" : v.label}`}
+    </span>
+  );
+}
+
+const hasGoalsTip = (p: HistoryPrediction) => !!p.tip_goals && p.tip_goals !== "Skip";
+
+function ResultBadge({ result, score }: { result: string | null; score?: string }) {
   if (!result) return null;
-  const label = result === "H" ? "Home Win" : result === "A" ? "Away Win" : "Draw";
+  const label = (result === "H" ? "Home Win" : result === "A" ? "Away Win" : "Draw") + (score ? ` ${score}` : "");
   const cls   = result === "H" ? "text-brand-700 dark:text-brand-400 bg-brand-50 dark:bg-brand-900/30 border-brand-200 dark:border-brand-800"
               : result === "A" ? "text-sky-700 dark:text-sky-400 bg-sky-50 dark:bg-sky-500/10 border-sky-200 dark:border-sky-500/30"
               :                  "text-zinc-500 dark:text-zinc-400 bg-zinc-50 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700";
@@ -58,13 +83,12 @@ function MatchDetailPanel({ p, onClose }: { p: HistoryPrediction; onClose: () =>
 
   const resultLabel: Record<string, string> = { H: "Home Win", D: "Draw", A: "Away Win" };
   const tipLabel: Record<string, string>    = { "1": "Home Win", "X": "Draw", "2": "Away Win" };
-  const isCorrect = p.actual_result && p.tip_code &&
-    ({ H: "1", D: "X", A: "2" } as Record<string, string>)[p.actual_result] === p.tip_code;
+  const isCorrect = p.outcome === "won";
 
   return (
     <div className="card !rounded-xl p-4 space-y-3 text-sm mt-2 animate-fade-in">
-      {/* Verdict banner */}
-      {p.actual_result && (
+      {/* Verdict banner — only when there was a 1X2 / double-chance pick to judge */}
+      {p.actual_result && (p.outcome === "won" || p.outcome === "lost") && (
         <div className={clsx("flex items-center gap-2 px-3 py-2 rounded-lg border",
           isCorrect
             ? "bg-brand-50 dark:bg-brand-900/20 border-brand-200 dark:border-brand-800"
@@ -78,7 +102,7 @@ function MatchDetailPanel({ p, onClose }: { p: HistoryPrediction; onClose: () =>
               {isCorrect ? "Prediction correct" : "Prediction incorrect"}
             </p>
             <p className="text-[10px] text-zinc-500 dark:text-zinc-400">
-              Result: <span className="text-zinc-900 dark:text-white font-semibold">{resultLabel[p.actual_result]}</span>
+              Result: <span className="tnum text-zinc-900 dark:text-white font-semibold">{resultLabel[p.actual_result]}{p.score && ` ${p.score}`}</span>
               &nbsp;· Our pick: <span className="text-zinc-900 dark:text-white font-semibold">{tipLabel[p.tip_code] || p.tip_1x2}</span>
             </p>
           </div>
@@ -104,12 +128,18 @@ function MatchDetailPanel({ p, onClose }: { p: HistoryPrediction; onClose: () =>
           <span className="tnum bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 px-2 py-0.5 rounded-md font-medium">
             1X2: {p.tip_1x2}{pickProbability(p) !== null && ` · ${Math.round(pickProbability(p)! * 100)}%`}
           </span>
-          {p.tip_goals && p.tip_goals !== "Skip" && (
+          {hasGoalsTip(p) && (
             <span className="tnum bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 px-2 py-0.5 rounded-md font-medium">
               Goals: {p.tip_goals} · {Math.round(p.goals_confidence * 100)}%
+              {p.goals_outcome && <> · <span className="font-bold">{GOALS_VERDICT[p.goals_outcome].label}</span></>}
             </span>
           )}
         </div>
+        {p.goals_outcome === "push" && (
+          <p className="text-[10px] text-zinc-400 dark:text-zinc-500">
+            Asian line landed exactly — bookmakers refund the stake on a push.
+          </p>
+        )}
       </div>
 
       {/* Model stats */}
@@ -170,6 +200,8 @@ function DayPanel({ date, onClose }: { date: string; onClose: () => void }) {
   const pending = preds.filter(p => p.outcome === "pending").length;
   const settled = won + lost;
   const accuracy = settled ? Math.round((won / settled) * 100) : null;
+  const goalsWon  = preds.filter(p => p.goals_outcome === "won" || p.goals_outcome === "half_won").length;
+  const goalsLost = preds.filter(p => p.goals_outcome === "lost" || p.goals_outcome === "half_lost").length;
 
   // Midday avoids DST/timezone flips shifting the date
   const fmt = (d: string) => new Date(d + "T12:00:00")
@@ -188,6 +220,11 @@ function DayPanel({ date, onClose }: { date: string; onClose: () => void }) {
                 accuracy >= 40 ? "text-warn" : "text-danger"
               )}>{accuracy}%</span>
               &nbsp;({won}W / {lost}L / {pending} pending)
+            </p>
+          )}
+          {goalsWon + goalsLost > 0 && (
+            <p className="tnum text-xs text-zinc-400 dark:text-zinc-500">
+              Goals tips: {goalsWon}W / {goalsLost}L
             </p>
           )}
         </div>
@@ -225,7 +262,8 @@ function DayPanel({ date, onClose }: { date: string; onClose: () => void }) {
                 <span className="text-[10px] font-bold bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 px-2 py-0.5 rounded-full whitespace-nowrap">
                   {p.tip_1x2}
                 </span>
-                {p.actual_result && <ResultBadge result={p.actual_result} />}
+                {hasGoalsTip(p) && <GoalsBadge tip={p.tip_goals} outcome={p.goals_outcome} />}
+                {p.actual_result && <ResultBadge result={p.actual_result} score={p.score} />}
                 {expanded === i
                   ? <ChevronUp size={10} className="text-zinc-300 dark:text-zinc-600" />
                   : <ChevronDown size={10} className="text-zinc-300 dark:text-zinc-600" />}
@@ -283,6 +321,12 @@ export default function HistoryPage() {
   const monthLost = days.reduce((n, d) => n + (d.lost || 0), 0);
   const monthAccuracy = !loadingCal && monthWon + monthLost > 0
     ? Math.round((monthWon / (monthWon + monthLost)) * 100) : null;
+  const goalsWon  = days.reduce((n, d) => n + (d.goals_won || 0), 0);
+  const goalsLost = days.reduce((n, d) => n + (d.goals_lost || 0), 0);
+  const goalsAccuracy = !loadingCal && goalsWon + goalsLost > 0
+    ? Math.round((goalsWon / (goalsWon + goalsLost)) * 100) : null;
+  const tone = (pct: number | null) =>
+    pct === null ? "text-zinc-500" : pct >= 60 ? "text-accent" : pct >= 40 ? "text-warn" : "text-danger";
 
   return (
     <AppShell>
@@ -294,12 +338,12 @@ export default function HistoryPage() {
         />
 
         {/* Month scoreboard */}
-        <div className="grid grid-cols-3 gap-3 max-w-2xl">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-2xl">
           {[
-            { label: "Accuracy", value: monthAccuracy === null ? "–" : `${monthAccuracy}%`,
-              cls: monthAccuracy === null ? "text-zinc-500" : monthAccuracy >= 60 ? "text-accent" : monthAccuracy >= 40 ? "text-warn" : "text-danger" },
+            { label: "1X2 accuracy", value: monthAccuracy === null ? "–" : `${monthAccuracy}%`, cls: tone(monthAccuracy) },
             { label: "Won", value: loadingCal ? "–" : monthWon, cls: "text-n-0" },
             { label: "Lost", value: loadingCal ? "–" : monthLost, cls: "text-zinc-400" },
+            { label: "Goals tips", value: goalsAccuracy === null ? "–" : `${goalsAccuracy}%`, cls: tone(goalsAccuracy) },
           ].map(({ label, value, cls }) => (
             <div key={label} className="card px-4 py-3">
               <p className="eyebrow truncate">{label}</p>

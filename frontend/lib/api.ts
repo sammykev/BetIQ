@@ -146,9 +146,15 @@ export interface H2HData {
   source?: "api" | "csv" | "none";
 }
 
+export type GoalsOutcome = "won" | "lost" | "push" | "half_won" | "half_lost";
+
 export interface HistoryPrediction extends Prediction {
-  outcome: "won" | "lost" | "pending";
+  /** The 1X2 / double-chance tip. "void": result known but there was no such tip. */
+  outcome: "won" | "lost" | "pending" | "void";
   actual_result: "H" | "D" | "A" | null;
+  /** The goals tip; null until the score is known or when there was no goals tip. */
+  goals_outcome?: GoalsOutcome | null;
+  score?: string;
 }
 
 export interface CalendarDay {
@@ -156,6 +162,8 @@ export interface CalendarDay {
   won: number;
   lost: number;
   pending: number;
+  goals_won?: number;
+  goals_lost?: number;
 }
 
 export async function fetchCalendar(month: string): Promise<Record<string, CalendarDay>> {
