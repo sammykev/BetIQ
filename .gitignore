@@ -7,6 +7,11 @@ out/
 
 # Runtime cache files
 backend/h2h_cache.json
+backend/data/h2h_cache.json
+backend/data/predictions_cache.json
+backend/data/odds_cache.json
+backend/data/recent_results.csv
+deploy/oracle/.env
 backend/data/model_cache.joblib
 
 # Python

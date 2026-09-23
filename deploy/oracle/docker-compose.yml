@@ -1,0 +1,33 @@
+# BetIQ API behind Caddy (automatic HTTPS). Run from this folder:
+#   docker compose up -d --build
+services:
+  api:
+    build:
+      context: ../..
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - betiq-data:/app/backend/data   # trained model, predictions, synced CSVs
+    expose:
+      - "8000"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data                # HTTPS certificates
+      - caddy-config:/config
+
+volumes:
+  betiq-data:
+  caddy-data:
+  caddy-config:
