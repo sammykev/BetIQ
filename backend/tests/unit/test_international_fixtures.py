@@ -275,9 +275,27 @@ class TestEspnFallbacks:
         report, _ = self.run(lambda request: httpx.Response(403, text="<html>Access Denied</html>"))
         assert "espn fifa.friendly: HTTP 403 '<html>Access Denied</html>'" in report["errors"]
 
-    def test_asks_like_a_browser(self):
+    def test_sends_browser_headers(self):
         _, seen = self.run(lambda request: self.events())
-        assert "Chrome" in seen[0].headers["user-agent"] and seen[0].headers["referer"] == "https://www.espn.com/"
+        espn = [r for r in seen if "espn" in r.url.host]
+        assert espn[0].headers["referer"] == "https://www.espn.com/"
+
+    def test_default_client_imitates_chrome(self, monkeypatch):
+        made = []
+
+        class Session:
+            def __init__(self, **kw):
+                made.append(kw)
+
+            async def get(self, url, params=None, headers=None):
+                return httpx.Response(200, json={"events": []})
+
+            async def close(self):
+                made.append("closed")
+
+        monkeypatch.setattr(intl, "AsyncSession", Session)
+        asyncio.run(intl.fetch_international(days_ahead=1, today=date(2026, 9, 23), odds_api_key=""))
+        assert made[0]["impersonate"].startswith("chrome") and made[-1] == "closed"
 
 
 class TestAdminCheck:
@@ -312,3 +330,84 @@ class TestAdminCheck:
         assert (r["fixtures"], r["published"]) == (1, 1)
         assert r["by_competition"] == {"AFCON Qualifying": 1} and r["errors"] == ["espn uefa.euroq: HTTP 400"]
         assert sorted(p["home"] for p in main._predictions_cache) == ["Arsenal", "Ivory Coast"]
+
+
+def sofa_event(eid, home, away, comp="International Friendly Games", when="2026-09-24T16:00:00+00:00",
+               status="notstarted", description="Not started", national=True, gender="M", score=None):
+    ev = {
+        "id": eid,
+        "tournament": {"name": comp, "uniqueTournament": {"name": comp}},
+        "homeTeam": {"name": home, "gender": gender, **({"national": national} if national is not None else {})},
+        "awayTeam": {"name": away, "gender": gender, **({"national": national} if national is not None else {})},
+        "startTimestamp": int(pd.Timestamp(when).timestamp()),
+        "status": {"type": status, "description": description},
+    }
+    if score:
+        ev["homeScore"] = {"current": score[0], "normaltime": score[0]}
+        ev["awayScore"] = {"current": score[1], "normaltime": score[1]}
+    return ev
+
+
+class TestSofaScore:
+    DAY = {"events": [
+        sofa_event(1, "Nigeria", "Ghana"),
+        sofa_event(2, "Ivory Coast", "Gabon", comp="Africa Cup of Nations, Qualification"),
+        sofa_event(3, "Arsenal", "Chelsea", comp="Premier League", national=False),
+        sofa_event(4, "Barcelona", "Ajax", comp="Club Friendly Games", national=False),
+        sofa_event(5, "England", "Spain", gender="F"),
+        sofa_event(6, "Nigeria U20", "Ghana U20"),
+        sofa_event(7, "Morocco", "Gabon", comp="Africa Cup of Nations, Qualification", national=None),
+        sofa_event(8, "Egypt", "Angola", status="finished", description="Ended", score=(2, 0)),
+        sofa_event(9, "Mali", "Togo", status="finished", description="AET", score=(1, 1)),
+    ]}
+
+    def test_keeps_senior_mens_national_team_matches(self):
+        fixtures, _ = intl.parse_sofascore(self.DAY)
+        assert [(f["home"], f["league_name"]) for f in fixtures] == [
+            ("Nigeria", "International Friendly Games"),
+            ("Ivory Coast", "Africa Cup of Nations, Qualification"),
+            ("Morocco", "Africa Cup of Nations, Qualification"),  # no "national" field: judged by competition
+        ]
+        assert fixtures[0]["league"] == "INT" and fixtures[0]["match_id"] == "sofa:1"
+
+    def test_results_are_regulation_time_only(self):
+        _, results = intl.parse_sofascore(self.DAY)
+        assert results == [{"Date": "2026-09-24", "HomeTeam": "Egypt", "AwayTeam": "Angola",
+                            "Result": "H", "FTHG": 2, "FTAG": 0, "league": "INT"}]
+
+    def test_fills_in_when_espn_refuses_the_server(self):
+        def handler(request):
+            if "espn" in request.url.host:
+                return httpx.Response(403, text="<HTML><HEAD><TITLE>Access Denied</TITLE>")
+            if request.url.path.endswith("/2026-09-24"):
+                return httpx.Response(200, json=self.DAY)
+            return httpx.Response(200, json={"events": []})
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        report = asyncio.run(intl.fetch_international(days_ahead=7, client=client, today=date(2026, 9, 23),
+                                                      odds_api_key=""))
+        assert {f["home"] for f in report["fixtures"]} == {"Nigeria", "Ivory Coast", "Morocco"}
+        assert report["sources"]["sofascore"]["2026-09-24"] == 3
+        assert any(e.startswith("espn caf.nations_qual: HTTP 403") for e in report["errors"])
+
+    def test_stops_after_a_refusal_on_the_first_day(self):
+        calls = []
+
+        def handler(request):
+            calls.append(request.url.host)
+            return httpx.Response(403, text="Access Denied")
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        asyncio.run(intl.fetch_international(days_ahead=7, client=client, today=date(2026, 9, 23), odds_api_key=""))
+        assert calls.count("api.sofascore.com") == 1
+
+    def test_espn_and_sofascore_listing_one_match_count_once(self):
+        def handler(request):
+            if "espn" in request.url.host:
+                return httpx.Response(200, json={"events": [espn_event("1", "Côte d'Ivoire", "Gabon")]}) \
+                    if "caf.nations_qual" in request.url.path else httpx.Response(200, json={"events": []})
+            return httpx.Response(200, json={"events": [sofa_event(2, "Ivory Coast", "Gabon",
+                                                                     comp="Africa Cup of Nations, Qualification",
+                                                                     when="2026-09-24T18:45:00+00:00")]})
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        report = asyncio.run(intl.fetch_international(days_ahead=3, client=client, today=date(2026, 9, 23),
+                                                      odds_api_key=""))
+        assert [f["match_id"] for f in report["fixtures"]] == ["espn:1"]

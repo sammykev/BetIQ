@@ -2,12 +2,17 @@
 International fixtures and results: national-team matches (Nations League,
 qualifiers, friendlies) that football-data.org's free tier doesn't carry.
 
-Sources, merged so a match listed by both appears once:
+Sources, merged so a match listed by more than one appears once:
   1. ESPN's public scoreboard (no key): fixtures, final scores and flags.
-  2. The Odds API events list (ODDS_API_KEY; listing sports and events
+  2. SofaScore's daily schedule (no key): every competition, so friendlies
+     and qualifiers still come through if ESPN refuses the server.
+  3. The Odds API events list (ODDS_API_KEY; listing sports and events
      doesn't use quota): every international competition it is pricing,
-     so one ESPN doesn't carry still shows up, and matched fixtures learn
-     which sport key their odds live under.
+     and matched fixtures learn which sport key their odds live under.
+
+ESPN and SofaScore sit behind bot filters that refuse ordinary server HTTP
+clients ("Access Denied"), so requests go through curl_cffi imitating
+Chrome, as for SportyBet.
 
 Every fixture is filed under one league, "INT" — the same tag the
 international training results carry, so the model's league features line up.
@@ -18,7 +23,10 @@ import os
 from datetime import date, datetime, timedelta, timezone
 from typing import Dict, Iterable, List, Optional, Tuple
 
+import re
+
 import httpx
+from curl_cffi.requests import AsyncSession
 
 from team_names import ALIASES, normalise
 
@@ -27,6 +35,10 @@ LEAGUE_INFO = {"name": "Internationals", "country": "World", "flag": "🌍"}
 
 ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports/soccer"
 ODDS_API_BASE = "https://api.the-odds-api.com/v4"
+SOFASCORE_BASE = "https://api.sofascore.com/api/v1/sport/football/scheduled-events"
+IMPERSONATE = os.getenv("SPORTYBET_IMPERSONATE", "chrome131")
+# Days of SofaScore schedule fetched around today (one request per day)
+SOFASCORE_DAYS_AHEAD, SOFASCORE_DAYS_BACK = 7, 3
 
 # ESPN league slug → (competition name, The Odds API sport key when known)
 ESPN_COMPETITIONS: Dict[str, Tuple[str, Optional[str]]] = {
@@ -49,15 +61,21 @@ _ODDS_API_HINTS = (
     "gold_cup", "asian_cup",
 )
 
-# ESPN answers browsers; a bare client can get an error page instead
-_ESPN_HEADERS = {
-    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                   "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"),
+# Sent along with the Chrome fingerprint (which brings its own User-Agent)
+_BROWSER_HEADERS = {
     "Accept": "application/json, text/plain, */*",
     "Accept-Language": "en-US,en;q=0.9",
-    "Referer": "https://www.espn.com/",
-    "Origin": "https://www.espn.com",
 }
+_ESPN_HEADERS = {**_BROWSER_HEADERS, "Referer": "https://www.espn.com/", "Origin": "https://www.espn.com"}
+_SOFASCORE_HEADERS = {**_BROWSER_HEADERS, "Referer": "https://www.sofascore.com/",
+                      "Origin": "https://www.sofascore.com"}
+
+# SofaScore competitions that are national-team football (when the team
+# objects don't say so themselves)
+_SOFA_COMPETITIONS = re.compile(
+    r"international friendl|nations league|world cup|qualification|africa cup|afcon|"
+    r"euro\b|european championship|copa am[eé]rica|gold cup|asian cup", re.I)
+_YOUTH = re.compile(r"\bU-?\d{2}\b|\bolympic", re.I)
 # Longest span fetched day by day when the date-range request fails
 ESPN_DAILY_MAX = 14
 
@@ -134,6 +152,46 @@ def parse_espn(data: Dict, slug: str) -> Tuple[List[Dict], List[Dict]]:
     return fixtures, results
 
 
+def parse_sofascore(data: Dict) -> Tuple[List[Dict], List[Dict]]:
+    """(upcoming fixtures, regulation-time results) from one SofaScore day:
+    senior men's national-team matches only."""
+    fixtures, results = [], []
+    for ev in (data or {}).get("events") or []:
+        home, away = ev.get("homeTeam") or {}, ev.get("awayTeam") or {}
+        h_name, a_name = (home.get("name") or "").strip(), (away.get("name") or "").strip()
+        comp = ((ev.get("tournament") or {}).get("uniqueTournament") or ev.get("tournament") or {}).get("name") or ""
+        if not h_name or not a_name or "club" in comp.lower():
+            continue
+        if "national" in home or "national" in away:
+            if not (home.get("national") and away.get("national")):
+                continue
+        elif not _SOFA_COMPETITIONS.search(comp):
+            continue
+        if "F" in (home.get("gender"), away.get("gender")) or _YOUTH.search(f"{h_name} {a_name} {comp}"):
+            continue
+        try:
+            kickoff = datetime.fromtimestamp(int(ev["startTimestamp"]), timezone.utc)
+        except (KeyError, TypeError, ValueError):
+            continue
+
+        status = ev.get("status") or {}
+        if status.get("type") == "notstarted":
+            fixtures.append(_fixture(f"sofa:{ev.get('id')}", h_name, a_name, kickoff, comp, None))
+        elif status.get("type") == "finished" and (status.get("description") or "Ended") == "Ended":
+            hs, as_ = ev.get("homeScore") or {}, ev.get("awayScore") or {}
+            try:
+                hg = int(hs.get("normaltime", hs.get("current")))
+                ag = int(as_.get("normaltime", as_.get("current")))
+            except (TypeError, ValueError):
+                continue
+            results.append({
+                "Date": kickoff.strftime("%Y-%m-%d"), "HomeTeam": h_name, "AwayTeam": a_name,
+                "Result": "H" if hg > ag else "A" if hg < ag else "D",
+                "FTHG": hg, "FTAG": ag, "league": LEAGUE_CODE,
+            })
+    return fixtures, results
+
+
 def international_sport_keys(sports: Iterable[Dict]) -> Dict[str, str]:
     """{sport key: title} for The Odds API's national-team soccer competitions."""
     out = {}
@@ -173,10 +231,12 @@ def merge(fixtures: List[Dict]) -> List[Dict]:
     return sorted(out, key=lambda f: (f["date"], f["time"], f["home"]))
 
 
-async def _get_json(client: httpx.AsyncClient, url: str, params: Dict) -> Tuple[Optional[object], Optional[str]]:
+async def _get_json(client, url: str, params: Dict,
+                    headers: Optional[Dict] = None) -> Tuple[Optional[object], Optional[str]]:
+    """GET through httpx or curl_cffi (same call shape). Returns (json, error)."""
     try:
-        r = await client.get(url, params=params)
-    except httpx.HTTPError as e:
+        r = await client.get(url, params=params, headers=headers)
+    except Exception as e:  # network errors differ between the two clients
         return None, type(e).__name__
     if r.status_code != 200:
         body = (r.text or "").strip()[:80]
@@ -187,7 +247,7 @@ async def _get_json(client: httpx.AsyncClient, url: str, params: Dict) -> Tuple[
         return None, "not JSON"
 
 
-async def _espn_pages(client: httpx.AsyncClient, slug: str,
+async def _espn_pages(client, slug: str,
                       start: date, end: date) -> Tuple[List[Dict], Optional[str]]:
     """
     Scoreboard pages for one competition. One date-range request normally;
@@ -196,11 +256,12 @@ async def _espn_pages(client: httpx.AsyncClient, slug: str,
     fetched on its own. Returns (pages, error when nothing worked).
     """
     url = f"{ESPN_BASE}/{slug}/scoreboard"
-    data, err = await _get_json(client, url, {"dates": f"{start:%Y%m%d}-{end:%Y%m%d}", "limit": 500})
+    data, err = await _get_json(client, url, {"dates": f"{start:%Y%m%d}-{end:%Y%m%d}", "limit": 500},
+                                _ESPN_HEADERS)
     if not err and (data or {}).get("events"):
         return [data], None
 
-    current, current_err = await _get_json(client, url, {})
+    current, current_err = await _get_json(client, url, {}, _ESPN_HEADERS)
     if current_err or not (current or {}).get("events"):
         # A competition with nothing scheduled answers with no events: not an error
         return ([], None) if not err and not current_err else ([], err or current_err)
@@ -208,7 +269,7 @@ async def _espn_pages(client: httpx.AsyncClient, slug: str,
     pages, day = [current], start
     last = min(end, start + timedelta(days=ESPN_DAILY_MAX - 1))
     while day <= last:
-        page, _ = await _get_json(client, url, {"dates": f"{day:%Y%m%d}", "limit": 200})
+        page, _ = await _get_json(client, url, {"dates": f"{day:%Y%m%d}", "limit": 200}, _ESPN_HEADERS)
         if (page or {}).get("events"):
             pages.append(page)
         day += timedelta(days=1)
@@ -216,21 +277,25 @@ async def _espn_pages(client: httpx.AsyncClient, slug: str,
 
 
 async def fetch_international(days_ahead: int = 21, days_back: int = 0,
-                              client: Optional[httpx.AsyncClient] = None,
+                              client=None,
                               today: Optional[date] = None,
                               odds_api_key: Optional[str] = None) -> Dict:
     """
     Upcoming international fixtures (today .. today+days_ahead) and final
     scores (today-days_back .. today). Returns
-    {"fixtures", "results", "sources": {"espn": {slug: n}, "odds_api": {key: n}}, "errors"}.
+    {"fixtures", "results",
+     "sources": {"espn": {slug: n}, "sofascore": {day: n}, "odds_api": {key: n}}, "errors"}.
+    `client` is anything with an async get(url, params=, headers=) (httpx in
+    tests); by default a curl_cffi session imitating Chrome.
     """
     today = today or datetime.now(timezone.utc).date()
     start, end = today - timedelta(days=days_back), today + timedelta(days=days_ahead)
     odds_api_key = os.getenv("ODDS_API_KEY", "") if odds_api_key is None else odds_api_key
-    report: Dict = {"fixtures": [], "results": [], "sources": {"espn": {}, "odds_api": {}}, "errors": []}
+    report: Dict = {"fixtures": [], "results": [],
+                    "sources": {"espn": {}, "sofascore": {}, "odds_api": {}}, "errors": []}
 
     own_client = client is None
-    client = client or httpx.AsyncClient(timeout=20, headers=_ESPN_HEADERS, follow_redirects=True)
+    client = client or AsyncSession(impersonate=IMPERSONATE, timeout=20)
     try:
         espn_fixtures: List[Dict] = []
         for slug in ESPN_COMPETITIONS:
@@ -246,6 +311,23 @@ async def fetch_international(days_ahead: int = 21, days_back: int = 0,
             fixtures = merge(fixtures)
             espn_fixtures += fixtures
             report["sources"]["espn"][slug] = len(fixtures)
+
+        sofa_fixtures: List[Dict] = []
+        day = today - timedelta(days=min(days_back, SOFASCORE_DAYS_BACK))
+        last = today + timedelta(days=min(days_ahead, SOFASCORE_DAYS_AHEAD))
+        while day <= last:
+            data, err = await _get_json(client, f"{SOFASCORE_BASE}/{day:%Y-%m-%d}", {}, _SOFASCORE_HEADERS)
+            if err:
+                report["errors"].append(f"sofascore {day:%Y-%m-%d}: {err}")
+                if not report["sources"]["sofascore"] and day == today:
+                    break  # refused on the first upcoming day: don't hammer it
+            else:
+                found, results = parse_sofascore(data)
+                found = [f for f in found if today.isoformat() <= f["date"] <= end.isoformat()]
+                sofa_fixtures += found
+                report["results"] += results
+                report["sources"]["sofascore"][f"{day:%Y-%m-%d}"] = len(found)
+            day += timedelta(days=1)
 
         odds_fixtures: List[Dict] = []
         if odds_api_key:
@@ -263,8 +345,8 @@ async def fetch_international(days_ahead: int = 21, days_back: int = 0,
                 report["sources"]["odds_api"][key] = len(found)
                 await asyncio.sleep(0.2)
 
-        report["fixtures"] = merge(espn_fixtures + odds_fixtures)
+        report["fixtures"] = merge(espn_fixtures + sofa_fixtures + odds_fixtures)
     finally:
         if own_client:
-            await client.aclose()
+            await client.close()
     return report

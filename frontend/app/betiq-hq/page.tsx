@@ -593,14 +593,16 @@ export default function AdminPage() {
                 {Object.entries(intlCheck.by_competition as Record<string, number>).map(([c, n]) => `${c}: ${n}`).join(" · ")}
               </p>
             )}
-            <p className="text-slate-400">
-              ESPN — {Object.entries((intlCheck.sources?.espn ?? {}) as Record<string, number>).map(([k, n]) => `${k} ${n}`).join(" · ") || "nothing"}
-            </p>
-            <p className="text-slate-400">
-              The Odds API — {Object.entries((intlCheck.sources?.odds_api ?? {}) as Record<string, number>).map(([k, n]) => `${k} ${n}`).join(" · ") || "nothing (or no ODDS_API_KEY)"}
-            </p>
+            {([["espn", "ESPN"], ["sofascore", "SofaScore"], ["odds_api", "The Odds API"]] as const).map(([key, label]) => (
+              <p key={key} className="text-slate-400">
+                {label} — {Object.entries((intlCheck.sources?.[key] ?? {}) as Record<string, number>)
+                  .map(([k, n]) => `${k} ${n}`).join(" · ") || (key === "odds_api" ? "nothing (or no ODDS_API_KEY)" : "nothing")}
+              </p>
+            ))}
             {intlCheck.errors?.length > 0 && (
-              <p className="text-red-400 break-words">Errors: {intlCheck.errors.join(" · ")}</p>
+              <p className="text-red-400 break-words">
+                Errors: {(intlCheck.errors as string[]).map(e => e.length > 90 ? e.slice(0, 90) + "…" : e).join(" · ")}
+              </p>
             )}
           </div>
         )}
@@ -638,6 +640,8 @@ export default function AdminPage() {
                 <span className="text-slate-300 font-semibold">Internationals:</span>{" "}
                 {dataStatus.international.fixtures} upcoming fixtures · ESPN{" "}
                 {Object.values(dataStatus.international.sources?.espn ?? {}).reduce((a: number, n) => a + (n as number), 0)}
+                {" "}· SofaScore{" "}
+                {Object.values(dataStatus.international.sources?.sofascore ?? {}).reduce((a: number, n) => a + (n as number), 0)}
                 {" "}· The Odds API{" "}
                 {Object.values(dataStatus.international.sources?.odds_api ?? {}).reduce((a: number, n) => a + (n as number), 0)}
               </p>
