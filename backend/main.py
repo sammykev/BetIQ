@@ -609,7 +609,7 @@ def _load_football_data_csvs() -> pd.DataFrame:
 
             keep = ["Date", "HomeTeam", "AwayTeam", "Result", "FTHG", "FTAG",
                     "B365H", "B365D", "B365A", "B365>2.5", "B365<2.5",  # O/U odds: backtest baseline
-                    "HC", "AC", "HY", "AY", "HR", "AR", "league"]
+                    "HC", "AC", "HY", "AY", "HR", "AR", "Referee", "league"]
             df = df[[c for c in keep if c in df.columns]]
             dfs.append(df)
         except Exception as e:

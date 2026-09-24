@@ -37,6 +37,19 @@ GAMMA = 0.6         # damping of the combined team ratings (tuned walk-forward o
 TEAM_GAMMA = 1.0    # the same for one team's own corners (tuned walk-forward on 2023-24)
 LEAGUE_DECAY = 0.995
 MIN_MATCHES = 6     # per team before we price its matches
+# Referees (bookings only): each one's bookings relative to what the teams
+# alone predicted, shrunk towards 1 by REF_PRIOR matches' worth. Walk-forward
+# on the Premier League + Championship (the leagues whose data names the
+# referee): bookings Brier 0.9616 → 0.9549 on 2023-24 and 0.9469 → 0.9466 on
+# 2024-25 with these cautious settings; bolder ones helped 2023-24 more but
+# hurt 2024-25. A referee new to our data starts from their career record
+# (career_factor) when a source gives one.
+USE_REFEREES = True
+REF_PRIOR = 80.0
+REF_DECAY = 0.98
+REF_GAMMA = 1.0
+CAREER_PRIOR = 20.0   # games' worth of weight on the league-wide average
+AVERAGE_BOOKINGS = 4.4
 
 
 def _counts(row) -> Optional[Dict[str, Tuple[float, float]]]:
@@ -50,6 +63,35 @@ def _counts(row) -> Optional[Dict[str, Tuple[float, float]]]:
     if any(math.isnan(v) for v in (hc, ac, hy, ay, hr, ar)):
         return None
     return {"corners": (hc, ac), "bookings": (hy + 2 * hr, ay + 2 * ar)}
+
+
+def career_factor(career: Optional[Dict]) -> float:
+    """A referee's career bookings a game vs the average, shrunk by games:
+    {"games", "yellow", "red"} (SofaScore's referee record); 1 without one."""
+    try:
+        games = float(career["games"])
+        per_game = (float(career.get("yellow") or 0) + 2 * float(career.get("red") or 0)) / games
+    except (TypeError, KeyError, ValueError, ZeroDivisionError):
+        return 1.0
+    if games <= 0:
+        return 1.0
+    ratio = min(2.0, max(0.5, per_game / AVERAGE_BOOKINGS))
+    return (games * ratio + CAREER_PRIOR) / (games + CAREER_PRIOR)
+
+
+def referee_key(name: Optional[str]) -> Optional[str]:
+    """One key per referee across sources: surname + first initial
+    ("Anthony Taylor", "A Taylor" → "taylor a")."""
+    import unicodedata
+    if not isinstance(name, str) or not name.strip():
+        return None
+    plain = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode().lower()
+    parts = [p for p in plain.replace(".", " ").replace(",", " ").split() if p]
+    if not parts:
+        return None
+    if len(parts) == 1:
+        return parts[0]
+    return f"{parts[-1]} {parts[0][0]}"
 
 
 def _nb_cdf(k: int, mu: float, r: Optional[float]) -> float:
@@ -148,6 +190,7 @@ class SetPieceModel:
     def __init__(self, params: Optional[Dict] = None):
         self.params = dict(params or {})
         self.overall: Dict[str, List[float]] = {}  # stat -> [home avg, away avg] over everything
+        self.ref: Dict[str, List[float]] = {}      # referee key -> [weight, bookings ratio sum]
         # league -> stat -> [home avg, away avg]
         self.league: Dict[str, Dict[str, List[float]]] = {}
         # team -> stat -> [weight, for ratio sum, against ratio sum]
@@ -168,8 +211,21 @@ class SetPieceModel:
         prior = self._p("prior")
         return (f + prior) / (w + prior), (a + prior) / (w + prior)
 
-    def expected(self, home: str, away: str, league: Optional[str] = None) -> Optional[Dict[str, Tuple[float, float]]]:
-        """{stat: (home mean, away mean)}, or None for teams we know too little about."""
+    def referee_factor(self, referee: Optional[str], career: Optional[Dict] = None) -> float:
+        """How many more (>1) or fewer bookings than usual this referee gives:
+        their matches in our data, starting from their career record."""
+        key = referee_key(referee)
+        if not key or not self._p("use_referees"):
+            return 1.0
+        start = career_factor(career)
+        w, total = self.ref.get(key, (0.0, 0.0))
+        prior = self._p("ref_prior")
+        return ((total + prior * start) / (w + prior)) ** self._p("ref_gamma")
+
+    def expected(self, home: str, away: str, league: Optional[str] = None,
+                 referee: Optional[str] = None, career: Optional[Dict] = None) -> Optional[Dict[str, Tuple[float, float]]]:
+        """{stat: (home mean, away mean)}, or None for teams we know too little about.
+        A known referee scales the bookings (when use_referees is on)."""
         need = self._p("min_matches")
         if self.matches.get(home, 0) < need or self.matches.get(away, 0) < need:
             return None
@@ -185,9 +241,23 @@ class SetPieceModel:
             out[stat] = (avgs[0] * (fh * aa) ** gamma, avgs[1] * (fa * ah) ** gamma)
             if stat == "corners":
                 out["corners_team"] = (avgs[0] * (fh * aa) ** team_gamma, avgs[1] * (fa * ah) ** team_gamma)
+        factor = self.referee_factor(referee, career)
+        if factor != 1.0:
+            out["bookings"] = (out["bookings"][0] * factor, out["bookings"][1] * factor)
         return out
 
-    def update(self, home: str, away: str, league: str, counts: Dict[str, Tuple[float, float]]) -> None:
+    def update(self, home: str, away: str, league: str, counts: Dict[str, Tuple[float, float]],
+               referee: Optional[str] = None) -> None:
+        key = referee_key(referee)
+        if key and "bookings" in counts:
+            # The referee's share: bookings given vs what the teams alone predicted
+            teams_only = self.expected(home, away, league)
+            base = sum(teams_only["bookings"]) if teams_only else sum(self._league_avgs(league, "bookings") or (0, 0))
+            if base > 0:
+                decay_r = self._p("ref_decay")
+                r = self.ref.setdefault(key, [0.0, 0.0])
+                r[0] = r[0] * decay_r + 1
+                r[1] = r[1] * decay_r + sum(counts["bookings"]) / base
         decay, league_decay = self._p("decay"), self._p("league_decay")
         for stat, (h, a) in counts.items():
             lg = self.league.setdefault(league, {})
@@ -222,8 +292,9 @@ class SetPieceModel:
             if counts is None:
                 continue
             league = row.get("league") or ""
+            referee = row.get("Referee") if isinstance(row.get("Referee"), str) else None
             if test_from is None or row["Date"] >= test_from:
-                exp = model.expected(row["HomeTeam"], row["AwayTeam"], league)
+                exp = model.expected(row["HomeTeam"], row["AwayTeam"], league, referee)
                 if exp:
                     for stat in STATS:
                         base = sum(model._league_avgs(league, stat))
@@ -231,7 +302,7 @@ class SetPieceModel:
                     avgs = model._league_avgs(league, "corners")
                     for side, stat in enumerate(TEAM_STATS):
                         rows.append((row["Date"], stat, exp["corners_team"][side], counts["corners"][side], avgs[side]))
-            model.update(row["HomeTeam"], row["AwayTeam"], league, counts)
+            model.update(row["HomeTeam"], row["AwayTeam"], league, counts, referee)
         return model, rows
 
     @staticmethod
@@ -262,10 +333,11 @@ class SetPieceModel:
         return model
 
     # ---------------------------------------------------------------- #
-    def markets(self, home: str, away: str, league: Optional[str] = None) -> Optional[Dict]:
+    def markets(self, home: str, away: str, league: Optional[str] = None,
+                referee: Optional[str] = None, career: Optional[Dict] = None) -> Optional[Dict]:
         """{"corners" / "bookings" / "corners_home" / "corners_away": {"mean",
         "over": {line: p}}, "corners_1x2": {"home", "draw", "away"}} for a fixture."""
-        exp = self.expected(home, away, league)
+        exp = self.expected(home, away, league, referee, career)
         if not exp:
             return None
         out = {}
@@ -337,6 +409,16 @@ def tune_international(matches: pd.DataFrame, today: Optional[pd.Timestamp] = No
         total = sum(v["model"] for k, v in sc.items() if k in STATS)
         if best_score is None or total < best_score:
             best, best_score = params, total
+    # Referees on or off (where the data names them), whichever scored better
+    if "Referee" in matches.columns and matches["Referee"].notna().any():
+        with_refs = {**best, "use_referees": True}
+        without = {**best, "use_referees": False}
+        pre = matches[matches["Date"] < holdout]
+        b_with = score(pre, with_refs, tune_start).get("bookings", {}).get("model")
+        b_without = score(pre, without, tune_start).get("bookings", {}).get("model")
+        best = with_refs if b_with is not None and b_without is not None and b_with < b_without else without
+    else:
+        best = {**best, "use_referees": False}
     report["params"] = best
     report["holdout"] = score(matches, best, holdout)
     for stat, v in report["holdout"].items():
