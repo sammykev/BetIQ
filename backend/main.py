@@ -3878,8 +3878,19 @@ def _sb_key(home: str, away: str, day: str) -> str:
     return f"{home}|{away}|{day}"
 
 
-def _match_predictions_to_events(preds: List[Dict], events: List[Dict]) -> Dict[str, Dict]:
-    """{prediction key: slim SportyBet event}. CPU-bound (fuzzy names): run in a thread."""
+def _kickoff_ms(p: Dict) -> Optional[int]:
+    try:
+        dt = datetime.strptime(f"{p['date']} {p.get('time') or ''}", "%Y-%m-%d %H:%M")
+    except (KeyError, ValueError):
+        return None
+    return int(dt.replace(tzinfo=timezone.utc).timestamp() * 1000)
+
+
+def _match_predictions_to_events(preds: List[Dict], events: List[Dict],
+                                 unlinked: Optional[List[Dict]] = None) -> Dict[str, Dict]:
+    """{prediction key: slim SportyBet event}: by both team names, else by
+    kick-off time plus one clear name. Unmatched predictions (with the
+    closest SportyBet event) go to `unlinked`. CPU-bound: run in a thread."""
     import sportybet
     by_day: Dict[str, List[Dict]] = {}
     for ev in events:
@@ -3889,8 +3900,19 @@ def _match_predictions_to_events(preds: List[Dict], events: List[Dict]) -> Dict[
         d = date.fromisoformat(p["date"])
         near = [ev for k in {(d + timedelta(days=o)).isoformat() for o in (-1, 0, 1)} for ev in by_day.get(k, [])]
         ev = sportybet.find_event(p["home"], p["away"], near)
+        kickoff = _kickoff_ms(p)
+        if ev is None and kickoff is not None:
+            ev = sportybet.find_event_by_kickoff(p["home"], p["away"], kickoff, near)
         if ev and ev.get("eventId"):
             links[_sb_key(p["home"], p["away"], p["date"])] = sportybet.slim_event(ev)
+        elif unlinked is not None:
+            guess, score = sportybet.closest_event(p["home"], p["away"], near)
+            unlinked.append({
+                "match": f"{p['home']} vs {p['away']}", "date": p["date"], "time": p.get("time") or "",
+                "league": p.get("league_name") or p.get("league") or "",
+                "closest": f"{guess['homeTeamName']} vs {guess['awayTeamName']}" if guess else None,
+                "score": round(score, 2),
+            })
     return links
 
 
@@ -3910,7 +3932,10 @@ async def _link_sportybet_events() -> Dict[str, Any]:
             events, status["report"] = [], [f"{type(e).__name__}: {e}"]
         status["events"] = len(events)
         if events:  # an empty catalog (SportyBet unreachable) keeps the last links
-            links = await asyncio.to_thread(_match_predictions_to_events, preds, events)
+            unlinked: List[Dict] = []
+            links = await asyncio.to_thread(_match_predictions_to_events, preds, events, unlinked)
+            # Worth checking first: closest candidates, highest score first
+            status["unlinked"] = sorted(unlinked, key=lambda u: -u["score"])[:40]
             _sb_links.clear()
             _sb_links.update(links)
             status["linked"] = len(links)

@@ -522,3 +522,45 @@ def test_upcoming_listing_uses_the_sites_parameters():
     asyncio.run(sportybet._pc_upcoming(s, max_pages=1))
     params = s.calls[0][2]["params"]
     assert params["todayGames"] == "false" and "option" not in params and params["sportId"] == "sr:sport:1"
+
+
+class TestKickoffMatching:
+    KO = ms("2026-09-26T18:45:00")
+
+    def ev(self, eid, home, away, iso="2026-09-26T18:45:00"):
+        return {"eventId": eid, "homeTeamName": home, "awayTeamName": away, "estimateStartTime": ms(iso)}
+
+    @pytest.mark.parametrize("ours,theirs", [("Czechia", "Czech Republic"), ("USA", "United States"),
+                                             ("Türkiye", "Turkey"), ("Côte d'Ivoire", "Ivory Coast"),
+                                             ("Korea Republic", "South Korea")])
+    def test_national_team_spellings_match(self, ours, theirs):
+        assert sportybet.team_similarity(ours, theirs) == 1.0
+
+    def test_one_clear_name_and_the_same_kickoff(self):
+        events = [self.ev("sr:match:1", "Vasco da Gama RJ", "Clube Atletico Mineiro")]
+        assert sportybet.find_event("CR Vasco da Gama", "CA Mineiro", events) is None  # strict pass misses
+        assert sportybet.find_event_by_kickoff("CR Vasco da Gama", "CA Mineiro", self.KO, events)["eventId"] == "sr:match:1"
+
+    def test_not_at_another_kickoff(self):
+        events = [self.ev("sr:match:1", "Vasco da Gama RJ", "Clube Atletico Mineiro", "2026-09-26T21:00:00")]
+        assert sportybet.find_event_by_kickoff("CR Vasco da Gama", "CA Mineiro", self.KO, events) is None
+
+    def test_never_a_womens_or_youth_side(self):
+        events = [self.ev("sr:match:1", "Arsenal W", "Chelsea W"), self.ev("sr:match:2", "Brazil U17", "Chile U17")]
+        assert sportybet.find_event_by_kickoff("Arsenal", "Chelsea", self.KO, events) is None
+        assert sportybet.find_event_by_kickoff("Brazil", "Chile", self.KO, events) is None
+        assert sportybet.find_event_by_kickoff("Brazil U17", "Chile U17", self.KO, events)["eventId"] == "sr:match:2"
+
+    def test_never_the_reverse_fixture(self):
+        events = [self.ev("sr:match:1", "Chelsea", "Arsenal")]
+        assert sportybet.find_event_by_kickoff("Arsenal", "Chelsea", self.KO, events) is None
+
+    def test_linking_uses_the_kickoff_and_reports_the_rest(self):
+        events = [self.ev("sr:match:1", "Vasco da Gama RJ", "Clube Atletico Mineiro"),
+                  self.ev("sr:match:2", "Sao Paulo", "Santos")]
+        preds = [{"home": "CR Vasco da Gama", "away": "CA Mineiro", "date": "2026-09-26", "time": "18:45"},
+                 {"home": "Botafogo", "away": "Fluminense", "date": "2026-09-26", "time": "18:45"}]
+        unlinked = []
+        links = main._match_predictions_to_events(preds, events, unlinked)
+        assert list(links) == ["CR Vasco da Gama|CA Mineiro|2026-09-26"]
+        assert unlinked[0]["match"] == "Botafogo vs Fluminense" and unlinked[0]["closest"]

@@ -21,7 +21,9 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from curl_cffi.requests import AsyncSession
 
-from team_names import normalise
+import re
+
+from team_names import ALIASES, normalise
 
 COUNTRY = os.getenv("SPORTYBET_COUNTRY", "ng")
 BASE = f"https://www.sportybet.com/api/{COUNTRY}"
@@ -294,26 +296,25 @@ _SB_ALIASES = {
     "sporting lisbon": "sporting", "sporting portugal": "sporting", "sp lisbon": "sporting",
     "rasenballsport leipzig": "rb leipzig", "stade rennais": "rennes", "stade brestois": "brest",
     "saint etienne": "st etienne", "az": "az alkmaar", "nec": "nec nijmegen", "nijmegen": "nec nijmegen",
+    "inter milano": "internazionale",
     # "Paris FC" normalises to "paris", which is inside "Paris Saint-Germain"
     "paris": "paris fc",
 }
 
 
-def _key(name: str) -> str:
+def _keys(name: str) -> set:
+    """The comparable forms of a name: as written (with SportyBet's aliases),
+    and via the training-data aliases ("Czechia" → Czech Republic, "USA" →
+    United States), so either spelling on either side can match."""
     n = normalise(name)
-    return _SB_ALIASES.get(n, n)
+    keys = {_SB_ALIASES.get(n, n)}
+    if n in ALIASES:
+        a = normalise(ALIASES[n])
+        keys.add(_SB_ALIASES.get(a, a))
+    return {k for k in keys if k}
 
 
-def team_similarity(a: str, b: str) -> float:
-    """
-    0–1. Full credit when one name's words are all in the other's
-    ("Brighton" / "Brighton & Hove Albion"). Names that share words are
-    compared on the words that differ, so "Manchester City" and
-    "Manchester United" (or Real / Atlético Madrid) come out far apart.
-    """
-    ka, kb = _key(a), _key(b)
-    if not ka or not kb:
-        return 0.0
+def _similarity(ka: str, kb: str) -> float:
     if ka == kb:
         return 1.0
     wa, wb = set(ka.split()), set(kb.split())
@@ -323,6 +324,16 @@ def team_similarity(a: str, b: str) -> float:
     if shared:
         return SequenceMatcher(None, " ".join(sorted(wa - shared)), " ".join(sorted(wb - shared))).ratio()
     return SequenceMatcher(None, ka, kb).ratio()
+
+
+def team_similarity(a: str, b: str) -> float:
+    """
+    0–1. Full credit when one name's words are all in the other's
+    ("Brighton" / "Brighton & Hove Albion"). Names that share words are
+    compared on the words that differ, so "Manchester City" and
+    "Manchester United" (or Real / Atlético Madrid) come out far apart.
+    """
+    return max((_similarity(ka, kb) for ka in _keys(a) for kb in _keys(b)), default=0.0)
 
 
 def find_event(home: str, away: str, events: Iterable[Dict]) -> Optional[Dict]:
@@ -339,6 +350,56 @@ def find_event(home: str, away: str, events: Iterable[Dict]) -> Optional[Dict]:
         if sh + sa > best_score:
             best, best_score = ev, sh + sa
     return best
+
+
+# Sides that share a club's or country's name but aren't its first team
+_SIDE_MARKER = re.compile(r"\b(u\d{2}|w|women|ladies|fem|reserves?|ii|b|youth|amateurs?)\b", re.I)
+KICKOFF_TOLERANCE_MS = 20 * 60 * 1000
+
+
+def _markers(name: str) -> set:
+    return {m.lower() for m in _SIDE_MARKER.findall(name or "")}
+
+
+def find_event_by_kickoff(home: str, away: str, kickoff_ms: int, events: Iterable[Dict]) -> Optional[Dict]:
+    """
+    Second pass for names the strict match misses ("Czechia" / "Czech
+    Republic", club naming differences): an event starting within 20 minutes
+    of our kick-off where one team matches clearly and the other at least
+    loosely — a team can't play two matches at once. Reversed fixtures and
+    youth / women's / reserve sides are never taken.
+    """
+    best, best_score = None, 0.0
+    for ev in events:
+        try:
+            start = int(ev["estimateStartTime"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if abs(start - kickoff_ms) > KICKOFF_TOLERANCE_MS:
+            continue
+        h, a = ev.get("homeTeamName") or "", ev.get("awayTeamName") or ""
+        if _markers(home) != _markers(h) or _markers(away) != _markers(a):
+            continue
+        sh, sa = team_similarity(home, h), team_similarity(away, a)
+        strong, weak = max(sh, sa), min(sh, sa)
+        if not ((strong >= 0.95 and weak >= 0.3) or weak >= 0.7):
+            continue
+        if team_similarity(home, a) > sh or team_similarity(away, h) > sa:
+            continue
+        if sh + sa > best_score:
+            best, best_score = ev, sh + sa
+    return best
+
+
+def closest_event(home: str, away: str, events: Iterable[Dict]) -> Tuple[Optional[Dict], float]:
+    """The nearest event by names (for diagnosing unlinked predictions)."""
+    best, best_score = None, -1.0
+    for ev in events:
+        score = min(team_similarity(home, ev.get("homeTeamName") or ""),
+                    team_similarity(away, ev.get("awayTeamName") or ""))
+        if score > best_score:
+            best, best_score = ev, score
+    return best, max(best_score, 0.0)
 
 
 # ------------------------------------------------------------------ #

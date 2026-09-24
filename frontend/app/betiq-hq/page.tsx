@@ -612,7 +612,22 @@ export default function AdminPage() {
                 {l.at
                   ? <>{l.linked} of {l.predictions} upcoming predictions linked to SportyBet events
                       ({l.events} listed) · {new Date(l.at).toLocaleTimeString()}
-                      {l.report?.length > 0 && <span className="block text-slate-500 break-words">{l.report.join(" · ")}</span>}</>
+                      {l.report?.length > 0 && <span className="block text-slate-500 break-words">{l.report.join(" · ")}</span>}
+                      {l.unlinked?.length > 0 && (
+                        <details className="mt-1">
+                          <summary className="cursor-pointer text-slate-400 hover:text-white">
+                            Not linked: {l.predictions - l.linked} (closest SportyBet match shown)
+                          </summary>
+                          <ul className="mt-1 space-y-0.5 text-slate-500">
+                            {l.unlinked.map((u: any) => (
+                              <li key={`${u.match}-${u.date}`}>
+                                <span className="text-slate-300">{u.match}</span> · {u.date} {u.time} · {u.league}
+                                {" — "}{u.closest ? <>closest: {u.closest} ({Math.round(u.score * 100)}%)</> : "nothing that day"}
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
+                      )}</>
                   : "not linked yet — runs every 30 minutes and after each refresh"}
               </p>
               <button
