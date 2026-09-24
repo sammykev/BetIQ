@@ -39,6 +39,14 @@ H2H_CACHE_FILE = os.path.join("data", "h2h_cache.json")
 H2H_TTL_DAYS = 7
 PREDICTIONS_CACHE_FILE = os.path.join("data", "predictions_cache.json")
 RESULTS_CSV = os.path.join("data", "recent_results.csv")
+# Only fixtures within this many days from today are fetched and predicted
+PREDICTION_DAYS = int(os.getenv("PREDICTION_DAYS", "14"))
+
+
+def _within_window(match_date: str, today: Optional[date] = None) -> bool:
+    """True unless the fixture is further out than PREDICTION_DAYS."""
+    last = (today or date.today()) + timedelta(days=PREDICTION_DAYS)
+    return not match_date or match_date <= last.isoformat()
 
 # Redis client — only active when UPSTASH_REDIS_URL is set
 _redis = None
@@ -755,6 +763,8 @@ def _build_predictions(predictor, fixtures: list, live_odds: dict) -> list:
     """Turn upcoming fixtures + live odds into prediction dicts (with value-bet flags)."""
     predictions = []
     for fx in fixtures:
+        if not _within_window(fx.get("date", "")):
+            continue
         try:
             key = f"{fx['home']}:{fx['away']}:{fx.get('date','')}"
             odds = live_odds.get(key, {})
@@ -828,7 +838,7 @@ _intl_status: Dict[str, Any] = {"at": None, "fixtures": 0, "sources": {}, "error
 async def _fetch_international_fixtures() -> list:
     """Upcoming national-team fixtures; [] when every source fails."""
     try:
-        report = await intl.fetch_international(days_ahead=21)
+        report = await intl.fetch_international(days_ahead=PREDICTION_DAYS)
     except Exception as e:
         print(f"[International] fetch failed: {e}")
         _intl_status.update(at=datetime.now(timezone.utc), fixtures=0, sources={}, errors=[str(e)])
@@ -975,7 +985,7 @@ async def _run_pipeline():
             print("[Pipeline] Fetching upcoming fixtures (publishing after each league)...")
             for code in list(LEAGUES.keys()):
                 try:
-                    league_fixtures = await client.fetch_upcoming(code, days_ahead=90)
+                    league_fixtures = await client.fetch_upcoming(code, days_ahead=PREDICTION_DAYS)
                 except Exception as e:
                     print(f"[Pipeline] Fixture fetch error for {code}: {e}")
                     league_fixtures = []
@@ -1243,7 +1253,8 @@ async def get_predictions(
     min_confidence: float = 0.0,
     limit: int = 500,
 ):
-    data = _predictions_cache
+    # Predictions cached before the window shrank stay hidden
+    data = [p for p in _predictions_cache if _within_window(p.get("date", ""))]
 
     if league and league.upper() != "ALL":
         data = [p for p in data if p.get("league", "").upper() == league.upper()]

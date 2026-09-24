@@ -17,6 +17,9 @@ services:
         sync: false
       # SportyBet booking (sportybet.py). Defaults work; set SPORTYBET_PROXY only
       # if the admin "Test live booking" check shows SportyBet refusing this server.
+      # Days ahead to fetch and predict (main.PREDICTION_DAYS)
+      - key: PREDICTION_DAYS
+        value: "14"
       - key: SPORTYBET_COUNTRY
         value: ng
       - key: SPORTYBET_PROXY
