@@ -114,15 +114,18 @@ export function ChatBot({ predictions }: Props) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          messages: newMessages,
-          predictions: predictions.slice(0, 120),
+          messages: newMessages.slice(-20),
+          predictions: predictions.slice(0, 100),
         }),
       });
       const data = await res.json();
       if (!res.ok || data.error) {
         setMessages([...newMessages, {
           role: "assistant",
-          content: "Sorry, I'm having trouble right now. Please try again in a moment.",
+          content: res.status === 429 ? "You're sending messages quickly — give me a few seconds and try again."
+            : res.status === 401 ? "Please sign in to use the assistant."
+            : res.status === 402 ? "The assistant is part of Premium."
+            : "Sorry, I'm having trouble right now. Please try again in a moment.",
         }]);
         return;
       }

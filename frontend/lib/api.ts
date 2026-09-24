@@ -222,16 +222,26 @@ export interface MatchExplanation {
   error: string | null;
 }
 
-export async function fetchExplanation(home: string, away: string): Promise<MatchExplanation> {
+type Fetcher = (url: string, init?: RequestInit) => Promise<Response>;
+
+/** Premium content: pass the signed-in fetch (useAuthedFetch) so the
+ * backend can check the subscription. */
+export async function fetchExplanation(home: string, away: string, fetcher: Fetcher = fetch): Promise<MatchExplanation> {
   const params = new URLSearchParams({ home, away });
-  const res = await fetch(`${API_URL}/api/explain?${params}`, { cache: "no-store" });
-  if (!res.ok) return { explanation: null, sources: [], model: null, error: "fetch_failed" };
+  const res = await fetcher(`${API_URL}/api/explain?${params}`, { cache: "no-store" });
+  if (!res.ok) return { explanation: null, sources: [], model: null, error: res.status === 402 ? "premium_required" : "fetch_failed" };
   return res.json();
 }
 
-export async function fetchMatchAnalysis(home: string, away: string): Promise<MatchAnalysis> {
+/** Thrown when the backend wants a (premium) sign-in: status 401 or 402. */
+export class AccessError extends Error {
+  constructor(public status: number) { super(status === 401 ? "sign_in_required" : "premium_required"); }
+}
+
+export async function fetchMatchAnalysis(home: string, away: string, fetcher: Fetcher = fetch): Promise<MatchAnalysis> {
   const params = new URLSearchParams({ home, away });
-  const res = await fetch(`${API_URL}/api/analysis?${params}`, { cache: "no-store" });
+  const res = await fetcher(`${API_URL}/api/analysis?${params}`, { cache: "no-store" });
+  if (res.status === 401 || res.status === 402) throw new AccessError(res.status);
   if (!res.ok) throw new Error("Analysis failed");
   return res.json();
 }

@@ -155,11 +155,13 @@ class TestHistoryEndpoints:
 
     def test_feedback_settles_both_markets(self, client, redis, monkeypatch, tmp_path):
         monkeypatch.setattr(main, "RESULTS_CSV", str(tmp_path / "results.csv"))
+        monkeypatch.setattr(main, "ADMIN_SECRET", "s3cret")
         redis.set("betiq:history:2026-09-20", json.dumps([{**PRED, "outcome": "pending", "actual_result": None}]))
-        r = client.post("/api/feedback/result", json={
-            "home": "Arsenal", "away": "Chelsea", "date": "2026-09-20",
-            "result": "D", "home_score": 1, "away_score": 1,
-        })
+        body = {"home": "Arsenal", "away": "Chelsea", "date": "2026-09-20",
+                "result": "D", "home_score": 1, "away_score": 1}
+        # Results change the track record and the training data: admins only
+        assert client.post("/api/feedback/result", json=body).status_code == 403
+        r = client.post("/api/feedback/result", json=body, headers={"X-Admin-Secret": "s3cret"})
         assert r.status_code == 200
         [p] = json.loads(redis.get("betiq:history:2026-09-20"))
         assert (p["outcome"], p["goals_outcome"], p["score"]) == ("won", "push", "1-1")

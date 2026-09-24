@@ -2,7 +2,8 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { fetchMatchAnalysis, fetchExplanation } from "@/lib/api";
+import { AccessError, fetchMatchAnalysis, fetchExplanation } from "@/lib/api";
+import { useAuthedFetch } from "@/lib/useAuthedFetch";
 import type { MatchAnalysis, Market, MatchExplanation, Prediction, TeamForm } from "@/lib/api";
 import { kickoff } from "@/lib/matchTime";
 import { TeamBadge } from "@/components/PredictionCard";
@@ -286,7 +287,8 @@ function MatchContent() {
   const [prediction, setPrediction] = useState<Prediction | null>(null);
   const [analysis, setAnalysis] = useState<MatchAnalysis | null>(null);
   const [loadingAnalysis, setLoadingAnalysis] = useState(true);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<false | "failed" | "sign_in_required" | "premium_required">(false);
+  const authFetch = useAuthedFetch();
   const [explanation, setExplanation] = useState<MatchExplanation | null>(null);
   const [sbEvent, setSbEvent] = useState<SbEvent | null>(null);
   const slip = useBetSlip();
@@ -294,12 +296,12 @@ function MatchContent() {
   useEffect(() => {
     if (!home || !away) return;
 
-    fetchMatchAnalysis(home, away)
+    fetchMatchAnalysis(home, away, authFetch)
       .then(setAnalysis)
-      .catch(() => setError(true))
+      .catch(e => setError(e instanceof AccessError ? (e.message as "sign_in_required" | "premium_required") : "failed"))
       .finally(() => setLoadingAnalysis(false));
 
-    fetchExplanation(home, away)
+    fetchExplanation(home, away, authFetch)
       .then(setExplanation)
       .catch(() => setExplanation({ explanation: null, sources: [], model: null, error: "failed" }));
 
@@ -320,7 +322,7 @@ function MatchContent() {
       .then(r => r.json())
       .then(d => { if (d?.found) setSbEvent(d); })
       .catch(() => {});
-  }, [home, away, date]);
+  }, [home, away, date, authFetch]);
 
   const matchDate = date || prediction?.date || "";
   const toggleOption = (market: Market) => (opt: Market["options"][number]) =>
@@ -418,8 +420,14 @@ function MatchContent() {
       )}
       {error && (
         <div className="card border-dashed text-center py-12 px-6">
-          <p className="font-display font-bold text-xl uppercase text-n-0">Analysis unavailable</p>
-          <p className="text-sm text-n-400 mt-1">The model couldn&apos;t load this match right now. Try again in a moment.</p>
+          <p className="font-display font-bold text-xl uppercase text-n-0">
+            {error === "failed" ? "Analysis unavailable" : "Premium analysis"}
+          </p>
+          <p className="text-sm text-n-400 mt-1">
+            {error === "sign_in_required" ? "Sign in with your Premium account to see the full analysis."
+              : error === "premium_required" ? "The full match analysis is part of Premium. Upgrade from the home page to unlock it."
+              : "The model couldn't load this match right now. Try again in a moment."}
+          </p>
         </div>
       )}
 

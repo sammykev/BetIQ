@@ -15,6 +15,7 @@ import json
 from datetime import datetime, date, timedelta, timezone
 from typing import List, Dict, Any, Optional
 
+import httpx
 import numpy as np
 import pandas as pd
 from fastapi import FastAPI, BackgroundTasks, Depends, HTTPException, Request
@@ -28,6 +29,7 @@ from dotenv import load_dotenv
 from predictor import LeaguePredictor
 from data_fetcher import FootballDataClient, LEAGUES, API_BASE
 import international_fixtures as intl
+import security
 import set_pieces
 from scrapers.fbref import load_cards, load_corners, refresh as scrape_fbref, CORNERS_CSV, CARDS_CSV
 
@@ -84,8 +86,14 @@ async def _admin_identity(request: Request):
     import hmac
     import auth
     given = request.headers.get("x-admin-secret", "").strip()
-    if ADMIN_SECRET and given and hmac.compare_digest(given, ADMIN_SECRET):
-        return "secret", None
+    if given:
+        # A wrong secret counts towards a lockout; while locked out, even the
+        # right one is refused (it stops guessing, not the real admin for long)
+        if security.admin_locked(request):
+            raise HTTPException(status_code=429, detail="Too many wrong admin secrets — try again later.")
+        if ADMIN_SECRET and hmac.compare_digest(given.encode(), ADMIN_SECRET.encode()):
+            return "secret", None
+        security.admin_failed(request)
     uid = await auth.optional_user(request)
     if uid and uid in ADMIN_USER_IDS:
         return "clerk", uid
@@ -98,12 +106,59 @@ async def require_admin(request: Request) -> str:
         raise HTTPException(status_code=403, detail="Forbidden")
     return via
 
+
+async def require_premium(request: Request) -> Optional[str]:
+    """Premium content (match analysis, AI explanation): a signed-in premium
+    user, an admin, or anyone while the paywall is switched off. Not enforced
+    until CLERK_ISSUER and CLERK_SECRET_KEY are both set (logged once)."""
+    import auth
+    if not _paywall_enabled():
+        return None
+    if not auth.premium_enforced():
+        global _warned_premium
+        if not _warned_premium:
+            print("[Auth] WARNING: premium content isn't protected — set CLERK_ISSUER and "
+                  "CLERK_SECRET_KEY on the backend.")
+            _warned_premium = True
+        return None
+    via, uid = await _admin_identity(request)
+    if via:
+        return uid
+    if not uid:
+        raise HTTPException(status_code=401, detail="Sign in to see this.")
+    if not await auth.user_is_premium(uid):
+        raise HTTPException(status_code=402, detail="premium_required")
+    return uid
+
+
+_warned_premium = False
+
+
+def _paywall_enabled() -> bool:
+    r = _get_redis()
+    if r:
+        try:
+            return r.get(PAYWALL_KEY) != "false"
+        except Exception:
+            pass
+    return True
+
+# Browsers may call this API only from our own site (and the app, which
+# loads the same site). ALLOWED_ORIGINS adds more, comma-separated.
+ALLOWED_ORIGINS = sorted({o.strip().rstrip("/") for o in [
+    FRONTEND_URL, "https://predict-withbetiq.vercel.app", "http://localhost:3000",
+    *os.getenv("ALLOWED_ORIGINS", "").split(","),
+] if o.strip()})
+
+app.add_middleware(security.SecurityMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[FRONTEND_URL, "http://localhost:3000", "*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_methods=["GET", "POST", "DELETE"],
-    allow_headers=["*"],
+    allow_headers=["Authorization", "Content-Type", "X-Admin-Secret"],
+    max_age=3600,
 )
+security.configure(lambda: _get_redis())
 
 # --- Global state ---
 _predictor: Optional[LeaguePredictor] = None
@@ -1614,7 +1669,7 @@ def _sanitize(obj):
 
 
 @app.get("/api/analysis")
-async def get_match_analysis(home: str, away: str):
+async def get_match_analysis(home: str, away: str, _premium=Depends(require_premium)):
     if _predictor is None:
         raise HTTPException(status_code=503, detail="Model not ready yet")
 
@@ -2144,7 +2199,7 @@ async def get_calendar(month: str = ""):
 
 
 @app.post("/api/feedback/result")
-async def submit_match_result(body: Dict[str, Any]):
+async def submit_match_result(body: Dict[str, Any], _admin: str = Depends(require_admin)):
     """
     Submit a confirmed match result to update Elo and track prediction accuracy.
     Body: {home, away, date, result: "H"|"D"|"A", home_score?, away_score?}
@@ -2158,6 +2213,13 @@ async def submit_match_result(body: Dict[str, Any]):
 
     if not all([home, away, date_s, result]):
         raise HTTPException(status_code=400, detail="home, away, date, result required")
+    if result not in ("H", "D", "A") or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(date_s)):
+        raise HTTPException(status_code=400, detail="result must be H/D/A and date YYYY-MM-DD")
+    for score in (home_s, away_s):
+        if score is not None and (not str(score).isdigit() or int(score) > 30):
+            raise HTTPException(status_code=400, detail="scores must be whole numbers")
+    if len(str(home)) > 80 or len(str(away)) > 80:
+        raise HTTPException(status_code=400, detail="team names too long")
 
     # Update Redis history entry with actual result
     r = _get_redis()
@@ -2224,28 +2286,47 @@ async def push_public_key():
     key = os.getenv("VAPID_PUBLIC_KEY", "")
     return {"public_key": key}
 
+# Browser push services. The server POSTs notifications to a subscription's
+# endpoint, so any other host would let callers aim our server at anything.
+_PUSH_HOSTS = re.compile(r"^(fcm\.googleapis\.com|android\.googleapis\.com|updates\.push\.services\.mozilla\.com|"
+                         r"[a-z0-9.-]+\.push\.apple\.com|[a-z0-9.-]+\.notify\.windows\.com)$")
+MAX_PUSH_SUBS = 50_000
+
+
+def _valid_push_subscription(sub: Any) -> bool:
+    from urllib.parse import urlparse
+    if not isinstance(sub, dict) or len(json.dumps(sub)) > 2000:
+        return False
+    url = urlparse(str(sub.get("endpoint") or ""))
+    keys = sub.get("keys")
+    return (url.scheme == "https" and bool(_PUSH_HOSTS.match(url.hostname or ""))
+            and isinstance(keys, dict) and isinstance(keys.get("p256dh"), str) and isinstance(keys.get("auth"), str))
+
+
 @app.post("/api/push/subscribe")
 async def push_subscribe(req: Request):
     body = await req.json()
-    sub = body.get("subscription")
-    if not sub:
-        return {"ok": False, "error": "no subscription"}
+    sub = body.get("subscription") if isinstance(body, dict) else None
+    if not _valid_push_subscription(sub):
+        return {"ok": False, "error": "invalid subscription"}
     r = _get_redis()
     if r:
-        import json as _json
-        r.sadd(PUSH_SUBS_KEY, _json.dumps(sub, sort_keys=True))
+        if r.scard(PUSH_SUBS_KEY) >= MAX_PUSH_SUBS:
+            return {"ok": False, "error": "full"}
+        r.sadd(PUSH_SUBS_KEY, json.dumps({"endpoint": sub["endpoint"], "keys": {
+            "p256dh": sub["keys"]["p256dh"], "auth": sub["keys"]["auth"]}}, sort_keys=True))
     return {"ok": True}
 
 @app.delete("/api/push/subscribe")
 async def push_unsubscribe(req: Request):
     body = await req.json()
-    sub = body.get("subscription")
-    if not sub:
+    sub = body.get("subscription") if isinstance(body, dict) else None
+    if not _valid_push_subscription(sub):
         return {"ok": False}
     r = _get_redis()
     if r:
-        import json as _json
-        r.srem(PUSH_SUBS_KEY, _json.dumps(sub, sort_keys=True))
+        r.srem(PUSH_SUBS_KEY, json.dumps({"endpoint": sub["endpoint"], "keys": {
+            "p256dh": sub["keys"]["p256dh"], "auth": sub["keys"]["auth"]}}, sort_keys=True))
     return {"ok": True}
 
 
@@ -2349,7 +2430,7 @@ async def upload_basketball_csv(request: Request):
 
 
 @app.get("/api/debug/basketball-provider")
-async def debug_basketball_provider(date: str = ""):
+async def debug_basketball_provider(date: str = "", _admin: str = Depends(require_admin)):
     """
     Raw diagnostic dump for the api-basketball (API-SPORTS) integration —
     same purpose as the earlier /api/debug/competition-logo. Deliberately
@@ -2419,7 +2500,10 @@ async def upload_tennis_csv(request: Request):
     tennis_dir = os.path.join(DATA_DIR, "tennis")
     os.makedirs(tennis_dir, exist_ok=True)
 
-    filename = getattr(upload, "filename", None) or "tennis_matches.csv"
+    # The uploaded name picks the file on disk: keep only a plain *.csv name
+    filename = os.path.basename(getattr(upload, "filename", None) or "") or "tennis_matches.csv"
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,80}\.csv", filename):
+        raise HTTPException(status_code=400, detail="Upload a .csv file with a plain name")
     dest = os.path.join(tennis_dir, filename)
     try:
         content = await upload.read()
@@ -2484,7 +2568,7 @@ async def model_status(_admin: str = Depends(require_admin)):
 
 
 @app.get("/api/debug/calendar-status")
-async def debug_calendar_status():
+async def debug_calendar_status(_admin: str = Depends(require_admin)):
     """Quick diagnostic: shows what the calendar will return and what's in cache."""
     from datetime import date as _date
     month = _date.today().strftime("%Y-%m")
@@ -2507,7 +2591,7 @@ async def debug_calendar_status():
 
 
 @app.get("/api/debug/pipeline")
-async def debug_pipeline():
+async def debug_pipeline(_admin: str = Depends(require_admin)):
     """
     Pipeline / cache state — browser-friendly. Shows whether a refresh is
     running, when it last published, how many predictions are cached, the
@@ -2532,7 +2616,7 @@ async def debug_pipeline():
 
 
 @app.get("/api/debug/team-form")
-async def debug_team_form(team: str, live: bool = False):
+async def debug_team_form(team: str, live: bool = False, _admin: str = Depends(require_admin)):
     """
     Inspect (or force-refresh) the web-searched form/xG for one team — this is
     the pathway that supplies real xG for teams with sparse local history,
@@ -2603,7 +2687,7 @@ async def debug_team_form(team: str, live: bool = False):
 
 
 @app.get("/api/debug/odds")
-async def debug_odds(probe_sportybet: bool = True, probe_odds_api: bool = False):
+async def debug_odds(probe_sportybet: bool = True, probe_odds_api: bool = False, _admin: str = Depends(require_admin)):
     """
     Diagnose why market odds might be missing. There are TWO independent odds
     systems and either can fail on its own:
@@ -2669,7 +2753,7 @@ async def debug_odds(probe_sportybet: bool = True, probe_odds_api: bool = False)
 
 
 @app.get("/api/debug/fixtures")
-async def debug_fixtures(league: str = "WC", days: int = 90):
+async def debug_fixtures(league: str = "WC", days: int = 90, _admin: str = Depends(require_admin)):
     """
     Diagnostic: hit football-data.org directly for one competition and report
     what actually comes back — HTTP reachability, per-status counts, a sample,
@@ -2733,7 +2817,7 @@ async def debug_fixtures(league: str = "WC", days: int = 90):
 
 
 @app.get("/api/debug/predict")
-async def debug_predict(home: str, away: str, date_str: Optional[str] = None):
+async def debug_predict(home: str, away: str, date_str: Optional[str] = None, _admin: str = Depends(require_admin)):
     """
     Explain a single prediction: the raw feature values the model actually
     saw (Elo, xG, market-implied odds, form, etc.) alongside the resulting
@@ -2795,7 +2879,7 @@ async def debug_predict(home: str, away: str, date_str: Optional[str] = None):
 
 
 @app.get("/api/explain")
-async def explain_match(home: str, away: str):
+async def explain_match(home: str, away: str, _premium=Depends(require_premium)):
     """
     Generate a plain-language AI explanation for a match prediction.
     Combines XGBoost/Elo stats with live web search for injuries & lineups.
@@ -3240,9 +3324,19 @@ async def set_prefs(request: Request, body: Dict[str, Any]):
     return {"ok": True}
 
 
+SPORTS = ("basketball", "tennis", "table-tennis")
+
+
+def _check_sport(sport: str) -> None:
+    # Sport names go into cache keys and outside API calls: known ones only
+    if sport not in SPORTS:
+        raise HTTPException(status_code=404, detail="Unknown sport")
+
+
 @app.get("/api/sports/{sport}/leagues")
 async def get_sport_leagues(sport: str):
     """Return distinct leagues/tournaments being predicted for a sport."""
+    _check_sport(sport)
     import json as _json
     cache_key = f"betiq:sports:{sport}"
     r = _get_redis()
@@ -3268,6 +3362,7 @@ async def get_sport_predictions(sport: str):
     sport: basketball | tennis | table-tennis
     Requires ODDS_API_KEY env var.
     """
+    _check_sport(sport)
     import time as _time
     from sports_fetcher import (
         fetch_basketball_predictions,
@@ -3342,7 +3437,7 @@ async def get_team_logo(name: str):
 
 
 @app.get("/api/debug/team-logo")
-async def debug_team_logo(name: str):
+async def debug_team_logo(name: str, _admin: str = Depends(require_admin)):
     """
     Diagnose the team badge lookup: whether football-data.org's crest cache
     (populated for free from the fixtures the pipeline fetches — see
@@ -3516,7 +3611,7 @@ async def get_competition_logo(name: str, sport: str = "Soccer"):
 
 
 @app.get("/api/debug/competition-logo")
-async def debug_competition_logo(name: str, sport: str = "Soccer"):
+async def debug_competition_logo(name: str, sport: str = "Soccer", _admin: str = Depends(require_admin)):
     """
     Diagnose the competition logo lookup end-to-end.
 
@@ -3633,6 +3728,9 @@ async def get_sport_event_detail(sport: str, home: str, away: str, date: str):
     Full market detail for a specific basketball/tennis/table-tennis match.
     Used by the sport analysis modal.
     """
+    _check_sport(sport)
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date) or len(home) > 80 or len(away) > 80:
+        raise HTTPException(status_code=400, detail="Invalid match")
     from sports_fetcher import fetch_event_detail
     import json as _json
 
@@ -3732,9 +3830,12 @@ async def get_leaderboard(request: Request, uid: str = ""):
 
 @app.post("/api/track/match")
 async def track_match(body: Dict[str, Any]):
-    home = body.get("home", "")
-    away = body.get("away", "")
+    home = str(body.get("home", ""))
+    away = str(body.get("away", ""))
     if not home or not away: return {"ok": True}
+    # Only real fixtures, so junk can't grow the stats without bound
+    if not any(p.get("home") == home and p.get("away") == away for p in _predictions_cache):
+        return {"ok": True}
     r = _get_redis()
     if r:
         try: r.zincrby("betiq:stats:matches", 1, f"{home} vs {away}")
@@ -3744,8 +3845,8 @@ async def track_match(body: Dict[str, Any]):
 
 @app.post("/api/track/league")
 async def track_league(body: Dict[str, Any]):
-    league = body.get("league", "")
-    if not league: return {"ok": True}
+    league = str(body.get("league", ""))
+    if not re.fullmatch(r"[A-Za-z0-9-]{1,16}", league): return {"ok": True}
     r = _get_redis()
     if r:
         try: r.zincrby("betiq:stats:leagues", 1, league)
@@ -3779,19 +3880,25 @@ async def get_referral_stats(request: Request, uid: str = ""):
 
 
 @app.post("/api/referral/use")
-async def use_referral(body: Dict[str, Any]):
-    """Called when a new user signs up with a referral code."""
-    code = body.get("code", "").strip()
-    if not code: return {"ok": False}
+async def use_referral(request: Request, body: Dict[str, Any]):
+    """Called when a new user signs up with a referral code: counts once per
+    signed-in user, never for their own code."""
+    uid = await require_user(request, body.get("uid", ""))
+    code = str(body.get("code", "")).strip()
+    if not re.fullmatch(r"ref_[A-Za-z0-9]{1,8}", code) or code == f"ref_{uid[-8:]}":
+        return {"ok": False}
     r = _get_redis()
     if r:
-        try: r.incr(f"betiq:referral:{code}:count")
-        except Exception: pass
+        try:
+            if r.set(f"betiq:referral:used:{uid}", code, nx=True):
+                r.incr(f"betiq:referral:{code}:count")
+        except Exception:
+            pass
     return {"ok": True}
 
 
 @app.get("/api/debug/odds-sample")
-async def debug_odds_sample():
+async def debug_odds_sample(_admin: str = Depends(require_admin)):
     """
     Returns raw SportyBet events for the first prediction date we have cached,
     so we can verify the odds extraction is working.
@@ -4206,10 +4313,25 @@ async def set_paywall_state(body: Dict[str, Any], _admin: str = Depends(require_
     return {"enabled": enabled}
 
 
+REFRESH_COOLDOWN = 30 * 60
+_last_public_refresh = 0.0
+
+
 @app.post("/api/refresh")
-async def refresh_predictions(background_tasks: BackgroundTasks):
+async def refresh_predictions(request: Request, background_tasks: BackgroundTasks):
+    """Rebuild predictions. Admins any time; the public button (the home
+    page's retry when nothing is cached) at most once per REFRESH_COOLDOWN —
+    a run takes minutes of the server's CPU."""
+    global _last_public_refresh
+    via, _ = await _admin_identity(request)
+    if _is_training:
+        return {"message": "Already refreshing", "started": False}
+    if not via:
+        if time.time() - _last_public_refresh < REFRESH_COOLDOWN:
+            return {"message": "Refreshed recently", "started": False}
+        _last_public_refresh = time.time()
     background_tasks.add_task(_run_pipeline)
-    return {"message": "Refresh started"}
+    return {"message": "Refresh started", "started": True}
 
 
 # ------------------------------------------------------------------ #

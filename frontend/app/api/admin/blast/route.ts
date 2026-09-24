@@ -5,6 +5,9 @@ import { isAdminRequest } from "@/lib/serverAdmin";
 
 const resend = new Resend(process.env.RESEND_API_KEY || "");
 
+const escapeHtml = (s: string) =>
+  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
 export async function POST(req: NextRequest) {
   try {
     if (!(await isAdminRequest(req)))
@@ -34,7 +37,7 @@ export async function POST(req: NextRequest) {
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px;">
           <span style="font-size:28px;font-weight:900;color:#22c55e;">BetIQ</span>
         </div>
-        <p style="font-size:16px;line-height:1.6;color:#1e293b;">${message.replace(/\n/g, "<br/>")}</p>
+        <p style="font-size:16px;line-height:1.6;color:#1e293b;">${escapeHtml(String(message)).replace(/\n/g, "<br/>")}</p>
         <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0;"/>
         <p style="font-size:12px;color:#94a3b8;">
           You're receiving this as a BetIQ Premium member.

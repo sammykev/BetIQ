@@ -36,3 +36,13 @@ def trained_predictor(training_df):
     predictor = LeaguePredictor()
     predictor.train(training_df)
     return predictor
+
+
+@pytest.fixture(autouse=True)
+def _fresh_rate_limits():
+    """Each test starts with empty rate-limit and admin-lockout counters."""
+    import security
+    security._limiter = security.SlidingWindow()
+    security._admin_failures = security.SlidingWindow()
+    security._logged = security.SlidingWindow()
+    yield
