@@ -202,16 +202,14 @@ def parse_espn(data: Dict, slug: str) -> Tuple[List[Dict], List[Dict]]:
     return fixtures, results
 
 
-def parse_sofascore(data: Dict) -> Tuple[List[Dict], List[Dict]]:
-    """(upcoming fixtures, regulation-time results) from one SofaScore day:
-    senior men's national-team matches only."""
-    fixtures, results = [], []
+def sofascore_internationals(data: Dict) -> Iterable[Tuple[Dict, str, str, str, datetime]]:
+    """(event, home, away, competition, kick-off) for each senior men's
+    national-team match in one SofaScore day."""
     for ev in (data or {}).get("events") or []:
         home, away = ev.get("homeTeam") or {}, ev.get("awayTeam") or {}
         h_name, a_name = (home.get("name") or "").strip(), (away.get("name") or "").strip()
         unique = (ev.get("tournament") or {}).get("uniqueTournament") or {}
         comp = (unique or ev.get("tournament") or {}).get("name") or ""
-        logo = SOFASCORE_LOGO.format(id=unique["id"]) if unique.get("id") else None
         if not h_name or not a_name or "club" in comp.lower():
             continue
         if "national" in home or "national" in away:
@@ -225,7 +223,16 @@ def parse_sofascore(data: Dict) -> Tuple[List[Dict], List[Dict]]:
             kickoff = datetime.fromtimestamp(int(ev["startTimestamp"]), timezone.utc)
         except (KeyError, TypeError, ValueError):
             continue
+        yield ev, h_name, a_name, comp, kickoff
 
+
+def parse_sofascore(data: Dict) -> Tuple[List[Dict], List[Dict]]:
+    """(upcoming fixtures, regulation-time results) from one SofaScore day:
+    senior men's national-team matches only."""
+    fixtures, results = [], []
+    for ev, h_name, a_name, comp, kickoff in sofascore_internationals(data):
+        unique = (ev.get("tournament") or {}).get("uniqueTournament") or {}
+        logo = SOFASCORE_LOGO.format(id=unique["id"]) if unique.get("id") else None
         status = ev.get("status") or {}
         if status.get("type") == "notstarted":
             fixtures.append(_fixture(f"sofa:{ev.get('id')}", h_name, a_name, kickoff, comp, None,

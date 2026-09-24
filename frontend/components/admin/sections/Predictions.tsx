@@ -2,11 +2,65 @@
 
 import { useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
-import { Database, Download, Flag, MousePointerClick, Star, Target } from "lucide-react";
+import { Database, Download, Flag, Globe2, MousePointerClick, Star, Target } from "lucide-react";
 import { TrackRecord } from "@/components/TrackRecord";
 import { API, BarList, Btn, Card, Skeleton, Stat, ago, inputClass, num, useAdmin } from "../ui";
 
 const toneOf = (acc: number) => (acc >= 60 ? "text-accent" : acc >= 45 ? "text-warn" : "text-danger");
+
+const STAT_NAMES: Record<string, string> = {
+  corners: "Total corners", bookings: "Total bookings (cards)", corners_home: "Home team corners", corners_away: "Away team corners",
+};
+
+/** International corners/cards: data collected nightly (GitHub Actions) and
+ * whether the model beat the competition average on the last 12 months. */
+function InternationalSetPieces({ info }: { info: any }) {
+  const ds = info?.dataset;
+  const check = info?.check ?? {};
+  if (!ds || !ds.matches) {
+    return (
+      <p className="text-xs text-n-400">
+        No international corner/card data yet. Add the UPSTASH_REDIS_URL secret on GitHub (and APIFOOTBALL_KEY for the
+        API-Football top-up), then run the &quot;Collect international stats&quot; workflow. Until then internationals use
+        SportyBet&apos;s own corners and bookings lines.
+      </p>
+    );
+  }
+  const run = ds.last_run;
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <Stat label="Matches" value={num(ds.matches)} sub={ds.first ? `${ds.first} → ${ds.last}` : undefined} />
+        <Stat label="Sources" value={Object.keys(ds.sources ?? {}).length}
+          sub={Object.entries(ds.sources ?? {}).map(([k, v]) => `${k} ${num(v as number)}`).join(" · ")} />
+        <Stat label="Backfill" value={ds.backfill_complete ? "Done" : "Running"} tone={ds.backfill_complete ? "accent" : "warn"}
+          sub={ds.oldest_day_scanned ? `back to ${ds.oldest_day_scanned}` : undefined} />
+        <Stat label="Model" value={info.active ? "In use" : "Not yet"} tone={info.active ? "accent" : undefined}
+          sub={check.at ? `checked ${ago(check.at)}` : undefined} />
+      </div>
+      {check.reason && <p className="text-xs text-n-400">{check.reason} — internationals use SportyBet&apos;s lines meanwhile.</p>}
+      {check.holdout && Object.keys(check.holdout).length > 0 && (
+        <ul className="grid gap-1.5 sm:grid-cols-2 text-xs">
+          {Object.entries(check.holdout as Record<string, any>).map(([stat, v]) => (
+            <li key={stat} className="rounded-lg bg-surface-sunken px-2.5 py-1.5 flex justify-between gap-2">
+              <span className="text-n-200">{STAT_NAMES[stat] ?? stat}</span>
+              <span className={clsx("tnum", check.use?.[stat] ? "text-accent" : "text-n-400")}>
+                {check.use?.[stat] ? "used" : "not used"} · score {v.model} vs {v.baseline} average · {num(v.matches)} matches
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {run && (
+        <p className="text-[11px] text-n-500">
+          Last collection {ago(run.at)}: SofaScore {run.sofascore?.days ?? 0} days, +{run.sofascore?.matches ?? 0} matches
+          {run.sofascore?.stopped && run.sofascore.stopped !== "time" ? ` (stopped: ${run.sofascore.stopped})` : ""}
+          {run.api_football ? ` · API-Football +${run.api_football.matches} (${run.api_football.requests} requests${run.api_football.stopped && run.api_football.stopped !== "budget" ? `, ${run.api_football.stopped}` : ""})` : " · API-Football off"}
+        </p>
+      )}
+    </div>
+  );
+}
 
 function SharedModel({ model }: { model: any }) {
   if (!model) return <p className="text-xs text-warn">No shared model yet, so restarts train on the server. Run the &quot;Train model&quot; workflow on GitHub.</p>;
@@ -107,6 +161,11 @@ export function PredictionsSection() {
       </Card>
 
       <TrackRecord adminFetch={trackFetch} />
+
+      <Card title="International corners & cards" icon={<Globe2 size={15} />}
+        subtitle="Collected nightly from SofaScore and API-Football; lower score is better">
+        {!data ? <Skeleton rows={2} /> : <InternationalSetPieces info={data.international_set_pieces} />}
+      </Card>
 
       <Card title="Training data" icon={<Database size={15} />}
         subtitle={data?.last_sync?.at ? `League results synced ${ago(data.last_sync.at)}` : "Not synced since the last restart"}>

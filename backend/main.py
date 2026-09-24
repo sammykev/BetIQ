@@ -186,6 +186,10 @@ _is_training = False
 _history_df: Optional[pd.DataFrame] = None
 # Corners / bookings totals, refitted from the league CSVs every pipeline run
 _set_pieces: Optional[set_pieces.SetPieceModel] = None
+# The same for internationals (data from collect_international_stats.py),
+# per stat only where it beat the competition average on unseen matches
+_intl_set_pieces: Optional[set_pieces.SetPieceModel] = None
+_intl_sp_info: Dict[str, Any] = {}
 _cards_df: pd.DataFrame = pd.DataFrame()
 _corners_df: pd.DataFrame = pd.DataFrame()
 
@@ -897,11 +901,14 @@ def _build_predictions(predictor, fixtures: list, live_odds: dict) -> list:
 
             value_edge = round(model_p - implied, 3) if (model_p is not None and implied is not None) else None
 
-            # Corners and bookings: club leagues with match stats only
+            # Corners and bookings: club leagues from their match stats;
+            # internationals from the international model where it earned it
             extras = None
             if _set_pieces is not None and not fx.get("model_league"):
                 extras = _set_pieces.markets(predictor.canon(fx["home"]), predictor.canon(fx["away"]),
                                              fx.get("league"))
+            elif fx.get("model_league"):
+                extras = _international_set_pieces(fx)
 
             predictions.append({
                 **fx, **tip,
@@ -1141,6 +1148,10 @@ async def _run_pipeline():
             _set_pieces = await asyncio.to_thread(set_pieces.SetPieceModel.fit, history)
         except Exception as e:
             print(f"[Pipeline] Corners/bookings model failed (non-fatal): {e}")
+        try:
+            await asyncio.to_thread(_load_international_set_pieces)
+        except Exception as e:
+            print(f"[Pipeline] International corners/bookings model failed (non-fatal): {e}")
         print(f"[Pipeline] {len(combined)} training matches.")
 
         # Training takes minutes of CPU. On a worker thread the API keeps
@@ -2125,6 +2136,7 @@ async def data_status(_admin: str = Depends(require_admin)):
         "international": {**_intl_status, "at": _intl_status["at"].isoformat() if _intl_status["at"] else None},
         "shared_model": _shared_model_status(),
         "sportybet_links": _sb_link_status,
+        "international_set_pieces": {**_intl_sp_info, "active": _intl_set_pieces is not None},
     }
 
 
@@ -4468,12 +4480,52 @@ def _linked_event(selection: Dict[str, Any]) -> Optional[Dict]:
 
 def _with_priced_set_pieces(pred: Dict, event: Optional[Dict]) -> Dict:
     """A prediction with corners/bookings lines implied by SportyBet's own
-    prices when our stats have none for it (internationals, clubs outside
-    the league data) — set_pieces.from_prices."""
-    if pred.get("set_pieces") or not event:
+    prices for whichever of the two our models don't cover for it
+    (internationals, clubs outside the league data) — set_pieces.from_prices."""
+    have = pred.get("set_pieces") or {}
+    if not event or ("corners" in have and "bookings" in have):
         return pred
-    priced = set_pieces.from_prices(event, getattr(_set_pieces, "size", None))
-    return {**pred, "set_pieces": priced} if priced else pred
+    priced = set_pieces.from_prices(event, getattr(_set_pieces, "size", None)) or {}
+    extra = {k: v for k, v in priced.items() if k not in have}
+    return {**pred, "set_pieces": {**have, **extra}} if extra else pred
+
+
+def _load_international_set_pieces() -> None:
+    """Fit the international corners/bookings model from the collected data,
+    with the settings the nightly check chose — if it beat the competition
+    average there. CPU-light (well under a second); run in a thread."""
+    global _intl_set_pieces, _intl_sp_info
+    import international_stats
+    import model_store
+    try:
+        data = international_stats.load(model_store._client())
+    except Exception as e:
+        _intl_sp_info = {"error": str(e)}
+        return
+    verdict = data.get("model") or {}
+    _intl_sp_info = {"dataset": international_stats.summary(data), "check": verdict}
+    use = verdict.get("use") or {}
+    if not any(use.values()) or not verdict.get("params"):
+        _intl_set_pieces = None
+        return
+    _intl_set_pieces = set_pieces.SetPieceModel.fit(international_stats.rows_frame(data), verdict["params"])
+
+
+def _international_set_pieces(fx: Dict) -> Optional[Dict]:
+    """Corners/bookings for an international fixture, only the stats the
+    nightly check approved."""
+    if _intl_set_pieces is None:
+        return None
+    use = (_intl_sp_info.get("check") or {}).get("use") or {}
+    got = _intl_set_pieces.markets(intl.team_key(fx["home"]), intl.team_key(fx["away"]), fx.get("league"))
+    if not got:
+        return None
+    keep = {k: v for k, v in got.items() if use.get(k)}
+    if not (use.get("corners_home") and use.get("corners_away")):
+        keep.pop("corners_1x2", None)
+    else:
+        keep["corners_1x2"] = got["corners_1x2"]
+    return keep or None
 
 
 def _bookable_markets():

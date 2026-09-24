@@ -139,7 +139,15 @@ def from_prices(event: Optional[Dict], sizes: Optional[Dict[str, Optional[float]
 
 
 class SetPieceModel:
-    def __init__(self):
+    """params (all optional, else the module defaults above, read at use):
+    decay, prior, gamma, team_gamma, league_decay, min_matches, and
+    seed_leagues — a competition seen for the first time starts from the
+    average over all competitions rather than its first match (for
+    internationals, where many competitions have few matches)."""
+
+    def __init__(self, params: Optional[Dict] = None):
+        self.params = dict(params or {})
+        self.overall: Dict[str, List[float]] = {}  # stat -> [home avg, away avg] over everything
         # league -> stat -> [home avg, away avg]
         self.league: Dict[str, Dict[str, List[float]]] = {}
         # team -> stat -> [weight, for ratio sum, against ratio sum]
@@ -152,14 +160,20 @@ class SetPieceModel:
     def _league_avgs(self, league: str, stat: str) -> Optional[List[float]]:
         return self.league.get(league, {}).get(stat)
 
+    def _p(self, name: str):
+        return self.params.get(name, globals()[name.upper()])
+
     def _rating(self, team: str, stat: str) -> Tuple[float, float]:
         w, f, a = self.team.get(team, {}).get(stat, (0.0, 0.0, 0.0))
-        return (f + PRIOR) / (w + PRIOR), (a + PRIOR) / (w + PRIOR)
+        prior = self._p("prior")
+        return (f + prior) / (w + prior), (a + prior) / (w + prior)
 
     def expected(self, home: str, away: str, league: Optional[str] = None) -> Optional[Dict[str, Tuple[float, float]]]:
         """{stat: (home mean, away mean)}, or None for teams we know too little about."""
-        if self.matches.get(home, 0) < MIN_MATCHES or self.matches.get(away, 0) < MIN_MATCHES:
+        need = self._p("min_matches")
+        if self.matches.get(home, 0) < need or self.matches.get(away, 0) < need:
             return None
+        gamma, team_gamma = self._p("gamma"), self._p("team_gamma")
         league = league if league in self.league else self.league_of.get(home)
         out = {}
         for stat in STATS:
@@ -168,33 +182,38 @@ class SetPieceModel:
                 return None
             fh, ah = self._rating(home, stat)
             fa, aa = self._rating(away, stat)
-            out[stat] = (avgs[0] * (fh * aa) ** GAMMA, avgs[1] * (fa * ah) ** GAMMA)
+            out[stat] = (avgs[0] * (fh * aa) ** gamma, avgs[1] * (fa * ah) ** gamma)
             if stat == "corners":
-                out["corners_team"] = (avgs[0] * (fh * aa) ** TEAM_GAMMA, avgs[1] * (fa * ah) ** TEAM_GAMMA)
+                out["corners_team"] = (avgs[0] * (fh * aa) ** team_gamma, avgs[1] * (fa * ah) ** team_gamma)
         return out
 
     def update(self, home: str, away: str, league: str, counts: Dict[str, Tuple[float, float]]) -> None:
+        decay, league_decay = self._p("decay"), self._p("league_decay")
         for stat, (h, a) in counts.items():
             lg = self.league.setdefault(league, {})
             if stat not in lg:
-                lg[stat] = [max(h, 0.5), max(a, 0.5)]
+                seed = self.overall.get(stat) if self.params.get("seed_leagues") else None
+                lg[stat] = list(seed) if seed else [max(h, 0.5), max(a, 0.5)]
             lh, la = lg[stat]
             for team, gained, conceded, own, opp in ((home, h, a, lh, la), (away, a, h, la, lh)):
                 t = self.team.setdefault(team, {}).setdefault(stat, [0.0, 0.0, 0.0])
-                t[0] = t[0] * DECAY + 1
-                t[1] = t[1] * DECAY + gained / own
-                t[2] = t[2] * DECAY + conceded / opp
-            lg[stat] = [lh * LEAGUE_DECAY + h * (1 - LEAGUE_DECAY), la * LEAGUE_DECAY + a * (1 - LEAGUE_DECAY)]
+                t[0] = t[0] * decay + 1
+                t[1] = t[1] * decay + gained / own
+                t[2] = t[2] * decay + conceded / opp
+            lg[stat] = [lh * league_decay + h * (1 - league_decay), la * league_decay + a * (1 - league_decay)]
+            ov = self.overall.setdefault(stat, [max(h, 0.5), max(a, 0.5)])
+            self.overall[stat] = [ov[0] * 0.998 + h * 0.002, ov[1] * 0.998 + a * 0.002]
         for team in (home, away):
             self.matches[team] = self.matches.get(team, 0) + 1
         self.league_of[home] = self.league_of[away] = league
 
     # ---------------------------------------------------------------- #
     @classmethod
-    def replay(cls, matches: pd.DataFrame, test_from: Optional[pd.Timestamp] = None):
+    def replay(cls, matches: pd.DataFrame, test_from: Optional[pd.Timestamp] = None,
+               params: Optional[Dict] = None):
         """Fit on matches in date order. Returns (model, [(date, stat, mean, actual,
         baseline mean)]) — predictions made before each match, from test_from on."""
-        model = cls()
+        model = cls(params)
         rows = []
         df = matches.sort_values("Date")
         for rec in df.itertuples(index=False):
@@ -227,7 +246,7 @@ class SetPieceModel:
         return den / num
 
     @classmethod
-    def fit(cls, matches: pd.DataFrame) -> Optional["SetPieceModel"]:
+    def fit(cls, matches: pd.DataFrame, params: Optional[Dict] = None) -> Optional["SetPieceModel"]:
         """The model after every match with stats, with spreads fitted on its own
         walk-forward errors (the first season is warm-up)."""
         cols = {"Date", "HomeTeam", "AwayTeam", "HC", "AC", "HY", "AY", "HR", "AR"}
@@ -237,7 +256,7 @@ class SetPieceModel:
         if data.empty:
             return None
         warm_up = data["Date"].min() + pd.Timedelta(days=365)
-        model, rows = cls.replay(data, test_from=warm_up)
+        model, rows = cls.replay(data, test_from=warm_up, params=params)
         for stat in STATS + TEAM_STATS:
             model.size[stat] = cls.fit_size((m, y) for _, s, m, y, _ in rows if s == stat)
         return model
@@ -260,6 +279,71 @@ class SetPieceModel:
                             self.size.get("corners_home"), self.size.get("corners_away"))
         out["corners_1x2"] = {k: round(v, 3) for k, v in race.items()}
         return out
+
+
+def score(matches: pd.DataFrame, params: Optional[Dict], start: pd.Timestamp,
+          end: Optional[pd.Timestamp] = None) -> Dict[str, Dict[str, float]]:
+    """Walk-forward Brier score, summed over each stat's lines, for matches in
+    [start, end): {stat: {"model", "baseline", "matches"}} — spreads fitted on
+    the errors before `start`, baseline = the competition average."""
+    data = matches.dropna(subset=["HC", "AC", "HY", "AY", "HR", "AR"])
+    warm_up = data["Date"].min() + pd.Timedelta(days=365)
+    _, rows = SetPieceModel.replay(data, test_from=warm_up, params=params)
+    out = {}
+    for stat in STATS + TEAM_STATS:
+        before = [(m, y, b) for d, s, m, y, b in rows if s == stat and d < start]
+        test = [(m, y, b) for d, s, m, y, b in rows if s == stat and d >= start and (end is None or d < end)]
+        if not test:
+            continue
+        size = SetPieceModel.fit_size((m, y) for m, y, _ in before) or DEFAULT_SIZE.get(stat.split("_")[0])
+        base_size = SetPieceModel.fit_size((b, y) for _, y, b in before) or size
+        model_b = base_b = 0.0
+        for m, y, b in test:
+            for line in LINES[stat]:
+                hit = 1.0 if y > line else 0.0
+                model_b += (p_over(line, m, size) - hit) ** 2
+                base_b += (p_over(line, b, base_size) - hit) ** 2
+        out[stat] = {"model": round(model_b / len(test), 4), "baseline": round(base_b / len(test), 4),
+                     "matches": len(test)}
+    return out
+
+
+# National teams: few matches each, many small competitions
+INTERNATIONAL_GRID = [
+    {"prior": prior, "gamma": gamma, "decay": decay, "min_matches": 4, "seed_leagues": True, "league_decay": 0.98}
+    for prior in (6.0, 12.0, 20.0) for gamma in (0.4, 0.6, 0.8) for decay in (0.85, 0.92)
+]
+MIN_HOLDOUT = 200
+
+
+def tune_international(matches: pd.DataFrame, today: Optional[pd.Timestamp] = None) -> Dict:
+    """Pick settings on everything but the last 12 months, then test on those
+    months against the competition average. The model is used ("use": True,
+    per stat) only where it beats that baseline on matches it never saw."""
+    today = today or pd.Timestamp.now().normalize()
+    holdout = today - pd.Timedelta(days=365)
+    report: Dict = {"matches": int(len(matches)), "use": {}, "params": None, "holdout": {}}
+    if matches.empty or len(matches) < 600:
+        report["reason"] = f"not enough matches yet ({len(matches)}; need 600)"
+        return report
+    first = matches["Date"].min()
+    tune_start = first + pd.Timedelta(days=730)
+    if tune_start >= holdout:
+        report["reason"] = "not enough history yet (need three years)"
+        return report
+    best, best_score = None, None
+    for params in INTERNATIONAL_GRID:
+        sc = score(matches[matches["Date"] < holdout], params, tune_start)
+        total = sum(v["model"] for k, v in sc.items() if k in STATS)
+        if best_score is None or total < best_score:
+            best, best_score = params, total
+    report["params"] = best
+    report["holdout"] = score(matches, best, holdout)
+    for stat, v in report["holdout"].items():
+        report["use"][stat] = v["matches"] >= MIN_HOLDOUT and v["model"] < v["baseline"]
+    if not any(report["use"].values()):
+        report["reason"] = "didn't beat the competition average on the last 12 months"
+    return report
 
 
 def evaluate(matches: pd.DataFrame, test_from: str) -> Dict:
