@@ -8,6 +8,7 @@ FastAPI backend for Sport Bet Predictions.
 
 import asyncio
 import os
+import re
 import time
 import glob
 import json
@@ -3916,6 +3917,27 @@ def _match_predictions_to_events(preds: List[Dict], events: List[Dict],
     return links
 
 
+_INTL_TOURNAMENT = re.compile(r"international|friendl|nations league|qualif|world cup|africa|afcon|"
+                              r"concacaf|conmebol|uefa|asian cup|euro\b", re.I)
+
+
+def _catalog_summary(events: List[Dict]) -> Dict[str, Any]:
+    """How SportyBet's listing is spread over the coming days, and which
+    national-team competitions it carries (to tell "not offered yet" from
+    "not fetched")."""
+    import sportybet
+    days: Dict[str, int] = {}
+    tournaments: Dict[str, int] = {}
+    for ev in events:
+        day = sportybet._utc_day(ev) or "?"
+        days[day] = days.get(day, 0) + 1
+        name = ev.get("_tournament") or ""
+        if name and _INTL_TOURNAMENT.search(name):
+            tournaments[name] = tournaments.get(name, 0) + 1
+    return {"days": dict(sorted(days.items())[:21]),
+            "international": dict(sorted(tournaments.items(), key=lambda kv: -kv[1])[:20])}
+
+
 async def _link_sportybet_events() -> Dict[str, Any]:
     """Match upcoming football predictions to SportyBet events and keep the links."""
     import sportybet
@@ -3931,6 +3953,7 @@ async def _link_sportybet_events() -> Dict[str, Any]:
         except Exception as e:
             events, status["report"] = [], [f"{type(e).__name__}: {e}"]
         status["events"] = len(events)
+        status["catalog"] = _catalog_summary(events)
         if events:  # an empty catalog (SportyBet unreachable) keeps the last links
             unlinked: List[Dict] = []
             links = await asyncio.to_thread(_match_predictions_to_events, preds, events, unlinked)

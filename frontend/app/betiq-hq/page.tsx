@@ -613,6 +613,16 @@ export default function AdminPage() {
                   ? <>{l.linked} of {l.predictions} upcoming predictions linked to SportyBet events
                       ({l.events} listed) · {new Date(l.at).toLocaleTimeString()}
                       {l.report?.length > 0 && <span className="block text-slate-500 break-words">{l.report.join(" · ")}</span>}
+                      {l.catalog?.days && (
+                        <span className="block text-slate-500 break-words">
+                          By day: {Object.entries(l.catalog.days as Record<string, number>).map(([d, n]) => `${d.slice(5)} ${n}`).join(" · ")}
+                        </span>
+                      )}
+                      {l.catalog?.international && Object.keys(l.catalog.international).length > 0 && (
+                        <span className="block text-slate-500 break-words">
+                          Internationals on SportyBet: {Object.entries(l.catalog.international as Record<string, number>).map(([t, n]) => `${t} ${n}`).join(" · ")}
+                        </span>
+                      )}
                       {l.unlinked?.length > 0 && (
                         <details className="mt-1">
                           <summary className="cursor-pointer text-slate-400 hover:text-white">

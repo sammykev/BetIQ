@@ -100,17 +100,23 @@ async def _request(session: AsyncSession, method: str, path: str, **kw) -> Dict[
 # Events
 # ------------------------------------------------------------------ #
 
-def _collect_events(node: Any, out: List[Dict]) -> None:
-    """Every event dict in a response, however it is grouped (tournaments, pages…)."""
+def _collect_events(node: Any, out: List[Dict], tournament: Optional[str] = None) -> None:
+    """Every event dict in a response, however it is grouped (tournaments,
+    pages…). Events are tagged with their tournament's name (`_tournament`)
+    when a parent group has one."""
     if isinstance(node, dict):
         if node.get("eventId") and node.get("homeTeamName") and node.get("awayTeamName"):
+            if tournament and "_tournament" not in node:
+                node["_tournament"] = tournament
             out.append(node)
             return
+        if isinstance(node.get("events"), list) and node.get("name"):
+            tournament = " · ".join(str(x) for x in (node.get("categoryName"), node.get("name")) if x)
         for v in node.values():
-            _collect_events(v, out)
+            _collect_events(v, out, tournament)
     elif isinstance(node, list):
         for v in node:
-            _collect_events(v, out)
+            _collect_events(v, out, tournament)
 
 
 def _utc_day(ev: Dict) -> Optional[str]:
@@ -137,33 +143,42 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
-async def _pc_upcoming(session: AsyncSession, max_pages: int = 10) -> List[Dict]:
-    """The desktop site's "Upcoming" football list, page by page."""
+async def _paged(session: AsyncSession, path: str, params: Dict[str, Any],
+                 max_pages: int) -> Tuple[List[Dict], int, Optional[int]]:
+    """(events, pages fetched, SportyBet's totalNum) for a paged listing:
+    pages until one adds no new events (pages hold ~40–100 events)."""
     events: List[Dict] = []
+    seen: set = set()
+    total: Optional[int] = None
+    page = 0
     for page in range(1, max_pages + 1):
-        # The parameters sportybet.com's Upcoming page (and public scrapers) use
-        data = (await _request(session, "GET", "/factsCenter/pcUpcomingEvents", params={
-            "sportId": FOOTBALL, "marketId": MARKETS, "pageSize": 100, "pageNum": page,
-            "todayGames": "false", "_t": _now_ms()})).get("data") or {}
+        data = (await _request(session, "GET", path, params={
+            **params, "pageNum": page, "_t": _now_ms()})).get("data") or {}
         found: List[Dict] = []
         _collect_events(data, found)
-        seen = {e["eventId"] for e in events}
         new = [e for e in found if e["eventId"] not in seen]
+        seen.update(e["eventId"] for e in new)
         events += new
-        total = data.get("totalNum") if isinstance(data, dict) else None
-        if not new or (total and len(events) >= int(total)):
+        if isinstance(data, dict) and str(data.get("totalNum", "")).isdigit():
+            total = int(data["totalNum"])
+        if not new:
             break
+    return events, page, total
+
+
+async def _pc_upcoming(session: AsyncSession, max_pages: int = 80) -> List[Dict]:
+    """The desktop site's "Upcoming" football list, page by page."""
+    # The parameters sportybet.com's Upcoming page (and public scrapers) use
+    events, _, _ = await _paged(session, "/factsCenter/pcUpcomingEvents", {
+        "sportId": FOOTBALL, "marketId": MARKETS, "pageSize": 100, "todayGames": "false"}, max_pages)
     return events
 
 
-async def _wap_upcoming(session: AsyncSession) -> List[Dict]:
+async def _wap_upcoming(session: AsyncSession, max_pages: int = 1) -> List[Dict]:
     """The mobile site's upcoming list."""
-    data = await _request(session, "GET", "/factsCenter/wapConfigurableUpcomingEvents", params={
-        "sportId": FOOTBALL, "marketId": MARKETS, "pageSize": 100, "pageNum": 1,
-        "option": 1, "_t": _now_ms()})
-    found: List[Dict] = []
-    _collect_events(data.get("data"), found)
-    return found
+    events, _, _ = await _paged(session, "/factsCenter/wapConfigurableUpcomingEvents", {
+        "sportId": FOOTBALL, "marketId": MARKETS, "pageSize": 100, "option": 1}, max_pages)
+    return events
 
 
 async def _pc_events(session: AsyncSession) -> List[Dict]:
@@ -266,18 +281,38 @@ def slim_event(ev: Dict) -> Dict:
 
 async def fetch_catalog(session: Optional[AsyncSession] = None) -> Tuple[List[Dict], List[str]]:
     """Every upcoming football event SportyBet lists (for linking predictions
-    ahead of booking), and one report line per listing tried."""
+    ahead of booking), merged from its desktop, mobile and highlights feeds,
+    and one report line per feed."""
     session = session or shared_session()
     report: List[str] = []
+    merged: Dict[str, Dict] = {}
+    feeds = [
+        ("pcUpcomingEvents", "/factsCenter/pcUpcomingEvents",
+         {"sportId": FOOTBALL, "marketId": MARKETS, "pageSize": 100, "todayGames": "false"}, 80),
+        ("wapConfigurableUpcomingEvents", "/factsCenter/wapConfigurableUpcomingEvents",
+         {"sportId": FOOTBALL, "marketId": MARKETS, "pageSize": 100, "option": 1}, 40),
+    ]
+    for name, path, params, max_pages in feeds:
+        try:
+            events, pages, total = await _paged(session, path, params, max_pages)
+        except Exception as e:
+            report.append(f"{name}: {e}")
+            continue
+        added = sum(1 for e in events if e["eventId"] not in merged)
+        for e in events:
+            merged.setdefault(e["eventId"], e)
+        report.append(f"{name}: {len(events)} events in {pages} pages"
+                      + (f" (SportyBet says {total})" if total is not None else "")
+                      + (f", {added} new" if merged and added != len(events) else ""))
     try:
-        events = await _pc_upcoming(session, max_pages=30)
-        report.append(f"pcUpcomingEvents: {len(events)} events")
-        if events:
-            return events, report
+        extra = await _thumbnail(session)
+        added = sum(1 for e in extra if e["eventId"] not in merged)
+        for e in extra:
+            merged.setdefault(e["eventId"], e)
+        report.append(f"commonThumbnailEvents: {len(extra)} events, {added} new")
     except Exception as e:
-        report.append(f"pcUpcomingEvents: {e}")
-    rest, more = await probe_listings(session, stop_at_first=True)
-    return rest, report + [line for line in more if not line.startswith("pcUpcomingEvents")]
+        report.append(f"commonThumbnailEvents: {e}")
+    return list(merged.values()), report
 
 
 # ------------------------------------------------------------------ #

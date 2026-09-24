@@ -251,15 +251,16 @@ class TestEvents:
         events = asyncio.run(sportybet.fetch_events_for_date("2026-09-26", session=s))
         assert [e["eventId"] for e in events] == ["sr:match:1", "sr:match:2"]
         assert s.calls[0][2]["params"]["sportId"] == "sr:sport:1"
-        assert len(s.calls) == 1  # totalNum reached: no second page
+        assert len(s.calls) == 2  # page 2 added nothing new: stop
 
     def test_pages_through_the_upcoming_list(self):
         page = lambda eid: ok({"totalNum": 2, "tournaments": [{"events": [
             self.ev(eid, "A", "B", "2026-09-26T12:00:00")]}]})
-        s = FakeSession({"/factsCenter/pcUpcomingEvents": [page("sr:match:1"), page("sr:match:2")]})
+        s = FakeSession({"/factsCenter/pcUpcomingEvents": [page("sr:match:1"), page("sr:match:2"),
+                                                            ok({"totalNum": 2, "tournaments": []})]})
         events = asyncio.run(sportybet.fetch_events_for_date("2026-09-26", session=s))
         assert [e["eventId"] for e in events] == ["sr:match:1", "sr:match:2"]
-        assert [c[2]["params"]["pageNum"] for c in s.calls] == [1, 2]
+        assert [c[2]["params"]["pageNum"] for c in s.calls] == [1, 2, 3]
 
     def test_falls_back_through_the_listings(self):
         s = FakeSession({
@@ -564,3 +565,31 @@ class TestKickoffMatching:
         links = main._match_predictions_to_events(preds, events, unlinked)
         assert list(links) == ["CR Vasco da Gama|CA Mineiro|2026-09-26"]
         assert unlinked[0]["match"] == "Botafogo vs Fluminense" and unlinked[0]["closest"]
+
+
+
+class TestCatalog:
+    def test_pages_past_thirty_until_nothing_new(self):
+        pages = [ok({"tournaments": [{"name": "Premier League", "categoryName": "England", "events": [
+            {"eventId": f"sr:match:{i}", "homeTeamName": f"H{i}", "awayTeamName": f"A{i}",
+             "estimateStartTime": ms("2026-09-26T15:00:00")}]}]}) for i in range(45)]
+        s = FakeSession({"/factsCenter/pcUpcomingEvents": pages + [ok({"tournaments": []})],
+                         "/factsCenter/wapConfigurableUpcomingEvents": [ok({"tournaments": [{"name": "Friendly", "events": [
+                             {"eventId": "sr:match:0", "homeTeamName": "H0", "awayTeamName": "A0"},
+                             {"eventId": "sr:match:999", "homeTeamName": "Wales", "awayTeamName": "Iceland"}]}]}),
+                             ok({"tournaments": []})],
+                         "/factsCenter/commonThumbnailEvents": ok([])})
+        events, report = asyncio.run(sportybet.fetch_catalog(s))
+        assert len(events) == 46  # 45 desktop pages + 1 only on the mobile feed
+        assert report[0].startswith("pcUpcomingEvents: 45 events in 46 pages")
+        assert "1 new" in report[1]
+        assert events[0]["_tournament"] == "England · Premier League"
+
+    def test_summary_by_day_and_international_competitions(self):
+        events = [{"eventId": "1", "estimateStartTime": ms("2026-09-26T15:00:00"), "_tournament": "International · Int. Friendly Games"},
+                  {"eventId": "2", "estimateStartTime": ms("2026-09-26T18:00:00"), "_tournament": "England · Premier League"},
+                  {"eventId": "3", "estimateStartTime": ms("2026-09-27T15:00:00"), "_tournament": "Africa · Africa Cup of Nations, Qualification"}]
+        summary = main._catalog_summary(events)
+        assert summary["days"] == {"2026-09-26": 2, "2026-09-27": 1}
+        assert set(summary["international"]) == {"International · Int. Friendly Games",
+                                                 "Africa · Africa Cup of Nations, Qualification"}
