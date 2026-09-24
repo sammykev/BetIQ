@@ -143,7 +143,8 @@ class TestToSportybet:
 
     def test_nothing_listed(self):
         result, _, posted = run([sel(home="Nobody FC")])
-        assert result["code"] is None and "listing" in result["error"] and posted == []
+        assert result["code"] is None and "hasn't listed" in result["error"] and posted == []
+        assert result["picks"][0]["reason"] == "SportyBet hasn't listed this match (yet)"
 
     def test_share_failure_keeps_picks_matched(self):
         result, _, _ = run([sel()], share_error=sportybet.SportyBetError("HTTP 403"))

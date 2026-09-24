@@ -131,7 +131,7 @@ async def to_sportybet(
             event = find_event(s["home"], s["away"], events_by_date[s["date"]])
         event_id = event and str(event.get("eventId") or "")
         if not event_id:
-            picks.append({**pick, "status": "not_found", "reason": "Match not found on SportyBet"})
+            picks.append({**pick, "status": "not_found", "reason": "SportyBet hasn't listed this match (yet)"})
             continue
         to_book.append((len(picks), {"eventId": event_id, **ids}, event))
         picks.append({**pick, "status": "matched"})  # found; "booked" once SportyBet accepts it
@@ -141,7 +141,8 @@ async def to_sportybet(
     if not to_book:
         result["error"] = ("Couldn't reach SportyBet's match list from our server. Try again in a few minutes."
                            if listing_down else
-                           "SportyBet isn't listing any of these matches right now."
+                           "SportyBet hasn't listed these matches yet. It adds most internationals "
+                           "a few days before kick-off, and skips some smaller ones."
                            if any(p["status"] == "not_found" for p in picks)
                            else "None of these picks can go in a SportyBet code.")
         return result

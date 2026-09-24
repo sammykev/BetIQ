@@ -75,7 +75,9 @@ export default function OptimizerPage() {
   const [days, setDays] = useState(3);
   const [maxGames, setMaxGames] = useState(30);
   const [markets, setMarkets] = useState<string[]>(MARKETS.map(m => m.id));
-  const [bookableOnly, setBookableOnly] = useState(false);
+  // On by default: SportyBet lists many matches only days before kick-off,
+  // and codes can only include matches it lists
+  const [bookableOnly, setBookableOnly] = useState(true);
 
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<OptResult | null>(null);
@@ -202,7 +204,7 @@ export default function OptimizerPage() {
 
           <label className="flex items-center gap-2 text-sm text-n-300 cursor-pointer select-none">
             <input type="checkbox" checked={bookableOnly} onChange={e => setBookableOnly(e.target.checked)} className="accent-[rgb(var(--accent))]" />
-            Only matches already linked to SportyBet (instant booking)
+            Only matches SportyBet lists right now (so the code books every pick)
           </label>
 
           <button onClick={run} disabled={busy || !validTarget}
