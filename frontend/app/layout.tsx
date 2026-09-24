@@ -34,7 +34,7 @@ export const metadata: Metadata = {
   metadataBase: new URL("https://predict-withbetiq.vercel.app"),
   title: "BetIQ — AI Football Predictions",
   description: "Get AI-powered football predictions with XGBoost + Elo ratings. Pick your games, generate a SportyBet booking code, and bet smarter across 9 major leagues.",
-  icons: { icon: "/favicon.svg", apple: "/logo.svg" },
+  icons: { icon: "/favicon.svg", apple: "/apple-touch-icon.png" },
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,

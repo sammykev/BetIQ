@@ -2381,7 +2381,7 @@ async def _send_push_notifications(value_preds: list):
         payload_obj = {
             "title": f"BetIQ — {len(value_preds)} Value Bet{'s' if len(value_preds) > 1 else ''} Found!",
             "body": " · ".join(f"{p['home']} vs {p['away']}" for p in value_preds[:3]),
-            "icon": "/logo.svg",
+            "icon": "/icon-192.png",
             "url": "/",
         }
         payload = _json.dumps(payload_obj)

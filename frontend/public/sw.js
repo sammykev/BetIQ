@@ -1,4 +1,4 @@
-const CACHE = "betiq-v2";
+const CACHE = "betiq-v3"; // bump when shell files change: old caches are dropped on activate
 const SHELL = ["/manifest.json", "/logo.svg", "/favicon.svg"];
 
 self.addEventListener("install", (e) => {
@@ -38,7 +38,7 @@ self.addEventListener("fetch", (e) => {
 });
 
 self.addEventListener("push", (e) => {
-  let data = { title: "BetIQ", body: "New value bets available!", icon: "/logo.svg", url: "/" };
+  let data = { title: "BetIQ", body: "New value bets available!", icon: "/icon-192.png", url: "/" };
   try {
     if (e.data) data = { ...data, ...JSON.parse(e.data.text()) };
   } catch {}
@@ -46,7 +46,7 @@ self.addEventListener("push", (e) => {
     self.registration.showNotification(data.title, {
       body: data.body,
       icon: data.icon,
-      badge: "/logo.svg",
+      badge: "/badge-96.png", // one-colour: Android draws only its shape
       tag: "betiq-value",
       renotify: true,
       data: { url: data.url },

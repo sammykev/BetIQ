@@ -35,13 +35,14 @@ export async function POST(req: NextRequest) {
     const html = `
       <div style="font-family:sans-serif;max-width:600px;margin:auto;padding:24px;">
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px;">
-          <span style="font-size:28px;font-weight:900;color:#22c55e;">BetIQ</span>
+          <img src="https://predict-withbetiq.vercel.app/icon-192.png" width="36" height="36" alt="" style="border-radius:9px;"/>
+          <span style="font-size:28px;font-weight:900;color:#070b14;">Bet<span style="color:#4d7c0f;">IQ</span></span>
         </div>
         <p style="font-size:16px;line-height:1.6;color:#1e293b;">${escapeHtml(String(message)).replace(/\n/g, "<br/>")}</p>
         <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0;"/>
         <p style="font-size:12px;color:#94a3b8;">
           You're receiving this as a BetIQ Premium member.
-          <a href="https://predict-withbetiq.vercel.app" style="color:#22c55e;">Visit BetIQ</a>
+          <a href="https://predict-withbetiq.vercel.app" style="color:#4d7c0f;">Visit BetIQ</a>
         </p>
       </div>`;
 

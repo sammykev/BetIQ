@@ -115,7 +115,7 @@ export default function AdminPage() {
       <div className="min-h-screen bg-canvas flex items-center justify-center p-4">
         <form className="card w-full max-w-sm p-6 space-y-4" onSubmit={e => { e.preventDefault(); checkAdmin(true); }}>
           <div className="flex items-center gap-3">
-            <img src="/logo.svg" alt="" className="w-9 h-9 rounded-full" />
+            <img src="/logo.svg" alt="" className="w-9 h-9 rounded-xl" />
             <div>
               <h1 className="font-display font-extrabold text-xl uppercase text-n-0">Control Centre</h1>
               <p className="text-xs text-n-400">Admins only</p>
@@ -162,7 +162,7 @@ export default function AdminPage() {
       <div className="min-h-screen bg-canvas">
         <header className="sticky top-0 z-30 border-b border-n-800 bg-canvas/90 backdrop-blur">
           <div className="max-w-6xl mx-auto px-4 pt-3 flex items-center gap-3">
-            <img src="/logo.svg" alt="" className="w-8 h-8 rounded-full" />
+            <img src="/logo.svg" alt="" className="w-8 h-8 rounded-lg" />
             <div className="min-w-0">
               <h1 className="font-display font-extrabold text-lg uppercase leading-none text-n-0">Control Centre</h1>
               <p className="text-[11px] text-n-400 truncate">

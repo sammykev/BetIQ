@@ -1,5 +1,6 @@
 import { ImageResponse } from "next/og";
 import { NextRequest } from "next/server";
+import { INK, LIME, Lockup, brandFonts } from "@/lib/brand";
 
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl;
@@ -11,33 +12,33 @@ export async function GET(req: NextRequest) {
   const flag   = searchParams.get("flag")   || "⚽";
   const confNum = Math.round(Number(conf) * 100);
 
-  const color = confNum >= 80 ? "#22c55e" : confNum >= 65 ? "#eab308" : "#94a3b8";
+  const color = confNum >= 80 ? LIME : confNum >= 65 ? "#eab308" : "#94a3b8";
 
   return new ImageResponse(
     (
       <div style={{
-        background: "#0f172a",
+        background: INK,
         width: "100%", height: "100%",
         display: "flex", flexDirection: "column",
         alignItems: "center", justifyContent: "center",
-        fontFamily: "system-ui, sans-serif",
+        fontFamily: "Inter",
         padding: "48px",
       }}>
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 32 }}>
-          <span style={{ fontSize: 28, fontWeight: 900, color: "#22c55e" }}>BetIQ</span>
+          <Lockup size={40} />
           <span style={{ color: "#334155", fontSize: 20 }}>·</span>
           <span style={{ color: "#64748b", fontSize: 20 }}>{flag} {league}</span>
         </div>
 
         {/* Teams */}
         <div style={{ display: "flex", alignItems: "center", gap: 32, marginBottom: 32 }}>
-          <div style={{ textAlign: "center" }}>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center" }}>
             <div style={{ color: "#f1f5f9", fontSize: 52, fontWeight: 900, maxWidth: 320 }}>{home}</div>
             <div style={{ color: "#64748b", fontSize: 18, marginTop: 4 }}>Home</div>
           </div>
           <div style={{ color: "#334155", fontSize: 40, fontWeight: 900 }}>vs</div>
-          <div style={{ textAlign: "center" }}>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center" }}>
             <div style={{ color: "#f1f5f9", fontSize: 52, fontWeight: 900, maxWidth: 320 }}>{away}</div>
             <div style={{ color: "#64748b", fontSize: 18, marginTop: 4 }}>Away</div>
           </div>
@@ -45,11 +46,11 @@ export async function GET(req: NextRequest) {
 
         {/* Tip */}
         <div style={{
-          background: "rgba(34,197,94,0.1)", border: "2px solid rgba(34,197,94,0.4)",
+          background: "rgba(184,245,61,0.08)", border: "2px solid rgba(184,245,61,0.35)",
           borderRadius: 16, padding: "16px 40px", marginBottom: 24,
           display: "flex", alignItems: "center", gap: 16,
         }}>
-          <span style={{ color, fontSize: 28, fontWeight: 900 }}>🎯 {tip}</span>
+          <span style={{ color, fontSize: 28, fontWeight: 900 }}>{tip}</span>
         </div>
 
         {/* Confidence */}
@@ -66,6 +67,6 @@ export async function GET(req: NextRequest) {
         </div>
       </div>
     ),
-    { width: 1200, height: 630 }
+    { width: 1200, height: 630, fonts: await brandFonts() }
   );
 }
