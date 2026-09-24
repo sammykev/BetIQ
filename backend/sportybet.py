@@ -279,14 +279,33 @@ def market_labels(events: Iterable[Dict]) -> Dict[str, str]:
     return labels
 
 
-async def event_market_labels(event_id: str, session: Optional[AsyncSession] = None) -> Dict[str, str]:
-    """{market id: label} for every market on one event's page — for ids
-    the listing didn't carry."""
+def market_details(events: Iterable[Dict]) -> Dict[str, Dict[str, Any]]:
+    """{market id: {"label", "norm", "outcomes": {outcome id: label}}} over
+    events, labels normalised with each event's own team names ("Arsenal
+    Total" → "home total") so booking_slip.resolve_markets can check them."""
+    from booking_slip import _normalise_label
+    out: Dict[str, Dict[str, Any]] = {}
+    for ev in events:
+        home, away = ev.get("homeTeamName") or "", ev.get("awayTeamName") or ""
+        for m in ev.get("markets") or []:
+            mid, label = str(m.get("id") or ""), _label(m)
+            if not mid or not label:
+                continue
+            entry = out.setdefault(mid, {"label": label, "norm": _normalise_label(label, home, away), "outcomes": {}})
+            for o in m.get("outcomes") or []:
+                oid, desc = str(o.get("id") or ""), str(o.get("desc") or "")
+                if oid and desc and oid not in entry["outcomes"]:
+                    entry["outcomes"][oid] = _normalise_label(desc, home, away)
+    return out
+
+
+async def event_market_details(event_id: str, session: Optional[AsyncSession] = None) -> Dict[str, Dict[str, Any]]:
+    """market_details for every market on one event's own page."""
     data = await _request(session or shared_session(), "GET", "/factsCenter/event",
                           params={"eventId": event_id, "productId": 3})
     found: List[Dict] = []
     _collect_events(data.get("data"), found)
-    return market_labels(found)
+    return market_details(found)
 
 
 def slim_event(ev: Dict) -> Dict:

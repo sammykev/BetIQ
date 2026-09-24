@@ -13,7 +13,7 @@ import time
 import glob
 import json
 from datetime import datetime, date, timedelta, timezone
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
 import httpx
 import numpy as np
@@ -4004,7 +4004,16 @@ SB_LINK_STATUS_KEY = "betiq:sportybet:link_status"
 SB_LINK_MINUTES = 30
 _sb_links: Dict[str, Dict] = {}
 _sb_link_status: Dict[str, Any] = {"at": None, "events": 0, "predictions": 0, "linked": 0, "report": []}
-_sb_link_lock = asyncio.Lock()
+_sb_link_lock: Optional[Tuple[Any, asyncio.Lock]] = None  # (event loop, lock)
+
+
+def _link_lock() -> asyncio.Lock:
+    """One linking run at a time (a lock belongs to one event loop)."""
+    global _sb_link_lock
+    loop = asyncio.get_running_loop()
+    if _sb_link_lock is None or _sb_link_lock[0] is not loop:
+        _sb_link_lock = (loop, asyncio.Lock())
+    return _sb_link_lock[1]
 
 
 def _sb_key(home: str, away: str, day: str) -> str:
@@ -4070,26 +4079,29 @@ def _catalog_summary(events: List[Dict]) -> Dict[str, Any]:
             "international": dict(sorted(tournaments.items(), key=lambda kv: -kv[1])[:20])}
 
 
-async def _market_labels(events: List[Dict], links: Dict[str, Dict], report: List[str]) -> Dict[str, str]:
-    """SportyBet's {market id: label} for the markets we book, from the
-    listing; for label-checked ids it didn't carry (corners, bookings), from
-    one linked club match's own page."""
+async def _market_map(events: List[Dict], links: Dict[str, Dict], report: List[str]) -> Tuple[Dict, Dict]:
+    """(booking_slip.resolve_markets result, {market id: label}): SportyBet's
+    markets from the listing plus one linked club match's own page, which
+    lists every market with its outcomes."""
     import booking_slip
     import sportybet
-    labels = sportybet.market_labels(events)
-    missing = [m for m in booking_slip.LABELLED_MARKETS if m not in labels]
-    if missing and links:
-        league = {_sb_key(p.get("home", ""), p.get("away", ""), p.get("date", "")): p.get("league", "")
-                  for p in _predictions_cache}
-        probe = next((ev for key, ev in links.items() if not intl.is_international(league.get(key, ""))), None)
-        if probe:
-            try:
-                found = await sportybet.event_market_labels(str(probe["eventId"]))
-                labels.update({m: found[m] for m in missing if m in found})
-                report.append(f"event page {probe['eventId']}: {len(found)} markets")
-            except Exception as e:
-                report.append(f"event page: {type(e).__name__}: {e}")
-    return {m: labels[m] for m in sorted(sportybet.BOOKED_MARKETS, key=int) if m in labels}
+    details = sportybet.market_details(events)
+    league = {_sb_key(p.get("home", ""), p.get("away", ""), p.get("date", "")): p.get("league", "")
+              for p in _predictions_cache}
+    # The biggest leagues carry the most markets: try those first
+    rank = {"PL": 0, "PD": 1, "SA": 2, "BL1": 3, "FL1": 4}
+    club = [(key, ev) for key, ev in links.items() if not intl.is_international(league.get(key, ""))]
+    club.sort(key=lambda kv: rank.get(league.get(kv[0], ""), 9))
+    for _, probe in club[:2]:
+        try:
+            page = await sportybet.event_market_details(str(probe["eventId"]))
+            details.update(page)
+            report.append(f"match page {probe.get('homeTeamName')} v {probe.get('awayTeamName')}: {len(page)} markets")
+            break
+        except Exception as e:
+            report.append(f"match page: {type(e).__name__}: {e}")
+    labels = {mid: d["label"] for mid, d in sorted(details.items(), key=lambda kv: int(kv[0]) if kv[0].isdigit() else 0)}
+    return booking_slip.resolve_markets({"markets": details}), labels
 
 
 def _market_coverage(links: Dict[str, Dict]) -> Dict[str, int]:
@@ -4122,17 +4134,17 @@ def _restore_link_status() -> None:
             pass
 
 
-def _sb_market_labels() -> Dict[str, str]:
-    if not _sb_link_status.get("market_labels"):
+def _sb_market_map() -> Dict[str, Dict[str, Any]]:
+    if not _sb_link_status.get("market_map"):
         _restore_link_status()
-    return _sb_link_status.get("market_labels") or {}
+    return _sb_link_status.get("market_map") or {}
 
 
 async def _link_sportybet_events(trigger: str = "schedule") -> Dict[str, Any]:
     """Match upcoming football predictions to SportyBet events and keep the
     links. `trigger` says what started the run: startup (a new deploy or
     restart), pipeline, international, schedule or manual."""
-    async with _sb_link_lock:
+    async with _link_lock():
         return await _link_sportybet_events_now(trigger)
 
 
@@ -4158,7 +4170,7 @@ async def _link_sportybet_events_now(trigger: str) -> Dict[str, Any]:
             links = await asyncio.to_thread(_match_predictions_to_events, preds, events, unlinked)
             # Worth checking first: closest candidates, highest score first
             status["unlinked"] = sorted(unlinked, key=lambda u: -u["score"])[:40]
-            status["market_labels"] = await _market_labels(events, links, status["report"])
+            status["market_map"], status["market_labels"] = await _market_map(events, links, status["report"])
             status["market_coverage"] = _market_coverage(links)
             _sb_links.clear()
             _sb_links.update(links)
@@ -4172,6 +4184,7 @@ async def _link_sportybet_events_now(trigger: str) -> Dict[str, Any]:
         else:
             status["error"] = "Couldn't load SportyBet's match list — kept the previous links."
             status["market_labels"] = _sb_link_status.get("market_labels") or {}
+            status["market_map"] = _sb_link_status.get("market_map") or {}
     else:
         status["error"] = "No upcoming predictions to link yet."
     status["seconds"] = round(time.monotonic() - started, 1)
@@ -4199,11 +4212,10 @@ async def sportybet_status():
     import booking_slip
     _restore_link_status()
     s = _sb_link_status
-    labels = s.get("market_labels") or {}
+    confirmed = s.get("market_map") or {}
     return {"at": s.get("at"), "trigger": s.get("trigger"), "linked": s.get("linked", 0),
             "predictions": s.get("predictions", 0),
-            "markets": {name: booking_slip.label_ok(mid, labels.get(mid))
-                        for mid, (_, name) in booking_slip.LABELLED_MARKETS.items()}}
+            "markets": {kind: bool((confirmed.get(kind) or {}).get("ok")) for kind in booking_slip.VERIFIED}}
 
 
 def _linked_event(selection: Dict[str, Any]) -> Optional[Dict]:
@@ -4285,7 +4297,7 @@ async def convert_slip(body: Dict[str, Any]):
         raise HTTPException(status_code=400, detail=str(e))
     return await booking_slip.to_sportybet(
         selections, sportybet.fetch_events_for_date, sportybet.find_event, sportybet.share_selections,
-        linked=_linked_event, market_labels=_sb_market_labels())
+        linked=_linked_event, market_map=_sb_market_map())
 
 
 ADMIN_SECRET = os.getenv("ADMIN_SECRET", "")

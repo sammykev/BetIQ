@@ -10,9 +10,10 @@ match: maximise Σ log(p) with Σ log(odds) inside [log lo, log hi], using at
 most `max_games` picks. Solved exactly by dynamic programming over log-odds
 in steps of 0.01 (1%), not by a greedy guess.
 
-Markets: 1X2, double chance, goals over/under 1.5–3.5, both
-teams to score, and total corners / bookings lines (set_pieces.py, club
-leagues only).
+Markets: 1X2, double chance, goals over/under 1.5–3.5, both teams to
+score, team goals, clean sheet, win to nil, Asian handicap ±1.5/±2.5,
+double chance & goals (from predictor.goal_markets), and total corners /
+bookings, team corners and most corners (set_pieces.py, club leagues only).
 
 Prices, best first: SportyBet's own (predictions linked to SportyBet events,
 see main._link_sportybet_events), the bookmaker 1X2 odds the prediction
@@ -24,7 +25,7 @@ Win chance treats the matches as independent and is the model's estimate.
 
 import math
 from dataclasses import asdict, dataclass
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
@@ -91,8 +92,67 @@ _PICKS = [
     for line in lines for side in ("O", "U")
 ]
 
-# Bookmakers keep more on corners and bookings than on goals
-_MARGINS = {"corners_ou": 0.90, "cards_ou": 0.90}
+
+
+def _gm(*path):
+    """A probability from the prediction's goal_markets (predictor.goal_markets)."""
+    def prob(p: Dict) -> Optional[float]:
+        node: Any = p.get("goal_markets")
+        for key in path:
+            node = node.get(key) if isinstance(node, dict) else None
+        return node if isinstance(node, (int, float)) else None
+    return prob
+
+
+def _sp(stat: str, line: Optional[str] = None, over: bool = True, key: Optional[str] = None):
+    """A probability from the prediction's set_pieces (set_pieces.py)."""
+    def prob(p: Dict) -> Optional[float]:
+        node = (p.get("set_pieces") or {}).get(stat) or {}
+        v = node.get(key) if key else (node.get("over") or {}).get(line)
+        return None if v is None else (v if over else 1 - v)
+    return prob
+
+
+def _flip(fn):
+    return lambda p: None if fn(p) is None else 1 - fn(p)
+
+
+_PICKS += [
+    # Team goals
+    *[(f"{side}_goals_ou", f"{'Home' if side == 'home' else 'Away'} Team Goals", f"{s}{line.replace('.', '')}",
+       f"{{{side}}} {'over' if s == 'O' else 'under'} {line} goals",
+       _gm("team_totals", side, line) if s == "O" else _flip(_gm("team_totals", side, line)))
+      for side in ("home", "away") for line in ("0.5", "1.5", "2.5") for s in ("O", "U")],
+    # Clean sheet / win to nil (yes only: "no" is the other team scoring)
+    ("clean_sheet", "Clean Sheet", "CS-H", "{home} clean sheet", _gm("clean_sheet", "home")),
+    ("clean_sheet", "Clean Sheet", "CS-A", "{away} clean sheet", _gm("clean_sheet", "away")),
+    ("win_to_nil", "Win to Nil", "WTN-H", "{home} to win to nil", _gm("win_to_nil", "home")),
+    ("win_to_nil", "Win to Nil", "WTN-A", "{away} to win to nil", _gm("win_to_nil", "away")),
+    # Asian handicap, half lines (no push)
+    *[("handicap", "Handicap", code, label, _gm("handicap", key))
+      for line in ("1.5", "2.5")
+      for code, label, key in ((f"H-{line}", f"{{home}} -{line}", f"home_-{line}"),
+                               (f"A+{line}", f"{{away}} +{line}", f"away_+{line}"),
+                               (f"A-{line}", f"{{away}} -{line}", f"away_-{line}"),
+                               (f"H+{line}", f"{{home}} +{line}", f"home_+{line}"))],
+    # Double chance & goals
+    *[("dc_goals", "Double Chance & Goals", f"{dc}&{s}{line.replace('.', '')}",
+       f"{name} & {'over' if s == 'O' else 'under'} {line}", _gm("dc_total", dc, f"{s.lower()}{line}"))
+      for dc, name in (("1X", "Home or Draw"), ("X2", "Draw or Away"), ("12", "Home or Away"))
+      for line in ("1.5", "2.5", "3.5") for s in ("O", "U")],
+    # Each team's corners, and who wins more
+    *[(f"{side}_corners_ou", f"{'Home' if side == 'home' else 'Away'} Team Corners", f"{s}{line.replace('.', '')}",
+       f"{{{side}}} {'over' if s == 'O' else 'under'} {line} corners", _sp(f"corners_{side}", line, s == "O"))
+      for side, lines in (("home", ("2.5", "3.5", "4.5", "5.5", "6.5")), ("away", ("1.5", "2.5", "3.5", "4.5", "5.5")))
+      for line in lines for s in ("O", "U")],
+    ("corners_1x2", "Most Corners", "CR-1", "{home} most corners", _sp("corners_1x2", key="home")),
+    ("corners_1x2", "Most Corners", "CR-X", "Level on corners", _sp("corners_1x2", key="draw")),
+    ("corners_1x2", "Most Corners", "CR-2", "{away} most corners", _sp("corners_1x2", key="away")),
+]
+
+# Bookmakers keep more on corners, bookings and specials than on goals
+_MARGINS = {"corners_ou": 0.90, "cards_ou": 0.90, "home_corners_ou": 0.90, "away_corners_ou": 0.90,
+            "corners_1x2": 0.90, "clean_sheet": 0.92, "win_to_nil": 0.90, "dc_goals": 0.92}
 
 
 def _bookmaker_price(pred: Dict, market: str, code: str) -> Optional[float]:

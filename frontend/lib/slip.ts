@@ -58,12 +58,19 @@ const SPORTYBET_FIXED = new Set([
   "btts:BTTS-Y", "btts:BTTS-N", "draw_no_bet:DNB-H", "draw_no_bet:DNB-A",
   "goals_odd_even:GOE-ODD", "goals_odd_even:GOE-EVEN",
   "half_time:HT1", "half_time:HTX", "half_time:HT2",
+  "clean_sheet:CS-H", "clean_sheet:CS-A", "win_to_nil:WTN-H", "win_to_nil:WTN-A",
+  "corners_1x2:CR-1", "corners_1x2:CR-X", "corners_1x2:CR-2",
 ]);
+const LINE_MARKETS = ["goals_ou", "corners_ou", "cards_ou", "home_goals_ou", "away_goals_ou",
+                      "home_corners_ou", "away_corners_ou"];
 
 export function bookableOnSportybet(s: Pick<SlipSelection, "market" | "code">) {
   if (SPORTYBET_FIXED.has(`${s.market}:${s.code}`)) return true;
-  // Over/under lines (goals, corners, bookings): half lines only, e.g. O25, U105
-  return ["goals_ou", "corners_ou", "cards_ou"].includes(s.market) && /^[OU]\d{1,2}5$/.test(s.code);
+  // Over/under lines (goals, corners, bookings, team totals): half lines only, e.g. O25, U105
+  if (LINE_MARKETS.includes(s.market)) return /^[OU]\d{1,2}5$/.test(s.code);
+  if (s.market === "handicap") return /^[HA][+-]\d\.5$/.test(s.code);  // H-1.5, A+2.5
+  if (s.market === "dc_goals") return /^(1X|X2|12)&[OU]\d5$/.test(s.code);  // 1X&O15
+  return false;
 }
 
 const DC_NAMES: Record<string, string> = { "1X": "Home or Draw", "X2": "Draw or Away", "2X": "Draw or Away", "12": "Home or Away" };

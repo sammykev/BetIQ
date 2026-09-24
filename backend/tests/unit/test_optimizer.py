@@ -181,3 +181,21 @@ class TestTargetOdds:
         # 1.5 or 2.25 only: nothing within ±2%, the nearest within ±25% comes back flagged
         assert res["within_target"] is False and res["target_odds"] == 2.0
         assert res["total_odds"] in (1.5, 2.25)
+
+
+class TestGridMarkets:
+    def test_every_new_market_is_offered_and_bookable(self):
+        from booking_slip import sportybet_ids
+        from predictor import goal_markets
+        sp = {"corners_home": {"over": {l: 0.6 for l in ("2.5", "3.5", "4.5", "5.5", "6.5")}},
+              "corners_away": {"over": {l: 0.6 for l in ("1.5", "2.5", "3.5", "4.5", "5.5")}},
+              "corners_1x2": {"home": 0.55, "draw": 0.1, "away": 0.35}}
+        p = pred(**goal_markets(1.6, 1.1, 0.55, 0.5, 0.25), set_pieces=sp)
+        opts = candidates(p, None, 0.0)
+        markets = {o.market for o in opts}
+        assert {"home_goals_ou", "away_goals_ou", "clean_sheet", "win_to_nil", "handicap", "dc_goals",
+                "home_corners_ou", "away_corners_ou", "corners_1x2"} <= markets
+        for o in opts:
+            assert sportybet_ids(o.market, o.code), (o.market, o.code)
+        labels = {o.code: o.label for o in opts if o.market == "handicap"}
+        assert labels["H-1.5"] == "Home0 -1.5" and labels["A+1.5"] == "Away0 +1.5"

@@ -80,3 +80,41 @@ class TestGoalMarkets:
 
     def test_more_goals_expected_means_more_over_35(self):
         assert goal_markets(1.0, 0.9, 0.35, 0.4, 0.3)["p_over35"] < goal_markets(2.0, 1.4, 0.7, 0.5, 0.25)["p_over35"]
+
+
+class TestTeamCorners:
+    def test_team_lines_and_most_corners(self):
+        model = SetPieceModel.fit(season())
+        m = model.markets("Corner FC", "Plain FC", "PL")
+        assert m["corners_home"]["mean"] > m["corners_away"]["mean"]
+        race = m["corners_1x2"]
+        assert race["home"] > race["away"] and sum(race.values()) == pytest.approx(1, abs=0.002)
+
+    def test_most_corners_is_symmetric(self):
+        r = set_pieces.most_corners(5.0, 5.0, 10.0, 10.0)
+        assert r["home"] == pytest.approx(r["away"], abs=1e-9) and 0.05 < r["draw"] < 0.2
+
+
+class TestScoreGrid:
+    def test_grid_matches_the_classifier(self):
+        from predictor import score_grid, _DIFF, _TOTALS
+        g = score_grid(1.5, 1.2, 0.56, 0.5, 0.25, -0.1)
+        h, a = g[_DIFF > 0].sum(), g[_DIFF < 0].sum()
+        assert h / (h + a) == pytest.approx(0.5 / 0.75, abs=0.01)
+        assert g[_TOTALS > 2.5].sum() == pytest.approx(0.56, abs=0.01)
+
+    def test_markets_are_consistent(self):
+        gm = goal_markets(1.6, 1.1, 0.55, 0.48, 0.27)["goal_markets"]
+        assert gm["win_to_nil"]["home"] < gm["clean_sheet"]["home"]
+        assert gm["team_totals"]["home"]["0.5"] == pytest.approx(1 - gm["clean_sheet"]["away"], abs=0.002)
+        h = gm["handicap"]
+        assert h["home_-1.5"] + h["away_+1.5"] == pytest.approx(1, abs=0.002)
+        assert h["home_-2.5"] <= h["home_-1.5"]
+        dc = gm["dc_total"]["1X"]
+        assert dc["o2.5"] + dc["u2.5"] == pytest.approx(0.48 + (1 - 0.48 - 0.27), abs=0.05)
+
+    def test_handicap_caps(self):
+        from predictor import HANDICAP_CAPS
+        gm = goal_markets(3.5, 0.3, 0.8, 0.9, 0.03)["goal_markets"]
+        assert gm["handicap"]["home_-1.5"] <= HANDICAP_CAPS[1.5]
+        assert gm["handicap"]["home_-2.5"] <= HANDICAP_CAPS[2.5]

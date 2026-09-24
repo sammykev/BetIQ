@@ -10,6 +10,7 @@ Key upgrades over original:
 
 import io
 import math
+from functools import lru_cache
 
 import numpy as np
 import pandas as pd
@@ -177,49 +178,99 @@ def _rounded_probs(p_h: float, p_d: float, p_a: float, p_o15: float, p_o25: floa
 
 
 # BTTS = sigmoid(a + b·logit(grid BTTS) + c·logit(p_over25)), fitted walk-forward
-# on 2023-24; on 2024-25 Brier 0.2472 vs 0.2483 for the base rate — BTTS is
+# on 2023-24; on 2024-25 Brier 0.2476 vs 0.2483 for the base rate — BTTS is
 # close to a coin flip for every model.
-BTTS_CALIBRATION = (0.211, 0.22, 0.364)
+BTTS_CALIBRATION = (0.159, 0.646, 0.264)
+
+# Heavy favourites to win by 2+ / 3+: the grid overrates them at the top
+# end (2024-25: said 75%, happened 48%, 44 matches), so those are capped
+HANDICAP_CAPS = {1.5: 0.6, 2.5: 0.45}
+
+_K = np.arange(11)
+_FACT = np.array([math.factorial(k) for k in _K], dtype=float)
+_TOTALS = np.add.outer(_K, _K)
+_DIFF = np.subtract.outer(_K, _K)
+
+
+def _grid(mh: float, ma: float, rho: float) -> np.ndarray:
+    mh, ma = max(mh, 0.05), max(ma, 0.05)
+    g = np.outer(mh ** _K * np.exp(-mh) / _FACT, ma ** _K * np.exp(-ma) / _FACT)
+    g[0, 0] *= _dc_tau(0, 0, mh, ma, rho)
+    g[0, 1] *= _dc_tau(0, 1, mh, ma, rho)
+    g[1, 0] *= _dc_tau(1, 0, mh, ma, rho)
+    g[1, 1] *= _dc_tau(1, 1, mh, ma, rho)
+    g = np.clip(g, 0, None)
+    return g / g.sum()
+
+
+@lru_cache(maxsize=4096)
+def score_grid(xg_h: float, xg_a: float, p_o25: float, p_h: float, p_a: float, rho: float) -> np.ndarray:
+    """P(home goals = i, away goals = j): Dixon-Coles from the expected goals,
+    with the home share of goals fitted so home wins' share of decided
+    matches equals the classifier's p_h/(p_h+p_a), and the total so over 2.5
+    equals its p_o25 — every market from the grid then agrees with the
+    tested 1X2 and over/under models. Inputs rounded by the caller (cache)."""
+    total = max(xg_h + xg_a, 0.2)
+    share = xg_h / total
+    target = p_h / (p_h + p_a) if p_h + p_a > 0 else 0.5
+    for _ in range(3):
+        lo, hi = 0.02, 0.98
+        for _ in range(20):
+            mid = (lo + hi) / 2
+            g = _grid(total * mid, total * (1 - mid), rho)
+            h, a = g[_DIFF > 0].sum(), g[_DIFF < 0].sum()
+            lo, hi = (mid, hi) if h / (h + a) < target else (lo, mid)
+        share = (lo + hi) / 2
+        lo, hi = 0.2, 10.0
+        for _ in range(20):
+            mid = (lo + hi) / 2
+            lo, hi = (mid, hi) if _grid(mid * share, mid * (1 - share), rho)[_TOTALS > 2.5].sum() < p_o25 else (lo, mid)
+        total = (lo + hi) / 2
+    g = _grid(total * share, total * (1 - share), rho)
+    g.setflags(write=False)
+    return g
 
 
 def goal_markets(xg_h: float, xg_a: float, p_o25: float, p_h: float, p_a: float,
                  rho: float = -0.13) -> Dict:
-    """BTTS, over 3.5 and draw no bet for one match. The Dixon-Coles score
-    grid from the expected goals, with both means scaled so its over 2.5
-    equals the classifier's (calibrated) p_o25 — the goal markets then agree
-    with each other and with the tested over/under model.
+    """Every goals market derived from the score grid (score_grid): BTTS,
+    over 3.5, draw no bet, team totals, clean sheets, win to nil, handicaps
+    and double chance & total combos.
 
-    Walk-forward on 2024-25 (3,222 league matches): over 3.5 and draw no bet
-    are calibrated as is; the grid's BTTS is overconfident (said 16%,
-    happened 43%), so it goes through BTTS_CALIBRATION, fitted on 2023-24."""
-    from math import exp, factorial
-    MAX = 11
-
-    def grid(scale: float) -> np.ndarray:
-        mh, ma = max(xg_h * scale, 0.05), max(xg_a * scale, 0.05)
-        ph = [mh ** k * exp(-mh) / factorial(k) for k in range(MAX)]
-        pa = [ma ** k * exp(-ma) / factorial(k) for k in range(MAX)]
-        g = np.array([[ph[i] * pa[j] * _dc_tau(i, j, mh, ma, rho) for j in range(MAX)] for i in range(MAX)])
-        return g / g.sum()
-
-    totals = np.add.outer(np.arange(MAX), np.arange(MAX))
-
-    def over(g: np.ndarray, line: float) -> float:
-        return float(g[totals > line].sum())
-
-    lo, hi = 0.1, 5.0
-    for _ in range(40):  # over 2.5 rises with the scale
-        mid = (lo + hi) / 2
-        lo, hi = (mid, hi) if over(grid(mid), 2.5) < p_o25 else (lo, mid)
-    g = grid((lo + hi) / 2)
-    dnb = p_h / (p_h + p_a) if p_h + p_a > 0 else 0.5
+    Walk-forward on 2024-25 (3,222 league matches, predicted from earlier
+    matches only): each beats last season's base rate and is calibrated,
+    except BTTS (the raw grid is overconfident, so BTTS_CALIBRATION) and
+    heavy-favourite handicaps (HANDICAP_CAPS)."""
+    g = score_grid(round(xg_h, 3), round(xg_a, 3), round(p_o25, 3), round(p_h, 3), round(p_a, 3), round(rho, 3))
+    r3 = lambda x: round(float(x), 3)
     logit = lambda p: math.log(min(max(p, 1e-4), 1 - 1e-4) / (1 - min(max(p, 1e-4), 1 - 1e-4)))
     a, b_grid, b_o25 = BTTS_CALIBRATION
     z = a + b_grid * logit(float(g[1:, 1:].sum())) + b_o25 * logit(p_o25)
+    dnb = p_h / (p_h + p_a) if p_h + p_a > 0 else 0.5
+
+    handicap = {}
+    for line, cap in HANDICAP_CAPS.items():
+        home = min(float(g[_DIFF > line].sum()), cap)    # home -line
+        away = min(float(g[_DIFF < -line].sum()), cap)   # away -line
+        handicap[f"home_-{line}"], handicap[f"away_+{line}"] = r3(home), r3(1 - home)
+        handicap[f"away_-{line}"], handicap[f"home_+{line}"] = r3(away), r3(1 - away)
+
+    dc_sides = {"1X": _DIFF >= 0, "X2": _DIFF <= 0, "12": _DIFF != 0}
+    dc_total = {dc: {f"{side}{line}": r3(g[mask & ((_TOTALS > line) if side == "o" else (_TOTALS < line))].sum())
+                     for line in (1.5, 2.5, 3.5) for side in ("o", "u")}
+                for dc, mask in dc_sides.items()}
     return {
         "p_btts": round(1 / (1 + math.exp(-z)), 3),
-        "p_over35": round(over(g, 3.5), 3),
+        "p_over35": r3(g[_TOTALS > 3.5].sum()),
         "p_dnb_home": round(dnb, 3),
+        "goal_markets": {
+            "team_totals": {"home": {f"{l}": r3(g[_K > l, :].sum()) for l in (0.5, 1.5, 2.5)},
+                            "away": {f"{l}": r3(g[:, _K > l].sum()) for l in (0.5, 1.5, 2.5)}},
+            "clean_sheet": {"home": r3(g[:, 0].sum()), "away": r3(g[0, :].sum())},
+            "win_to_nil": {"home": r3(g[1:, 0].sum()), "away": r3(g[0, 1:].sum())},
+            "handicap": handicap,
+            "dc_total": dc_total,
+        },
     }
 
 

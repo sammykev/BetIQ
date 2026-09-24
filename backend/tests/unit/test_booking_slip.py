@@ -605,7 +605,7 @@ class TestCornersAndBookings:
         assert sportybet_ids("goals_ou", "U35")["specifier"] == "total=3.5"
         assert sportybet_ids("goals_ou", "O20") is None
 
-    def _book(self, labels):
+    def _book(self, market_map):
         shared = []
 
         async def share(sels):
@@ -613,19 +613,19 @@ class TestCornersAndBookings:
             return {"code": "CRN01", "url": "u", "odds": {}, "unavailable": set()}
         s = {**sel(), "market": "corners_ou", "code": "O95", "label": "Over 9.5 corners"}
         out = asyncio.run(to_sportybet([s], None, sportybet.find_event, share,
-                                       linked=lambda s: sportybet.slim_event(EVENT), market_labels=labels))
+                                       linked=lambda s: sportybet.slim_event(EVENT), market_map=market_map))
         return out, shared
 
-    def test_not_booked_until_sportybet_labels_the_market_corners(self):
-        for labels in (None, {}, {"166": "Total Goals"}):
-            out, shared = self._book(labels)
+    def test_not_booked_until_sportybet_confirms_the_market(self):
+        for market_map in (None, {}, {"corners_ou": {"id": "166", "ok": False}}):
+            out, shared = self._book(market_map)
             assert out["picks"][0]["status"] == "unsupported" and not shared
             assert "corners" in out["picks"][0]["reason"]
 
-    def test_booked_once_the_label_matches(self):
-        out, shared = self._book({"166": "Total Corners"})
+    def test_booked_under_the_confirmed_id(self):
+        out, shared = self._book({"corners_ou": {"id": "167", "ok": True}})
         assert out["code"] == "CRN01"
-        assert shared == [[{"eventId": "sr:match:111", "marketId": "166", "specifier": "total=9.5", "outcomeId": "12"}]]
+        assert shared == [[{"eventId": "sr:match:111", "marketId": "167", "specifier": "total=9.5", "outcomeId": "12"}]]
 
     def test_market_labels_from_the_listing(self):
         events = [{"markets": [{"id": "1", "desc": "1X2"}, {"id": "166", "desc": "Total Corners"}]},
@@ -655,7 +655,8 @@ class TestLinkStatus:
         day = (date.today() + timedelta(days=2)).isoformat()
         event = {**EVENT, "estimateStartTime": ms(day + "T16:30:00"),
                  "markets": EVENT["markets"] + [{"id": "166", "specifier": "total=9.5", "desc": "Total Corners",
-                                                 "outcomes": [{"id": "12", "odds": "1.8"}]}]}
+                                                 "outcomes": [{"id": "12", "odds": "1.8", "desc": "Over 9.5"},
+                                                              {"id": "13", "odds": "1.9", "desc": "Under 9.5"}]}]}
         store = {}
 
         class Redis:
@@ -670,14 +671,17 @@ class TestLinkStatus:
             return [event], ["pcUpcomingEvents: 1 events"]
 
         async def event_page(event_id, session=None):
-            return {"139": "Total Bookings"}
+            return {"139": {"label": "Total Bookings", "norm": "total bookings",
+                            "outcomes": {"12": "over", "13": "under"}}}
         monkeypatch.setattr(sportybet, "fetch_catalog", catalog)
-        monkeypatch.setattr(sportybet, "event_market_labels", event_page)
+        monkeypatch.setattr(sportybet, "event_market_details", event_page)
         asyncio.run(main._link_on_startup())
         status = main._sb_link_status
         assert status["trigger"] == "startup" and status["linked"] == 1
         assert status["market_labels"]["166"] == "Total Corners"
         assert status["market_labels"]["139"] == "Total Bookings"  # from the event page
+        assert status["market_map"]["corners_ou"] == {"id": "166", "label": "Total Corners", "ok": True, "why": None}
+        assert status["market_map"]["cards_ou"]["ok"] is True
         assert status["market_coverage"]["166"] == 1
 
         # After a restart the last result shows before any new run
@@ -685,7 +689,8 @@ class TestLinkStatus:
         monkeypatch.setattr(main, "_predictions_cache", [])
         body = TestClient(main.app).get("/api/sportybet/status").json()
         assert body["trigger"] == "startup" and body["linked"] == 1
-        assert body["markets"] == {"corners": True, "bookings": True}
+        assert body["markets"]["corners_ou"] is True and body["markets"]["cards_ou"] is True
+        assert body["markets"]["handicap"] is False  # not on that page
 
     def test_empty_cache_on_startup_waits_for_the_pipeline(self, monkeypatch):
         monkeypatch.setattr(main, "_predictions_cache", [])
@@ -695,3 +700,62 @@ class TestLinkStatus:
             raise AssertionError("nothing to link")
         monkeypatch.setattr(sportybet, "fetch_catalog", catalog)
         asyncio.run(main._link_on_startup())
+
+
+class TestNewMarkets:
+    def test_ids(self):
+        from booking_slip import sportybet_ids
+        assert sportybet_ids("home_goals_ou", "O15") == {"marketId": "19", "specifier": "total=1.5", "outcomeId": "12"}
+        assert sportybet_ids("away_corners_ou", "U45") == {"marketId": "170", "specifier": "total=4.5", "outcomeId": "13"}
+        assert sportybet_ids("clean_sheet", "CS-A") == {"marketId": "32", "specifier": "", "outcomeId": "74"}
+        assert sportybet_ids("win_to_nil", "WTN-H")["marketId"] == "33"
+        assert sportybet_ids("corners_1x2", "CR-X") == {"marketId": "162", "specifier": "", "outcomeId": "2"}
+        # Handicap: the specifier is always the home side's line
+        assert sportybet_ids("handicap", "H-1.5") == {"marketId": "16", "specifier": "hcp=-1.5", "outcomeId": "1714"}
+        assert sportybet_ids("handicap", "A+1.5") == {"marketId": "16", "specifier": "hcp=-1.5", "outcomeId": "1715"}
+        assert sportybet_ids("handicap", "A-2.5") == {"marketId": "16", "specifier": "hcp=2.5", "outcomeId": "1715"}
+        assert sportybet_ids("handicap", "H+2.5") == {"marketId": "16", "specifier": "hcp=2.5", "outcomeId": "1714"}
+        assert sportybet_ids("dc_goals", "X2&U35") == {"marketId": "547", "specifier": "total=3.5", "outcomeId": "802"}
+        assert sportybet_ids("handicap", "H-1.0") is None and sportybet_ids("dc_goals", "1X&O20") is None
+
+
+class TestResolveMarkets:
+    def _page(self, markets):
+        return {"home": "Arsenal", "away": "Chelsea", "markets": markets}
+
+    def test_confirms_guessed_ids_by_label_with_team_names(self):
+        from booking_slip import resolve_markets
+        out = resolve_markets(self._page({
+            "19": {"label": "Arsenal Total", "outcomes": {"12": "Over 1.5", "13": "Under 1.5"}},
+            "20": {"label": "Chelsea Total", "outcomes": {"12": "Over", "13": "Under"}},
+            "16": {"label": "Asian Handicap", "outcomes": {"1714": "Arsenal (-1.5)", "1715": "Chelsea (+1.5)"}},
+            "547": {"label": "Double Chance & Total", "outcomes": {
+                "794": "Arsenal or Draw & Under 2.5", "796": "Arsenal or Draw & Over 2.5",
+                "798": "Arsenal or Chelsea & Under 2.5", "800": "Arsenal or Chelsea & Over 2.5",
+                "802": "Draw or Chelsea & Under 2.5", "804": "Draw or Chelsea & Over 2.5"}},
+        }))
+        assert out["home_goals_ou"]["ok"] and out["away_goals_ou"]["ok"]
+        assert out["handicap"]["ok"] and out["dc_goals"]["ok"]
+        assert not out["corners_ou"]["ok"] and out["corners_ou"]["why"] == "not on this match's page"
+
+    def test_finds_the_right_id_when_the_guess_is_wrong(self):
+        from booking_slip import resolve_markets
+        out = resolve_markets(self._page({
+            "166": {"label": "1st Half - Total Corners", "outcomes": {"12": "Over", "13": "Under"}},
+            "167": {"label": "Total Corners", "outcomes": {"12": "Over", "13": "Under"}},
+        }))
+        assert out["corners_ou"] == {"id": "167", "label": "Total Corners", "ok": True, "why": None}
+
+    def test_wrong_outcome_labels_are_not_booked(self):
+        from booking_slip import resolve_markets
+        out = resolve_markets(self._page({
+            "547": {"label": "Double Chance & Total", "outcomes": {
+                "794": "Draw or Chelsea & Over 2.5", "796": "x", "798": "x", "800": "x", "802": "x", "804": "x"}},
+        }))
+        assert not out["dc_goals"]["ok"] and "794" in out["dc_goals"]["why"]
+
+    def test_listing_details_normalise_each_events_names(self):
+        events = [{"homeTeamName": "Arsenal", "awayTeamName": "Chelsea", "markets": [
+            {"id": "19", "desc": "Arsenal Total", "outcomes": [{"id": "12", "desc": "Over 1.5"}]}]}]
+        d = sportybet.market_details(events)
+        assert d["19"]["norm"] == "home total" and d["19"]["outcomes"]["12"] == "over 1.5"

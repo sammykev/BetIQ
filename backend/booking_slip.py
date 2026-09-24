@@ -28,37 +28,160 @@ _FIXED: Dict[Tuple[str, str], Tuple[str, str]] = {
     ("half_time", "HT1"): ("60", "1"), ("half_time", "HTX"): ("60", "2"), ("half_time", "HT2"): ("60", "3"),
 }
 _OVER, _UNDER = "12", "13"
+_YES = "74"
 # Over/under markets: model market → SportyBet market (lines go in the specifier)
-_LINE_MARKETS = {"goals_ou": "18", "corners_ou": "166", "cards_ou": "139"}
+_LINE_MARKETS = {"goals_ou": "18", "corners_ou": "166", "cards_ou": "139",
+                 "home_goals_ou": "19", "away_goals_ou": "20",
+                 "home_corners_ou": "169", "away_corners_ou": "170"}
 _OU_CODE = re.compile(r"^([OU])(\d{1,2})5$")  # O25 → over 2.5, U105 → under 10.5
-
-# Market ids we couldn't check against Betradar's documentation: a price is
-# only used, and a pick only booked, once SportyBet's own label for the id
-# says what we expect (seen in its listing — see sportybet.market_labels).
-LABELLED_MARKETS = {
-    "166": (re.compile(r"corner", re.I), "corners"),
-    "139": (re.compile(r"booking|card", re.I), "bookings"),
+_HANDICAP_CODE = re.compile(r"^([HA])([+-])(\d)\.5$")  # H-1.5 → home -1.5
+_DC_GOALS_CODE = re.compile(r"^(1X|X2|12)&([OU])(\d)5$")  # 1X&O15 → home or draw & over 1.5
+# Double chance & total (Betradar 547) outcome ids
+_DC_GOALS_OUTCOMES = {("1X", "U"): "794", ("1X", "O"): "796", ("12", "U"): "798",
+                      ("12", "O"): "800", ("X2", "U"): "802", ("X2", "O"): "804"}
+_OTHER_FIXED: Dict[Tuple[str, str], Tuple[str, str]] = {
+    ("clean_sheet", "CS-H"): ("31", _YES), ("clean_sheet", "CS-A"): ("32", _YES),
+    ("win_to_nil", "WTN-H"): ("33", _YES), ("win_to_nil", "WTN-A"): ("34", _YES),
+    ("corners_1x2", "CR-1"): ("162", "1"), ("corners_1x2", "CR-X"): ("162", "2"),
+    ("corners_1x2", "CR-2"): ("162", "3"),
 }
+
+# ── Markets confirmed against SportyBet itself ─────────────────────────────
+# These ids come from Betradar's numbering but couldn't be checked against
+# its documentation, so a pick in one is only booked once SportyBet's own
+# match page confirms it (main._link_sportybet_events, every 30 minutes):
+# the guessed id's label — team names read as "home"/"away" — must match,
+# else the one market whose label does is used; outcome labels, where the
+# page has them, must match too. Unconfirmed markets are never booked.
+_NOT_TOTAL = r"1st|first|2nd|second|half|handicap|asian|exact|range|odd|even|most|1x2|race|next|min|&|\band\b"
+VERIFIED: Dict[str, Dict[str, Any]] = {
+    "corners_ou": {"guess": "166", "name": "corners", "must": [r"corner"], "not": _NOT_TOTAL + r"|home|away|team",
+                   "outcomes": {_OVER: r"over", _UNDER: r"under"}},
+    "cards_ou": {"guess": "139", "name": "bookings", "must": [r"booking|card"],
+                 "not": _NOT_TOTAL + r"|home|away|team|point|sending|red|player",
+                 "outcomes": {_OVER: r"over", _UNDER: r"under"}},
+    "home_goals_ou": {"guess": "19", "name": "home team goals", "must": [r"\bhome\b", r"total|over|under|o/u|goals"],
+                      "not": _NOT_TOTAL + r"|away|corner|card|booking|clean|nil|both|btts|win",
+                      "outcomes": {_OVER: r"over", _UNDER: r"under"}},
+    "away_goals_ou": {"guess": "20", "name": "away team goals", "must": [r"\baway\b", r"total|over|under|o/u|goals"],
+                      "not": _NOT_TOTAL + r"|\bhome\b|corner|card|booking|clean|nil|both|btts|win",
+                      "outcomes": {_OVER: r"over", _UNDER: r"under"}},
+    "home_corners_ou": {"guess": "169", "name": "home team corners", "must": [r"\bhome\b", r"corner"],
+                        "not": _NOT_TOTAL + r"|away", "outcomes": {_OVER: r"over", _UNDER: r"under"}},
+    "away_corners_ou": {"guess": "170", "name": "away team corners", "must": [r"\baway\b", r"corner"],
+                        "not": _NOT_TOTAL + r"|\bhome\b", "outcomes": {_OVER: r"over", _UNDER: r"under"}},
+    "clean_sheet:H": {"guess": "31", "name": "home clean sheet", "must": [r"\bhome\b", r"clean sheet"],
+                      "not": r"away|1st|first|half|win|&", "outcomes": {_YES: r"yes"}},
+    "clean_sheet:A": {"guess": "32", "name": "away clean sheet", "must": [r"\baway\b", r"clean sheet"],
+                      "not": r"\bhome\b|1st|first|half|win|&", "outcomes": {_YES: r"yes"}},
+    "win_to_nil:H": {"guess": "33", "name": "home win to nil", "must": [r"\bhome\b", r"win to nil"],
+                     "not": r"away|1st|first|half", "outcomes": {_YES: r"yes"}},
+    "win_to_nil:A": {"guess": "34", "name": "away win to nil", "must": [r"\baway\b", r"win to nil"],
+                     "not": r"\bhome\b|1st|first|half", "outcomes": {_YES: r"yes"}},
+    "handicap": {"guess": "16", "name": "handicap", "must": [r"handicap"],
+                 "not": r"corner|card|booking|1st|first|half|european|3.?way|1x2|draw|range|min",
+                 "outcomes": {"1714": r"\bhome\b|^1\b", "1715": r"\baway\b|^2\b"}},
+    "dc_goals": {"guess": "547", "name": "double chance & goals", "must": [r"double chance", r"total|over|under|goals"],
+                 "not": r"1st|first|half|corner|card|booking|both|btts",
+                 "outcomes": {oid: (r"(home\W*(or\W*)?draw|draw\W*(or\W*)?home|\b1x\b|\b1/x\b)" if dc == "1X" else
+                                    r"(draw\W*(or\W*)?away|away\W*(or\W*)?draw|\bx2\b|\bx/2\b)" if dc == "X2" else
+                                    r"(home\W*(or\W*)?away|away\W*(or\W*)?home|\b12\b|\b1/2\b)")
+                                   + r".*" + ("over" if side == "O" else "under")
+                              for (dc, side), oid in _DC_GOALS_OUTCOMES.items()}},
+    "corners_1x2": {"guess": "162", "name": "most corners", "must": [r"corner", r"1x2|most|race|winner|result"],
+                    "not": r"1st|first|half|handicap|total|over|under|odd|even|range|next|min",
+                    "outcomes": {"1": r"\bhome\b|^1$", "2": r"draw|^x$", "3": r"\baway\b|^2$"}},
+}
+_KIND_BY_GUESS = {spec["guess"]: kind for kind, spec in VERIFIED.items()}
+
+
+def verified_kind(market: str, code: str) -> Optional[str]:
+    """Which VERIFIED entry a selection needs, or None for trusted markets."""
+    if market in ("clean_sheet", "win_to_nil"):
+        return f"{market}:{'H' if code.endswith('-H') else 'A'}"
+    return market if market in VERIFIED else None
+
+
+def _normalise_label(label: str, home: str = "", away: str = "") -> str:
+    text = (label or "").lower()
+    text = text.replace("{$competitor1}", "home").replace("{$competitor2}", "away")
+    for name, word in ((home, "home"), (away, "away")):
+        if name and len(name) > 2:
+            text = text.replace(name.lower(), word)
+    return text
+
+
+def _label_matches(kind: str, label: str) -> bool:
+    spec = VERIFIED[kind]
+    return (all(re.search(rx, label) for rx in spec["must"])
+            and not re.search(spec["not"], label))
 
 
 def label_ok(market_id: str, label: Optional[str]) -> bool:
-    """False when SportyBet's label for a checked market id doesn't match."""
-    check = LABELLED_MARKETS.get(str(market_id))
-    return check is None or bool(label and check[0].search(label))
+    """False when SportyBet's label for an unconfirmed market id doesn't
+    match (so a price under that id isn't trusted)."""
+    kind = _KIND_BY_GUESS.get(str(market_id))
+    return kind is None or bool(label and _label_matches(kind, _normalise_label(label)))
+
+
+def resolve_markets(details: Optional[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """Confirm each VERIFIED market against one SportyBet match page:
+    details = {"home", "away", "markets": {id: {"label", "norm"?, "outcomes": {id: label}}}}
+    (sportybet.market_details gives the markets, labels already normalised).
+    Returns {kind: {"id", "label", "ok", "why"}} — only ok entries are booked."""
+    details = details or {}
+    home, away = details.get("home") or "", details.get("away") or ""
+    markets = {str(k): v for k, v in (details.get("markets") or {}).items()}
+    labels = {mid: m.get("norm") or _normalise_label(m.get("label") or "", home, away) for mid, m in markets.items()}
+    out: Dict[str, Dict[str, Any]] = {}
+    for kind, spec in VERIFIED.items():
+        mid = spec["guess"] if spec["guess"] in labels and _label_matches(kind, labels[spec["guess"]]) else None
+        if mid is None:
+            matches = [m for m, lab in labels.items() if _label_matches(kind, lab)]
+            mid = matches[0] if len(matches) == 1 else None
+            if mid is None:
+                out[kind] = {"id": None, "label": markets.get(spec["guess"], {}).get("label"), "ok": False,
+                             "why": "several markets match" if matches else "not on this match's page"}
+                continue
+        outcomes = markets[mid].get("outcomes") or {}
+        bad = [oid for oid, rx in spec["outcomes"].items()
+               if oid in outcomes and outcomes[oid]
+               and not re.search(rx, _normalise_label(outcomes[oid], home, away))]
+        missing = [oid for oid in spec["outcomes"] if oid not in outcomes]
+        # Outcomes decide which side is booked: every one we'd book must be confirmed
+        ok = not bad and not missing
+        out[kind] = {"id": mid, "label": markets[mid].get("label"), "ok": ok,
+                     "why": None if ok else f"outcome labels don't match ({', '.join(bad + missing)})"}
+    return out
+
 
 MAX_SELECTIONS = 30
 
 
 def sportybet_ids(market: str, code: str) -> Optional[Dict[str, str]]:
-    """SportyBet {marketId, specifier, outcomeId} for a model selection, or None."""
-    fixed = _FIXED.get((market, code))
+    """SportyBet {marketId, specifier, outcomeId} for a model selection, or
+    None. For VERIFIED markets the id is the guess: booking swaps in the
+    confirmed one (see to_sportybet)."""
+    code = code or ""
+    fixed = _FIXED.get((market, code)) or _OTHER_FIXED.get((market, code))
     if fixed:
         return {"marketId": fixed[0], "specifier": "", "outcomeId": fixed[1]}
     if market in _LINE_MARKETS:
-        m = _OU_CODE.match(code or "")
+        m = _OU_CODE.match(code)
         if m:  # only half lines exist as plain totals
             return {"marketId": _LINE_MARKETS[market], "specifier": f"total={int(m.group(2))}.5",
                     "outcomeId": _OVER if m.group(1) == "O" else _UNDER}
+    if market == "handicap":
+        m = _HANDICAP_CODE.match(code)
+        if m:  # the specifier is the home side's handicap
+            side, sign, n = m.groups()
+            home_hcp = f"{'-' if (side == 'H') == (sign == '-') else ''}{n}.5"
+            return {"marketId": "16", "specifier": f"hcp={home_hcp}", "outcomeId": "1714" if side == "H" else "1715"}
+    if market == "dc_goals":
+        m = _DC_GOALS_CODE.match(code)
+        if m:
+            dc, side, n = m.groups()
+            return {"marketId": "547", "specifier": f"total={n}.5", "outcomeId": _DC_GOALS_OUTCOMES[(dc, side)]}
     return None
 
 
@@ -113,7 +236,7 @@ async def to_sportybet(
     find_event: Callable[[str, str, List[Dict]], Optional[Dict]],
     post_share: Callable[[List[Dict]], Awaitable[Dict[str, Any]]],
     linked: Optional[Callable[[Dict[str, Any]], Optional[Dict]]] = None,
-    market_labels: Optional[Dict[str, str]] = None,
+    market_map: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """
     Book the slip on SportyBet. Every selection comes back with a status:
@@ -125,8 +248,8 @@ async def to_sportybet(
     time (see main._link_sportybet_events); only unlinked selections need
     the event listing, so a fully linked slip is a single request.
 
-    `market_labels` is SportyBet's {market id: label}; picks in a
-    LABELLED_MARKETS market are only booked once its label matches.
+    `market_map` is resolve_markets' result: picks in a VERIFIED market are
+    only booked once it's confirmed, under the confirmed id.
     """
     picks: List[Dict[str, Any]] = []
     to_book: List[Tuple[int, Dict[str, str], Dict]] = []  # (pick index, ids, event)
@@ -141,11 +264,14 @@ async def to_sportybet(
             picks.append({**pick, "status": "unsupported",
                           "reason": "SportyBet codes can't include this market"})
             continue
-        if not label_ok(ids["marketId"], (market_labels or {}).get(ids["marketId"])):
-            picks.append({**pick, "status": "unsupported",
-                          "reason": f"We haven't confirmed SportyBet's {LABELLED_MARKETS[ids['marketId']][1]} "
-                                    "market yet"})
-            continue
+        kind = verified_kind(s["market"], s["code"])
+        if kind:
+            confirmed = (market_map or {}).get(kind) or {}
+            if not confirmed.get("ok"):
+                picks.append({**pick, "status": "unsupported",
+                              "reason": f"We haven't confirmed SportyBet's {VERIFIED[kind]['name']} market yet"})
+                continue
+            ids = {**ids, "marketId": str(confirmed["id"])}
         event = linked(s) if linked else None
         if event is None:
             if s["date"] not in events_by_date:

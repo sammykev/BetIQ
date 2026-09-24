@@ -51,22 +51,31 @@ function offBy(total: number, target: number) {
 const short = (x: number) => (x >= 1000 ? `${x / 1000}K` : `${x}x`);
 const CONFIDENCE = [0.6, 0.7, 0.8];
 const DAYS = [{ label: "Today", n: 1 }, { label: "2 days", n: 2 }, { label: "3 days", n: 3 }, { label: "Week", n: 7 }];
-const MARKETS = [
-  { id: "1x2", label: "Result" },
-  { id: "double_chance", label: "Double chance" },
-  { id: "goals_ou", label: "Goals" },
-  { id: "btts", label: "Both score" },
-  { id: "corners_ou", label: "Corners" },
-  { id: "cards_ou", label: "Cards" },
+// Each chip covers one or more backend markets (optimizer.py _PICKS). `needs`
+// are the booking_slip.VERIFIED markets SportyBet must confirm before codes
+// can include them.
+const MARKETS: { id: string; label: string; ids: string[]; needs?: string[] }[] = [
+  { id: "1x2", label: "Result", ids: ["1x2"] },
+  { id: "double_chance", label: "Double chance", ids: ["double_chance"] },
+  { id: "goals_ou", label: "Goals", ids: ["goals_ou"] },
+  { id: "btts", label: "Both score", ids: ["btts"] },
+  { id: "team_goals", label: "Team goals", ids: ["home_goals_ou", "away_goals_ou"],
+    needs: ["home_goals_ou", "away_goals_ou"] },
+  { id: "dc_goals", label: "Double chance + goals", ids: ["dc_goals"], needs: ["dc_goals"] },
+  { id: "clean_sheet", label: "Clean sheet / to nil", ids: ["clean_sheet", "win_to_nil"],
+    needs: ["clean_sheet:H", "clean_sheet:A", "win_to_nil:H", "win_to_nil:A"] },
+  { id: "handicap", label: "Handicap", ids: ["handicap"], needs: ["handicap"] },
+  { id: "corners", label: "Corners", ids: ["corners_ou"], needs: ["corners_ou"] },
+  { id: "team_corners", label: "Team corners", ids: ["home_corners_ou", "away_corners_ou", "corners_1x2"],
+    needs: ["home_corners_ou", "away_corners_ou", "corners_1x2"] },
+  { id: "cards", label: "Cards", ids: ["cards_ou"], needs: ["cards_ou"] },
 ];
-// Corners and cards (SportyBet's "Total bookings": yellow 1, red 2) only go
-// in a code once SportyBet's own market labels confirm them
-const SET_PIECE_MARKETS: Record<string, "corners" | "bookings"> = { corners_ou: "corners", cards_ou: "bookings" };
+// Cards are SportyBet's "Total bookings": yellow 1, red 2
 
 // /api/sportybet/status — the last automatic linking run
 interface LinkStatus {
   at: string | null; trigger: string | null; linked: number; predictions: number;
-  markets: { corners?: boolean; bookings?: boolean };
+  markets: Record<string, boolean>;
 }
 const TRIGGERS: Record<string, string> = {
   startup: "after the latest deploy", pipeline: "after new predictions", schedule: "on the 30-minute check",
@@ -110,6 +119,8 @@ export default function OptimizerPage() {
   const [days, setDays] = useState(3);
   const [maxGames, setMaxGames] = useState(30);
   const [markets, setMarkets] = useState<string[]>(MARKETS.map(m => m.id));
+  const confirmed = (m: (typeof MARKETS)[number], s: LinkStatus | null) =>
+    !m.needs || !s || m.needs.every(k => s.markets?.[k]);
   const [link, setLink] = useState<LinkStatus | null>(null);
 
   useEffect(() => {
@@ -119,11 +130,11 @@ export default function OptimizerPage() {
         if (!s) return;
         setLink(s);
         // Leave out corners/cards while SportyBet codes can't take them
-        setMarkets(ms => ms.filter(m => !SET_PIECE_MARKETS[m] || s.markets?.[SET_PIECE_MARKETS[m]]));
+        setMarkets(ms => ms.filter(id => confirmed(MARKETS.find(m => m.id === id)!, s)));
       })
       .catch(() => {});
   }, []);
-  const unconfirmed = MARKETS.filter(m => SET_PIECE_MARKETS[m.id] && link && !link.markets?.[SET_PIECE_MARKETS[m.id]]);
+  const unconfirmed = MARKETS.filter(m => !confirmed(m, link));
   // On by default: SportyBet lists many matches only days before kick-off,
   // and codes can only include matches it lists
   const [bookableOnly, setBookableOnly] = useState(true);
@@ -151,7 +162,8 @@ export default function OptimizerPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ target_odds: targetOdds, min_odds: lo, max_odds: hi, min_prob: minProb, days, max_games: maxGames,
-                               markets, bookable_only: bookableOnly }),
+                               markets: MARKETS.filter(m => markets.includes(m.id)).flatMap(m => m.ids),
+                               bookable_only: bookableOnly }),
       });
       const data = await res.json();
       setResult(res.ok ? data : { error: data?.detail || "The optimizer couldn't run. Try again." });

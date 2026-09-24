@@ -27,10 +27,14 @@ from typing import Dict, Iterable, List, Optional, Tuple
 import pandas as pd
 
 STATS = ("corners", "bookings")
-LINES = {"corners": (7.5, 8.5, 9.5, 10.5, 11.5), "bookings": (2.5, 3.5, 4.5, 5.5, 6.5)}
+# Each team's own corners (home side / away side), with their own spread
+TEAM_STATS = ("corners_home", "corners_away")
+LINES = {"corners": (7.5, 8.5, 9.5, 10.5, 11.5), "bookings": (2.5, 3.5, 4.5, 5.5, 6.5),
+         "corners_home": (2.5, 3.5, 4.5, 5.5, 6.5), "corners_away": (1.5, 2.5, 3.5, 4.5, 5.5)}
 DECAY = 0.95        # per match of that team: ~20 matches of memory
 PRIOR = 8.0         # matches' worth of league-average shrinkage
 GAMMA = 0.6         # damping of the combined team ratings (tuned walk-forward on 2022-24)
+TEAM_GAMMA = 1.0    # the same for one team's own corners (tuned walk-forward on 2023-24)
 LEAGUE_DECAY = 0.995
 MIN_MATCHES = 6     # per team before we price its matches
 
@@ -66,6 +70,23 @@ def p_over(line: float, mu: float, r: Optional[float]) -> float:
     return 1.0 - _nb_cdf(int(math.floor(line)), mu, r)
 
 
+def _nb_pmf(k: int, mu: float, r: Optional[float]) -> float:
+    if r is None:
+        return math.exp(k * math.log(mu) - mu - math.lgamma(k + 1))
+    p = r / (r + mu)
+    return math.exp(math.lgamma(k + r) - math.lgamma(r) - math.lgamma(k + 1) + r * math.log(p) + k * math.log(1 - p))
+
+
+def most_corners(mu_h: float, mu_a: float, r_h: Optional[float], r_a: Optional[float]) -> Dict[str, float]:
+    """P(home wins more corners / level / away more), the teams independent."""
+    ph = [_nb_pmf(k, mu_h, r_h) for k in range(40)]
+    pa = [_nb_pmf(k, mu_a, r_a) for k in range(40)]
+    home = sum(ph[i] * pa[j] for i in range(40) for j in range(i))
+    draw = sum(ph[i] * pa[i] for i in range(40))
+    total = home + draw + sum(ph[i] * pa[j] for i in range(40) for j in range(i + 1, 40))
+    return {"home": home / total, "draw": draw / total, "away": 1 - (home + draw) / total}
+
+
 class SetPieceModel:
     def __init__(self):
         # league -> stat -> [home avg, away avg]
@@ -73,7 +94,7 @@ class SetPieceModel:
         # team -> stat -> [weight, for ratio sum, against ratio sum]
         self.team: Dict[str, Dict[str, List[float]]] = {}
         self.matches: Dict[str, int] = {}
-        self.size: Dict[str, Optional[float]] = {s: None for s in STATS}  # NB size r
+        self.size: Dict[str, Optional[float]] = {s: None for s in STATS + TEAM_STATS}  # NB size r
         self.league_of: Dict[str, str] = {}
 
     # ---------------------------------------------------------------- #
@@ -97,6 +118,8 @@ class SetPieceModel:
             fh, ah = self._rating(home, stat)
             fa, aa = self._rating(away, stat)
             out[stat] = (avgs[0] * (fh * aa) ** GAMMA, avgs[1] * (fa * ah) ** GAMMA)
+            if stat == "corners":
+                out["corners_team"] = (avgs[0] * (fh * aa) ** TEAM_GAMMA, avgs[1] * (fa * ah) ** TEAM_GAMMA)
         return out
 
     def update(self, home: str, away: str, league: str, counts: Dict[str, Tuple[float, float]]) -> None:
@@ -135,6 +158,9 @@ class SetPieceModel:
                     for stat in STATS:
                         base = sum(model._league_avgs(league, stat))
                         rows.append((row["Date"], stat, sum(exp[stat]), sum(counts[stat]), base))
+                    avgs = model._league_avgs(league, "corners")
+                    for side, stat in enumerate(TEAM_STATS):
+                        rows.append((row["Date"], stat, exp["corners_team"][side], counts["corners"][side], avgs[side]))
             model.update(row["HomeTeam"], row["AwayTeam"], league, counts)
         return model, rows
 
@@ -161,22 +187,27 @@ class SetPieceModel:
             return None
         warm_up = data["Date"].min() + pd.Timedelta(days=365)
         model, rows = cls.replay(data, test_from=warm_up)
-        for stat in STATS:
+        for stat in STATS + TEAM_STATS:
             model.size[stat] = cls.fit_size((m, y) for _, s, m, y, _ in rows if s == stat)
         return model
 
     # ---------------------------------------------------------------- #
     def markets(self, home: str, away: str, league: Optional[str] = None) -> Optional[Dict]:
-        """{"corners": {"mean", "over": {line: p}}, "bookings": {...}} for a fixture."""
+        """{"corners" / "bookings" / "corners_home" / "corners_away": {"mean",
+        "over": {line: p}}, "corners_1x2": {"home", "draw", "away"}} for a fixture."""
         exp = self.expected(home, away, league)
         if not exp:
             return None
         out = {}
-        for stat in STATS:
-            mu = sum(exp[stat])
+        means = {**{stat: sum(exp[stat]) for stat in STATS},
+                 "corners_home": exp["corners_team"][0], "corners_away": exp["corners_team"][1]}
+        for stat, mu in means.items():
             out[stat] = {"mean": round(mu, 2),
-                         "over": {f"{line}": round(p_over(line, mu, self.size[stat]), 3)
+                         "over": {f"{line}": round(p_over(line, mu, self.size.get(stat)), 3)
                                   for line in LINES[stat]}}
+        race = most_corners(means["corners_home"], means["corners_away"],
+                            self.size.get("corners_home"), self.size.get("corners_away"))
+        out["corners_1x2"] = {k: round(v, 3) for k, v in race.items()}
         return out
 
 
@@ -189,7 +220,7 @@ def evaluate(matches: pd.DataFrame, test_from: str) -> Dict:
     warm_up = data["Date"].min() + pd.Timedelta(days=365)
     _, rows = SetPieceModel.replay(data, test_from=warm_up)
     report: Dict = {}
-    for stat in STATS:
+    for stat in STATS + TEAM_STATS:
         train = [(m, y, b) for d, s, m, y, b in rows if s == stat and d < cutoff]
         test = [(m, y, b) for d, s, m, y, b in rows if s == stat and d >= cutoff]
         size = SetPieceModel.fit_size((m, y) for m, y, _ in train)

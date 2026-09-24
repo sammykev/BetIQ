@@ -358,8 +358,13 @@ class TestAdminCheck:
             def predict_match(self, *a, **k):
                 return {"p_home": 0.5, "p_draw": 0.3, "p_away": 0.2, "tip_code": "1X"}
 
+        linked = []
+
+        async def link(trigger="schedule"):
+            linked.append(trigger)  # the real one would call SportyBet
         monkeypatch.setattr(intl, "fetch_international", fake)
         monkeypatch.setattr(main, "_predictor", Model())
+        monkeypatch.setattr(main, "_link_sportybet_events", link)
         monkeypatch.setattr(main, "_predictions_cache", [{"home": "Old", "away": "Game", "league": "INT-UNL"},
                                                          {"home": "Arsenal", "away": "Chelsea", "league": "PL"}])
         monkeypatch.setattr(main, "_save_predictions_cache", lambda: None)
