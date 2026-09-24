@@ -30,6 +30,10 @@ services:
       # Extra sites allowed to call the API from a browser, comma-separated
       - key: ALLOWED_ORIGINS
         sync: false
+      # API-Football (dashboard.api-football.com), same key as the GitHub
+      # secret: referees for upcoming matches when SofaScore blocks this server
+      - key: APIFOOTBALL_KEY
+        sync: false
       # SportyBet booking (sportybet.py). Defaults work; set SPORTYBET_PROXY only
       # if the admin "Test live booking" check shows SportyBet refusing this server.
       # Days ahead to fetch and predict (main.PREDICTION_DAYS)

@@ -4,7 +4,7 @@ Referees for upcoming matches (referees.py) and how they reach predictions
 """
 
 import asyncio
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 
 import pandas as pd
 import pytest
@@ -149,16 +149,118 @@ class TestPredictions:
         assert "referee" not in c and "bookings" in c["set_pieces"]
         assert tennis == {"home": "X", "away": "Y", "date": "2025-03-22", "sport": "tennis"}
 
-    def test_refresh_keeps_old_appointments_when_sofascore_is_down(self, monkeypatch):
+    def _blocked_sofascore(self, monkeypatch):
         import curl_cffi.requests as cr
-        main._referees["appointments"] = {"A|B|2025-03-22": {"name": "Calm Ref"}}
-        monkeypatch.setattr(main, "_predictions_cache", [{"home": "A", "away": "B", "date": "2025-03-22"}])
 
         class Down:
             def __init__(self, *a, **k): pass
             async def __aenter__(self): return Client({"scheduled-events": (403, {})})
             async def __aexit__(self, *a): return False
         monkeypatch.setattr(cr, "AsyncSession", Down)
+
+    def _api_football(self, monkeypatch, reply):
+        import httpx
+        calls = []
+
+        class AF:
+            def __init__(self, *a, **k): pass
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+            async def get(self, url, params=None, headers=None):
+                calls.append(params["date"])
+                return Resp(200, reply(params["date"]))
+        monkeypatch.setattr(httpx, "AsyncClient", AF)
+        return calls
+
+    def test_refresh_keeps_old_appointments_when_sofascore_is_down(self, monkeypatch):
+        day = (date.today() + timedelta(days=1)).isoformat()
+        main._referees["appointments"] = {f"A|B|{day}": {"name": "Calm Ref"}}
+        monkeypatch.setattr(main, "_predictions_cache", [{"home": "A", "away": "B", "date": day}])
+        monkeypatch.delenv("APIFOOTBALL_KEY", raising=False)
+        self._blocked_sofascore(monkeypatch)
         rep = asyncio.run(main._refresh_referees("manual"))
-        assert rep["errors"] and main._referees["appointments"] == {"A|B|2025-03-22": {"name": "Calm Ref"}}
+        assert rep["errors"] and main._referees["appointments"] == {f"A|B|{day}": {"name": "Calm Ref"}}
+        assert "APIFOOTBALL_KEY" in rep["api_football"]["skipped"]
         assert main._referee_status()["count"] == 1
+
+    def test_blocked_sofascore_falls_back_to_api_football(self, monkeypatch):
+        today = date.today()
+        day = (today + timedelta(days=1)).isoformat()
+        monkeypatch.setattr(main, "_predictions_cache", [{"home": "A", "away": "B", "date": day, "league": "PL"}])
+        monkeypatch.setenv("APIFOOTBALL_KEY", "k")
+        monkeypatch.setattr(main, "_get_redis", lambda: None)
+        self._blocked_sofascore(monkeypatch)
+        calls = self._api_football(monkeypatch, lambda d: {"response": [
+            {"fixture": {"id": 1, "referee": "Michael Oliver, England"},
+             "teams": {"home": {"name": "A"}, "away": {"name": "B"}}}] if d == day else []})
+        rep = asyncio.run(main._refresh_referees("manual"))
+        assert calls == [(today + timedelta(days=o)).isoformat() for o in range(3)]
+        assert main._referees["appointments"][f"A|B|{day}"] == {"name": "Michael Oliver", "career": None,
+                                                                "source": "api-football"}
+        assert rep["api_football"]["found"] == 1 and main._predictions_cache[0]["referee"]["name"] == "Michael Oliver"
+        assert main._referee_status()["api_football_calls_today"] == 3
+
+        # Within the daily cap only
+        main._referees["_af_calls"] = {today.isoformat(): referees.AF_DAILY_CAP}
+        rep = asyncio.run(main._refresh_referees("manual"))
+        assert "used today" in rep["api_football"]["skipped"] and len(calls) == 3
+
+
+class TestApiFootball:
+    def test_bad_key_stops_early(self):
+        class C:
+            n = 0
+            async def get(self, url, params=None, headers=None):
+                C.n += 1
+                return Resp(200, {"errors": {"token": "Error/Missing application key."}, "response": []})
+        found, rep = asyncio.run(referees.fetch_api_football(C(), PREDS, TODAY, "bad"))
+        assert found == {} and C.n == 1 and "token" in rep["errors"][0]
+
+
+class TestGitHubJob:
+    def test_stores_what_sofascore_found(self, monkeypatch):
+        import json
+        import collect_referees
+        import curl_cffi.requests as cr
+
+        class R:
+            def __init__(self):
+                self.data = {"betiq:predictions": json.dumps({"predictions": PREDS}).encode()}
+            def get(self, k): return self.data.get(k)
+            def set(self, k, v, ex=None): self.data[k] = v
+        r = R()
+        monkeypatch.setattr(collect_referees.model_store, "_client", lambda: r)
+        routes = TestFetch().routes()
+
+        class Up:
+            def __init__(self, *a, **k): pass
+            async def __aenter__(self): return Client(routes)
+            async def __aexit__(self, *a): return False
+        monkeypatch.setattr(cr, "AsyncSession", Up)
+        monkeypatch.setattr(referees, "PAUSE", 0)
+        real = referees.fetch
+        monkeypatch.setattr(referees, "fetch", lambda c, p, k, t, **kw: real(c, p, k, TODAY, pause=0))
+        assert collect_referees.main() == 0
+        stored = referees.load(r)
+        assert stored["trigger"] == "github" and stored["appointments"]["Man United|Man City|2025-03-22"]["name"] == "Anthony Taylor"
+
+    def test_blocked_leaves_stored_referees_alone(self, monkeypatch):
+        import json
+        import collect_referees
+        import curl_cffi.requests as cr
+
+        class R:
+            def __init__(self):
+                self.data = {"betiq:predictions": json.dumps({"predictions": PREDS}).encode(),
+                             referees.APPOINTED_KEY: json.dumps({"at": "x", "appointments": {"k|l|2099-01-01": {"name": "Kept"}}})}
+            def get(self, k): return self.data.get(k)
+            def set(self, k, v, ex=None): raise AssertionError("must not write")
+        monkeypatch.setattr(collect_referees.model_store, "_client", lambda: R())
+        today = datetime.now(timezone.utc).date().isoformat()
+
+        class Down:
+            def __init__(self, *a, **k): pass
+            async def __aenter__(self): return Client({f"scheduled-events/{today}": (403, {})})
+            async def __aexit__(self, *a): return False
+        monkeypatch.setattr(cr, "AsyncSession", Down)
+        assert collect_referees.main() == 0

@@ -11,15 +11,21 @@ scales its bookings by that referee (set_pieces.SetPieceModel.referee_factor).
 Stored in Redis (APPOINTED_KEY) so a restart keeps them. A referee once
 found isn't asked for again; matches still without one are re-checked each
 run, up to MAX_PAGES match pages a run.
+
+SofaScore blocks some servers (Render gets a 403 "challenge"). Two ways
+round it: a GitHub Actions job (collect_referees.py) runs the same lookup
+from GitHub's machines into the same Redis key, and the API server falls
+back to API-Football's fixture lists (fetch_api_football), which name the
+referee but not their career record.
 """
 
 import asyncio
 import json
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Tuple
 
 import international_fixtures as intl
-from international_stats import SOFA_EVENT, parse_sofa_referee
+from international_stats import AF_BASE, SOFA_EVENT, parse_sofa_referee
 
 APPOINTED_KEY = "betiq:referees:appointed"
 SOFA_DAY = "https://api.sofascore.com/api/v1/sport/football/scheduled-events/{day}"
@@ -116,6 +122,52 @@ async def fetch(client, preds: List[Dict], known: Dict[str, Dict], today: date,
     for k, v in known.items():
         if k not in out and k.rsplit("|", 1)[-1] >= today.isoformat() and v.get("name"):
             out[k] = v
+    report["found"] = len(out)
+    return out, report
+
+
+AF_DAYS = 3          # today and the next two days: one request a day
+AF_DAILY_CAP = 12    # of the key's 100 a day (the nightly collector uses up to 85)
+
+
+def blocked(report: Dict[str, Any]) -> bool:
+    """Whether SofaScore refused us (rather than just listing no referee)."""
+    return any(" 403" in e or " 429" in e for e in report.get("errors") or [])
+
+
+async def fetch_api_football(client, preds: List[Dict], today: date, api_key: str,
+                             days: int = AF_DAYS) -> Tuple[Dict[str, Dict], Dict[str, Any]]:
+    """({prediction key: {"name", "career": None, "source"}}, report) from
+    API-Football's fixture lists for the next `days` days."""
+    report: Dict[str, Any] = {"requests": 0, "fixtures": 0, "errors": []}
+    events: List[Dict] = []
+    for offset in range(days):
+        day = (today + timedelta(days=offset)).isoformat()
+        try:
+            res = await client.get(f"{AF_BASE}/fixtures", params={"date": day}, headers={"x-apisports-key": api_key})
+            data = res.json()
+        except Exception as e:
+            report["errors"].append(f"{day}: {type(e).__name__}")
+            continue
+        finally:
+            report["requests"] += 1
+        if data.get("errors") and not data.get("response"):
+            report["errors"].append(f"{day}: {data['errors']}")
+            if isinstance(data["errors"], dict) and (data["errors"].get("requests") or data["errors"].get("token")):
+                break  # out of requests, or a bad key
+            continue
+        for f in data.get("response") or []:
+            referee = ((f.get("fixture") or {}).get("referee") or "").split(",")[0].strip()
+            teams = f.get("teams") or {}
+            if referee:
+                events.append({"homeTeamName": (teams.get("home") or {}).get("name") or "",
+                               "awayTeamName": (teams.get("away") or {}).get("name") or "", "day": day,
+                               "referee": referee})
+        report["fixtures"] += len(data.get("response") or [])
+    last = (today + timedelta(days=days - 1)).isoformat()
+    upcoming = [p for p in preds if today.isoformat() <= (p.get("date") or "") <= last]
+    out = {k: {"name": ev["referee"], "career": None, "source": "api-football"}
+           for k, ev in match(upcoming, events).items()}
     report["found"] = len(out)
     return out, report
 

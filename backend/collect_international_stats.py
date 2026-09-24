@@ -4,9 +4,11 @@ then tune and test the international corners/bookings model on them
 (set_pieces.tune_international) and store the verdict with the data, so
 the API server knows whether to use it. Run by .github/workflows/
 collect-international-stats.yml; needs UPSTASH_REDIS_URL, and
-APIFOOTBALL_KEY for the API-Football top-up.
+APIFOOTBALL_KEY for the API-Football top-up (85 requests a night by
+default: the API server's referee lookup may use up to 12 more of the
+free plan's 100 a day).
 
-    python collect_international_stats.py --minutes 150 --af-budget 90
+    python collect_international_stats.py --minutes 150 --af-budget 85
 """
 
 import argparse
@@ -24,7 +26,7 @@ import set_pieces
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--minutes", type=float, default=float(os.getenv("INTL_STATS_MINUTES", "150")))
-    ap.add_argument("--af-budget", type=int, default=int(os.getenv("APIFOOTBALL_DAILY_BUDGET", "90")))
+    ap.add_argument("--af-budget", type=int, default=int(os.getenv("APIFOOTBALL_DAILY_BUDGET", "85")))
     args = ap.parse_args()
     r = model_store._client()
     if r is None:

@@ -4597,10 +4597,34 @@ def _apply_referees() -> int:
     return n
 
 
+def _af_referee_calls(add: int = 0) -> int:
+    """API-Football requests the referee lookup made today (Redis-backed, so
+    restarts count too). `add` records more."""
+    day = datetime.now(timezone.utc).date().isoformat()
+    r = _get_redis()
+    if r:
+        try:
+            key = f"betiq:referees:af_calls:{day}"
+            if add:
+                n = int(r.incrby(key, add))
+                r.expire(key, 2 * 86400)
+                return n
+            return int(r.get(key) or 0)
+        except Exception:
+            pass
+    calls = _referees.setdefault("_af_calls", {})
+    calls[day] = calls.get(day, 0) + add
+    return calls[day]
+
+
 async def _refresh_referees(trigger: str = "schedule") -> Dict[str, Any]:
-    """Look up the referees of the coming days' matches (SofaScore), keep
-    them, and re-price the cached predictions' bookings."""
+    """Look up the referees of the coming days' matches and re-price the
+    cached predictions' bookings. SofaScore first; when it blocks this
+    server, API-Football (APIFOOTBALL_KEY). The GitHub job
+    (collect_referees.py) fills the same Redis key from GitHub's machines,
+    so what it found is picked up here too."""
     global _referee_lock
+    import httpx
     import referees
     loop = asyncio.get_running_loop()
     if _referee_lock is None or _referee_lock[0] is not loop:
@@ -4609,18 +4633,35 @@ async def _refresh_referees(trigger: str = "schedule") -> Dict[str, Any]:
         preds = [p for p in _predictions_cache if p.get("sport") in (None, "football")]
         if not preds:
             return {"skipped": "no predictions yet"}
-        from curl_cffi.requests import AsyncSession
+        saved = referees.load(_get_redis())
+        if saved.get("at") and saved["at"] > (_referees.get("at") or ""):
+            _referees.update(saved)  # newer, from the GitHub job
+        known = dict(_appointments())
         today = datetime.now(timezone.utc).date()
+        from curl_cffi.requests import AsyncSession
         try:
             async with AsyncSession(impersonate=intl.IMPERSONATE, timeout=20) as client:
-                found, report = await referees.fetch(client, preds, _appointments(), today)
+                found, report = await referees.fetch(client, preds, known, today)
         except Exception as e:
-            found, report = None, {"errors": [f"{type(e).__name__}: {e}"]}
-        if found is None or (not found and report.get("errors") and not report.get("days")):
-            # Couldn't reach SofaScore: keep what we had
-            _referees.update({"report": report, "trigger": trigger,
-                              "checked": datetime.now(timezone.utc).isoformat()})
-            return report
+            found = {k: v for k, v in known.items() if k.rsplit("|", 1)[-1] >= today.isoformat()}
+            report = {"errors": [f"{type(e).__name__}: {e}"]}
+        report["source"] = "sofascore"
+
+        api_key = os.getenv("APIFOOTBALL_KEY", "").strip()
+        if referees.blocked(report) or not report.get("days"):
+            if not api_key:
+                report["api_football"] = {"skipped": "set APIFOOTBALL_KEY on Render to use API-Football instead"}
+            elif _af_referee_calls() + referees.AF_DAYS > referees.AF_DAILY_CAP:
+                report["api_football"] = {"skipped": f"used today's {referees.AF_DAILY_CAP} requests"}
+            else:
+                async with httpx.AsyncClient(timeout=30) as client:
+                    af, af_report = await referees.fetch_api_football(client, preds, today, api_key)
+                _af_referee_calls(af_report["requests"])
+                report["api_football"] = af_report
+                # A SofaScore find (with the referee's career record) wins
+                found = {**af, **{k: v for k, v in found.items() if v.get("source") != "api-football"}}
+        report["found"] = len(found)
+
         _referees.update({"at": datetime.now(timezone.utc).isoformat(), "checked": None,
                           "appointments": found, "report": report, "trigger": trigger})
         try:
@@ -4629,21 +4670,23 @@ async def _refresh_referees(trigger: str = "schedule") -> Dict[str, Any]:
             print(f"[Referees] Could not save: {e}")
         report["on_predictions"] = _apply_referees()
         _save_predictions_cache()
-        print(f"[Referees] {trigger}: {report['found']} referees for {report['matched']} listed matches")
+        print(f"[Referees] {trigger}: {len(found)} referees; errors {report.get('errors') or 'none'}")
         return report
 
 
 def _referee_status() -> Dict[str, Any]:
+    import referees
     appointed = _appointments()
     shown = []
     for k, v in appointed.items():
         home, away, day = (k.split("|") + ["", "", ""])[:3]
         shown.append({"match": f"{home} vs {away}", "date": day, "referee": v.get("name"),
-                      "games": (v.get("career") or {}).get("games")})
+                      "games": (v.get("career") or {}).get("games"), "source": v.get("source") or "sofascore"})
     shown.sort(key=lambda x: x["date"])
     return {"at": _referees.get("at") or None, "checked": _referees.get("checked"),
             "trigger": _referees.get("trigger"), "report": _referees.get("report"),
             "appointments": shown[:60], "count": len(appointed),
+            "api_football_calls_today": _af_referee_calls(), "api_football_cap": referees.AF_DAILY_CAP,
             "on_predictions": sum(1 for p in _predictions_cache if p.get("referee"))}
 
 

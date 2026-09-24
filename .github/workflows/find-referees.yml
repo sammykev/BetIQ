@@ -1,0 +1,40 @@
+# Finds the referees of the coming days' matches on SofaScore (which blocks
+# the API server on Render) and stores them in Upstash Redis for the API
+# server to use in the cards forecast — see backend/collect_referees.py.
+# Needs the UPSTASH_REDIS_URL secret (same as Render).
+name: Find referees
+
+on:
+  schedule:
+    - cron: "20 */3 * * *"   # every 3 hours
+  workflow_dispatch:
+
+concurrency:
+  group: find-referees
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  find:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - run: pip install -r requirements.txt
+
+      - name: Find referees
+        env:
+          UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
+        run: python collect_referees.py

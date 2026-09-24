@@ -66,24 +66,37 @@ function InternationalSetPieces({ info }: { info: any }) {
 function Referees({ info, onRun, running }: { info: any; onRun: () => void; running: boolean }) {
   const rep = info?.report ?? {};
   const errors: string[] = rep.errors ?? [];
+  const blocked = errors.some(e => / 403| 429/.test(e));
+  const af = rep.api_football;
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Stat label="Referees found" value={num(info?.count ?? 0)} tone={info?.count ? "accent" : undefined} />
         <Stat label="On predictions" value={num(info?.on_predictions ?? 0)} sub="cards priced with them" />
         <Stat label="Matches listed" value={num(rep.matched ?? 0)} sub="ours, next 4 days on SofaScore" />
-        <Stat label="Last found" value={info?.at ? ago(info.at) : "Never"}
-          sub={info?.checked ? `tried ${ago(info.checked)}` : info?.trigger ? `by ${info.trigger}` : undefined} />
+        <Stat label="Last check" value={info?.at ? ago(info.at) : "Never"}
+          sub={info?.trigger === "github" ? "by the GitHub job" : info?.trigger ? `by ${info.trigger}` : undefined} />
       </div>
-      {errors.length > 0 && (
+      {blocked ? (
+        <p className="text-xs text-warn">SofaScore blocks this server, so referees come from the &quot;Find referees&quot; job on GitHub
+          (every 3 hours) and from API-Football.</p>
+      ) : errors.length > 0 && (
         <p className="text-xs text-warn">SofaScore: {errors.slice(0, 3).join(" · ")}{errors.length > 3 ? ` (+${errors.length - 3})` : ""}</p>
+      )}
+      {af && (
+        <p className={clsx("text-xs", af.skipped || af.errors?.length ? "text-warn" : "text-n-400")}>
+          API-Football: {af.skipped ?? `${af.found ?? 0} found in ${num(af.fixtures ?? 0)} fixtures`}
+          {af.errors?.length ? ` · ${af.errors[0]}` : ""}
+          {` · ${info?.api_football_calls_today ?? 0}/${info?.api_football_cap ?? 12} requests today`}
+        </p>
       )}
       {info?.appointments?.length ? (
         <ul className="grid gap-1.5 sm:grid-cols-2 text-xs">
           {info.appointments.slice(0, 20).map((a: any) => (
             <li key={`${a.match}|${a.date}`} className="rounded-lg bg-surface-sunken px-2.5 py-1.5 flex justify-between gap-2">
               <span className="text-n-200 truncate">{a.match}</span>
-              <span className="text-n-400 shrink-0">{a.referee}{a.games ? ` · ${a.games} games` : ""} · {a.date}</span>
+              <span className="text-n-400 shrink-0">{a.referee}{a.games ? ` · ${a.games} games` : ""} · {a.date}
+                {a.source === "api-football" ? " · API-Football" : ""}</span>
             </li>
           ))}
         </ul>
