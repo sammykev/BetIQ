@@ -910,6 +910,9 @@ def _build_predictions(predictor, fixtures: list, live_odds: dict) -> list:
                 "odds_away": round(float(odds.get("2") or 0), 2) or None,
                 "value_edge": value_edge,
                 "is_value_bet": value_edge is not None and value_edge > 0.05,
+                # Still linked from the last run (keys are home|away|date), so a
+                # rebuild doesn't hide "bookable" until the next linking run
+                "sportybet": _linked_event(fx) is not None,
                 **({"set_pieces": extras} if extras else {}),
             })
         except Exception:
@@ -4407,7 +4410,7 @@ def _linked_event(selection: Dict[str, Any]) -> Optional[Dict]:
                 _sb_links.update(json.loads(r.get(SB_LINKS_KEY) or "{}"))
             except Exception:
                 pass
-    return _sb_links.get(_sb_key(selection["home"], selection["away"], selection["date"]))
+    return _sb_links.get(_sb_key(selection.get("home", ""), selection.get("away", ""), selection.get("date", "")))
 
 
 @app.post("/api/optimizer")
@@ -4435,13 +4438,22 @@ async def optimize_slip(body: Dict[str, Any]):
     now = datetime.now(timezone.utc)
     today, last = now.date().isoformat(), (now.date() + timedelta(days=days - 1)).isoformat()
     kicked_off = now.strftime("%H:%M")
-    preds = [p for p in _predictions_cache
-             if p.get("sport") in (None, "football")
-             and today <= p.get("date", "") <= last
-             and not (p.get("date") == today and (p.get("time") or "99:99") <= kicked_off)
-             and (not leagues or p.get("league") in leagues)
-             and (not bookable_only or p.get("sportybet"))]
-    groups = [optimizer.candidates(p, _linked_event(p), min_prob, markets) for p in preds]
+    upcoming = [p for p in _predictions_cache
+                if p.get("sport") in (None, "football")
+                and today <= p.get("date", "") <= last
+                and not (p.get("date") == today and (p.get("time") or "99:99") <= kicked_off)
+                and (not leagues or p.get("league") in leagues)]
+    # Bookable = linked to a SportyBet event. Asked of the stored links, not
+    # the prediction's "sportybet" flag: a predictions rebuild replaces the
+    # predictions (flags and all) minutes before the next linking run.
+    linked = {id(p): _linked_event(p) for p in upcoming}
+    preds = [p for p in upcoming if not bookable_only or linked[id(p)]]
+    if bookable_only and upcoming and not preds:
+        return {"error": (f"SportyBet hasn't listed any of the {len(upcoming)} matches in the next {days} "
+                          f"day{'s' if days != 1 else ''} yet (or we haven't linked them since the last restart). "
+                          "Untick \"Only matches SportyBet lists\", or pick more days."),
+                "matches_considered": 0, "target": [lo, hi], "target_odds": target}
+    groups = [optimizer.candidates(p, linked[id(p)], min_prob, markets) for p in preds]
     result = await asyncio.to_thread(optimizer.optimize, groups, lo, hi, max_games)
     considered = sum(1 for g in groups if g)
     if result is None and lo <= target <= hi:

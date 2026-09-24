@@ -99,11 +99,12 @@ class TestEndpoint:
     def cache(self, monkeypatch):
         tomorrow = (date.today() + timedelta(days=1)).isoformat()
         preds = [pred(i, odds_home=1.7, odds_draw=3.6, odds_away=5.0) for i in range(8)]
-        preds[0]["sportybet"] = True
         preds[1]["league"] = "INT-FRI"
         preds.append(pred(99, day=(date.today() + timedelta(days=9)).isoformat()))
         monkeypatch.setattr(main, "_predictions_cache", preds)
-        monkeypatch.setattr(main, "_sb_links", {})
+        # Only the first match is linked to a SportyBet event (bookable)
+        monkeypatch.setattr(main, "_sb_links", {f"{preds[0]['home']}|{preds[0]['away']}|{preds[0]['date']}":
+                                                {"eventId": "sr:match:1", "markets": []}})
         monkeypatch.setattr(main, "_get_redis", lambda: None)
         self.tomorrow = tomorrow
 
@@ -199,3 +200,36 @@ class TestGridMarkets:
             assert sportybet_ids(o.market, o.code), (o.market, o.code)
         labels = {o.code: o.label for o in opts if o.market == "handicap"}
         assert labels["H-1.5"] == "Home0 -1.5" and labels["A+1.5"] == "Away0 +1.5"
+
+
+class TestBookableAfterRebuild:
+    def test_links_count_even_when_the_flag_was_wiped(self, monkeypatch):
+        # A predictions rebuild replaces the dicts (no "sportybet" flag) before
+        # the next linking run; the stored link still makes the match bookable
+        p = pred(1, odds_home=1.6, odds_draw=3.9, odds_away=5.5)
+        monkeypatch.setattr(main, "_predictions_cache", [p])
+        monkeypatch.setattr(main, "_sb_links", {f"{p['home']}|{p['away']}|{p['date']}": {"eventId": "sr:match:1", "markets": []}})
+        body = {"target_odds": 1.6, "min_odds": 1.5, "max_odds": 1.7, "min_prob": 0.5, "days": 3, "bookable_only": True}
+        res = TestClient(main.app).post("/api/optimizer", json=body).json()
+        assert res["matches_considered"] == 1 and "picks" in res
+
+    def test_says_why_when_nothing_is_listed(self, monkeypatch):
+        monkeypatch.setattr(main, "_predictions_cache", [pred(1), pred(2)])
+        monkeypatch.setattr(main, "_sb_links", {})
+        monkeypatch.setattr(main, "_get_redis", lambda: None)
+        body = {"target_odds": 3, "min_odds": 2.9, "max_odds": 3.1, "days": 3, "bookable_only": True}
+        res = TestClient(main.app).post("/api/optimizer", json=body).json()
+        assert "SportyBet hasn't listed any of the 2 matches" in res["error"]
+
+    def test_rebuilt_predictions_keep_the_flag(self, monkeypatch):
+        fx = {"home": "Arsenal", "away": "Chelsea", "date": (date.today() + timedelta(days=1)).isoformat(), "league": "PL"}
+
+        class Model:
+            def predict_match(self, *a, **k):
+                return {"p_home": 0.5, "p_draw": 0.3, "p_away": 0.2, "p_over15": 0.7, "p_over25": 0.5, "tip_code": "1X"}
+
+            def canon(self, t):
+                return t
+        monkeypatch.setattr(main, "_sb_links", {f"Arsenal|Chelsea|{fx['date']}": {"eventId": "sr:match:9"}})
+        [p] = main._build_predictions(Model(), [fx], {})
+        assert p["sportybet"] is True

@@ -155,7 +155,7 @@ export default function OptimizerPage() {
     market: p.market, marketName: p.market_name, code: p.code, label: p.label, prob: p.prob,
   }));
 
-  const run = async () => {
+  const run = async (bookable = bookableOnly) => {
     setBusy(true); setResult(null); setBooked(null);
     try {
       const res = await fetch(`${API}/api/optimizer`, {
@@ -163,7 +163,7 @@ export default function OptimizerPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ target_odds: targetOdds, min_odds: lo, max_odds: hi, min_prob: minProb, days, max_games: maxGames,
                                markets: MARKETS.filter(m => markets.includes(m.id)).flatMap(m => m.ids),
-                               bookable_only: bookableOnly }),
+                               bookable_only: bookable }),
       });
       const data = await res.json();
       setResult(res.ok ? data : { error: data?.detail || "The optimizer couldn't run. Try again." });
@@ -300,7 +300,7 @@ export default function OptimizerPage() {
             </p>
           )}
 
-          <button onClick={run} disabled={busy || !validTarget}
+          <button onClick={() => run()} disabled={busy || !validTarget}
             className="w-full sm:w-auto flex items-center justify-center gap-2 rounded-xl bg-brand-400 hover:bg-brand-300 text-ink font-bold px-6 py-3 disabled:opacity-50">
             {busy ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
             {busy ? "Optimizing…" : `Build a ${odds(targetOdds)}x slip`}
@@ -309,7 +309,14 @@ export default function OptimizerPage() {
 
         {result?.error && (
           <div className="card p-4 flex items-start gap-2 text-sm text-warn">
-            <AlertTriangle size={16} className="shrink-0 mt-0.5" /> {result.error}
+            <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+            <div className="space-y-2">
+              <p>{result.error}</p>
+              {bookableOnly && result.matches_considered === 0 && (
+                <button onClick={() => { setBookableOnly(false); run(false); }}
+                  className="chip chip-idle">Try all matches, not just SportyBet-listed ones</button>
+              )}
+            </div>
           </div>
         )}
 
