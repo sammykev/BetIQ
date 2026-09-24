@@ -946,7 +946,48 @@ async def _sync_football_data(force: bool = False) -> Optional[Dict[str, list]]:
     print(f"[DataSync] updated {report['updated'] or 'nothing'}; "
           f"{len(report['unchanged'])} unchanged, {len(report['skipped'])} not published, "
           f"failed {report['failed'] or 'none'}")
+    if report["failed"]:
+        asyncio.create_task(_retry_football_sync())
     return report
+
+
+async def _manual_football_sync() -> None:
+    """Admin job: download the league files now, and rebuild if any changed."""
+    report = await _sync_football_data(force=True)
+    if report and report["updated"] and not _is_training:
+        await _run_pipeline()
+
+
+FOOTBALL_DATA_RETRY_MINUTES = 30
+FOOTBALL_DATA_RETRIES = 4
+
+
+async def _retry_football_sync() -> None:
+    """Try the league files the sync couldn't download again, every 30
+    minutes (up to 4 times) rather than waiting a day; rebuild the
+    predictions when one comes through."""
+    from football_data_sync import failed_files, sync
+    for _ in range(FOOTBALL_DATA_RETRIES):
+        todo = failed_files(_football_sync["report"] or {})
+        if not todo:
+            return
+        await asyncio.sleep(FOOTBALL_DATA_RETRY_MINUTES * 60)
+        retried = {"updated": [], "unchanged": [], "skipped": [], "failed": []}
+        for div, season in todo:
+            try:
+                got = await sync(FOOTBALL_DATA_DIR, divisions=[div], seasons=[season])
+            except Exception as e:
+                got = {"updated": [], "unchanged": [], "skipped": [], "failed": [f"{div}_{season}.csv: {e}"]}
+            for k in retried:
+                retried[k] += got[k]
+        report = _football_sync["report"]
+        names = {f"{d}_{s}.csv" for d, s in todo}
+        report["failed"] = [f for f in report["failed"] if f.split(":", 1)[0] not in names] + retried["failed"]
+        for k in ("updated", "unchanged", "skipped"):
+            report[k] = report[k] + retried[k]
+        print(f"[DataSync] retry: updated {retried['updated'] or 'nothing'}, still failing {retried['failed'] or 'none'}")
+        if retried["updated"] and not _is_training:
+            asyncio.create_task(_run_pipeline())
 
 
 _intl_status: Dict[str, Any] = {"at": None, "fixtures": 0, "sources": {}, "errors": []}
@@ -3210,6 +3251,7 @@ ADMIN_JOBS = {
     "fbref_refresh": ("Refresh corners/cards data (FBref)", lambda: _load_fbref_data()),
     "traffic_flush": ("Save traffic counts", lambda: asyncio.to_thread(_flush_traffic)),
     "referees": ("Find referees for upcoming matches", lambda: _refresh_referees("manual")),
+    "football_sync": ("Download league results (football-data.co.uk)", lambda: _manual_football_sync()),
 }
 
 

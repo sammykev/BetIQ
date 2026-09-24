@@ -76,11 +76,41 @@ def _write_atomic(path: str, text: str) -> None:
     os.replace(tmp, path)
 
 
+ATTEMPTS = 3
+RETRY_PAUSE = 3.0  # seconds, doubled after each failed attempt
+
+
+async def _get(client: httpx.AsyncClient, url: str, pause: float = RETRY_PAUSE):
+    """GET with retries for timeouts, dropped connections and server errors
+    (football-data.co.uk is sometimes slow). Raises the last network error;
+    returns the last response otherwise."""
+    for attempt in range(ATTEMPTS):
+        try:
+            res = await client.get(url)
+            if res.status_code < 500 or attempt == ATTEMPTS - 1:
+                return res
+        except httpx.HTTPError:
+            if attempt == ATTEMPTS - 1:
+                raise
+        await asyncio.sleep(pause * 2 ** attempt)
+
+
+def failed_files(report: Dict[str, list]) -> List[tuple]:
+    """(division, season) of the league files a sync couldn't download."""
+    out = []
+    for item in report.get("failed", []):
+        name = item.split(":", 1)[0]
+        div, _, season = name.removesuffix(".csv").rpartition("_")
+        if div in DEFAULT_DIVISIONS and season.isdigit():
+            out.append((div, season))
+    return out
+
+
 async def sync(dest_dir: str = DEST_DIR,
                divisions: Iterable[str] = DEFAULT_DIVISIONS,
                seasons: Optional[Iterable[str]] = None,
                client: Optional[httpx.AsyncClient] = None,
-               today: Optional[date] = None) -> Dict[str, list]:
+               today: Optional[date] = None, pause: float = RETRY_PAUSE) -> Dict[str, list]:
     """Download and store changed files. Returns {"updated", "unchanged", "skipped", "failed"}."""
     seasons = list(seasons or recent_seasons(today or date.today()))
     report: Dict[str, list] = {"updated": [], "unchanged": [], "skipped": [], "failed": []}
@@ -88,7 +118,7 @@ async def sync(dest_dir: str = DEST_DIR,
 
     own_client = client is None
     client = client or httpx.AsyncClient(
-        timeout=30, follow_redirects=True,
+        timeout=httpx.Timeout(60, connect=15), follow_redirects=True,
         headers={"User-Agent": "BetIQ/1.0 (+https://predict-withbetiq.vercel.app)"},
     )
     try:
@@ -97,7 +127,7 @@ async def sync(dest_dir: str = DEST_DIR,
                 name = f"{div}_{season}.csv"
                 path = os.path.join(dest_dir, name)
                 try:
-                    res = await client.get(f"{BASE_URL}/{season}/{div}.csv")
+                    res = await _get(client, f"{BASE_URL}/{season}/{div}.csv", pause)
                 except httpx.HTTPError as e:
                     report["failed"].append(f"{name}: {type(e).__name__}")
                     continue

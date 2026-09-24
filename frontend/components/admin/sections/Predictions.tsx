@@ -139,6 +139,16 @@ export function PredictionsSection() {
   };
   const refRunning = busy === "referees";
 
+  // Downloads the league files now; predictions rebuild by themselves if any changed
+  const syncNow = async () => {
+    setBusy("sync");
+    try {
+      await post("/api/admin/jobs/football_sync/run");
+      flash("ok", "Downloading league results…");
+      setTimeout(() => { get("/api/admin/data-status").then(setData); setBusy(null); }, 30_000);
+    } catch { flash("err", "Couldn't start the download"); setBusy(null); }
+  };
+
   const trackFetch = useMemo(() => (url: string) => adminFetch(url), [adminFetch]);
 
   const matches = useMemo(() => preds.filter(p =>
@@ -235,7 +245,13 @@ export function PredictionsSection() {
                 })}
               </div>
             )}
-            {data.last_sync?.report?.failed?.length > 0 && <p className="text-xs text-danger">Sync failed: {data.last_sync.report.failed.join(" · ")}</p>}
+            {data.last_sync?.report?.failed?.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-xs text-danger">Sync failed: {data.last_sync.report.failed.join(" · ")}
+                  <span className="text-n-400"> — retried automatically every 30 minutes</span></p>
+                <Btn onClick={syncNow} busy={busy === "sync"}>Download again</Btn>
+              </div>
+            )}
             <p className="text-xs text-n-400">
               {data.teams_checked} upcoming teams checked · {Object.keys(data.renamed ?? {}).length} matched to a different training name ·{" "}
               {data.thin_history?.length ?? 0} with under 5 known matches
@@ -293,7 +309,12 @@ export function PredictionsSection() {
           <div className="grid grid-cols-2 gap-2">
             <input value={result.home} onChange={e => setResult({ ...result, home: e.target.value })} placeholder="Home team" className={inputClass} />
             <input value={result.away} onChange={e => setResult({ ...result, away: e.target.value })} placeholder="Away team" className={inputClass} />
-            <input type="date" value={result.date} onChange={e => setResult({ ...result, date: e.target.value })} className={inputClass} />
+            {/* iPhones show an empty date field with no hint: label it */}
+            <label className="relative block">
+              {!result.date && <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-n-500">Match date</span>}
+              <input type="date" aria-label="Match date" value={result.date}
+                onChange={e => setResult({ ...result, date: e.target.value })} className={inputClass} />
+            </label>
             <div className="flex gap-2">
               <input inputMode="numeric" value={result.home_score} onChange={e => setResult({ ...result, home_score: e.target.value.replace(/\D/g, "") })} placeholder="H" className={inputClass} />
               <input inputMode="numeric" value={result.away_score} onChange={e => setResult({ ...result, away_score: e.target.value.replace(/\D/g, "") })} placeholder="A" className={inputClass} />

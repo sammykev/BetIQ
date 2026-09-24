@@ -21,14 +21,22 @@ def csv(n, team="Arsenal"):
 
 
 def run(responses, tmp_path, seasons=("2627",), divisions=("E0",)):
-    """responses: {url suffix: (status, bytes)}"""
+    """responses: {url suffix: (status, bytes) or a list of them, one per attempt}"""
+    served = {}
+
     def handler(request):
-        for suffix, (status, body) in responses.items():
+        for suffix, reply in responses.items():
             if request.url.path.endswith(suffix):
+                if isinstance(reply, list):
+                    reply = reply[min(served.setdefault(suffix, 0), len(reply) - 1)]
+                    served[suffix] += 1
+                if reply == "timeout":
+                    raise httpx.ReadTimeout("slow", request=request)
+                status, body = reply
                 return httpx.Response(status, content=body)
         return httpx.Response(404)
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    return asyncio.run(fds.sync(str(tmp_path), divisions=divisions, seasons=seasons, client=client))
+    return asyncio.run(fds.sync(str(tmp_path), divisions=divisions, seasons=seasons, client=client, pause=0))
 
 
 class TestSeasons:
@@ -73,6 +81,16 @@ class TestSync:
     def test_server_errors_are_reported(self, tmp_path):
         assert run({"/2627/E0.csv": (503, b"")}, tmp_path)["failed"] == ["E0_2627.csv: HTTP 503"]
 
+    def test_timeouts_and_server_errors_are_retried(self, tmp_path):
+        report = run({"/2627/SP1.csv": ["timeout", (503, b""), (200, csv(3).encode())]}, tmp_path, divisions=("SP1",))
+        assert report["updated"] == ["SP1_2627.csv"] and report["failed"] == []
+
+    def test_gives_up_after_three_attempts(self, tmp_path):
+        report = run({"/2627/SP1.csv": ["timeout"] * 4}, tmp_path, divisions=("SP1",))
+        assert report["failed"] == ["SP1_2627.csv: ReadTimeout"]
+        assert fds.failed_files(report) == [("SP1", "2627")]
+        assert fds.failed_files({"failed": ["international_results.csv: HTTP 500"]}) == []
+
     def test_windows_1252_files_are_stored_as_utf8(self, tmp_path):
         run({"/2627/E0.csv": (200, csv(2, team="Nürnberg").encode("cp1252"))}, tmp_path)
         assert "Nürnberg" in (tmp_path / "E0_2627.csv").read_text(encoding="utf-8")
@@ -98,6 +116,29 @@ class TestPipelineThrottle:
         main._football_sync["at"] = datetime.now(timezone.utc) - timedelta(hours=main.FOOTBALL_DATA_SYNC_HOURS + 1)
         asyncio.run(main._sync_football_data())
         assert len(calls) == 2
+
+    def test_failed_files_are_retried_soon_and_rebuild(self, monkeypatch, tmp_path):
+        tries, rebuilds = [], []
+
+        async def fake_sync(dest, divisions=None, seasons=None):
+            tries.append((list(divisions), list(seasons)))
+            return {"updated": ["SP1_2627.csv"], "unchanged": [], "skipped": [], "failed": []}
+
+        async def fake_pipeline():
+            rebuilds.append(1)
+        monkeypatch.setattr(fds, "sync", fake_sync)
+        monkeypatch.setattr(main, "_run_pipeline", fake_pipeline)
+        monkeypatch.setattr(main, "FOOTBALL_DATA_RETRY_MINUTES", 0)
+        monkeypatch.setattr(main, "_is_training", False)
+        monkeypatch.setattr(main, "_football_sync", {"at": datetime.now(timezone.utc), "report": {
+            "updated": [], "unchanged": ["E0_2627.csv"], "skipped": [], "failed": ["SP1_2627.csv: ReadTimeout"]}})
+
+        async def go():
+            await main._retry_football_sync()
+            await asyncio.sleep(0)
+        asyncio.run(go())
+        assert tries == [(["SP1"], ["2627"])] and rebuilds == [1]
+        assert main._football_sync["report"]["failed"] == [] and "SP1_2627.csv" in main._football_sync["report"]["updated"]
 
     def test_can_be_turned_off(self, calls, monkeypatch):
         monkeypatch.setenv("FOOTBALL_DATA_SYNC", "0")
