@@ -19,6 +19,17 @@ services:
       # shows yours). ADMIN_SECRET then only matters for scripts.
       - key: ADMIN_USER_IDS
         sync: false
+      # Clerk secret key (Clerk Dashboard → API keys): lets the server check a
+      # user's Premium before returning match analysis (require_premium).
+      - key: CLERK_SECRET_KEY
+        sync: false
+      # Shared with Vercel: the site's /api/t route sends page views with it.
+      # Optional — without it ADMIN_SECRET is used.
+      - key: TRAFFIC_KEY
+        sync: false
+      # Extra sites allowed to call the API from a browser, comma-separated
+      - key: ALLOWED_ORIGINS
+        sync: false
       # SportyBet booking (sportybet.py). Defaults work; set SPORTYBET_PROXY only
       # if the admin "Test live booking" check shows SportyBet refusing this server.
       # Days ahead to fetch and predict (main.PREDICTION_DAYS)

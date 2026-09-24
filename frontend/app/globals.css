@@ -30,6 +30,10 @@
   --warn: 180 83 9;
   --danger: 225 29 72;
   --info: 3 105 161;
+  /* Chart series (admin charts), validated for colour-blind separation:
+     1 = lime, 2 = blue. Dark steps are chosen for the dark surface. */
+  --chart-1: 77 124 15;   /* #4d7c0f */
+  --chart-2: 3 105 161;   /* #0369a1 */
 
   --shadow-card: 0 1px 2px 0 rgb(15 23 41 / 0.05), 0 1px 3px -1px rgb(15 23 41 / 0.08);
   --shadow-card-hover: 0 4px 8px -2px rgb(15 23 41 / 0.08), 0 16px 32px -12px rgb(15 23 41 / 0.18);
@@ -63,6 +67,8 @@ html.dark {
   --warn: 252 211 77;
   --danger: 251 113 133;
   --info: 125 211 252;
+  --chart-1: 101 163 13;  /* #65a30d */
+  --chart-2: 57 135 229;  /* #3987e5 */
 
   --shadow-card: inset 0 1px 0 0 rgb(255 255 255 / 0.03), 0 1px 2px 0 rgb(0 0 0 / 0.4);
   --shadow-card-hover: inset 0 1px 0 0 rgb(255 255 255 / 0.05), 0 12px 32px -12px rgb(0 0 0 / 0.7);

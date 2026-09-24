@@ -26,6 +26,7 @@ from starlette.responses import JSONResponse, Response
 # (path prefix, requests, per seconds) — first match wins
 RATE_LIMITS: List[Tuple[str, int, int]] = [
     ("/api/admin/", 240, 60),
+    ("/api/traffic/hit", 3000, 60),  # from our site's server (key-checked), not browsers
     ("/api/optimizer", 20, 60),
     ("/api/booking/convert", 20, 60),
     ("/api/explain", 10, 60),

@@ -12,6 +12,8 @@ import { useCallback, useRef } from "react";
  * The returned function is stable across renders (safe in effect deps):
  * `getToken` isn't guaranteed to be, so it's read through a ref.
  */
+const TOKEN_WAIT_MS = 3000;
+
 export function useAuthedFetch() {
   const { getToken } = useAuth();
   const getTokenRef = useRef(getToken);
@@ -20,7 +22,12 @@ export function useAuthedFetch() {
   return useCallback(async (url: string, init: RequestInit = {}) => {
     let token: string | null = null;
     try {
-      token = await getTokenRef.current();
+      // If Clerk can't load (blocked script, bad network) getToken never
+      // settles: don't hold every request hostage to it
+      token = await Promise.race([
+        getTokenRef.current(),
+        new Promise<null>(resolve => setTimeout(() => resolve(null), TOKEN_WAIT_MS)),
+      ]);
     } catch {
       // No session / Clerk not loaded — send without a token
     }

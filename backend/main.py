@@ -30,6 +30,7 @@ from predictor import LeaguePredictor
 from data_fetcher import FootballDataClient, LEAGUES, API_BASE
 import international_fixtures as intl
 import security
+import traffic
 import set_pieces
 from scrapers.fbref import load_cards, load_corners, refresh as scrape_fbref, CORNERS_CSV, CARDS_CSV
 
@@ -101,10 +102,27 @@ async def _admin_identity(request: Request):
 
 
 async def require_admin(request: Request) -> str:
-    via, _ = await _admin_identity(request)
+    """The admin making this request, for the audit log: "secret" or "clerk:<user id>"."""
+    via, uid = await _admin_identity(request)
     if not via:
         raise HTTPException(status_code=403, detail="Forbidden")
-    return via
+    return f"clerk:{uid}" if via == "clerk" else via
+
+
+AUDIT_KEY = "betiq:admin:audit"
+
+
+def _audit(actor: str, action: str, **detail) -> None:
+    """Record an admin action (who, what, when) for the admin panel's log."""
+    r = _get_redis()
+    if not r:
+        return
+    try:
+        r.lpush(AUDIT_KEY, json.dumps({"at": int(time.time()), "actor": actor, "action": action,
+                                       **{k: v for k, v in detail.items() if v is not None}}, default=str))
+        r.ltrim(AUDIT_KEY, 0, 199)
+    except Exception:
+        pass
 
 
 async def require_premium(request: Request) -> Optional[str]:
@@ -2014,6 +2032,7 @@ async def sportybet_check(_admin: str = Depends(require_admin)):
 @app.get("/api/admin/sportybet-link")
 async def sportybet_link_now(_admin: str = Depends(require_admin)):
     """Match upcoming predictions to SportyBet events now (normally every 30 min)."""
+    _audit(_admin, "sportybet_link")
     return await _link_sportybet_events("manual")
 
 
@@ -2029,6 +2048,7 @@ async def international_check(_admin: str = Depends(require_admin)):
     """Fetch international fixtures now, report what each source returned,
     and publish them without waiting for the next pipeline run."""
     global _predictions_cache, _last_updated
+    _audit(_admin, "international_check")
     fixtures = await _fetch_international_fixtures()
     published = 0
     if fixtures and _predictor is not None:
@@ -2220,6 +2240,8 @@ async def submit_match_result(body: Dict[str, Any], _admin: str = Depends(requir
             raise HTTPException(status_code=400, detail="scores must be whole numbers")
     if len(str(home)) > 80 or len(str(away)) > 80:
         raise HTTPException(status_code=400, detail="team names too long")
+    _audit(_admin, "result", match=f"{home} v {away} {date_s}", result=result,
+           score=f"{home_s}-{away_s}" if home_s is not None and away_s is not None else None)
 
     # Update Redis history entry with actual result
     r = _get_redis()
@@ -3013,36 +3035,191 @@ async def admin_stats(_admin: str = Depends(require_admin)):
     }
 
 
+REVENUE_CACHE_SECONDS = 300
+_revenue_cache: Dict[str, Any] = {"at": 0.0, "data": None}
+
+
+def _revenue_summary(transactions: List[Dict], now: Optional[datetime] = None) -> Dict[str, Any]:
+    """Totals, a 30-day daily series and recent payments from Paystack's
+    successful transactions (amounts in kobo)."""
+    now = now or datetime.now(timezone.utc)
+    today = now.date()
+    by_day: Dict[str, float] = {}
+    total = today_sum = week = month = 0.0
+    customers = set()
+    for t in transactions:
+        naira = (t.get("amount") or 0) / 100
+        total += naira
+        email = ((t.get("customer") or {}).get("email") or "").lower()
+        if email:
+            customers.add(email)
+        try:
+            day = datetime.fromisoformat(str(t.get("paid_at") or t.get("created_at")).replace("Z", "+00:00")).date()
+        except ValueError:
+            continue
+        age = (today - day).days
+        today_sum += naira if age == 0 else 0
+        week += naira if age < 7 else 0
+        month += naira if age < 30 else 0
+        if age < 30:
+            by_day[day.isoformat()] = by_day.get(day.isoformat(), 0) + naira
+    series = [{"date": (today - timedelta(days=i)).isoformat(),
+               "amount": round(by_day.get((today - timedelta(days=i)).isoformat(), 0), 2)} for i in range(29, -1, -1)]
+    return {
+        "total_revenue": round(total, 2), "transaction_count": len(transactions),
+        "today": round(today_sum, 2), "last_7_days": round(week, 2), "last_30_days": round(month, 2),
+        "average": round(total / len(transactions), 2) if transactions else 0,
+        "customers": len(customers), "series": series,
+        "recent": [{"email": (t.get("customer") or {}).get("email", ""), "amount": (t.get("amount") or 0) / 100,
+                    "date": (t.get("paid_at") or "")[:10], "reference": t.get("reference", ""),
+                    "channel": t.get("channel") or ""} for t in transactions[:15]],
+    }
+
+
 @app.get("/api/admin/revenue")
-async def admin_revenue(_admin: str = Depends(require_admin)):
+async def admin_revenue(fresh: bool = False, _admin: str = Depends(require_admin)):
     paystack_key = os.getenv("PAYSTACK_SECRET_KEY", "")
     if not paystack_key:
         return {"error": "no_paystack_key"}
+    if not fresh and _revenue_cache["data"] and time.time() - _revenue_cache["at"] < REVENUE_CACHE_SECONDS:
+        return _revenue_cache["data"]
+    transactions: List[Dict] = []
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            r = await client.get(
-                "https://api.paystack.co/transaction?status=success&perPage=100",
-                headers={"Authorization": f"Bearer {paystack_key}"},
-            )
-        if r.status_code != 200:
-            return {"error": f"paystack_{r.status_code}"}
-        data = r.json().get("data", [])
-        total = sum(t.get("amount", 0) for t in data) / 100
-        return {
-            "total_revenue": round(total, 2),
-            "transaction_count": len(data),
-            "recent": [
-                {
-                    "email": t.get("customer", {}).get("email", ""),
-                    "amount": t.get("amount", 0) / 100,
-                    "date": (t.get("paid_at") or "")[:10],
-                    "reference": t.get("reference", ""),
-                }
-                for t in data[:10]
-            ],
-        }
+            for page in range(1, 6):  # up to 500 payments
+                r = await client.get("https://api.paystack.co/transaction",
+                                     params={"status": "success", "perPage": 100, "page": page},
+                                     headers={"Authorization": f"Bearer {paystack_key}"})
+                if r.status_code != 200:
+                    if page == 1:
+                        return {"error": f"paystack_{r.status_code}"}
+                    break
+                batch = r.json().get("data") or []
+                transactions += batch
+                if len(batch) < 100:
+                    break
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": f"{type(e).__name__}: {e}"}
+    data = _revenue_summary(transactions)
+    _revenue_cache.update(at=time.time(), data=data)
+    return data
+
+
+# ── Traffic (traffic.py) ──────────────────────────────────────────────────
+_traffic = traffic.Traffic()
+TRAFFIC_FLUSH_MINUTES = 5
+
+
+def _traffic_key_ok(given: str) -> bool:
+    import hmac
+    expected = os.getenv("TRAFFIC_KEY") or ADMIN_SECRET
+    return bool(expected and given) and hmac.compare_digest(given.encode(), expected.encode())
+
+
+@app.post("/api/traffic/hit")
+async def traffic_hit(request: Request, body: Dict[str, Any]):
+    """A page view, sent by the site's own /api/t route (which adds the
+    visitor's location) with the shared TRAFFIC_KEY (or ADMIN_SECRET)."""
+    if not _traffic_key_ok(request.headers.get("x-traffic-key", "").strip()):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    hit = traffic.clean_hit(body)
+    if hit:
+        _traffic.record(hit)
+    return {"ok": bool(hit)}
+
+
+def _flush_traffic() -> int:
+    return _traffic.flush(_get_redis())
+
+
+@app.get("/api/admin/traffic")
+async def admin_traffic(days: int = 30, _admin: str = Depends(require_admin)):
+    days = min(90, max(1, days))
+    await asyncio.to_thread(_flush_traffic)
+    data = await asyncio.to_thread(traffic.summary, _get_redis(), days)
+    return {**data, "live": _traffic.live()}
+
+
+@app.get("/api/admin/traffic/live")
+async def admin_traffic_live(_admin: str = Depends(require_admin)):
+    """Who's on the site in the last 5 minutes (memory only — cheap to poll)."""
+    return _traffic.live()
+
+
+# ── Audit log, security overview, jobs ────────────────────────────────────
+@app.get("/api/admin/audit")
+async def admin_audit(_admin: str = Depends(require_admin)):
+    r = _get_redis()
+    if not r:
+        return {"entries": []}
+    try:
+        return {"entries": [json.loads(x) for x in r.lrange(AUDIT_KEY, 0, 99)]}
+    except Exception:
+        return {"entries": []}
+
+
+@app.get("/api/admin/security")
+async def admin_security(_admin: str = Depends(require_admin)):
+    """How this server is protected, as checks the admin can act on, plus the
+    recent security events (wrong admin secrets, rate limits)."""
+    import auth
+    events = security.recent_events(200)
+    day_ago = time.time() - 86400
+    recent = [e for e in events if e.get("at", 0) >= day_ago]
+    checks = [
+        {"id": "clerk_issuer", "ok": auth.auth_enforced(), "label": "Signed-in users verified (CLERK_ISSUER)",
+         "fix": "Set CLERK_ISSUER on Render: without it, user data endpoints trust the uid the browser sends."},
+        {"id": "premium", "ok": auth.premium_enforced(), "label": "Paywall enforced on the server (CLERK_SECRET_KEY)",
+         "fix": "Set CLERK_SECRET_KEY on Render so premium analysis can't be fetched directly."},
+        {"id": "admin_ids", "ok": bool(ADMIN_USER_IDS), "label": "Admins sign in with Clerk (ADMIN_USER_IDS)",
+         "fix": "Add your Clerk user id to ADMIN_USER_IDS on Render and Vercel, then you rarely need the secret."},
+        {"id": "admin_secret", "ok": len(ADMIN_SECRET) >= 24, "label": "Admin secret is long (24+ characters)",
+         "fix": "Use a long random ADMIN_SECRET (e.g. `openssl rand -hex 24`) on Render and Vercel."},
+        {"id": "traffic_key", "ok": bool(os.getenv("TRAFFIC_KEY")), "label": "Separate traffic key (TRAFFIC_KEY)",
+         "fix": "Optional: set TRAFFIC_KEY on Render and Vercel so page-view reporting doesn't reuse the admin secret."},
+        {"id": "redis", "ok": _get_redis() is not None, "label": "Redis connected",
+         "fix": "Set UPSTASH_REDIS_URL on Render."},
+        {"id": "rate_limits", "ok": os.getenv("RATE_LIMITS", "1") != "0", "label": "Rate limits on",
+         "fix": "Remove RATE_LIMITS=0 from Render."},
+        {"id": "cors", "ok": "*" not in ALLOWED_ORIGINS, "label": "Only our site may call the API from a browser",
+         "fix": "Remove * from ALLOWED_ORIGINS."},
+    ]
+    counts: Dict[str, int] = {}
+    for e in recent:
+        counts[e.get("type", "?")] = counts.get(e.get("type", "?"), 0) + 1
+    return {"checks": checks, "last_24h": counts, "events": events[:100], "allowed_origins": ALLOWED_ORIGINS,
+            "rate_limits": [{"path": p, "limit": n, "per_seconds": w} for p, n, w in security.RATE_LIMITS]}
+
+
+# Jobs an admin can run now (scheduler ids → what they do)
+ADMIN_JOBS = {
+    "refresh": ("Rebuild predictions", lambda: _run_pipeline()),
+    "results_refresh": ("Fetch results and grade picks", lambda: _fetch_and_save_results()),
+    "sportybet_links": ("Link to SportyBet", lambda: _link_sportybet_events("manual")),
+    "fbref_refresh": ("Refresh corners/cards data (FBref)", lambda: _load_fbref_data()),
+    "traffic_flush": ("Save traffic counts", lambda: asyncio.to_thread(_flush_traffic)),
+}
+
+
+@app.get("/api/admin/jobs")
+async def admin_jobs(_admin: str = Depends(require_admin)):
+    jobs = {j.id: j for j in scheduler.get_jobs()} if scheduler.running else {}
+    return {"training": _is_training, "jobs": [
+        {"id": jid, "name": name,
+         "next_run": jobs[jid].next_run_time.isoformat() if jid in jobs and jobs[jid].next_run_time else None,
+         "every": str(jobs[jid].trigger.interval) if jid in jobs and hasattr(jobs[jid].trigger, "interval") else None}
+        for jid, (name, _) in ADMIN_JOBS.items()]}
+
+
+@app.post("/api/admin/jobs/{job_id}/run")
+async def admin_run_job(job_id: str, _admin: str = Depends(require_admin)):
+    if job_id not in ADMIN_JOBS:
+        raise HTTPException(status_code=404, detail="Unknown job")
+    if job_id == "refresh" and _is_training:
+        return {"started": False, "message": "Already refreshing"}
+    _audit(_admin, "run_job", job=job_id)
+    asyncio.create_task(ADMIN_JOBS[job_id][1]())
+    return {"started": True, "message": f"{ADMIN_JOBS[job_id][0]} started"}
 
 
 @app.get("/api/admin/banner")
@@ -3063,11 +3240,12 @@ async def set_banner(body: Dict[str, Any], _admin: str = Depends(require_admin))
     r = _get_redis()
     if not r:
         raise HTTPException(status_code=503, detail="No Redis")
-    text = (body.get("text") or "").strip()
+    text = (body.get("text") or "").strip()[:300]
     if text:
         r.set("betiq:config:banner", text)
     else:
         r.delete("betiq:config:banner")
+    _audit(_admin, "banner", text=text or "(cleared)")
     return {"banner": text or None}
 
 
@@ -3091,6 +3269,7 @@ async def set_maintenance(body: Dict[str, Any], _admin: str = Depends(require_ad
         raise HTTPException(status_code=503, detail="No Redis")
     enabled = bool(body.get("enabled", False))
     r.set("betiq:config:maintenance", "true" if enabled else "false")
+    _audit(_admin, "maintenance", enabled=enabled)
     return {"enabled": enabled}
 
 
@@ -3104,6 +3283,7 @@ async def clear_cache(body: Dict[str, Any], _admin: str = Depends(require_admin)
         # Clear all explanation caches
         for key in r.scan_iter("betiq:explain:*"):
             r.delete(key)
+        _audit(_admin, "clear_cache")
         return {"cleared": True}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -3127,11 +3307,12 @@ async def set_featured(body: Dict[str, Any], _admin: str = Depends(require_admin
     r = _get_redis()
     if not r:
         raise HTTPException(status_code=503, detail="No Redis")
-    picks = body.get("picks", [])[:3]
+    picks = [p for p in body.get("picks", []) if isinstance(p, dict)][:3]
     if picks:
         r.set("betiq:config:featured", json.dumps(picks))
     else:
         r.delete("betiq:config:featured")
+    _audit(_admin, "featured", picks=[f"{p.get('home')} v {p.get('away')}" for p in picks] or "(cleared)")
     return {"featured": picks}
 
 
@@ -4332,6 +4513,7 @@ async def set_paywall_state(body: Dict[str, Any], _admin: str = Depends(require_
             raise HTTPException(status_code=500, detail=f"Redis error: {e}")
 
     print(f"[Admin] Paywall {'enabled' if enabled else 'DISABLED'}")
+    _audit(_admin, "paywall", enabled=enabled)
     return {"enabled": enabled}
 
 
@@ -4345,9 +4527,11 @@ async def refresh_predictions(request: Request, background_tasks: BackgroundTask
     page's retry when nothing is cached) at most once per REFRESH_COOLDOWN —
     a run takes minutes of the server's CPU."""
     global _last_public_refresh
-    via, _ = await _admin_identity(request)
+    via, uid = await _admin_identity(request)
     if _is_training:
         return {"message": "Already refreshing", "started": False}
+    if via:
+        _audit(f"clerk:{uid}" if via == "clerk" else via, "refresh")
     if not via:
         if time.time() - _last_public_refresh < REFRESH_COOLDOWN:
             return {"message": "Refreshed recently", "started": False}
@@ -4398,9 +4582,11 @@ async def startup():
     scheduler.add_job(_load_fbref_data, "interval", days=7, id="fbref_refresh")
     scheduler.add_job(_fetch_and_save_results, "interval", hours=3, id="results_refresh")
     scheduler.add_job(_link_sportybet_events, "interval", minutes=SB_LINK_MINUTES, id="sportybet_links")
+    scheduler.add_job(_flush_traffic, "interval", minutes=TRAFFIC_FLUSH_MINUTES, id="traffic_flush")
     scheduler.start()
 
 
 @app.on_event("shutdown")
 async def shutdown():
     scheduler.shutdown()
+    _flush_traffic()  # keep the last few minutes of page views
