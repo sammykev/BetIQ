@@ -26,6 +26,8 @@ export interface Prediction {
   odds_away?: number;
   value_edge?: number | null;      // model_prob - implied_prob (positive = value)
   is_value_bet?: boolean;          // true when value_edge > 0.05
+  /** Appointed referee (SofaScore), once named. cards_factor > 1: more cards than these teams usually get. */
+  referee?: { name: string; games?: number; cards_factor?: number };
 }
 
 export interface League {

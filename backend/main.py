@@ -901,14 +901,7 @@ def _build_predictions(predictor, fixtures: list, live_odds: dict) -> list:
 
             value_edge = round(model_p - implied, 3) if (model_p is not None and implied is not None) else None
 
-            # Corners and bookings: club leagues from their match stats;
-            # internationals from the international model where it earned it
-            extras = None
-            if _set_pieces is not None and not fx.get("model_league"):
-                extras = _set_pieces.markets(predictor.canon(fx["home"]), predictor.canon(fx["away"]),
-                                             fx.get("league"))
-            elif fx.get("model_league"):
-                extras = _international_set_pieces(fx)
+            extras, referee = _set_piece_extras(fx, predictor)
 
             predictions.append({
                 **fx, **tip,
@@ -921,6 +914,7 @@ def _build_predictions(predictor, fixtures: list, live_odds: dict) -> list:
                 # rebuild doesn't hide "bookable" until the next linking run
                 "sportybet": _linked_event(fx) is not None,
                 **({"set_pieces": extras} if extras else {}),
+                **({"referee": referee} if referee else {}),
             })
         except Exception:
             pass
@@ -1291,6 +1285,7 @@ async def _run_pipeline():
         _predictor = predictor
         print(f"[Pipeline] Done — {len(predictions)} predictions cached.")
         asyncio.create_task(_link_sportybet_events("pipeline"))
+        asyncio.create_task(_refresh_referees("pipeline"))
 
         # Send push notifications for high-value picks
         value_picks = [p for p in predictions if p.get("is_value_bet") and p.get("value_edge", 0) > 0.08]
@@ -2137,6 +2132,7 @@ async def data_status(_admin: str = Depends(require_admin)):
         "shared_model": _shared_model_status(),
         "sportybet_links": _sb_link_status,
         "international_set_pieces": {**_intl_sp_info, "active": _intl_set_pieces is not None},
+        "referees": _referee_status(),
     }
 
 
@@ -3213,6 +3209,7 @@ ADMIN_JOBS = {
     "sportybet_links": ("Link to SportyBet", lambda: _link_sportybet_events("manual")),
     "fbref_refresh": ("Refresh corners/cards data (FBref)", lambda: _load_fbref_data()),
     "traffic_flush": ("Save traffic counts", lambda: asyncio.to_thread(_flush_traffic)),
+    "referees": ("Find referees for upcoming matches", lambda: _refresh_referees("manual")),
 }
 
 
@@ -4490,6 +4487,124 @@ def _with_priced_set_pieces(pred: Dict, event: Optional[Dict]) -> Dict:
     return {**pred, "set_pieces": {**have, **extra}} if extra else pred
 
 
+# ── Referees appointed to upcoming matches (referees.py) ──
+REFEREE_HOURS = 3
+_referees: Dict[str, Any] = {"at": None, "appointments": {}, "report": None, "trigger": None}
+_referee_lock: Optional[Tuple[Any, asyncio.Lock]] = None
+
+
+def _appointments() -> Dict[str, Dict]:
+    """{home|away|date: {"name", "career"}}, from Redis after a restart."""
+    if _referees["at"] is None:
+        import referees
+        saved = referees.load(_get_redis())
+        if saved:
+            _referees.update(saved)
+        else:
+            _referees["at"] = ""  # looked: nothing saved
+    return _referees.get("appointments") or {}
+
+
+def _set_piece_extras(fx: Dict, predictor) -> Tuple[Optional[Dict], Optional[Dict]]:
+    """(corners/bookings markets, referee shown on the match) for a fixture.
+    Clubs from the league match stats; internationals from the international
+    model where it earned it. An appointed referee scales the bookings."""
+    ref = _appointments().get(_sb_key(fx["home"], fx["away"], fx.get("date", ""))) or {}
+    name, career = ref.get("name"), ref.get("career")
+    extras, model = None, None
+    if _set_pieces is not None and not fx.get("model_league"):
+        model = _set_pieces
+        extras = _set_pieces.markets(predictor.canon(fx["home"]), predictor.canon(fx["away"]),
+                                     fx.get("league"), name, career)
+    elif fx.get("model_league"):
+        model = _intl_set_pieces
+        extras = _international_set_pieces(fx, name, career)
+    if not name:
+        return extras, None
+    referee: Dict[str, Any] = {"name": name, **({"games": career.get("games")} if career else {})}
+    if model is not None and extras and "bookings" in extras:
+        # >1: more cards than these teams usually get (the model's view of them)
+        referee["cards_factor"] = round(model.referee_factor(name, career), 2)
+    return extras, referee
+
+
+def _apply_referees() -> int:
+    """Re-price the cached predictions' corners/bookings with the current
+    appointments. Returns how many predictions have a referee."""
+    global _predictions_cache
+    if _predictor is None or not _predictions_cache:
+        return 0
+    out, n = [], 0
+    for p in _predictions_cache:
+        if p.get("sport") not in (None, "football"):
+            out.append(p)
+            continue
+        try:
+            extras, referee = _set_piece_extras(p, _predictor)
+        except Exception:
+            out.append(p)
+            continue
+        q = {k: v for k, v in p.items() if k not in ("set_pieces", "referee")}
+        if extras:
+            q["set_pieces"] = extras
+        if referee:
+            q["referee"] = referee
+            n += 1
+        out.append(q)
+    _predictions_cache = out
+    return n
+
+
+async def _refresh_referees(trigger: str = "schedule") -> Dict[str, Any]:
+    """Look up the referees of the coming days' matches (SofaScore), keep
+    them, and re-price the cached predictions' bookings."""
+    global _referee_lock
+    import referees
+    loop = asyncio.get_running_loop()
+    if _referee_lock is None or _referee_lock[0] is not loop:
+        _referee_lock = (loop, asyncio.Lock())
+    async with _referee_lock[1]:
+        preds = [p for p in _predictions_cache if p.get("sport") in (None, "football")]
+        if not preds:
+            return {"skipped": "no predictions yet"}
+        from curl_cffi.requests import AsyncSession
+        today = datetime.now(timezone.utc).date()
+        try:
+            async with AsyncSession(impersonate=intl.IMPERSONATE, timeout=20) as client:
+                found, report = await referees.fetch(client, preds, _appointments(), today)
+        except Exception as e:
+            found, report = None, {"errors": [f"{type(e).__name__}: {e}"]}
+        if found is None or (not found and report.get("errors") and not report.get("days")):
+            # Couldn't reach SofaScore: keep what we had
+            _referees.update({"report": report, "trigger": trigger,
+                              "checked": datetime.now(timezone.utc).isoformat()})
+            return report
+        _referees.update({"at": datetime.now(timezone.utc).isoformat(), "checked": None,
+                          "appointments": found, "report": report, "trigger": trigger})
+        try:
+            referees.save(_get_redis(), {k: _referees[k] for k in ("at", "appointments", "report", "trigger")})
+        except Exception as e:
+            print(f"[Referees] Could not save: {e}")
+        report["on_predictions"] = _apply_referees()
+        _save_predictions_cache()
+        print(f"[Referees] {trigger}: {report['found']} referees for {report['matched']} listed matches")
+        return report
+
+
+def _referee_status() -> Dict[str, Any]:
+    appointed = _appointments()
+    shown = []
+    for k, v in appointed.items():
+        home, away, day = (k.split("|") + ["", "", ""])[:3]
+        shown.append({"match": f"{home} vs {away}", "date": day, "referee": v.get("name"),
+                      "games": (v.get("career") or {}).get("games")})
+    shown.sort(key=lambda x: x["date"])
+    return {"at": _referees.get("at") or None, "checked": _referees.get("checked"),
+            "trigger": _referees.get("trigger"), "report": _referees.get("report"),
+            "appointments": shown[:60], "count": len(appointed),
+            "on_predictions": sum(1 for p in _predictions_cache if p.get("referee"))}
+
+
 def _with_club_referees(history: pd.DataFrame) -> pd.DataFrame:
     """The club history with the referees the nightly collector found
     (the league CSVs name them only for England). Unchanged on any error."""
@@ -4524,13 +4639,15 @@ def _load_international_set_pieces() -> None:
     _intl_set_pieces = set_pieces.SetPieceModel.fit(international_stats.rows_frame(data), verdict["params"])
 
 
-def _international_set_pieces(fx: Dict) -> Optional[Dict]:
+def _international_set_pieces(fx: Dict, referee: Optional[str] = None,
+                              career: Optional[Dict] = None) -> Optional[Dict]:
     """Corners/bookings for an international fixture, only the stats the
     nightly check approved."""
     if _intl_set_pieces is None:
         return None
     use = (_intl_sp_info.get("check") or {}).get("use") or {}
-    got = _intl_set_pieces.markets(intl.team_key(fx["home"]), intl.team_key(fx["away"]), fx.get("league"))
+    got = _intl_set_pieces.markets(intl.team_key(fx["home"]), intl.team_key(fx["away"]), fx.get("league"),
+                                   referee, career)
     if not got:
         return None
     keep = {k: v for k, v in got.items() if use.get(k)}
@@ -4836,6 +4953,7 @@ async def startup():
     scheduler.add_job(_fetch_and_save_results, "interval", hours=3, id="results_refresh")
     scheduler.add_job(_link_sportybet_events, "interval", minutes=SB_LINK_MINUTES, id="sportybet_links")
     scheduler.add_job(_flush_traffic, "interval", minutes=TRAFFIC_FLUSH_MINUTES, id="traffic_flush")
+    scheduler.add_job(_refresh_referees, "interval", hours=REFEREE_HOURS, id="referees")
     scheduler.start()
 
 

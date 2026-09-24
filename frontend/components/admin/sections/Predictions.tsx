@@ -62,6 +62,40 @@ function InternationalSetPieces({ info }: { info: any }) {
   );
 }
 
+/** Referees appointed to upcoming matches (SofaScore), which scale the cards forecast. */
+function Referees({ info, onRun, running }: { info: any; onRun: () => void; running: boolean }) {
+  const rep = info?.report ?? {};
+  const errors: string[] = rep.errors ?? [];
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <Stat label="Referees found" value={num(info?.count ?? 0)} tone={info?.count ? "accent" : undefined} />
+        <Stat label="On predictions" value={num(info?.on_predictions ?? 0)} sub="cards priced with them" />
+        <Stat label="Matches listed" value={num(rep.matched ?? 0)} sub="ours, next 4 days on SofaScore" />
+        <Stat label="Last found" value={info?.at ? ago(info.at) : "Never"}
+          sub={info?.checked ? `tried ${ago(info.checked)}` : info?.trigger ? `by ${info.trigger}` : undefined} />
+      </div>
+      {errors.length > 0 && (
+        <p className="text-xs text-warn">SofaScore: {errors.slice(0, 3).join(" · ")}{errors.length > 3 ? ` (+${errors.length - 3})` : ""}</p>
+      )}
+      {info?.appointments?.length ? (
+        <ul className="grid gap-1.5 sm:grid-cols-2 text-xs">
+          {info.appointments.slice(0, 20).map((a: any) => (
+            <li key={`${a.match}|${a.date}`} className="rounded-lg bg-surface-sunken px-2.5 py-1.5 flex justify-between gap-2">
+              <span className="text-n-200 truncate">{a.match}</span>
+              <span className="text-n-400 shrink-0">{a.referee}{a.games ? ` · ${a.games} games` : ""} · {a.date}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-xs text-n-400">None named yet. Referees are usually announced two to four days before kick-off;
+          this checks every 3 hours and after each predictions rebuild.</p>
+      )}
+      <Btn onClick={onRun} busy={running}>Check now</Btn>
+    </div>
+  );
+}
+
 function SharedModel({ model }: { model: any }) {
   if (!model) return <p className="text-xs text-warn">No shared model yet, so restarts train on the server. Run the &quot;Train model&quot; workflow on GitHub.</p>;
   const stale = (Date.now() - new Date(model.trained_at).getTime()) / 3600000 > model.max_age_hours;
@@ -93,6 +127,17 @@ export function PredictionsSection() {
     fetch(`${API}/api/predictions?limit=500`).then(r => r.json()).then(d => setPreds(d.predictions ?? [])).catch(() => {});
     fetch(`${API}/api/admin/featured`).then(r => r.json()).then(d => setFeatured(d.featured ?? [])).catch(() => {});
   }, [get]);
+
+  // The lookup runs in the background (a page per match, ~1–2 min): re-read the status after
+  const runReferees = async () => {
+    setBusy("referees");
+    try {
+      const d = await post("/api/admin/jobs/referees/run");
+      flash("ok", d.message ?? "Started");
+      setTimeout(() => { get("/api/admin/data-status").then(setData); setBusy(null); }, 45_000);
+    } catch { flash("err", "Couldn't start the referee check"); setBusy(null); }
+  };
+  const refRunning = busy === "referees";
 
   const trackFetch = useMemo(() => (url: string) => adminFetch(url), [adminFetch]);
 
@@ -165,6 +210,11 @@ export function PredictionsSection() {
       <Card title="International corners & cards" icon={<Globe2 size={15} />}
         subtitle="Collected nightly from SofaScore and API-Football; lower score is better">
         {!data ? <Skeleton rows={2} /> : <InternationalSetPieces info={data.international_set_pieces} />}
+      </Card>
+
+      <Card title="Referees" icon={<Flag size={15} />}
+        subtitle="Appointed referees for upcoming matches (SofaScore); they adjust the cards forecast">
+        {!data ? <Skeleton rows={2} /> : <Referees info={data.referees} onRun={runReferees} running={refRunning} />}
       </Card>
 
       <Card title="Training data" icon={<Database size={15} />}

@@ -238,7 +238,7 @@ class TestClubReferees:
 class TestPredictions:
     def test_only_approved_stats_are_used(self, monkeypatch):
         class Model:
-            def markets(self, home, away, league):
+            def markets(self, home, away, league, referee=None, career=None):
                 return {"corners": {"over": {"9.5": 0.5}}, "bookings": {"over": {"4.5": 0.4}},
                         "corners_home": {"over": {}}, "corners_away": {"over": {}}, "corners_1x2": {"home": 0.6}}
         monkeypatch.setattr(main, "_intl_set_pieces", Model())

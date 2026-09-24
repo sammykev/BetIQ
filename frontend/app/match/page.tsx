@@ -12,7 +12,7 @@ import { AppShell } from "@/components/shell/AppShell";
 import { useBetSlip } from "@/lib/useBetSlip";
 import { bookableOnSportybet, isSelected } from "@/lib/slip";
 import {
-  ArrowLeft, Sparkles, ExternalLink, Check, Ticket, Radio, Search,
+  ArrowLeft, Sparkles, ExternalLink, Check, Ticket, Radio, Search, Flag,
 } from "lucide-react";
 import clsx from "clsx";
 
@@ -22,6 +22,13 @@ interface SbOutcome { id: string; desc: string; odds: string; }
 interface SbMarket  { id: string; name: string; specifier: string; outcomes: SbOutcome[]; }
 interface SbEvent   { found: boolean; eventId: string; gameId: string; homeTeam: string; awayTeam: string; markets: SbMarket[]; }
 
+
+/** How the appointed referee moves the cards forecast, when it clearly does. */
+function refereeNote(factor?: number): string | null {
+  if (!factor || Math.abs(factor - 1) < 0.05) return null;
+  const pct = Math.round(Math.abs(factor - 1) * 100);
+  return `usually ${pct}% ${factor > 1 ? "more" : "fewer"} cards than these teams get`;
+}
 
 function PanelTitle({ children, right }: { children: React.ReactNode; right?: React.ReactNode }) {
   return (
@@ -389,6 +396,16 @@ function MatchContent() {
             )
           )}
         </div>
+
+        {prediction?.referee && (
+          <p className="relative -mt-2 pb-4 px-4 text-center text-xs text-n-300 flex items-center justify-center gap-1.5 flex-wrap">
+            <Flag size={13} className="text-n-400" aria-hidden="true" />
+            <span>Referee <span className="font-semibold text-n-0">{prediction.referee.name}</span></span>
+            {refereeNote(prediction.referee.cards_factor) && (
+              <span className="text-n-400">· {refereeNote(prediction.referee.cards_factor)}</span>
+            )}
+          </p>
+        )}
 
         {prediction && (
           <div className="relative px-4 sm:px-8 pb-6">
