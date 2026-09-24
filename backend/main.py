@@ -802,7 +802,8 @@ def _build_predictions(predictor, fixtures: list, live_odds: dict) -> list:
                 odds_draw=float(odds.get("X") or 0),
                 odds_away=float(odds.get("2") or 0),
                 match_date=fx.get("date"),
-                league=fx.get("league", ""),
+                # Internationals are listed per competition but modelled as "INT"
+                league=fx.get("model_league") or fx.get("league", ""),
             )
             if not tip:
                 continue
@@ -1313,7 +1314,16 @@ async def health():
 
 @app.get("/api/leagues")
 async def get_leagues():
-    return [{"code": intl.LEAGUE_CODE, **intl.LEAGUE_INFO}] + [
+    # International competitions with upcoming matches first (they're only
+    # busy during international windows), then the club leagues
+    live = {p.get("league", "") for p in _predictions_cache if _within_window(p.get("date", ""))}
+    international = [
+        {"code": code, "name": name, "country": "World", "flag": flag}
+        for code, name, flag, _ in intl.COMPETITIONS if code in live
+    ]
+    if intl.LEAGUE_CODE in live:
+        international.append({"code": intl.LEAGUE_CODE, **intl.LEAGUE_INFO})
+    return international + [
         {"code": code, **info}
         for code, info in LEAGUES.items()
     ]
@@ -1903,7 +1913,7 @@ async def international_check(_admin: str = Depends(require_admin)):
         fresh = _build_predictions(_predictor, fixtures, cached_odds or {})
         if fresh:
             _predictions_cache = [p for p in _predictions_cache
-                                  if p.get("league") != intl.LEAGUE_CODE] + fresh
+                                  if not intl.is_international(p.get("league", ""))] + fresh
             _last_updated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
             _save_predictions_cache()
             published = len(fresh)

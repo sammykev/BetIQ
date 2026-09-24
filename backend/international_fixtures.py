@@ -14,8 +14,10 @@ ESPN and SofaScore sit behind bot filters that refuse ordinary server HTTP
 clients ("Access Denied"), so requests go through curl_cffi imitating
 Chrome, as for SportyBet.
 
-Every fixture is filed under one league, "INT" — the same tag the
-international training results carry, so the model's league features line up.
+Each fixture is filed under its competition (friendlies, Nations League,
+AFCON qualifiers…; see competition()), so the site can list them
+separately. The model still sees every international as league "INT"
+(`model_league`), the tag its international training results carry.
 """
 
 import asyncio
@@ -30,8 +32,38 @@ from curl_cffi.requests import AsyncSession
 
 from team_names import ALIASES, normalise
 
-LEAGUE_CODE = "INT"
-LEAGUE_INFO = {"name": "Internationals", "country": "World", "flag": "🌍"}
+LEAGUE_CODE = "INT"   # the model's league for every international match
+LEAGUE_INFO = {"name": "Other internationals", "country": "World", "flag": "🌍"}
+
+# Competitions shown separately, in tab order. Names differ between sources
+# ("AFCON Qualifying" on ESPN, "Africa Cup of Nations, Qualification" on
+# SofaScore), so each is recognised by keywords in its lowercased name.
+COMPETITIONS: List[Tuple[str, str, str, str]] = [
+    # (code, name, flag, pattern)
+    ("INT-WCQ",   "World Cup Qualifiers",       "🏆", r"world cup.*qualif|qualif.*world cup"),
+    ("INT-UNL",   "UEFA Nations League",        "🇪🇺", r"^(?!.*concacaf).*nations league"),
+    ("INT-ECQ",   "Euro Qualifiers",            "🇪🇺", r"(euro\b|european championship).*qualif|qualif.*(euro\b|european championship)"),
+    ("INT-AFCQ",  "AFCON Qualifiers",           "🌍", r"(africa cup|afcon).*qualif|qualif.*(africa cup|afcon)"),
+    ("INT-AFCON", "Africa Cup of Nations",      "🌍", r"africa cup|afcon"),
+    ("INT-CNL",   "CONCACAF Nations League",    "🌎", r"concacaf.*nations league"),
+    ("INT-ACQ",   "Asian Cup Qualifiers",       "🌏", r"asian cup.*qualif|qualif.*asian cup"),
+    ("INT-FRI",   "International Friendlies",   "🤝", r"^(?!.*club).*friendl"),
+]
+_COMPETITION_RE = [(code, name, flag, re.compile(pat)) for code, name, flag, pat in COMPETITIONS]
+
+
+def competition(name: str) -> Tuple[str, str, str]:
+    """(league code, display name, flag) for a source's competition name;
+    unrecognised competitions share "Other internationals"."""
+    low = (name or "").lower()
+    for code, display, flag, pattern in _COMPETITION_RE:
+        if pattern.search(low):
+            return code, display, flag
+    return LEAGUE_CODE, LEAGUE_INFO["name"], LEAGUE_INFO["flag"]
+
+
+def is_international(league_code: str) -> bool:
+    return league_code == LEAGUE_CODE or league_code.startswith(LEAGUE_CODE + "-")
 
 ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports/soccer"
 ODDS_API_BASE = "https://api.the-odds-api.com/v4"
@@ -99,17 +131,19 @@ def _parse_time(value: str) -> Optional[datetime]:
         return None
 
 
-def _fixture(match_id: str, home: str, away: str, kickoff: datetime, competition: str,
+def _fixture(match_id: str, home: str, away: str, kickoff: datetime, source_competition: str,
              odds_sport: Optional[str], home_crest=None, away_crest=None) -> Dict:
+    code, name, flag = competition(source_competition)
     return {
         "match_id": match_id,
         "home": home, "away": away,
         "home_crest": home_crest, "away_crest": away_crest,
         "date": kickoff.strftime("%Y-%m-%d"),
         "time": kickoff.strftime("%H:%M"),
-        "league": LEAGUE_CODE,
-        "league_name": competition,
-        "flag": LEAGUE_INFO["flag"],
+        "league": code,
+        "league_name": name,
+        "flag": flag,
+        "model_league": LEAGUE_CODE,
         "odds_sport": odds_sport,
     }
 

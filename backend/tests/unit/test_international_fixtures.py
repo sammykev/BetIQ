@@ -51,7 +51,8 @@ class TestEspn:
         fixtures, _ = intl.parse_espn(NATIONS, "uefa.nations")
         [f] = fixtures
         assert (f["home"], f["away"], f["date"], f["time"]) == ("Czechia", "USA", "2026-09-24", "18:45")
-        assert (f["league"], f["league_name"], f["odds_sport"]) == ("INT", "UEFA Nations League", "soccer_uefa_nations_league")
+        assert (f["league"], f["league_name"], f["odds_sport"]) == ("INT-UNL", "UEFA Nations League", "soccer_uefa_nations_league")
+        assert f["model_league"] == "INT"  # the model's league for every international
         assert f["home_crest"] == "https://flags/Czechia.png" and f["match_id"] == "espn:1"
 
     def test_results_are_regulation_time_only(self):
@@ -216,9 +217,47 @@ def test_international_training_rows_share_the_fixture_league(tmp_path, monkeypa
     assert len(df) == 1 and list(df["league"]) == [intl.LEAGUE_CODE]
 
 
-def test_leagues_endpoint_lists_internationals_first():
+def test_leagues_list_international_competitions_with_matches_first(monkeypatch):
+    from datetime import date
+    today = date.today().isoformat()
+    monkeypatch.setattr(main, "_predictions_cache", [
+        {"home": "Nigeria", "away": "Ghana", "date": today, "league": "INT-FRI"},
+        {"home": "Ivory Coast", "away": "Gabon", "date": today, "league": "INT-AFCQ"},
+        {"home": "Qatar", "away": "Oman", "date": today, "league": "INT"},
+        {"home": "Arsenal", "away": "Chelsea", "date": today, "league": "PL"},
+    ])
     leagues = TestClient(main.app).get("/api/leagues").json()
-    assert leagues[0] == {"code": "INT", "name": "Internationals", "country": "World", "flag": "🌍"}
+    assert [l["code"] for l in leagues[:3]] == ["INT-AFCQ", "INT-FRI", "INT"]  # COMPETITIONS order, "other" last
+    assert leagues[0] == {"code": "INT-AFCQ", "name": "AFCON Qualifiers", "country": "World", "flag": "🌍"}
+    assert "INT-UNL" not in {l["code"] for l in leagues}  # no Nations League matches now
+    assert {"PL", "CL"} <= {l["code"] for l in leagues}
+
+
+@pytest.mark.parametrize("source_name,code", [
+    ("International Friendly", "INT-FRI"), ("International Friendly Games", "INT-FRI"),
+    ("UEFA Nations League", "INT-UNL"), ("CONCACAF Nations League", "INT-CNL"),
+    ("AFCON Qualifying", "INT-AFCQ"), ("Africa Cup of Nations, Qualification", "INT-AFCQ"),
+    ("World Cup Qualifying · UEFA", "INT-WCQ"), ("FIFA World Cup Qualifiers - Europe", "INT-WCQ"),
+    ("Euro Qualifying", "INT-ECQ"), ("AFC Asian Cup, Qualification", "INT-ACQ"),
+    ("Africa Cup of Nations", "INT-AFCON"), ("Arab Cup", "INT"), ("Club Friendly Games", "INT"),
+])
+def test_each_source_name_maps_to_one_competition(source_name, code):
+    assert intl.competition(source_name)[0] == code
+    assert intl.is_international(code)
+
+
+def test_predictions_model_internationals_as_one_league():
+    seen = []
+
+    class Model:
+        def predict_match(self, *a, league="", **k):
+            seen.append(league)
+            return {"p_home": 0.5, "p_draw": 0.3, "p_away": 0.2, "tip_code": "1X"}
+    from datetime import date
+    fx = intl._fixture("espn:5", "Ivory Coast", "Ghana", pd.Timestamp(date.today().isoformat() + "T16:00Z"),
+                       "AFCON Qualifying", None)
+    [p] = main._build_predictions(Model(), [fx], {})
+    assert seen == ["INT"] and p["league"] == "INT-AFCQ" and p["league_name"] == "AFCON Qualifiers"
 
 
 def test_pipeline_helper_records_what_each_source_found(monkeypatch):
@@ -260,7 +299,7 @@ class TestEspnFallbacks:
             return self.events()
 
         report, seen = self.run(handler)
-        assert [(f["home"], f["league_name"]) for f in report["fixtures"]] == [("Ivory Coast", "AFCON Qualifying")]
+        assert [(f["home"], f["league_name"]) for f in report["fixtures"]] == [("Ivory Coast", "AFCON Qualifiers")]
         assert report["sources"]["espn"]["caf.nations_qual"] == 1 and report["errors"] == []
         afcon_days = [r.url.params.get("dates") for r in seen if "caf.nations_qual" in r.url.path]
         assert afcon_days == ["20260923-20260926", None, "20260923", "20260924", "20260925", "20260926"]
@@ -321,14 +360,14 @@ class TestAdminCheck:
 
         monkeypatch.setattr(intl, "fetch_international", fake)
         monkeypatch.setattr(main, "_predictor", Model())
-        monkeypatch.setattr(main, "_predictions_cache", [{"home": "Old", "away": "Game", "league": "INT"},
+        monkeypatch.setattr(main, "_predictions_cache", [{"home": "Old", "away": "Game", "league": "INT-UNL"},
                                                          {"home": "Arsenal", "away": "Chelsea", "league": "PL"}])
         monkeypatch.setattr(main, "_save_predictions_cache", lambda: None)
         monkeypatch.setattr(main, "_load_cached_live_odds", lambda: ({}, None))
 
         r = TestClient(main.app).get(self.URL, headers={"X-Admin-Secret": "s3cret"}).json()
         assert (r["fixtures"], r["published"]) == (1, 1)
-        assert r["by_competition"] == {"AFCON Qualifying": 1} and r["errors"] == ["espn uefa.euroq: HTTP 400"]
+        assert r["by_competition"] == {"AFCON Qualifiers": 1} and r["errors"] == ["espn uefa.euroq: HTTP 400"]
         assert sorted(p["home"] for p in main._predictions_cache) == ["Arsenal", "Ivory Coast"]
 
 
@@ -363,12 +402,12 @@ class TestSofaScore:
 
     def test_keeps_senior_mens_national_team_matches(self):
         fixtures, _ = intl.parse_sofascore(self.DAY)
-        assert [(f["home"], f["league_name"]) for f in fixtures] == [
-            ("Nigeria", "International Friendly Games"),
-            ("Ivory Coast", "Africa Cup of Nations, Qualification"),
-            ("Morocco", "Africa Cup of Nations, Qualification"),  # no "national" field: judged by competition
+        assert [(f["home"], f["league"]) for f in fixtures] == [
+            ("Nigeria", "INT-FRI"),
+            ("Ivory Coast", "INT-AFCQ"),
+            ("Morocco", "INT-AFCQ"),  # no "national" field: judged by competition
         ]
-        assert fixtures[0]["league"] == "INT" and fixtures[0]["match_id"] == "sofa:1"
+        assert fixtures[0]["league_name"] == "International Friendlies" and fixtures[0]["match_id"] == "sofa:1"
 
     def test_results_are_regulation_time_only(self):
         _, results = intl.parse_sofascore(self.DAY)
