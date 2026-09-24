@@ -1,0 +1,45 @@
+# Trains the model on GitHub's runners and publishes it to Upstash Redis,
+# where the API server loads it at startup instead of training on its own
+# small CPU (backend/model_store.py). Needs the UPSTASH_REDIS_URL secret —
+# the same value as on Render; skips itself without it.
+name: Train model
+
+on:
+  schedule:
+    - cron: "30 4 * * *"   # daily, after the overnight results are in
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "backend/predictor.py"
+      - "backend/team_names.py"
+      - "backend/train_model.py"
+      - "backend/model_store.py"
+      - ".github/workflows/train-model.yml"
+
+concurrency:
+  group: train-model
+  cancel-in-progress: true
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - run: pip install -r requirements.txt
+
+      - name: Train and publish
+        env:
+          UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
+        run: python train_model.py

@@ -8,6 +8,7 @@ FastAPI backend for Sport Bet Predictions.
 
 import asyncio
 import os
+import time
 import glob
 import json
 from datetime import datetime, date, timedelta, timezone
@@ -850,17 +851,120 @@ async def _fetch_international_fixtures() -> list:
     return report["fixtures"]
 
 
+def _assemble_training_data():
+    """(history for H2H lookups, training matches, newest data mtime), or None
+    without data. Shared by the pipeline and train_model.py."""
+    print("[Pipeline] Loading CSV data...")
+    # Primary: football-data.co.uk CSVs (include Bet365 odds — best for accuracy)
+    fd_df = _load_football_data_csvs()
+    # Legacy: our existing EPL + UCL CSVs (no odds but more historical depth)
+    epl_df = _load_epl_csv()
+    ucl_df = _load_ucl_csv()
+    # International match history (fixes national team calibration)
+    intl_df = _load_international_csv()
+
+    # One naming scheme for club training data — football-data.co.uk's.
+    # UCL CSVs and API results name clubs differently ("Atleti",
+    # "Arsenal FC"); unresolved, each club would train as two teams.
+    club_names: set = set()
+    for df in (fd_df, epl_df):
+        if not df.empty:
+            club_names |= set(df["HomeTeam"].dropna()) | set(df["AwayTeam"].dropna())
+    nation_names: set = set()
+    if not intl_df.empty:
+        nation_names = set(intl_df["HomeTeam"].dropna()) | set(intl_df["AwayTeam"].dropna())
+    if not ucl_df.empty and club_names:
+        ucl_df = TeamResolver(club_names, aliases=UCL_ALIASES).resolve_frame(ucl_df)
+
+    parts = [df for df in [fd_df, epl_df, ucl_df, intl_df] if not df.empty]
+    if not parts:
+        print("[Pipeline] No training data found!")
+        return None
+    combined = pd.concat(parts, ignore_index=True)
+    combined = combined.drop_duplicates(
+        subset=["Date", "HomeTeam", "AwayTeam"]
+    ).sort_values("Date").reset_index(drop=True)
+    if combined.empty:
+        print("[Pipeline] No training data after dedup!")
+        return None
+    history = combined
+
+    # Augment training set with API results saved between runs
+    if os.path.exists(RESULTS_CSV):
+        try:
+            saved_results = pd.read_csv(RESULTS_CSV, parse_dates=["Date"])
+            saved_results = saved_results[["Date", "HomeTeam", "AwayTeam", "Result", "FTHG", "FTAG"]].dropna()
+            if club_names or nation_names:
+                saved_results = TeamResolver(club_names | nation_names).resolve_frame(saved_results)
+            combined = pd.concat([combined, saved_results], ignore_index=True)
+            combined = combined.drop_duplicates(subset=["Date", "HomeTeam", "AwayTeam"])
+            combined = combined.sort_values("Date").reset_index(drop=True)
+            print(f"[Pipeline] +{len(saved_results)} saved API results → {len(combined)} total training rows.")
+        except Exception as e:
+            print(f"[Pipeline] Saved results load error: {e}")
+
+    # The latest mtime across all data sources, so a cached model newer than
+    # all of them can be reused
+    def _mtime(path):
+        try: return os.path.getmtime(path)
+        except OSError: return 0.0
+    data_mtime = max(
+        _mtime(INTERNATIONAL_CSV),
+        _mtime(RESULTS_CSV) if os.path.exists(RESULTS_CSV) else 0,
+        *[_mtime(os.path.join(DATA_DIR, f)) for f in os.listdir(DATA_DIR) if f.endswith(".csv")],
+        # League CSVs — refreshed daily by _sync_football_data
+        *[_mtime(f) for f in glob.glob(os.path.join(FOOTBALL_DATA_DIR, "*.csv"))],
+    )
+    return history, combined, data_mtime
+
+
+def _train_new(combined: pd.DataFrame) -> LeaguePredictor:
+    predictor = LeaguePredictor()
+    # Seed national team Elo from FIFA rankings BEFORE training
+    # This prevents unknown national teams (Ecuador, Algeria etc.) from
+    # starting at 1500 and looking equal to Germany/France/Brazil
+    predictor.elo.seed_national_teams()
+    predictor.train(combined)
+    return predictor
+
+
 def _load_or_train(combined: pd.DataFrame, data_mtime: float) -> LeaguePredictor:
-    """The cached model if it's newer than the data, else a freshly trained one."""
+    """
+    The model, as cheaply as possible:
+      1. this server's cached model, if newer than its data;
+      2. the shared model (trained nightly on GitHub Actions, see
+         train_model.py), if fresh — seconds instead of minutes of training;
+      3. training here, then sharing the result so a restart can load it.
+    """
+    import model_store
+    from predictor import MODEL_CACHE_VERSION
+
     predictor = LeaguePredictor.load_cache(data_mtime)
-    if predictor is None:
-        predictor = LeaguePredictor()
-        # Seed national team Elo from FIFA rankings BEFORE training
-        # This prevents unknown national teams (Ecuador, Algeria etc.) from
-        # starting at 1500 and looking equal to Germany/France/Brazil
-        predictor.elo.seed_national_teams()
-        predictor.train(combined)
-        predictor.save_cache(data_mtime)
+    if predictor is not None:
+        return predictor
+    try:
+        shared = model_store.fetch(MODEL_CACHE_VERSION)
+        if shared is not None:
+            blob, meta = shared
+            predictor = LeaguePredictor.from_bytes(blob)
+            if predictor is not None:
+                age_h = (time.time() - meta["trained_at"]) / 3600
+                print(f"[ModelStore] Loaded shared model ({meta.get('source', '?')}, "
+                      f"{age_h:.1f}h old, {meta.get('rows', '?')} matches) — skipping training.")
+                predictor.save_cache(data_mtime)
+                return predictor
+    except Exception as e:
+        print(f"[ModelStore] Could not load the shared model: {e}")
+
+    predictor = _train_new(combined)
+    predictor.save_cache(data_mtime)
+    try:
+        if model_store._client() is not None:
+            model_store.publish(predictor.to_bytes(), MODEL_CACHE_VERSION,
+                                {"source": "api-server", "rows": len(combined)})
+            print("[ModelStore] Shared the model trained here.")
+    except Exception as e:
+        print(f"[ModelStore] Could not share the model: {e}")
     return predictor
 
 
@@ -873,71 +977,13 @@ async def _run_pipeline():
 
     try:
         await _sync_football_data()
-        print("[Pipeline] Loading CSV data...")
-        # Primary: football-data.co.uk CSVs (include Bet365 odds — best for accuracy)
-        fd_df = await asyncio.to_thread(_load_football_data_csvs)
-        # Legacy: our existing EPL + UCL CSVs (no odds but more historical depth)
-        epl_df = await asyncio.to_thread(_load_epl_csv)
-        ucl_df = await asyncio.to_thread(_load_ucl_csv)
-        # International match history (from Kaggle — fixes national team calibration)
-        intl_df = await asyncio.to_thread(_load_international_csv)
-
-        # One naming scheme for club training data — football-data.co.uk's.
-        # UCL CSVs and API results name clubs differently ("Atleti",
-        # "Arsenal FC"); unresolved, each club would train as two teams.
-        club_names: set = set()
-        for df in (fd_df, epl_df):
-            if not df.empty:
-                club_names |= set(df["HomeTeam"].dropna()) | set(df["AwayTeam"].dropna())
-        nation_names: set = set()
-        if not intl_df.empty:
-            nation_names = set(intl_df["HomeTeam"].dropna()) | set(intl_df["AwayTeam"].dropna())
-        if not ucl_df.empty and club_names:
-            ucl_df = TeamResolver(club_names, aliases=UCL_ALIASES).resolve_frame(ucl_df)
-
-        parts = [df for df in [fd_df, epl_df, ucl_df, intl_df] if not df.empty]
-        if not parts:
-            print("[Pipeline] No training data found!")
+        assembled = await asyncio.to_thread(_assemble_training_data)
+        if assembled is None:
             return
-
-        combined = pd.concat(parts, ignore_index=True)
-        combined = combined.drop_duplicates(
-            subset=["Date", "HomeTeam", "AwayTeam"]
-        ).sort_values("Date").reset_index(drop=True)
-        if combined.empty:
-            print("[Pipeline] No training data after dedup!")
-            return
-
+        history, combined, data_mtime = assembled
         global _history_df
-        _history_df = combined  # keep for H2H lookups
-
-        # Augment training set with API results saved between runs
-        if os.path.exists(RESULTS_CSV):
-            try:
-                saved_results = pd.read_csv(RESULTS_CSV, parse_dates=["Date"])
-                saved_results = saved_results[["Date", "HomeTeam", "AwayTeam", "Result", "FTHG", "FTAG"]].dropna()
-                if club_names or nation_names:
-                    saved_results = TeamResolver(club_names | nation_names).resolve_frame(saved_results)
-                combined = pd.concat([combined, saved_results], ignore_index=True)
-                combined = combined.drop_duplicates(subset=["Date", "HomeTeam", "AwayTeam"])
-                combined = combined.sort_values("Date").reset_index(drop=True)
-                print(f"[Pipeline] +{len(saved_results)} saved API results → {len(combined)} total training rows.")
-            except Exception as e:
-                print(f"[Pipeline] Saved results load error: {e}")
-
-        print(f"[Pipeline] Training on {len(combined)} matches...")
-
-        # Compute the latest mtime across all data sources so we know when to invalidate
-        def _mtime(path):
-            try: return os.path.getmtime(path)
-            except: return 0.0
-        data_mtime = max(
-            _mtime(INTERNATIONAL_CSV),
-            _mtime(RESULTS_CSV) if os.path.exists(RESULTS_CSV) else 0,
-            *[_mtime(os.path.join(DATA_DIR, f)) for f in os.listdir(DATA_DIR) if f.endswith(".csv")],
-            # League CSVs — refreshed daily by _sync_football_data
-            *[_mtime(f) for f in glob.glob(os.path.join(FOOTBALL_DATA_DIR, "*.csv"))],
-        )
+        _history_df = history  # keep for H2H lookups
+        print(f"[Pipeline] {len(combined)} training matches.")
 
         # Training takes minutes of CPU. On a worker thread the API keeps
         # answering (from the previous model) instead of timing out.
@@ -1844,6 +1890,21 @@ async def international_check(secret: str = ""):
             "errors": _intl_status["errors"]}
 
 
+def _shared_model_status() -> Optional[Dict[str, Any]]:
+    """The model published for this server (model_store), if any."""
+    try:
+        import model_store
+        from predictor import MODEL_CACHE_VERSION
+        meta = model_store.describe(MODEL_CACHE_VERSION)
+    except Exception:
+        return None
+    if not meta:
+        return None
+    return {"source": meta.get("source"), "rows": meta.get("rows"), "size": meta.get("size"),
+            "trained_at": datetime.fromtimestamp(meta["trained_at"], timezone.utc).isoformat(),
+            "max_age_hours": model_store.MAX_AGE_HOURS}
+
+
 @app.get("/api/admin/data-status")
 async def data_status(secret: str = ""):
     """How fresh the training data is, and which upcoming teams the model
@@ -1881,6 +1942,7 @@ async def data_status(secret: str = ""):
         "renamed": {k: v["model_name"] for k, v in sorted(teams.items()) if v["model_name"] != k},
         "thin_history": thin,
         "international": {**_intl_status, "at": _intl_status["at"].isoformat() if _intl_status["at"] else None},
+        "shared_model": _shared_model_status(),
     }
 
 

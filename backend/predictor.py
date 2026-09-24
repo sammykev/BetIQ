@@ -8,6 +8,7 @@ Key upgrades over original:
 - Attack vs Defence matchup features
 """
 
+import io
 import math
 
 import numpy as np
@@ -608,25 +609,46 @@ class LeaguePredictor:
 
         self._ready = True
 
+    def _payload(self, data_mtime: float) -> Dict:
+        return {
+            "version": MODEL_CACHE_VERSION,
+            "models": self.models,
+            "elo": self.elo,
+            "team_stats": self.team_stats,
+            "_avg_impl": self._avg_impl,
+            "_league_home_goals": self._league_home_goals,
+            "_league_away_goals": self._league_away_goals,
+            "last_match_date": self.last_match_date,
+            "h2h": self.h2h,
+            "dc_rho": self.dc_rho,
+            "league_stats": self.league_stats,
+            "data_mtime": data_mtime,
+        }
+
+    @classmethod
+    def _from_payload(cls, payload: Dict) -> Optional["LeaguePredictor"]:
+        if payload.get("version", 1) != MODEL_CACHE_VERSION:
+            print("[Cache] Cache version mismatch — retraining.")
+            return None
+        inst = cls.__new__(cls)
+        inst.models               = payload["models"]
+        inst.elo                  = payload["elo"]
+        inst.team_stats           = payload["team_stats"]
+        inst._avg_impl            = payload["_avg_impl"]
+        inst._league_home_goals   = payload.get("_league_home_goals", [])
+        inst._league_away_goals   = payload.get("_league_away_goals", [])
+        inst.last_match_date      = payload.get("last_match_date", {})
+        inst.h2h                  = payload.get("h2h", {})
+        inst.dc_rho               = payload.get("dc_rho", -0.13)
+        inst.league_stats         = payload.get("league_stats", {})
+        inst._ready               = True
+        return inst
+
     def save_cache(self, data_mtime: float):
         """Persist trained model + state to disk so cold restarts skip retraining."""
         try:
             os.makedirs(os.path.dirname(MODEL_CACHE_PATH), exist_ok=True)
-            payload = {
-                "version": MODEL_CACHE_VERSION,
-                "models": self.models,
-                "elo": self.elo,
-                "team_stats": self.team_stats,
-                "_avg_impl": self._avg_impl,
-                "_league_home_goals": self._league_home_goals,
-                "_league_away_goals": self._league_away_goals,
-                "last_match_date": self.last_match_date,
-                "h2h": self.h2h,
-                "dc_rho": self.dc_rho,
-                "league_stats": self.league_stats,
-                "data_mtime": data_mtime,
-            }
-            joblib.dump(payload, MODEL_CACHE_PATH, compress=3)
+            joblib.dump(self._payload(data_mtime), MODEL_CACHE_PATH, compress=3)
             print(f"[Cache] Model saved → {MODEL_CACHE_PATH}")
         except Exception as e:
             print(f"[Cache] Save failed: {e}")
@@ -638,29 +660,26 @@ class LeaguePredictor:
             return None
         try:
             payload = joblib.load(MODEL_CACHE_PATH)
-            if payload.get("version", 1) != MODEL_CACHE_VERSION:
-                print("[Cache] Cache version mismatch — retraining.")
-                return None
             if payload.get("data_mtime", 0) < data_mtime:
                 print("[Cache] Training data is newer than cache — retraining.")
                 return None
-            inst = cls.__new__(cls)
-            inst.models               = payload["models"]
-            inst.elo                  = payload["elo"]
-            inst.team_stats           = payload["team_stats"]
-            inst._avg_impl            = payload["_avg_impl"]
-            inst._league_home_goals   = payload.get("_league_home_goals", [])
-            inst._league_away_goals   = payload.get("_league_away_goals", [])
-            inst.last_match_date      = payload.get("last_match_date", {})
-            inst.h2h                  = payload.get("h2h", {})
-            inst.dc_rho               = payload.get("dc_rho", -0.13)
-            inst.league_stats         = payload.get("league_stats", {})
-            inst._ready               = True
-            print("[Cache] Model loaded from disk — skipping training.")
+            inst = cls._from_payload(payload)
+            if inst is not None:
+                print("[Cache] Model loaded from disk — skipping training.")
             return inst
         except Exception as e:
             print(f"[Cache] Load failed: {e}")
             return None
+
+    def to_bytes(self, data_mtime: float = 0.0) -> bytes:
+        """The trained model as one blob (model_store shares it between servers)."""
+        buf = io.BytesIO()
+        joblib.dump(self._payload(data_mtime), buf, compress=3)
+        return buf.getvalue()
+
+    @classmethod
+    def from_bytes(cls, blob: bytes) -> Optional["LeaguePredictor"]:
+        return cls._from_payload(joblib.load(io.BytesIO(blob)))
 
     def predict_match(self, home: str, away: str,
                       odds_home: float = 0, odds_draw: float = 0,
