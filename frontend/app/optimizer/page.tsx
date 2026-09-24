@@ -23,19 +23,32 @@ interface OptPick {
 interface OptResult {
   picks?: OptPick[]; games?: number; total_odds?: number; win_chance?: number;
   within_target?: boolean; estimated_prices?: number; matches_considered?: number;
-  target?: [number, number]; error?: string;
+  target?: [number, number]; target_odds?: number; error?: string;
 }
 interface BookResult { code: string | null; share_url: string | null; total_odds: number | null; error: string | null;
   picks: { key: string; status: string; reason?: string }[] }
 
-const TARGETS: { label: string; lo: number; hi: number }[] = [
-  { label: "2–3x", lo: 2, hi: 3 },
-  { label: "5–10x", lo: 5, hi: 10 },
-  { label: "20–50x", lo: 20, hi: 50 },
-  { label: "100–300x", lo: 100, hi: 300 },
-  { label: "1K–5K", lo: 1000, hi: 5000 },
-  { label: "5K–15K", lo: 5000, hi: 15000 },
-];
+// Target odds: a slider on a log scale (each step is the same % change),
+// quick jumps, and how far off the slip's total may land
+const MIN_TARGET = 1.5;
+const MAX_TARGET = 100_000;
+const SLIDER_STEPS = 1000;
+const QUICK = [2, 5, 10, 50, 100, 1000, 10_000];
+const TOLERANCES = [0.02, 0.05, 0.1];
+
+const toSlider = (t: number) =>
+  Math.round((Math.log(t / MIN_TARGET) / Math.log(MAX_TARGET / MIN_TARGET)) * SLIDER_STEPS);
+function fromSlider(pos: number) {
+  const t = MIN_TARGET * Math.pow(MAX_TARGET / MIN_TARGET, pos / SLIDER_STEPS);
+  // Round to a number people would type: 2.35, 47.5, 1,250, 38,000
+  const mag = Math.pow(10, Math.floor(Math.log10(t)) - 2);
+  return Math.max(MIN_TARGET, Math.round(t / mag) * mag);
+}
+function offBy(total: number, target: number) {
+  const d = (total / target - 1) * 100;
+  return Math.abs(d) < 0.05 ? "exact" : `${d > 0 ? "+" : "−"}${Math.abs(d).toFixed(1)}%`;
+}
+const short = (x: number) => (x >= 1000 ? `${x / 1000}K` : `${x}x`);
 const CONFIDENCE = [0.6, 0.7, 0.8];
 const DAYS = [{ label: "Today", n: 1 }, { label: "2 days", n: 2 }, { label: "3 days", n: 3 }, { label: "Week", n: 7 }];
 const MARKETS = [
@@ -90,8 +103,9 @@ export default function OptimizerPage() {
   const authFetch = useAuthedFetch();
   const slip = useBetSlip();
 
-  const [target, setTarget] = useState(TARGETS[1]);
-  const [custom, setCustom] = useState({ lo: "", hi: "" });
+  const [targetOdds, setTargetOdds] = useState(10);
+  const [typed, setTyped] = useState("10");
+  const [tolerance, setTolerance] = useState(0.05);
   const [minProb, setMinProb] = useState(0.6);
   const [days, setDays] = useState(3);
   const [maxGames, setMaxGames] = useState(30);
@@ -120,10 +134,10 @@ export default function OptimizerPage() {
   const [booked, setBooked] = useState<BookResult | null>(null);
   const [copied, setCopied] = useState(false);
 
-  const usingCustom = custom.lo !== "" || custom.hi !== "";
-  const lo = usingCustom ? Number(custom.lo) : target.lo;
-  const hi = usingCustom ? Number(custom.hi) : target.hi;
-  const validTarget = lo >= 1.01 && hi >= lo;
+  const setTarget = (t: number) => { setTargetOdds(t); setTyped(String(Number(t.toFixed(2)))); };
+  const lo = Math.max(1.01, targetOdds * (1 - tolerance));
+  const hi = targetOdds * (1 + tolerance);
+  const validTarget = targetOdds >= MIN_TARGET && targetOdds <= MAX_TARGET;
 
   const selections: SlipSelection[] = (result?.picks ?? []).map(p => ({
     home: p.home, away: p.away, date: p.date, time: p.time, league: p.league,
@@ -136,7 +150,7 @@ export default function OptimizerPage() {
       const res = await fetch(`${API}/api/optimizer`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ min_odds: lo, max_odds: hi, min_prob: minProb, days, max_games: maxGames,
+        body: JSON.stringify({ target_odds: targetOdds, min_odds: lo, max_odds: hi, min_prob: minProb, days, max_games: maxGames,
                                markets, bookable_only: bookableOnly }),
       });
       const data = await res.json();
@@ -196,22 +210,38 @@ export default function OptimizerPage() {
 
         {/* Settings */}
         <section className="card p-5 space-y-5">
-          <Setting label="Target odds">
-            {TARGETS.map(t => (
-              <Chip key={t.label} active={!usingCustom && target.label === t.label}
-                onClick={() => { setTarget(t); setCustom({ lo: "", hi: "" }); }}>{t.label}</Chip>
-            ))}
-            <span className="flex items-center gap-1.5 text-xs text-n-400">
-              <input inputMode="decimal" placeholder="min" value={custom.lo}
-                onChange={e => setCustom(c => ({ ...c, lo: e.target.value }))}
-                className="w-20 rounded-lg bg-surface-sunken border border-n-800 px-2 py-1.5 text-n-0 tnum outline-none focus:border-accent" />
-              –
-              <input inputMode="decimal" placeholder="max" value={custom.hi}
-                onChange={e => setCustom(c => ({ ...c, hi: e.target.value }))}
-                className="w-20 rounded-lg bg-surface-sunken border border-n-800 px-2 py-1.5 text-n-0 tnum outline-none focus:border-accent" />
-              x
-            </span>
-          </Setting>
+          <div className="space-y-3">
+            <div className="flex items-end justify-between gap-3">
+              <div>
+                <p className="eyebrow">Target odds</p>
+                <p className="font-display font-extrabold text-3xl text-n-0 tnum mt-1">
+                  {odds(targetOdds)}<span className="text-n-400 text-xl">x</span>
+                </p>
+              </div>
+              <label className="flex items-center gap-1.5 text-xs text-n-400">
+                Exact
+                <input inputMode="decimal" value={typed} aria-label="Exact target odds"
+                  onChange={e => {
+                    setTyped(e.target.value);
+                    const v = Number(e.target.value.replace(/,/g, ""));
+                    if (v >= MIN_TARGET && v <= MAX_TARGET) setTargetOdds(v);
+                  }}
+                  className="w-24 rounded-lg bg-surface-sunken border border-n-800 px-2 py-1.5 text-n-0 tnum outline-none focus:border-accent" />
+              </label>
+            </div>
+            <input type="range" min={0} max={SLIDER_STEPS} value={toSlider(targetOdds)}
+              onChange={e => setTarget(fromSlider(Number(e.target.value)))}
+              className="w-full accent-[rgb(var(--accent))]" aria-label="Target odds" />
+            <div className="flex flex-wrap gap-1.5">
+              {QUICK.map(q => <Chip key={q} active={targetOdds === q} onClick={() => setTarget(q)}>{short(q)}</Chip>)}
+            </div>
+            <Setting label="Land within">
+              {TOLERANCES.map(t => (
+                <Chip key={t} active={tolerance === t} onClick={() => setTolerance(t)}>±{Math.round(t * 100)}%</Chip>
+              ))}
+              <span className="self-center text-xs text-n-500 tnum">{odds(lo)}–{odds(hi)}x</span>
+            </Setting>
+          </div>
 
           <div className="grid gap-5 sm:grid-cols-2">
             <Setting label="Each pick at least">
@@ -261,7 +291,7 @@ export default function OptimizerPage() {
           <button onClick={run} disabled={busy || !validTarget}
             className="w-full sm:w-auto flex items-center justify-center gap-2 rounded-xl bg-brand-400 hover:bg-brand-300 text-ink font-bold px-6 py-3 disabled:opacity-50">
             {busy ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-            {busy ? "Optimizing…" : `Optimize for ${odds(lo || 0)}–${odds(hi || 0)}x`}
+            {busy ? "Optimizing…" : `Build a ${odds(targetOdds)}x slip`}
           </button>
         </section>
 
@@ -290,8 +320,8 @@ export default function OptimizerPage() {
               </div>
               <p className={clsx("text-xs flex items-center gap-1.5", result.within_target ? "text-accent" : "text-warn")}>
                 {result.within_target ? <Check size={13} /> : <AlertTriangle size={13} />}
-                {result.within_target ? "Within" : "Closest to"} target {odds(result.target![0])}–{odds(result.target![1])}x
-                · best of {result.matches_considered} matches
+                {result.within_target ? "On target" : "Closest to target"}: {odds(result.total_odds!)}x vs {odds(result.target_odds ?? targetOdds)}x
+                ({offBy(result.total_odds!, result.target_odds ?? targetOdds)}) · best of {result.matches_considered} matches
               </p>
               <p className="text-[11px] text-n-500">
                 &quot;All win&quot; is the model&apos;s chance every pick wins, treating matches as independent.

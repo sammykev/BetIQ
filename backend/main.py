@@ -4227,6 +4227,7 @@ async def optimize_slip(body: Dict[str, Any]):
     import optimizer
     try:
         lo, hi = float(body.get("min_odds", 2)), float(body.get("max_odds", 5))
+        target = float(body.get("target_odds") or (lo * hi) ** 0.5)
         max_games = int(body.get("max_games", optimizer.MAX_GAMES))
         min_prob = min(0.95, max(0.5, float(body.get("min_prob", 0.6))))
         days = min(PREDICTION_DAYS, max(1, int(body.get("days", 3))))
@@ -4250,11 +4251,20 @@ async def optimize_slip(body: Dict[str, Any]):
     groups = [optimizer.candidates(p, _linked_event(p), min_prob, markets) for p in preds]
     result = await asyncio.to_thread(optimizer.optimize, groups, lo, hi, max_games)
     considered = sum(1 for g in groups if g)
+    if result is None and lo <= target <= hi:
+        # Nothing inside the tolerance: the nearest slip within ±25% of the
+        # target, flagged as off target (within_target is False)
+        for spread in (0.1, 0.25):
+            near = await asyncio.to_thread(optimizer.optimize, groups, max(1.01, target * (1 - spread)),
+                                           target * (1 + spread), max_games)
+            if near is not None:
+                result = {**near, "within_target": False}
+                break
     if result is None:
-        return {"error": (f"No slip from {considered} matches reaches {lo:g}–{hi:g}x. "
-                          "Widen the range, allow more games or days, or lower the minimum confidence."),
-                "matches_considered": considered, "target": [lo, hi]}
-    return {**result, "target": [lo, hi], "matches_considered": considered}
+        return {"error": (f"No slip from {considered} matches gets near {target:,.2f}x. "
+                          "Allow more games or days, add markets, or lower the minimum confidence."),
+                "matches_considered": considered, "target": [lo, hi], "target_odds": target}
+    return {**result, "target": [lo, hi], "target_odds": round(target, 2), "matches_considered": considered}
 
 
 @app.post("/api/booking/convert")

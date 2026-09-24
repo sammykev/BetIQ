@@ -122,7 +122,7 @@ class TestEndpoint:
 
     def test_unreachable_target_explains(self):
         r = self.post(min_odds=100000, max_odds=200000, max_games=2).json()
-        assert "Widen the range" in r["error"]
+        assert "gets near" in r["error"]
 
     @pytest.mark.parametrize("body", [{"min_odds": 5, "max_odds": 2}, {"min_odds": 0.5, "max_odds": 2},
                                       {"min_odds": "x", "max_odds": 2}])
@@ -161,3 +161,23 @@ class TestMoreMarkets:
         wrong = {o.code: o for o in candidates(p, event("Total Goals"), 0.6, {"corners_ou"})}
         assert (good["O85"].odds, good["O85"].odds_source) == (1.55, "sportybet")
         assert wrong["O85"].odds_source == "estimated"
+
+
+class TestTargetOdds:
+    def test_lands_within_tolerance_of_the_target(self):
+        random.seed(3)
+        groups = [[option(i, random.uniform(0.55, 0.9), round(random.uniform(1.15, 2.2), 2))] for i in range(40)]
+        for target in (3, 12.5, 47, 260, 1800):
+            res = optimize(groups, target * 0.98, target * 1.02, 30)
+            assert res and res["within_target"], target
+            assert abs(res["total_odds"] / target - 1) <= 0.02 + 1e-9
+
+    def test_endpoint_falls_back_to_the_nearest_slip(self, monkeypatch):
+        preds = [pred(i, p_home=0.62, p_draw=0.22, p_away=0.16, odds_home=1.5, odds_draw=4.0, odds_away=6.0)
+                 for i in range(2)]
+        monkeypatch.setattr(main, "_predictions_cache", preds)
+        body = {"target_odds": 2.0, "min_odds": 1.96, "max_odds": 2.04, "markets": ["1x2"], "min_prob": 0.6, "days": 3}
+        res = TestClient(main.app).post("/api/optimizer", json=body).json()
+        # 1.5 or 2.25 only: nothing within ±2%, the nearest within ±25% comes back flagged
+        assert res["within_target"] is False and res["target_odds"] == 2.0
+        assert res["total_odds"] in (1.5, 2.25)
