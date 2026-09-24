@@ -397,3 +397,110 @@ class TestDiagnose:
     def test_admin_only(self, monkeypatch):
         monkeypatch.setattr(main, "ADMIN_SECRET", "s3cret")
         assert TestClient(main.app).get("/api/admin/sportybet-check").status_code == 403
+
+
+class TestLinkedBooking:
+    """Predictions matched to SportyBet events ahead of time book in one request."""
+
+    def test_linked_selections_skip_the_event_listing(self):
+        async def fetch(date):
+            raise AssertionError("listing should not be fetched")
+        shared = []
+
+        async def share(sels):
+            shared.append(sels)
+            return {"code": "FAST01", "url": "u", "odds": {}, "unavailable": set()}
+        out = asyncio.run(to_sportybet([sel()], fetch, sportybet.find_event, share,
+                                       linked=lambda s: sportybet.slim_event(EVENT)))
+        assert out["code"] == "FAST01" and out["picks"][0]["status"] == "booked"
+        assert out["picks"][0]["odds"] == 1.85  # from the linked event's stored prices
+        assert shared == [[{"eventId": "sr:match:111", "marketId": "1", "specifier": "", "outcomeId": "1"}]]
+
+    def test_unlinked_selections_still_use_the_listing(self):
+        calls = []
+
+        async def fetch(date):
+            calls.append(date)
+            return [EVENT]
+
+        async def share(sels):
+            return {"code": "SLOW01", "url": "u", "odds": {}, "unavailable": set()}
+        out = asyncio.run(to_sportybet([sel()], fetch, sportybet.find_event, share, linked=lambda s: None))
+        assert out["code"] == "SLOW01" and calls == ["2026-09-26"]
+
+    def test_slim_event_keeps_only_booked_markets(self):
+        ev = {**EVENT, "extra": "x", "markets": EVENT["markets"] + [{"id": "999", "outcomes": []}]}
+        slim = sportybet.slim_event(ev)
+        assert set(slim) == {"eventId", "homeTeamName", "awayTeamName", "estimateStartTime", "markets"}
+        assert [m["id"] for m in slim["markets"]] == [m["id"] for m in EVENT["markets"]
+                                                       if m["id"] in sportybet.BOOKED_MARKETS]
+
+    def test_predictions_link_to_events_around_their_date(self):
+        events = [EVENT,
+                  {**EVENT, "eventId": "sr:match:222", "homeTeamName": "Leeds", "awayTeamName": "Hull",
+                   "estimateStartTime": ms("2026-10-20T15:00:00")}]
+        preds = [{"home": "Arsenal FC", "away": "Chelsea FC", "date": "2026-09-26"},
+                 {"home": "Leeds United", "away": "Hull City", "date": "2026-09-26"}]  # SportyBet's is weeks later
+        links = main._match_predictions_to_events(preds, events)
+        assert list(links) == ["Arsenal FC|Chelsea FC|2026-09-26"]
+        assert links["Arsenal FC|Chelsea FC|2026-09-26"]["eventId"] == "sr:match:111"
+
+    def test_linking_job_flags_bookable_predictions_and_keeps_links_when_sportybet_is_down(self, monkeypatch):
+        from datetime import date, timedelta
+        day = (date.today() + timedelta(days=2)).isoformat()
+        event = {**EVENT, "estimateStartTime": ms(day + "T16:30:00")}
+        preds = [{"home": "Arsenal FC", "away": "Chelsea FC", "date": day, "league": "PL"},
+                 {"home": "Nowhere", "away": "Nobody", "date": day, "league": "PL"}]
+        monkeypatch.setattr(main, "_predictions_cache", preds)
+        monkeypatch.setattr(main, "_sb_links", {})
+        monkeypatch.setattr(main, "_get_redis", lambda: None)
+
+        async def catalog():
+            return [event], ["pcUpcomingEvents: 1 events"]
+        monkeypatch.setattr(sportybet, "fetch_catalog", catalog)
+        status = asyncio.run(main._link_sportybet_events())
+        assert (status["linked"], status["predictions"], status["events"]) == (1, 2, 1)
+        assert [p["sportybet"] for p in preds] == [True, False]
+
+        async def down():
+            return [], ["pcUpcomingEvents: HTTP 403"]
+        monkeypatch.setattr(sportybet, "fetch_catalog", down)
+        status = asyncio.run(main._link_sportybet_events())
+        assert status["linked"] == 1 and preds[0]["sportybet"] is True  # last links kept
+
+    def test_convert_endpoint_uses_the_links(self, monkeypatch):
+        monkeypatch.setattr(main, "_sb_links", {"Arsenal FC|Chelsea FC|2026-09-26": sportybet.slim_event(EVENT)})
+
+        async def no_listing(date):
+            raise AssertionError("listing should not be fetched")
+
+        async def share(sels):
+            return {"code": "FAST02", "url": "u", "odds": {}, "unavailable": set()}
+        monkeypatch.setattr(sportybet, "fetch_events_for_date", no_listing)
+        monkeypatch.setattr(sportybet, "share_selections", share)
+        r = TestClient(main.app).post("/api/booking/convert", json={"platform": "sportybet", "selections": [sel()]})
+        assert r.json()["code"] == "FAST02"
+
+
+class TestSharedSession:
+    def test_bookings_reuse_one_connection_and_reconnect_once(self, monkeypatch):
+        made = []
+
+        class Session(FakeSession):
+            def __init__(self, fail_first):
+                super().__init__({"/orders/share": ok({"shareCode": "KEEP01"})})
+                self.fail = fail_first
+                made.append(self)
+
+            async def request(self, method, url, **kw):
+                if self.fail:
+                    self.fail = False
+                    raise ConnectionError("stale connection")
+                return await super().request(method, url, **kw)
+
+        monkeypatch.setattr(sportybet, "_shared", None)
+        monkeypatch.setattr(sportybet, "_session", lambda: Session(fail_first=not made))
+        one = [{"eventId": "sr:match:1", "marketId": "1", "outcomeId": "1"}]
+        assert asyncio.run(sportybet.share_selections(one))["code"] == "KEEP01"   # reconnected once
+        assert asyncio.run(sportybet.share_selections(one))["code"] == "KEEP01"   # same connection again
+        assert len(made) == 2 and len(made[1].calls) == 2

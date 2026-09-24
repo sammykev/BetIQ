@@ -75,3 +75,7 @@ def test_signing_in_no_longer_switches_the_paywall_on(monkeypatch):
     monkeypatch.setattr(main, "_get_redis", lambda: calls.append("redis") or None)
     client.get("/api/admin/whoami", headers={"X-Admin-Secret": "s3cret"})
     assert calls == []
+
+
+def test_link_now_is_admin_only():
+    assert client.get("/api/admin/sportybet-link").status_code == 403

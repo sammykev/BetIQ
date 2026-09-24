@@ -110,6 +110,7 @@ export default function AdminPage() {
   const [dataStatus, setDataStatus] = useState<any>(null);
   const [sbCheck, setSbCheck] = useState<any>(null);
   const [sbChecking, setSbChecking] = useState(false);
+  const [sbLinking, setSbLinking] = useState(false);
   const [intlCheck, setIntlCheck] = useState<any>(null);
   const [intlChecking, setIntlChecking] = useState(false);
   // Grant/Revoke
@@ -602,6 +603,35 @@ export default function AdminPage() {
           </button>
         </div>
         <p className="text-slate-500 text-xs">Books a real one-pick code from the server — codes only load a betslip, nothing is staked.</p>
+        {dataStatus?.sportybet_links && (() => {
+          const l = dataStatus.sportybet_links;
+          return (
+            <div className="flex items-start gap-2 text-xs">
+              <p className={clsx("flex-1", l.linked > 0 ? "text-slate-400" : "text-amber-400")}>
+                <span className="text-slate-300 font-semibold">Instant booking:</span>{" "}
+                {l.at
+                  ? <>{l.linked} of {l.predictions} upcoming predictions linked to SportyBet events
+                      ({l.events} listed) · {new Date(l.at).toLocaleTimeString()}
+                      {l.report?.length > 0 && <span className="block text-slate-500 break-words">{l.report.join(" · ")}</span>}</>
+                  : "not linked yet — runs every 30 minutes and after each refresh"}
+              </p>
+              <button
+                onClick={async () => {
+                  setSbLinking(true);
+                  try {
+                    const r = await adminFetch(`${API}/api/admin/sportybet-link`);
+                    if (r.ok) { const links = await r.json(); setDataStatus((d: any) => ({ ...d, sportybet_links: links })); }
+                  } finally { setSbLinking(false); }
+                }}
+                disabled={sbLinking}
+                className="shrink-0 flex items-center gap-1 border border-slate-600 hover:border-green-500 text-slate-300 px-2 py-1 rounded-lg disabled:opacity-50"
+              >
+                {sbLinking ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
+                Link now
+              </button>
+            </div>
+          );
+        })()}
         {sbCheck && (
           <div className="space-y-1.5">
             <p className={clsx("text-sm font-bold", sbCheck.ok ? "text-green-400" : "text-red-400")}>

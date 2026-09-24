@@ -1187,6 +1187,7 @@ async def _run_pipeline():
 
         _predictor = predictor
         print(f"[Pipeline] Done — {len(predictions)} predictions cached.")
+        asyncio.create_task(_link_sportybet_events())
 
         # Send push notifications for high-value picks
         value_picks = [p for p in predictions if p.get("is_value_bet") and p.get("value_edge", 0) > 0.08]
@@ -1939,6 +1940,12 @@ async def sportybet_check(_admin: str = Depends(require_admin)):
     return await sportybet.diagnose(upcoming)
 
 
+@app.get("/api/admin/sportybet-link")
+async def sportybet_link_now(_admin: str = Depends(require_admin)):
+    """Match upcoming predictions to SportyBet events now (normally every 30 min)."""
+    return await _link_sportybet_events()
+
+
 @app.get("/api/admin/international-check")
 async def international_check(_admin: str = Depends(require_admin)):
     """Fetch international fixtures now, report what each source returned,
@@ -1955,6 +1962,7 @@ async def international_check(_admin: str = Depends(require_admin)):
             _last_updated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
             _save_predictions_cache()
             published = len(fresh)
+            asyncio.create_task(_link_sportybet_events())
     by_competition: Dict[str, int] = {}
     for f in fixtures:
         by_competition[f["league_name"]] = by_competition.get(f["league_name"], 0) + 1
@@ -2015,6 +2023,7 @@ async def data_status(_admin: str = Depends(require_admin)):
         "thin_history": thin,
         "international": {**_intl_status, "at": _intl_status["at"].isoformat() if _intl_status["at"] else None},
         "shared_model": _shared_model_status(),
+        "sportybet_links": _sb_link_status,
     }
 
 
@@ -3857,6 +3866,79 @@ async def get_sportybet_event(home: str, away: str, date: str):
         return {"found": False, "markets": [], "error": str(e)}
 
 
+# ── SportyBet links: predictions matched to SportyBet events ahead of time ──
+# Booking then needs no event listing, just one request for the code.
+SB_LINKS_KEY = "betiq:sportybet:links"
+SB_LINK_MINUTES = 30
+_sb_links: Dict[str, Dict] = {}
+_sb_link_status: Dict[str, Any] = {"at": None, "events": 0, "predictions": 0, "linked": 0, "report": []}
+
+
+def _sb_key(home: str, away: str, day: str) -> str:
+    return f"{home}|{away}|{day}"
+
+
+def _match_predictions_to_events(preds: List[Dict], events: List[Dict]) -> Dict[str, Dict]:
+    """{prediction key: slim SportyBet event}. CPU-bound (fuzzy names): run in a thread."""
+    import sportybet
+    by_day: Dict[str, List[Dict]] = {}
+    for ev in events:
+        by_day.setdefault(sportybet._utc_day(ev) or "", []).append(ev)
+    links: Dict[str, Dict] = {}
+    for p in preds:
+        d = date.fromisoformat(p["date"])
+        near = [ev for k in {(d + timedelta(days=o)).isoformat() for o in (-1, 0, 1)} for ev in by_day.get(k, [])]
+        ev = sportybet.find_event(p["home"], p["away"], near)
+        if ev and ev.get("eventId"):
+            links[_sb_key(p["home"], p["away"], p["date"])] = sportybet.slim_event(ev)
+    return links
+
+
+async def _link_sportybet_events() -> Dict[str, Any]:
+    """Match upcoming football predictions to SportyBet events and keep the links."""
+    import sportybet
+    today = date.today().isoformat()
+    preds = [p for p in _predictions_cache
+             if p.get("sport") in (None, "football") and p.get("home") and p.get("away")
+             and today <= p.get("date", "") and _within_window(p.get("date", ""))]
+    status: Dict[str, Any] = {"at": datetime.now(timezone.utc).isoformat(), "predictions": len(preds),
+                              "events": 0, "linked": len(_sb_links), "report": []}
+    if preds:
+        try:
+            events, status["report"] = await sportybet.fetch_catalog()
+        except Exception as e:
+            events, status["report"] = [], [f"{type(e).__name__}: {e}"]
+        status["events"] = len(events)
+        if events:  # an empty catalog (SportyBet unreachable) keeps the last links
+            links = await asyncio.to_thread(_match_predictions_to_events, preds, events)
+            _sb_links.clear()
+            _sb_links.update(links)
+            status["linked"] = len(links)
+            r = _get_redis()
+            if r:
+                try:
+                    r.set(SB_LINKS_KEY, json.dumps(links), ex=6 * 3600)
+                except Exception as e:
+                    print(f"[SportyBet] Could not save links: {e}")
+    for p in _predictions_cache:
+        p["sportybet"] = _sb_key(p.get("home", ""), p.get("away", ""), p.get("date", "")) in _sb_links
+    _sb_link_status.update(status)
+    print(f"[SportyBet] Linked {status['linked']}/{status['predictions']} predictions "
+          f"({status['events']} SportyBet events) — {' · '.join(status['report']) or 'no fetch'}")
+    return _sb_link_status
+
+
+def _linked_event(selection: Dict[str, Any]) -> Optional[Dict]:
+    if not _sb_links:
+        r = _get_redis()
+        if r:
+            try:
+                _sb_links.update(json.loads(r.get(SB_LINKS_KEY) or "{}"))
+            except Exception:
+                pass
+    return _sb_links.get(_sb_key(selection["home"], selection["away"], selection["date"]))
+
+
 @app.post("/api/booking/convert")
 async def convert_slip(body: Dict[str, Any]):
     """
@@ -3874,7 +3956,8 @@ async def convert_slip(body: Dict[str, Any]):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return await booking_slip.to_sportybet(
-        selections, sportybet.fetch_events_for_date, sportybet.find_event, sportybet.share_selections)
+        selections, sportybet.fetch_events_for_date, sportybet.find_event, sportybet.share_selections,
+        linked=_linked_event)
 
 
 ADMIN_SECRET = os.getenv("ADMIN_SECRET", "")
@@ -3958,6 +4041,7 @@ async def startup():
     scheduler.add_job(_run_pipeline, "interval", hours=12, id="refresh")
     scheduler.add_job(_load_fbref_data, "interval", days=7, id="fbref_refresh")
     scheduler.add_job(_fetch_and_save_results, "interval", hours=3, id="results_refresh")
+    scheduler.add_job(_link_sportybet_events, "interval", minutes=SB_LINK_MINUTES, id="sportybet_links")
     scheduler.start()
 
 

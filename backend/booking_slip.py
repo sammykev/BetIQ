@@ -94,12 +94,17 @@ async def to_sportybet(
     fetch_events: Callable[[str], Awaitable[List[Dict]]],
     find_event: Callable[[str, str, List[Dict]], Optional[Dict]],
     post_share: Callable[[List[Dict]], Awaitable[Dict[str, Any]]],
+    linked: Optional[Callable[[Dict[str, Any]], Optional[Dict]]] = None,
 ) -> Dict[str, Any]:
     """
     Book the slip on SportyBet. Every selection comes back with a status:
     "booked"; "matched" (found, but no code was made); "unavailable" (SportyBet refused it — suspended or started);
     "unsupported" (a market SportyBet codes can't take from us); or
     "not_found" (match not listed on SportyBet around that date).
+
+    `linked` returns the SportyBet event a selection was matched to ahead of
+    time (see main._link_sportybet_events); only unlinked selections need
+    the event listing, so a fully linked slip is a single request.
     """
     picks: List[Dict[str, Any]] = []
     to_book: List[Tuple[int, Dict[str, str], Dict]] = []  # (pick index, ids, event)
@@ -113,9 +118,11 @@ async def to_sportybet(
             picks.append({**pick, "status": "unsupported",
                           "reason": "SportyBet codes can't include this market"})
             continue
-        if s["date"] not in events_by_date:
-            events_by_date[s["date"]] = await fetch_events(s["date"])
-        event = find_event(s["home"], s["away"], events_by_date[s["date"]])
+        event = linked(s) if linked else None
+        if event is None:
+            if s["date"] not in events_by_date:
+                events_by_date[s["date"]] = await fetch_events(s["date"])
+            event = find_event(s["home"], s["away"], events_by_date[s["date"]])
         event_id = event and str(event.get("eventId") or "")
         if not event_id:
             picks.append({**pick, "status": "not_found", "reason": "Match not found on SportyBet"})

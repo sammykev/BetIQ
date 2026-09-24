@@ -57,6 +57,29 @@ def _session() -> AsyncSession:
     return AsyncSession(impersonate=IMPERSONATE, timeout=20, headers=_HEADERS, proxy=PROXY)
 
 
+# One long-lived session: its connection to SportyBet stays open, so a
+# booking skips the TLS handshake (the slowest part of a fresh request).
+_shared: Optional[AsyncSession] = None
+
+
+def shared_session() -> AsyncSession:
+    global _shared
+    if _shared is None:
+        _shared = _session()
+    return _shared
+
+
+async def reset_shared_session() -> None:
+    """Drop the shared session (after a connection error); the next call opens a new one."""
+    global _shared
+    old, _shared = _shared, None
+    if old is not None:
+        try:
+            await old.close()
+        except Exception:
+            pass
+
+
 async def _request(session: AsyncSession, method: str, path: str, **kw) -> Dict[str, Any]:
     """One API call. Returns the parsed body when bizCode is 10000, raises otherwise."""
     r = await session.request(method, f"{BASE}{path}", **kw)
@@ -112,10 +135,10 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
-async def _pc_upcoming(session: AsyncSession) -> List[Dict]:
+async def _pc_upcoming(session: AsyncSession, max_pages: int = 10) -> List[Dict]:
     """The desktop site's "Upcoming" football list, page by page."""
     events: List[Dict] = []
-    for page in range(1, 11):
+    for page in range(1, max_pages + 1):
         data = (await _request(session, "GET", "/factsCenter/pcUpcomingEvents", params={
             "sportId": FOOTBALL, "marketId": MARKETS, "pageSize": 100, "pageNum": page,
             "option": 1, "_t": _now_ms()})).get("data") or {}
@@ -200,26 +223,58 @@ async def fetch_events_for_date(date_str: str, session: Optional[AsyncSession] =
     if hit and time.time() - hit[0] < CACHE_SECONDS:
         return hit[1]
 
-    own = session is None
-    session = session or _session()
+    session = session or shared_session()
     events: List[Dict] = []
-    try:
-        for name, fetch in LISTINGS:
-            try:
-                events = [e for e in await fetch(session) if _near(_utc_day(e), date_str)]
-            except Exception as e:
-                print(f"[SportyBet] {name}: {e}")
-                continue
-            if events:
-                break
-    finally:
-        if own:
-            await session.close()
+    for name, fetch in LISTINGS:
+        try:
+            events = [e for e in await fetch(session) if _near(_utc_day(e), date_str)]
+        except Exception as e:
+            print(f"[SportyBet] {name}: {e}")
+            continue
+        if events:
+            break
 
     print(f"[SportyBet] {len(events)} events around {date_str}")
     if events:
         _cache[date_str] = (time.time(), events)
     return events
+
+
+# The markets booking_slip books; the catalog keeps only these per event
+BOOKED_MARKETS = {"1", "10", "11", "18", "26", "29", "60"}
+
+
+def slim_event(ev: Dict) -> Dict:
+    """What booking needs from an event: its id, teams, kick-off, and the
+    prices of the markets we book (for the slip's odds)."""
+    return {
+        "eventId": ev.get("eventId"),
+        "homeTeamName": ev.get("homeTeamName"),
+        "awayTeamName": ev.get("awayTeamName"),
+        "estimateStartTime": ev.get("estimateStartTime"),
+        "markets": [
+            {"id": m.get("id"), "specifier": m.get("specifier") or "",
+             "outcomes": [{"id": o.get("id"), "odds": o.get("odds"), "isActive": o.get("isActive", 1)}
+                          for o in m.get("outcomes") or []]}
+            for m in ev.get("markets") or [] if str(m.get("id")) in BOOKED_MARKETS
+        ],
+    }
+
+
+async def fetch_catalog(session: Optional[AsyncSession] = None) -> Tuple[List[Dict], List[str]]:
+    """Every upcoming football event SportyBet lists (for linking predictions
+    ahead of booking), and one report line per listing tried."""
+    session = session or shared_session()
+    report: List[str] = []
+    try:
+        events = await _pc_upcoming(session, max_pages=30)
+        report.append(f"pcUpcomingEvents: {len(events)} events")
+        if events:
+            return events, report
+    except Exception as e:
+        report.append(f"pcUpcomingEvents: {e}")
+    rest, more = await probe_listings(session, stop_at_first=True)
+    return rest, report + [line for line in more if not line.startswith("pcUpcomingEvents")]
 
 
 # ------------------------------------------------------------------ #
@@ -320,13 +375,17 @@ async def share_selections(selections: List[Dict[str, str]],
          **({"specifier": s["specifier"]} if s.get("specifier") else {})}
         for s in selections
     ]}
-    own = session is None
-    session = session or _session()
-    try:
+    if session is not None:
         data = (await _request(session, "POST", "/orders/share", json=payload)).get("data") or {}
-    finally:
-        if own:
-            await session.close()
+    else:
+        try:
+            data = (await _request(shared_session(), "POST", "/orders/share", json=payload)).get("data") or {}
+        except SportyBetError:
+            raise
+        except Exception:
+            # A kept-alive connection can go stale: reconnect once
+            await reset_shared_session()
+            data = (await _request(shared_session(), "POST", "/orders/share", json=payload)).get("data") or {}
 
     code = data.get("shareCode")
     if not code:
