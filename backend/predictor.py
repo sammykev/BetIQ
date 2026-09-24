@@ -176,6 +176,53 @@ def _rounded_probs(p_h: float, p_d: float, p_a: float, p_o15: float, p_o25: floa
     }
 
 
+# BTTS = sigmoid(a + b·logit(grid BTTS) + c·logit(p_over25)), fitted walk-forward
+# on 2023-24; on 2024-25 Brier 0.2472 vs 0.2483 for the base rate — BTTS is
+# close to a coin flip for every model.
+BTTS_CALIBRATION = (0.211, 0.22, 0.364)
+
+
+def goal_markets(xg_h: float, xg_a: float, p_o25: float, p_h: float, p_a: float,
+                 rho: float = -0.13) -> Dict:
+    """BTTS, over 3.5 and draw no bet for one match. The Dixon-Coles score
+    grid from the expected goals, with both means scaled so its over 2.5
+    equals the classifier's (calibrated) p_o25 — the goal markets then agree
+    with each other and with the tested over/under model.
+
+    Walk-forward on 2024-25 (3,222 league matches): over 3.5 and draw no bet
+    are calibrated as is; the grid's BTTS is overconfident (said 16%,
+    happened 43%), so it goes through BTTS_CALIBRATION, fitted on 2023-24."""
+    from math import exp, factorial
+    MAX = 11
+
+    def grid(scale: float) -> np.ndarray:
+        mh, ma = max(xg_h * scale, 0.05), max(xg_a * scale, 0.05)
+        ph = [mh ** k * exp(-mh) / factorial(k) for k in range(MAX)]
+        pa = [ma ** k * exp(-ma) / factorial(k) for k in range(MAX)]
+        g = np.array([[ph[i] * pa[j] * _dc_tau(i, j, mh, ma, rho) for j in range(MAX)] for i in range(MAX)])
+        return g / g.sum()
+
+    totals = np.add.outer(np.arange(MAX), np.arange(MAX))
+
+    def over(g: np.ndarray, line: float) -> float:
+        return float(g[totals > line].sum())
+
+    lo, hi = 0.1, 5.0
+    for _ in range(40):  # over 2.5 rises with the scale
+        mid = (lo + hi) / 2
+        lo, hi = (mid, hi) if over(grid(mid), 2.5) < p_o25 else (lo, mid)
+    g = grid((lo + hi) / 2)
+    dnb = p_h / (p_h + p_a) if p_h + p_a > 0 else 0.5
+    logit = lambda p: math.log(min(max(p, 1e-4), 1 - 1e-4) / (1 - min(max(p, 1e-4), 1 - 1e-4)))
+    a, b_grid, b_o25 = BTTS_CALIBRATION
+    z = a + b_grid * logit(float(g[1:, 1:].sum())) + b_o25 * logit(p_o25)
+    return {
+        "p_btts": round(1 / (1 + math.exp(-z)), 3),
+        "p_over35": round(over(g, 3.5), 3),
+        "p_dnb_home": round(dnb, 3),
+    }
+
+
 def pick_tips(p_h: float, p_d: float, p_a: float, p_o15: float, p_o25: float) -> Dict:
     """
     The 1X2 / double-chance tip and the goals tip for a set of probabilities.
@@ -690,7 +737,9 @@ class LeaguePredictor:
         f = self._feats(home, away, odds_home, odds_draw, odds_away,
                         match_date=match_date, league=league)
         probs = self.predict_proba(f)
-        return {**_rounded_probs(*probs), **pick_tips(*probs)}
+        p_h, _, p_a, _, p_o25 = probs
+        return {**_rounded_probs(*probs), **pick_tips(*probs),
+                **goal_markets(f["xG_Home"], f["xG_Away"], p_o25, p_h, p_a, getattr(self, "dc_rho", -0.13))}
 
     def predict_proba(self, feats: Dict) -> tuple:
         """(p_home, p_draw, p_away, p_over15, p_over25) for one feature row.

@@ -62,7 +62,8 @@ const SPORTYBET_FIXED = new Set([
 
 export function bookableOnSportybet(s: Pick<SlipSelection, "market" | "code">) {
   if (SPORTYBET_FIXED.has(`${s.market}:${s.code}`)) return true;
-  return s.market === "goals_ou" && /^[OU]\d5$/.test(s.code);
+  // Over/under lines (goals, corners, bookings): half lines only, e.g. O25, U105
+  return ["goals_ou", "corners_ou", "cards_ou"].includes(s.market) && /^[OU]\d{1,2}5$/.test(s.code);
 }
 
 const DC_NAMES: Record<string, string> = { "1X": "Home or Draw", "X2": "Draw or Away", "2X": "Draw or Away", "12": "Home or Away" };

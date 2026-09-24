@@ -27,8 +27,24 @@ _FIXED: Dict[Tuple[str, str], Tuple[str, str]] = {
     ("goals_odd_even", "GOE-ODD"): ("26", "70"), ("goals_odd_even", "GOE-EVEN"): ("26", "72"),
     ("half_time", "HT1"): ("60", "1"), ("half_time", "HTX"): ("60", "2"), ("half_time", "HT2"): ("60", "3"),
 }
-_TOTAL_MARKET, _OVER, _UNDER = "18", "12", "13"
-_OU_CODE = re.compile(r"^([OU])(\d)(\d)$")  # O25 → over 2.5
+_OVER, _UNDER = "12", "13"
+# Over/under markets: model market → SportyBet market (lines go in the specifier)
+_LINE_MARKETS = {"goals_ou": "18", "corners_ou": "166", "cards_ou": "139"}
+_OU_CODE = re.compile(r"^([OU])(\d{1,2})5$")  # O25 → over 2.5, U105 → under 10.5
+
+# Market ids we couldn't check against Betradar's documentation: a price is
+# only used, and a pick only booked, once SportyBet's own label for the id
+# says what we expect (seen in its listing — see sportybet.market_labels).
+LABELLED_MARKETS = {
+    "166": (re.compile(r"corner", re.I), "corners"),
+    "139": (re.compile(r"booking|card", re.I), "bookings"),
+}
+
+
+def label_ok(market_id: str, label: Optional[str]) -> bool:
+    """False when SportyBet's label for a checked market id doesn't match."""
+    check = LABELLED_MARKETS.get(str(market_id))
+    return check is None or bool(label and check[0].search(label))
 
 MAX_SELECTIONS = 30
 
@@ -38,10 +54,10 @@ def sportybet_ids(market: str, code: str) -> Optional[Dict[str, str]]:
     fixed = _FIXED.get((market, code))
     if fixed:
         return {"marketId": fixed[0], "specifier": "", "outcomeId": fixed[1]}
-    if market == "goals_ou":
+    if market in _LINE_MARKETS:
         m = _OU_CODE.match(code or "")
-        if m and m.group(3) == "5":  # only half-goal lines exist as plain totals
-            return {"marketId": _TOTAL_MARKET, "specifier": f"total={m.group(2)}.5",
+        if m:  # only half lines exist as plain totals
+            return {"marketId": _LINE_MARKETS[market], "specifier": f"total={int(m.group(2))}.5",
                     "outcomeId": _OVER if m.group(1) == "O" else _UNDER}
     return None
 
@@ -56,6 +72,8 @@ def _event_odds(event: Dict, ids: Dict[str, str]) -> Optional[float]:
         if str(m.get("id")) != ids["marketId"]:
             continue
         if (m.get("specifier") or "") != ids["specifier"]:
+            continue
+        if not label_ok(ids["marketId"], m.get("desc")):
             continue
         for o in m.get("outcomes") or []:
             if str(o.get("id")) == ids["outcomeId"]:
@@ -95,6 +113,7 @@ async def to_sportybet(
     find_event: Callable[[str, str, List[Dict]], Optional[Dict]],
     post_share: Callable[[List[Dict]], Awaitable[Dict[str, Any]]],
     linked: Optional[Callable[[Dict[str, Any]], Optional[Dict]]] = None,
+    market_labels: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """
     Book the slip on SportyBet. Every selection comes back with a status:
@@ -105,6 +124,9 @@ async def to_sportybet(
     `linked` returns the SportyBet event a selection was matched to ahead of
     time (see main._link_sportybet_events); only unlinked selections need
     the event listing, so a fully linked slip is a single request.
+
+    `market_labels` is SportyBet's {market id: label}; picks in a
+    LABELLED_MARKETS market are only booked once its label matches.
     """
     picks: List[Dict[str, Any]] = []
     to_book: List[Tuple[int, Dict[str, str], Dict]] = []  # (pick index, ids, event)
@@ -118,6 +140,11 @@ async def to_sportybet(
         if not ids:
             picks.append({**pick, "status": "unsupported",
                           "reason": "SportyBet codes can't include this market"})
+            continue
+        if not label_ok(ids["marketId"], (market_labels or {}).get(ids["marketId"])):
+            picks.append({**pick, "status": "unsupported",
+                          "reason": f"We haven't confirmed SportyBet's {LABELLED_MARKETS[ids['marketId']][1]} "
+                                    "market yet"})
             continue
         event = linked(s) if linked else None
         if event is None:

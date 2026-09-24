@@ -65,10 +65,11 @@ describe("slip helpers", () => {
 describe("bookableOnSportybet (mirrors backend/booking_slip.py)", () => {
   it.each([
     ["1x2", "X"], ["double_chance", "2X"], ["btts", "BTTS-N"], ["goals_ou", "O25"], ["goals_ou", "U45"],
+    ["corners_ou", "O95"], ["corners_ou", "U105"], ["cards_ou", "O45"],
     ["draw_no_bet", "DNB-H"], ["half_time", "HT1"], ["goals_odd_even", "GOE-ODD"],
   ])("%s %s is bookable", (market, code) => expect(bookableOnSportybet({ market, code })).toBe(true));
 
-  it.each([["correct_score", "CS-1-0"], ["asian_handicap", "AH-H05"], ["goals_ou", "O2"], ["result_btts", "RB-H-Y"]])(
+  it.each([["correct_score", "CS-1-0"], ["asian_handicap", "AH-H05"], ["goals_ou", "O2"], ["result_btts", "RB-H-Y"], ["corners_ou", "O9"], ["cards", "CRD-O35"]])(
     "%s %s is not", (market, code) => expect(bookableOnSportybet({ market, code })).toBe(false));
 });
 

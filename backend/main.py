@@ -28,6 +28,7 @@ from dotenv import load_dotenv
 from predictor import LeaguePredictor
 from data_fetcher import FootballDataClient, LEAGUES, API_BASE
 import international_fixtures as intl
+import set_pieces
 from scrapers.fbref import load_cards, load_corners, refresh as scrape_fbref, CORNERS_CSV, CARDS_CSV
 
 load_dotenv()
@@ -110,6 +111,8 @@ _predictions_cache: List[Dict] = []
 _last_updated: Optional[str] = None
 _is_training = False
 _history_df: Optional[pd.DataFrame] = None
+# Corners / bookings totals, refitted from the league CSVs every pipeline run
+_set_pieces: Optional[set_pieces.SetPieceModel] = None
 _cards_df: pd.DataFrame = pd.DataFrame()
 _corners_df: pd.DataFrame = pd.DataFrame()
 
@@ -474,7 +477,7 @@ FOOTBALL_DATA_DIR = os.path.join(os.path.dirname(__file__), "data", "football")
 def _load_football_data_csvs() -> pd.DataFrame:
     """
     Load football-data.co.uk CSVs (with Bet365 odds) from data/football/*.csv.
-    These files have columns: Date, HomeTeam, AwayTeam, FTHG, FTAG, FTR, B365H, B365D, B365A, HY, AY, HR, AR
+    These files have columns: Date, HomeTeam, AwayTeam, FTHG, FTAG, FTR, B365H, B365D, B365A, HC, AC, HY, AY, HR, AR
     """
     # Map filename prefix → league code (football-data.co.uk naming convention)
     _LEAGUE_CODES = {
@@ -529,7 +532,7 @@ def _load_football_data_csvs() -> pd.DataFrame:
 
             keep = ["Date", "HomeTeam", "AwayTeam", "Result", "FTHG", "FTAG",
                     "B365H", "B365D", "B365A", "B365>2.5", "B365<2.5",  # O/U odds: backtest baseline
-                    "HY", "AY", "HR", "AR", "league"]
+                    "HC", "AC", "HY", "AY", "HR", "AR", "league"]
             df = df[[c for c in keep if c in df.columns]]
             dfs.append(df)
         except Exception as e:
@@ -821,6 +824,12 @@ def _build_predictions(predictor, fixtures: list, live_odds: dict) -> list:
 
             value_edge = round(model_p - implied, 3) if (model_p is not None and implied is not None) else None
 
+            # Corners and bookings: club leagues with match stats only
+            extras = None
+            if _set_pieces is not None and not fx.get("model_league"):
+                extras = _set_pieces.markets(predictor.canon(fx["home"]), predictor.canon(fx["away"]),
+                                             fx.get("league"))
+
             predictions.append({
                 **fx, **tip,
                 "odds_home": round(float(odds.get("1") or 0), 2) or None,
@@ -828,6 +837,7 @@ def _build_predictions(predictor, fixtures: list, live_odds: dict) -> list:
                 "odds_away": round(float(odds.get("2") or 0), 2) or None,
                 "value_edge": value_edge,
                 "is_value_bet": value_edge is not None and value_edge > 0.05,
+                **({"set_pieces": extras} if extras else {}),
             })
         except Exception:
             pass
@@ -1050,6 +1060,11 @@ async def _run_pipeline():
         history, combined, data_mtime = assembled
         global _history_df
         _history_df = history  # keep for H2H lookups
+        global _set_pieces
+        try:
+            _set_pieces = await asyncio.to_thread(set_pieces.SetPieceModel.fit, history)
+        except Exception as e:
+            print(f"[Pipeline] Corners/bookings model failed (non-fatal): {e}")
         print(f"[Pipeline] {len(combined)} training matches.")
 
         # Training takes minutes of CPU. On a worker thread the API keeps
@@ -1188,7 +1203,7 @@ async def _run_pipeline():
 
         _predictor = predictor
         print(f"[Pipeline] Done — {len(predictions)} predictions cached.")
-        asyncio.create_task(_link_sportybet_events())
+        asyncio.create_task(_link_sportybet_events("pipeline"))
 
         # Send push notifications for high-value picks
         value_picks = [p for p in predictions if p.get("is_value_bet") and p.get("value_edge", 0) > 0.08]
@@ -1944,7 +1959,14 @@ async def sportybet_check(_admin: str = Depends(require_admin)):
 @app.get("/api/admin/sportybet-link")
 async def sportybet_link_now(_admin: str = Depends(require_admin)):
     """Match upcoming predictions to SportyBet events now (normally every 30 min)."""
-    return await _link_sportybet_events()
+    return await _link_sportybet_events("manual")
+
+
+@app.get("/api/admin/sportybet-link-status")
+async def sportybet_link_status(_admin: str = Depends(require_admin)):
+    """The last linking run's full result (the admin panel polls this)."""
+    _restore_link_status()
+    return _sb_link_status
 
 
 @app.get("/api/admin/international-check")
@@ -1963,7 +1985,7 @@ async def international_check(_admin: str = Depends(require_admin)):
             _last_updated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
             _save_predictions_cache()
             published = len(fresh)
-            asyncio.create_task(_link_sportybet_events())
+            asyncio.create_task(_link_sportybet_events("international"))
     by_competition: Dict[str, int] = {}
     for f in fixtures:
         by_competition[f["league_name"]] = by_competition.get(f["league_name"], 0) + 1
@@ -3870,9 +3892,12 @@ async def get_sportybet_event(home: str, away: str, date: str):
 # ── SportyBet links: predictions matched to SportyBet events ahead of time ──
 # Booking then needs no event listing, just one request for the code.
 SB_LINKS_KEY = "betiq:sportybet:links"
+# The last linking run's result, so a restart (a new deploy) shows it at once
+SB_LINK_STATUS_KEY = "betiq:sportybet:link_status"
 SB_LINK_MINUTES = 30
 _sb_links: Dict[str, Dict] = {}
 _sb_link_status: Dict[str, Any] = {"at": None, "events": 0, "predictions": 0, "linked": 0, "report": []}
+_sb_link_lock = asyncio.Lock()
 
 
 def _sb_key(home: str, away: str, day: str) -> str:
@@ -3938,15 +3963,82 @@ def _catalog_summary(events: List[Dict]) -> Dict[str, Any]:
             "international": dict(sorted(tournaments.items(), key=lambda kv: -kv[1])[:20])}
 
 
-async def _link_sportybet_events() -> Dict[str, Any]:
-    """Match upcoming football predictions to SportyBet events and keep the links."""
+async def _market_labels(events: List[Dict], links: Dict[str, Dict], report: List[str]) -> Dict[str, str]:
+    """SportyBet's {market id: label} for the markets we book, from the
+    listing; for label-checked ids it didn't carry (corners, bookings), from
+    one linked club match's own page."""
+    import booking_slip
+    import sportybet
+    labels = sportybet.market_labels(events)
+    missing = [m for m in booking_slip.LABELLED_MARKETS if m not in labels]
+    if missing and links:
+        league = {_sb_key(p.get("home", ""), p.get("away", ""), p.get("date", "")): p.get("league", "")
+                  for p in _predictions_cache}
+        probe = next((ev for key, ev in links.items() if not intl.is_international(league.get(key, ""))), None)
+        if probe:
+            try:
+                found = await sportybet.event_market_labels(str(probe["eventId"]))
+                labels.update({m: found[m] for m in missing if m in found})
+                report.append(f"event page {probe['eventId']}: {len(found)} markets")
+            except Exception as e:
+                report.append(f"event page: {type(e).__name__}: {e}")
+    return {m: labels[m] for m in sorted(sportybet.BOOKED_MARKETS, key=int) if m in labels}
+
+
+def _market_coverage(links: Dict[str, Dict]) -> Dict[str, int]:
+    """How many linked matches carry each market we book, with a price."""
+    counts: Dict[str, int] = {}
+    for ev in links.values():
+        for m in {str(m.get("id")) for m in ev.get("markets") or []}:
+            counts[m] = counts.get(m, 0) + 1
+    return dict(sorted(counts.items(), key=lambda kv: int(kv[0]) if kv[0].isdigit() else 0))
+
+
+def _save_link_status() -> None:
+    r = _get_redis()
+    if r:
+        try:
+            r.set(SB_LINK_STATUS_KEY, json.dumps(_sb_link_status, default=str), ex=3 * 24 * 3600)
+        except Exception as e:
+            print(f"[SportyBet] Could not save link status: {e}")
+
+
+def _restore_link_status() -> None:
+    """The last run's result (from before this restart), until this server's first run."""
+    r = _get_redis()
+    if r and not _sb_link_status.get("at"):
+        try:
+            saved = json.loads(r.get(SB_LINK_STATUS_KEY) or "{}")
+            if saved:
+                _sb_link_status.update(saved)
+        except Exception:
+            pass
+
+
+def _sb_market_labels() -> Dict[str, str]:
+    if not _sb_link_status.get("market_labels"):
+        _restore_link_status()
+    return _sb_link_status.get("market_labels") or {}
+
+
+async def _link_sportybet_events(trigger: str = "schedule") -> Dict[str, Any]:
+    """Match upcoming football predictions to SportyBet events and keep the
+    links. `trigger` says what started the run: startup (a new deploy or
+    restart), pipeline, international, schedule or manual."""
+    async with _sb_link_lock:
+        return await _link_sportybet_events_now(trigger)
+
+
+async def _link_sportybet_events_now(trigger: str) -> Dict[str, Any]:
     import sportybet
     today = date.today().isoformat()
     preds = [p for p in _predictions_cache
              if p.get("sport") in (None, "football") and p.get("home") and p.get("away")
              and today <= p.get("date", "") and _within_window(p.get("date", ""))]
-    status: Dict[str, Any] = {"at": datetime.now(timezone.utc).isoformat(), "predictions": len(preds),
-                              "events": 0, "linked": len(_sb_links), "report": []}
+    started = time.monotonic()
+    status: Dict[str, Any] = {"at": datetime.now(timezone.utc).isoformat(), "trigger": trigger,
+                              "deploy": (os.getenv("RENDER_GIT_COMMIT") or "")[:7] or None,
+                              "predictions": len(preds), "events": 0, "linked": len(_sb_links), "report": []}
     if preds:
         try:
             events, status["report"] = await sportybet.fetch_catalog()
@@ -3959,6 +4051,8 @@ async def _link_sportybet_events() -> Dict[str, Any]:
             links = await asyncio.to_thread(_match_predictions_to_events, preds, events, unlinked)
             # Worth checking first: closest candidates, highest score first
             status["unlinked"] = sorted(unlinked, key=lambda u: -u["score"])[:40]
+            status["market_labels"] = await _market_labels(events, links, status["report"])
+            status["market_coverage"] = _market_coverage(links)
             _sb_links.clear()
             _sb_links.update(links)
             status["linked"] = len(links)
@@ -3968,12 +4062,41 @@ async def _link_sportybet_events() -> Dict[str, Any]:
                     r.set(SB_LINKS_KEY, json.dumps(links), ex=6 * 3600)
                 except Exception as e:
                     print(f"[SportyBet] Could not save links: {e}")
+        else:
+            status["error"] = "Couldn't load SportyBet's match list — kept the previous links."
+            status["market_labels"] = _sb_link_status.get("market_labels") or {}
+    else:
+        status["error"] = "No upcoming predictions to link yet."
+    status["seconds"] = round(time.monotonic() - started, 1)
     for p in _predictions_cache:
         p["sportybet"] = _sb_key(p.get("home", ""), p.get("away", ""), p.get("date", "")) in _sb_links
+    _sb_link_status.clear()
     _sb_link_status.update(status)
+    _save_link_status()
     print(f"[SportyBet] Linked {status['linked']}/{status['predictions']} predictions "
-          f"({status['events']} SportyBet events) — {' · '.join(status['report']) or 'no fetch'}")
+          f"({status['events']} SportyBet events, {trigger}) — {' · '.join(status['report']) or 'no fetch'}")
     return _sb_link_status
+
+
+async def _link_on_startup() -> None:
+    """After a deploy or restart: show the last result straight away, then
+    link the cached predictions without waiting for the pipeline."""
+    _restore_link_status()
+    if _predictions_cache:
+        await _link_sportybet_events("startup")
+
+
+@app.get("/api/sportybet/status")
+async def sportybet_status():
+    """Public: how many upcoming matches can be booked on SportyBet, and when that was checked."""
+    import booking_slip
+    _restore_link_status()
+    s = _sb_link_status
+    labels = s.get("market_labels") or {}
+    return {"at": s.get("at"), "trigger": s.get("trigger"), "linked": s.get("linked", 0),
+            "predictions": s.get("predictions", 0),
+            "markets": {name: booking_slip.label_ok(mid, labels.get(mid))
+                        for mid, (_, name) in booking_slip.LABELLED_MARKETS.items()}}
 
 
 def _linked_event(selection: Dict[str, Any]) -> Optional[Dict]:
@@ -4045,7 +4168,7 @@ async def convert_slip(body: Dict[str, Any]):
         raise HTTPException(status_code=400, detail=str(e))
     return await booking_slip.to_sportybet(
         selections, sportybet.fetch_events_for_date, sportybet.find_event, sportybet.share_selections,
-        linked=_linked_event)
+        linked=_linked_event, market_labels=_sb_market_labels())
 
 
 ADMIN_SECRET = os.getenv("ADMIN_SECRET", "")
@@ -4123,6 +4246,7 @@ async def _load_fbref_data():
 async def startup():
     _load_h2h_cache()
     _load_predictions_cache()   # serve cached predictions instantly while pipeline rebuilds
+    asyncio.create_task(_link_on_startup())  # every deploy re-links to SportyBet straight away
     asyncio.create_task(_run_pipeline())
     asyncio.create_task(_load_fbref_data())
     # results fetcher runs via scheduler only — not on boot to avoid API contention with pipeline

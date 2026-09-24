@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import clsx from "clsx";
 import { useUser } from "@clerk/nextjs";
-import { Check, Copy, Loader2, Sparkles, Ticket, AlertTriangle, ExternalLink } from "lucide-react";
+import { Check, Copy, Loader2, Sparkles, Ticket, AlertTriangle, ExternalLink, Link2 } from "lucide-react";
 import { AppShell } from "@/components/shell/AppShell";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { useBetSlip } from "@/lib/useBetSlip";
@@ -42,7 +42,28 @@ const MARKETS = [
   { id: "1x2", label: "Result" },
   { id: "double_chance", label: "Double chance" },
   { id: "goals_ou", label: "Goals" },
+  { id: "btts", label: "Both score" },
+  { id: "corners_ou", label: "Corners" },
+  { id: "cards_ou", label: "Cards" },
 ];
+// Corners and cards (SportyBet's "Total bookings": yellow 1, red 2) only go
+// in a code once SportyBet's own market labels confirm them
+const SET_PIECE_MARKETS: Record<string, "corners" | "bookings"> = { corners_ou: "corners", cards_ou: "bookings" };
+
+// /api/sportybet/status — the last automatic linking run
+interface LinkStatus {
+  at: string | null; trigger: string | null; linked: number; predictions: number;
+  markets: { corners?: boolean; bookings?: boolean };
+}
+const TRIGGERS: Record<string, string> = {
+  startup: "after the latest deploy", pipeline: "after new predictions", schedule: "on the 30-minute check",
+  manual: "by an admin", international: "after new international fixtures",
+};
+
+function ago(iso: string) {
+  const min = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  return min < 1 ? "just now" : min < 60 ? `${min} min ago` : `${Math.round(min / 60)}h ago`;
+}
 
 const odds = (x: number) => x.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const pct = (x: number) => (x >= 0.1 ? `${Math.round(x * 100)}%` : x >= 0.001 ? `${(x * 100).toFixed(1)}%` : "<0.1%");
@@ -75,6 +96,20 @@ export default function OptimizerPage() {
   const [days, setDays] = useState(3);
   const [maxGames, setMaxGames] = useState(30);
   const [markets, setMarkets] = useState<string[]>(MARKETS.map(m => m.id));
+  const [link, setLink] = useState<LinkStatus | null>(null);
+
+  useEffect(() => {
+    fetch(`${API}/api/sportybet/status`)
+      .then(r => (r.ok ? r.json() : null))
+      .then((s: LinkStatus | null) => {
+        if (!s) return;
+        setLink(s);
+        // Leave out corners/cards while SportyBet codes can't take them
+        setMarkets(ms => ms.filter(m => !SET_PIECE_MARKETS[m] || s.markets?.[SET_PIECE_MARKETS[m]]));
+      })
+      .catch(() => {});
+  }, []);
+  const unconfirmed = MARKETS.filter(m => SET_PIECE_MARKETS[m.id] && link && !link.markets?.[SET_PIECE_MARKETS[m.id]]);
   // On by default: SportyBet lists many matches only days before kick-off,
   // and codes can only include matches it lists
   const [bookableOnly, setBookableOnly] = useState(true);
@@ -194,6 +229,12 @@ export default function OptimizerPage() {
                   {m.label}
                 </Chip>
               ))}
+              {unconfirmed.length > 0 && (
+                <p className="basis-full text-[11px] text-n-500">
+                  {unconfirmed.map(m => m.label).join(" & ")}: our picks work, but SportyBet codes skip them until
+                  we&apos;ve confirmed SportyBet&apos;s market.
+                </p>
+              )}
             </Setting>
             <div className="space-y-2">
               <p className="eyebrow">At most {maxGames} games</p>
@@ -206,6 +247,16 @@ export default function OptimizerPage() {
             <input type="checkbox" checked={bookableOnly} onChange={e => setBookableOnly(e.target.checked)} className="accent-[rgb(var(--accent))]" />
             Only matches SportyBet lists right now (so the code books every pick)
           </label>
+          {link?.at && (
+            <p className="flex items-center gap-1.5 text-xs text-n-400 -mt-2">
+              <Link2 size={13} className="text-accent shrink-0" />
+              <span>
+                <span className="text-n-0 font-semibold tnum">{link.linked}</span> of {link.predictions} upcoming
+                matches bookable on SportyBet · checked {ago(link.at)}
+                {link.trigger && TRIGGERS[link.trigger] ? ` ${TRIGGERS[link.trigger]}` : ""}
+              </span>
+            </p>
+          )}
 
           <button onClick={run} disabled={busy || !validTarget}
             className="w-full sm:w-auto flex items-center justify-center gap-2 rounded-xl bg-brand-400 hover:bg-brand-300 text-ink font-bold px-6 py-3 disabled:opacity-50">

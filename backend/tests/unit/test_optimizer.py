@@ -128,3 +128,36 @@ class TestEndpoint:
                                       {"min_odds": "x", "max_odds": 2}])
     def test_bad_settings(self, body):
         assert self.post(**body).status_code == 400
+
+
+class TestMoreMarkets:
+    SP = {"corners": {"mean": 9.6, "over": {"7.5": 0.74, "8.5": 0.62, "9.5": 0.5, "10.5": 0.38, "11.5": 0.27}},
+          "bookings": {"mean": 4.2, "over": {"2.5": 0.8, "3.5": 0.6, "4.5": 0.4, "5.5": 0.25, "6.5": 0.15}}}
+
+    def test_corners_bookings_btts_and_over_35(self):
+        opts = {(o.market, o.code): o for o in candidates(pred(p_over35=0.3, p_btts=0.62, set_pieces=self.SP), None, 0.6)}
+        assert opts[("corners_ou", "O75")].prob == 0.74 and opts[("corners_ou", "O75")].label == "Over 7.5 corners"
+        assert opts[("cards_ou", "O25")].prob == 0.8
+        assert opts[("cards_ou", "U55")].prob == 0.75
+        assert opts[("goals_ou", "U35")].prob == 0.7
+        assert opts[("btts", "BTTS-Y")].prob == 0.62
+        # corners/bookings are estimated with a wider bookmaker margin
+        assert opts[("corners_ou", "O75")].odds == round(optimizer._MARGINS["corners_ou"] / 0.74, 2)
+
+    def test_matches_without_stats_offer_no_corners(self):
+        assert not [o for o in candidates(pred(), None, 0.5) if o.market in ("corners_ou", "cards_ou", "btts")]
+
+    def test_every_new_market_can_be_booked(self):
+        from booking_slip import sportybet_ids
+        for o in candidates(pred(p_over35=0.3, p_btts=0.5, set_pieces=self.SP), None, 0.0):
+            assert sportybet_ids(o.market, o.code), (o.market, o.code)
+
+    def test_sportybet_corner_price_only_when_its_label_says_corners(self):
+        def event(desc):
+            return {"eventId": "sr:match:1", "markets": [{"id": "166", "specifier": "total=8.5", "desc": desc,
+                                                         "outcomes": [{"id": "12", "odds": "1.55"}]}]}
+        p = pred(set_pieces=self.SP)
+        good = {o.code: o for o in candidates(p, event("Total Corners"), 0.6, {"corners_ou"})}
+        wrong = {o.code: o for o in candidates(p, event("Total Goals"), 0.6, {"corners_ou"})}
+        assert (good["O85"].odds, good["O85"].odds_source) == (1.55, "sportybet")
+        assert wrong["O85"].odds_source == "estimated"

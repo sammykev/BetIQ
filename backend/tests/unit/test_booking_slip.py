@@ -594,3 +594,104 @@ class TestCatalog:
         assert summary["days"] == {"2026-09-26": 2, "2026-09-27": 1}
         assert set(summary["international"]) == {"International · Int. Friendly Games",
                                                  "Africa · Africa Cup of Nations, Qualification"}
+
+
+class TestCornersAndBookings:
+    def test_ids_for_the_new_lines(self):
+        from booking_slip import sportybet_ids
+        assert sportybet_ids("corners_ou", "O95") == {"marketId": "166", "specifier": "total=9.5", "outcomeId": "12"}
+        assert sportybet_ids("corners_ou", "U105") == {"marketId": "166", "specifier": "total=10.5", "outcomeId": "13"}
+        assert sportybet_ids("cards_ou", "O45") == {"marketId": "139", "specifier": "total=4.5", "outcomeId": "12"}
+        assert sportybet_ids("goals_ou", "U35")["specifier"] == "total=3.5"
+        assert sportybet_ids("goals_ou", "O20") is None
+
+    def _book(self, labels):
+        shared = []
+
+        async def share(sels):
+            shared.append(sels)
+            return {"code": "CRN01", "url": "u", "odds": {}, "unavailable": set()}
+        s = {**sel(), "market": "corners_ou", "code": "O95", "label": "Over 9.5 corners"}
+        out = asyncio.run(to_sportybet([s], None, sportybet.find_event, share,
+                                       linked=lambda s: sportybet.slim_event(EVENT), market_labels=labels))
+        return out, shared
+
+    def test_not_booked_until_sportybet_labels_the_market_corners(self):
+        for labels in (None, {}, {"166": "Total Goals"}):
+            out, shared = self._book(labels)
+            assert out["picks"][0]["status"] == "unsupported" and not shared
+            assert "corners" in out["picks"][0]["reason"]
+
+    def test_booked_once_the_label_matches(self):
+        out, shared = self._book({"166": "Total Corners"})
+        assert out["code"] == "CRN01"
+        assert shared == [[{"eventId": "sr:match:111", "marketId": "166", "specifier": "total=9.5", "outcomeId": "12"}]]
+
+    def test_market_labels_from_the_listing(self):
+        events = [{"markets": [{"id": "1", "desc": "1X2"}, {"id": "166", "desc": "Total Corners"}]},
+                  {"markets": [{"id": "139", "name": "Total Bookings"}]}]
+        assert sportybet.market_labels(events) == {"1": "1X2", "166": "Total Corners", "139": "Total Bookings"}
+
+    def test_catalog_retries_without_the_new_markets(self):
+        page = ok({"tournaments": [{"name": "Premier League", "events": [
+            {"eventId": "sr:match:1", "homeTeamName": "H", "awayTeamName": "A"}]}]})
+        calls = []
+
+        class Picky(FakeSession):
+            async def request(self, method, url, params=None, **kw):
+                calls.append(params.get("marketId"))
+                if "166" in params["marketId"]:
+                    return FakeResponse(400, "")
+                return FakeResponse(*(page if params.get("pageNum", 1) == 1 else ok({"tournaments": []})))
+        events, report = asyncio.run(sportybet.fetch_catalog(Picky({})))
+        assert len(events) == 1
+        assert "without corners/bookings markets" in report[0]
+        assert sportybet.BASE_MARKETS in calls
+
+
+class TestLinkStatus:
+    def test_status_is_saved_with_its_trigger_and_restored_after_a_restart(self, monkeypatch):
+        from datetime import date, timedelta
+        day = (date.today() + timedelta(days=2)).isoformat()
+        event = {**EVENT, "estimateStartTime": ms(day + "T16:30:00"),
+                 "markets": EVENT["markets"] + [{"id": "166", "specifier": "total=9.5", "desc": "Total Corners",
+                                                 "outcomes": [{"id": "12", "odds": "1.8"}]}]}
+        store = {}
+
+        class Redis:
+            def get(self, k): return store.get(k)
+            def set(self, k, v, ex=None): store[k] = v
+        monkeypatch.setattr(main, "_predictions_cache", [{"home": "Arsenal FC", "away": "Chelsea FC", "date": day, "league": "PL"}])
+        monkeypatch.setattr(main, "_sb_links", {})
+        monkeypatch.setattr(main, "_sb_link_status", {"at": None})
+        monkeypatch.setattr(main, "_get_redis", lambda: Redis())
+
+        async def catalog():
+            return [event], ["pcUpcomingEvents: 1 events"]
+
+        async def event_page(event_id, session=None):
+            return {"139": "Total Bookings"}
+        monkeypatch.setattr(sportybet, "fetch_catalog", catalog)
+        monkeypatch.setattr(sportybet, "event_market_labels", event_page)
+        asyncio.run(main._link_on_startup())
+        status = main._sb_link_status
+        assert status["trigger"] == "startup" and status["linked"] == 1
+        assert status["market_labels"]["166"] == "Total Corners"
+        assert status["market_labels"]["139"] == "Total Bookings"  # from the event page
+        assert status["market_coverage"]["166"] == 1
+
+        # After a restart the last result shows before any new run
+        monkeypatch.setattr(main, "_sb_link_status", {"at": None})
+        monkeypatch.setattr(main, "_predictions_cache", [])
+        body = TestClient(main.app).get("/api/sportybet/status").json()
+        assert body["trigger"] == "startup" and body["linked"] == 1
+        assert body["markets"] == {"corners": True, "bookings": True}
+
+    def test_empty_cache_on_startup_waits_for_the_pipeline(self, monkeypatch):
+        monkeypatch.setattr(main, "_predictions_cache", [])
+        monkeypatch.setattr(main, "_get_redis", lambda: None)
+
+        async def catalog():
+            raise AssertionError("nothing to link")
+        monkeypatch.setattr(sportybet, "fetch_catalog", catalog)
+        asyncio.run(main._link_on_startup())

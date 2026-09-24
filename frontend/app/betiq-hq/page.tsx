@@ -17,6 +17,11 @@ const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onren
 
 /* ───────────── helpers ───────────── */
 function fmt(n: number) { return n.toLocaleString("en-NG"); }
+// What started a SportyBet linking run (backend _link_sportybet_events)
+const LINK_TRIGGERS: Record<string, string> = {
+  startup: "auto after deploy", pipeline: "auto after new predictions", schedule: "auto 30-min check",
+  manual: "Link now", international: "auto after internationals",
+};
 function pct(n: number) {
   const color = n >= 60 ? "text-green-400" : n >= 45 ? "text-yellow-400" : "text-red-400";
   return <span className={clsx("font-bold", color)}>{n}%</span>;
@@ -168,6 +173,18 @@ export default function AdminPage() {
   }, [adminFetch]);
 
   useEffect(() => { if (authed) loadAll(); }, [authed, loadAll]);
+
+  // Linking runs by itself (after each deploy, every 30 min): keep its line current
+  useEffect(() => {
+    if (!authed) return;
+    const t = setInterval(() => {
+      adminFetch(`${API}/api/admin/sportybet-link-status`)
+        .then(r => (r.ok ? r.json() : null))
+        .then(links => { if (links?.at) setDataStatus((d: any) => ({ ...d, sportybet_links: links })); })
+        .catch(() => {});
+    }, 30_000);
+    return () => clearInterval(t);
+  }, [authed, adminFetch]);
 
   // Signed in as an admin? Then no secret is needed at all.
   const checkAdmin = useCallback(async (withSecret: boolean) => {
@@ -612,6 +629,21 @@ export default function AdminPage() {
                 {l.at
                   ? <>{l.linked} of {l.predictions} upcoming predictions linked to SportyBet events
                       ({l.events} listed) · {new Date(l.at).toLocaleTimeString()}
+                      {l.trigger && <> · {LINK_TRIGGERS[l.trigger] ?? l.trigger}{l.deploy ? ` ${l.deploy}` : ""}</>}
+                      {l.seconds != null && <> · {l.seconds}s</>}
+                      {l.error && <span className="block text-amber-400">{l.error}</span>}
+                      {l.market_labels && (
+                        <span className="block text-slate-500 break-words">
+                          Markets:{" "}
+                          {Object.entries(l.market_labels as Record<string, string>).map(([id, label]) => (
+                            <span key={id} className={clsx(["166", "139"].includes(id) && "text-green-400")}>
+                              {label} ({id}{l.market_coverage?.[id] != null ? `, ${l.market_coverage[id]} priced` : ""}){" · "}
+                            </span>
+                          ))}
+                          {!l.market_labels["166"] && <span className="text-amber-400">corners (166) not seen yet · </span>}
+                          {!l.market_labels["139"] && <span className="text-amber-400">bookings (139) not seen yet</span>}
+                        </span>
+                      )}
                       {l.report?.length > 0 && <span className="block text-slate-500 break-words">{l.report.join(" · ")}</span>}
                       {l.catalog?.days && (
                         <span className="block text-slate-500 break-words">
@@ -638,7 +670,7 @@ export default function AdminPage() {
                           </ul>
                         </details>
                       )}</>
-                  : "not linked yet — runs every 30 minutes and after each refresh"}
+                  : "not linked yet — runs after every deploy, every 30 minutes and after each refresh"}
               </p>
               <button
                 onClick={async () => {

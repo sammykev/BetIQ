@@ -135,8 +135,10 @@ def _near(day: Optional[str], date_str: str) -> bool:
 
 
 # Markets the slip books (booking_slip.sportybet_ids) — listed so each event
-# shows which of them SportyBet offers
-MARKETS = "1,18,10,29,11,26,60"
+# shows which of them SportyBet offers. 166/139 (total corners / bookings)
+# are asked for separately so a listing that refuses them still loads.
+BASE_MARKETS = "1,18,10,29,11,26,60"
+MARKETS = BASE_MARKETS + ",166,139"
 
 
 def _now_ms() -> int:
@@ -170,21 +172,21 @@ async def _pc_upcoming(session: AsyncSession, max_pages: int = 80) -> List[Dict]
     """The desktop site's "Upcoming" football list, page by page."""
     # The parameters sportybet.com's Upcoming page (and public scrapers) use
     events, _, _ = await _paged(session, "/factsCenter/pcUpcomingEvents", {
-        "sportId": FOOTBALL, "marketId": MARKETS, "pageSize": 100, "todayGames": "false"}, max_pages)
+        "sportId": FOOTBALL, "marketId": BASE_MARKETS, "pageSize": 100, "todayGames": "false"}, max_pages)
     return events
 
 
 async def _wap_upcoming(session: AsyncSession, max_pages: int = 1) -> List[Dict]:
     """The mobile site's upcoming list."""
     events, _, _ = await _paged(session, "/factsCenter/wapConfigurableUpcomingEvents", {
-        "sportId": FOOTBALL, "marketId": MARKETS, "pageSize": 100, "option": 1}, max_pages)
+        "sportId": FOOTBALL, "marketId": BASE_MARKETS, "pageSize": 100, "option": 1}, max_pages)
     return events
 
 
 async def _pc_events(session: AsyncSession) -> List[Dict]:
     """Our main tournaments in one call, the way the site's league filter asks."""
     data = await _request(session, "POST", "/factsCenter/pcEvents", json=[{
-        "sportId": FOOTBALL, "marketId": MARKETS,
+        "sportId": FOOTBALL, "marketId": BASE_MARKETS,
         "tournamentId": [[tid] for tid in TOURNAMENT_IDS]}])
     found: List[Dict] = []
     _collect_events(data.get("data"), found)
@@ -259,7 +261,32 @@ async def fetch_events_for_date(date_str: str, session: Optional[AsyncSession] =
 
 
 # The markets booking_slip books; the catalog keeps only these per event
-BOOKED_MARKETS = {"1", "10", "11", "18", "26", "29", "60"}
+BOOKED_MARKETS = {"1", "10", "11", "18", "26", "29", "60", "166", "139"}
+
+
+def _label(market: Dict) -> str:
+    return str(market.get("desc") or market.get("name") or "")
+
+
+def market_labels(events: Iterable[Dict]) -> Dict[str, str]:
+    """{market id: SportyBet's label} over a listing's events."""
+    labels: Dict[str, str] = {}
+    for ev in events:
+        for m in ev.get("markets") or []:
+            mid, label = str(m.get("id") or ""), _label(m)
+            if mid and label and mid not in labels:
+                labels[mid] = label
+    return labels
+
+
+async def event_market_labels(event_id: str, session: Optional[AsyncSession] = None) -> Dict[str, str]:
+    """{market id: label} for every market on one event's page — for ids
+    the listing didn't carry."""
+    data = await _request(session or shared_session(), "GET", "/factsCenter/event",
+                          params={"eventId": event_id, "productId": 3})
+    found: List[Dict] = []
+    _collect_events(data.get("data"), found)
+    return market_labels(found)
 
 
 def slim_event(ev: Dict) -> Dict:
@@ -271,7 +298,7 @@ def slim_event(ev: Dict) -> Dict:
         "awayTeamName": ev.get("awayTeamName"),
         "estimateStartTime": ev.get("estimateStartTime"),
         "markets": [
-            {"id": m.get("id"), "specifier": m.get("specifier") or "",
+            {"id": m.get("id"), "specifier": m.get("specifier") or "", "desc": _label(m),
              "outcomes": [{"id": o.get("id"), "odds": o.get("odds"), "isActive": o.get("isActive", 1)}
                           for o in m.get("outcomes") or []]}
             for m in ev.get("markets") or [] if str(m.get("id")) in BOOKED_MARKETS
@@ -293,17 +320,24 @@ async def fetch_catalog(session: Optional[AsyncSession] = None) -> Tuple[List[Di
          {"sportId": FOOTBALL, "marketId": MARKETS, "pageSize": 100, "option": 1}, 40),
     ]
     for name, path, params, max_pages in feeds:
+        note = ""
         try:
             events, pages, total = await _paged(session, path, params, max_pages)
         except Exception as e:
-            report.append(f"{name}: {e}")
-            continue
+            events, pages, total, note = [], 0, None, f" ({e})"
+        if not events:  # retry without the corners/bookings markets
+            try:
+                events, pages, total = await _paged(session, path, {**params, "marketId": BASE_MARKETS}, max_pages)
+                note += " — without corners/bookings markets" if events else ""
+            except Exception as e:
+                report.append(f"{name}: {e}")
+                continue
         added = sum(1 for e in events if e["eventId"] not in merged)
         for e in events:
             merged.setdefault(e["eventId"], e)
         report.append(f"{name}: {len(events)} events in {pages} pages"
                       + (f" (SportyBet says {total})" if total is not None else "")
-                      + (f", {added} new" if merged and added != len(events) else ""))
+                      + (f", {added} new" if merged and added != len(events) else "") + note)
     try:
         extra = await _thumbnail(session)
         added = sum(1 for e in extra if e["eventId"] not in merged)

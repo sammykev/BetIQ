@@ -10,10 +10,14 @@ match: maximise Σ log(p) with Σ log(odds) inside [log lo, log hi], using at
 most `max_games` picks. Solved exactly by dynamic programming over log-odds
 in steps of 0.01 (1%), not by a greedy guess.
 
+Markets: 1X2, double chance, goals over/under 1.5–3.5, both
+teams to score, and total corners / bookings lines (set_pieces.py, club
+leagues only).
+
 Prices, best first: SportyBet's own (predictions linked to SportyBet events,
 see main._link_sportybet_events), the bookmaker 1X2 odds the prediction
-carries (double chance derived from them), else an estimate from our
-probability with a typical bookmaker margin, marked "estimated".
+carries (double chance derived from them), else an estimate
+from our probability with a typical bookmaker margin, marked "estimated".
 
 Win chance treats the matches as independent and is the model's estimate.
 """
@@ -48,7 +52,16 @@ class Option:
     odds_source: str   # "sportybet" | "bookmaker" | "estimated"
 
 
-# (market, market name, code, label template, probability from a prediction)
+def _line(stat: str, line: str, over: bool):
+    """Probability of over/under a corners or bookings line (set_pieces.py),
+    None when the prediction has none (internationals, unknown teams)."""
+    def prob(p: Dict) -> Optional[float]:
+        v = ((p.get("set_pieces") or {}).get(stat) or {}).get("over", {}).get(line)
+        return None if v is None else (v if over else 1 - v)
+    return prob
+
+
+# (market, market name, code, label template, probability from a prediction — None if unknown)
 _PICKS = [
     ("1x2", "Match Result", "1", "{home} Win", lambda p: p["p_home"]),
     ("1x2", "Match Result", "X", "Draw", lambda p: p["p_draw"]),
@@ -60,7 +73,26 @@ _PICKS = [
     ("goals_ou", "Total Goals", "U15", "Under 1.5", lambda p: 1 - p["p_over15"]),
     ("goals_ou", "Total Goals", "O25", "Over 2.5", lambda p: p["p_over25"]),
     ("goals_ou", "Total Goals", "U25", "Under 2.5", lambda p: 1 - p["p_over25"]),
+    ("goals_ou", "Total Goals", "O35", "Over 3.5", lambda p: p.get("p_over35")),
+    ("goals_ou", "Total Goals", "U35", "Under 3.5",
+     lambda p: None if p.get("p_over35") is None else 1 - p["p_over35"]),
+    ("btts", "Both Teams to Score", "BTTS-Y", "Both teams score", lambda p: p.get("p_btts")),
+    ("btts", "Both Teams to Score", "BTTS-N", "Not both teams score",
+     lambda p: None if p.get("p_btts") is None else 1 - p["p_btts"]),
+    # No draw no bet: on a draw the leg counts at odds 1, so the slip only
+    # reaches its target when the team wins — the straight win's chance at
+    # lower odds, which the 1X2 pick always beats.
+] + [
+    (market, market_name, f"{side}{line.replace('.', '')}",
+     f"{'Over' if side == 'O' else 'Under'} {line} {stat}", _line(stat, line, side == "O"))
+    for market, market_name, stat, lines in (
+        ("corners_ou", "Total Corners", "corners", ("7.5", "8.5", "9.5", "10.5", "11.5")),
+        ("cards_ou", "Total Bookings", "bookings", ("2.5", "3.5", "4.5", "5.5", "6.5")))
+    for line in lines for side in ("O", "U")
 ]
+
+# Bookmakers keep more on corners and bookings than on goals
+_MARGINS = {"corners_ou": 0.90, "cards_ou": 0.90}
 
 
 def _bookmaker_price(pred: Dict, market: str, code: str) -> Optional[float]:
@@ -86,7 +118,10 @@ def candidates(pred: Dict, sportybet_event: Optional[Dict] = None,
     for market, market_name, code, label, prob_of in _PICKS:
         if markets and market not in markets:
             continue
-        prob = float(prob_of(pred))
+        prob = prob_of(pred)
+        if prob is None:
+            continue
+        prob = float(prob)
         if not min_prob <= prob < 0.995:
             continue
         odds, source = None, None
@@ -96,7 +131,7 @@ def candidates(pred: Dict, sportybet_event: Optional[Dict] = None,
         if not odds:
             odds, source = _bookmaker_price(pred, market, code), "bookmaker"
         if not odds:
-            odds, source = MARGIN / prob, "estimated"
+            odds, source = _MARGINS.get(market, MARGIN) / prob, "estimated"
         if odds <= 1.01:
             continue
         out.append(Option(pred["home"], pred["away"], pred["date"], pred.get("time") or "",
