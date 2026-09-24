@@ -155,7 +155,7 @@ class TestOptimizerExplains:
     def test_corners_for_internationals(self, client, monkeypatch):
         monkeypatch.setattr(main, "_predictions_cache", [pred(league="INT-WCQ")])
         r = self.post(client, markets=["corners_ou"])
-        assert "no predictions" in r["error"] and "internationals have none" in r["error"]
+        assert "no predictions" in r["error"] and "SportyBet's own line" in r["error"]
         assert r["reasons"][0]["reason"] == "no_data"
 
     def test_btts_below_the_minimum(self, client, monkeypatch):
@@ -173,3 +173,30 @@ class TestOptimizerExplains:
         monkeypatch.setattr(main, "_sb_link_status", {"at": "x", "market_map": {"home_goals_ou": {"id": "19", "ok": True}}})
         r = self.post(client, markets=["home_goals_ou"], bookable_only=True, target_odds=1.2, min_odds=1.1, max_odds=1.3)
         assert "picks" in r
+
+
+class TestPricedCorners:
+    CORNERS = {"id": "166", "specifier": "total=9.5", "desc": "Total Corners",
+               "outcomes": [{"id": "12", "odds": "1.85"}, {"id": "13", "odds": "1.85"}]}
+
+    def test_lines_fitted_to_sportybets_price(self):
+        import set_pieces
+        sp = set_pieces.from_prices({"markets": [self.CORNERS]})
+        assert sp["corners"]["over"]["9.5"] == pytest.approx(0.5, abs=0.005) and sp["corners"]["source"] == "sportybet"
+        over = [sp["corners"]["over"][l] for l in ("7.5", "8.5", "9.5", "10.5", "11.5")]
+        assert over == sorted(over, reverse=True) and "bookings" not in sp
+
+    def test_mislabelled_market_is_ignored(self):
+        import set_pieces
+        assert set_pieces.from_prices({"markets": [{**self.CORNERS, "desc": "Total Goals"}]}) is None
+
+    def test_internationals_get_corner_picks_from_prices(self, monkeypatch):
+        p = pred(league="INT-WCQ")
+        monkeypatch.setattr(main, "_get_redis", lambda: None)
+        monkeypatch.setattr(main, "_sb_link_status", {"at": "x", "market_map": {"corners_ou": {"id": "166", "ok": True}}})
+        monkeypatch.setattr(main, "_predictions_cache", [p])
+        monkeypatch.setattr(main, "_sb_links", {f"Arsenal|Chelsea|{TOMORROW}": {"eventId": "sr:match:1", "markets": [self.CORNERS]}})
+        body = {"target_odds": 1.25, "min_odds": 1.15, "max_odds": 1.35, "days": 3, "markets": ["corners_ou"],
+                "bookable_only": True, "min_prob": 0.7}
+        r = TestClient(main.app).post("/api/optimizer", json=body).json()
+        assert r["picks"][0]["market"] == "corners_ou" and r["picks"][0]["code"] == "O75"

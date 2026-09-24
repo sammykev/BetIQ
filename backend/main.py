@@ -4466,6 +4466,16 @@ def _linked_event(selection: Dict[str, Any]) -> Optional[Dict]:
     return _sb_links.get(_sb_key(selection.get("home", ""), selection.get("away", ""), selection.get("date", "")))
 
 
+def _with_priced_set_pieces(pred: Dict, event: Optional[Dict]) -> Dict:
+    """A prediction with corners/bookings lines implied by SportyBet's own
+    prices when our stats have none for it (internationals, clubs outside
+    the league data) — set_pieces.from_prices."""
+    if pred.get("set_pieces") or not event:
+        return pred
+    priced = set_pieces.from_prices(event, getattr(_set_pieces, "size", None))
+    return {**pred, "set_pieces": priced} if priced else pred
+
+
 def _bookable_markets():
     """(market, code) → whether a SportyBet code can take the pick now:
     trusted markets always, VERIFIED ones once SportyBet's own labels
@@ -4487,8 +4497,11 @@ def _explain_empty(reasons: List[Dict], matches: int, days: int, min_prob: float
     parts = []
     for r in reasons:
         if r["reason"] == "no_data":
-            extra = (" Corners and cards come from club-league match stats, so internationals have none."
-                     if r["market"] in ("corners_ou", "cards_ou", "home_corners_ou", "away_corners_ou", "corners_1x2") else "")
+            extra = (" Each team's corners come from club-league match stats, so internationals have none."
+                     if r["market"] in ("home_corners_ou", "away_corners_ou", "corners_1x2") else
+                     " These come from club-league stats, or for other matches from SportyBet's own line once "
+                     "SportyBet lists the match with that market (tick \"Only matches SportyBet lists\")."
+                     if r["market"] in ("corners_ou", "cards_ou") else "")
             parts.append(f"{r['name']}: no predictions for {span}.{extra}")
         elif r["reason"] == "below_minimum":
             parts.append(f"{r['name']}: the likeliest pick is {round(r['best'] * 100)}%, under your "
@@ -4542,7 +4555,10 @@ async def optimize_slip(body: Dict[str, Any]):
     # Bookable-only slips skip markets SportyBet hasn't confirmed yet (a code
     # couldn't take those picks)
     allowed = _bookable_markets() if bookable_only else None
-    groups = [optimizer.candidates(p, linked[id(p)], min_prob, markets, allowed) for p in preds]
+    # Matches without corner/card stats (internationals) get SportyBet-implied lines
+    pairs = [(_with_priced_set_pieces(p, linked[id(p)]), linked[id(p)]) for p in preds]
+    preds = [p for p, _ in pairs]
+    groups = [optimizer.candidates(p, ev, min_prob, markets, allowed) for p, ev in pairs]
     considered = sum(1 for g in groups if g)
     if considered == 0:
         reasons = optimizer.why_empty(preds, markets, min_prob, allowed)
@@ -4622,8 +4638,12 @@ async def optimize_code(body: Dict[str, Any]):
     by_key = {_sb_key(p.get("home", ""), p.get("away", ""), p.get("date", "")): p for p in _predictions_cache}
     by_event = {str(ev.get("eventId")): by_key[k] for k, ev in _sb_links.items() if k in by_key}
     confirmed = {k: str(v["id"]) for k, v in _sb_market_map().items() if (v or {}).get("ok")}
+    def find(sel: Dict) -> Optional[Dict]:
+        p = _prediction_for_leg(sel, by_event)
+        return _with_priced_set_pieces(p, _linked_event(p)) if p else None
+
     report = await asyncio.to_thread(
-        code_check.analyse, selections, lambda sel: _prediction_for_leg(sel, by_event),
+        code_check.analyse, selections, find,
         _linked_event, confirmed, _bookable_markets())
     return {"code": code.upper(), **report}
 

@@ -87,6 +87,57 @@ def most_corners(mu_h: float, mu_a: float, r_h: Optional[float], r_a: Optional[f
     return {"home": home / total, "draw": draw / total, "away": 1 - (home + draw) / total}
 
 
+# Spreads used when a match has no fitted model (the fitted values sit near these)
+DEFAULT_SIZE = {"corners": 75.0, "bookings": 16.0}
+_PRICE_MARKETS = {"corners": "166", "bookings": "139"}
+
+
+def from_prices(event: Optional[Dict], sizes: Optional[Dict[str, Optional[float]]] = None) -> Optional[Dict]:
+    """Corners / bookings lines for a match we have no stats for (internationals),
+    implied by SportyBet's own over/under price: the margin taken out, a
+    negative binomial fitted to that one line, the other lines read off it.
+    Market-implied, not a model edge — marked "source": "sportybet"."""
+    from booking_slip import label_ok
+    if not event:
+        return None
+    sizes = sizes or {}
+    out: Dict[str, Dict] = {}
+    for stat, market_id in _PRICE_MARKETS.items():
+        best = None
+        for m in event.get("markets") or []:
+            spec = m.get("specifier") or ""
+            if str(m.get("id")) != market_id or not spec.startswith("total=") or not label_ok(market_id, m.get("desc")):
+                continue
+            prices = {}
+            for o in m.get("outcomes") or []:
+                try:
+                    if o.get("isActive", 1):
+                        prices[str(o.get("id"))] = float(o.get("odds"))
+                except (TypeError, ValueError):
+                    pass
+            if not {"12", "13"} <= set(prices) or min(prices["12"], prices["13"]) <= 1:
+                continue
+            p = (1 / prices["12"]) / (1 / prices["12"] + 1 / prices["13"])
+            try:
+                line = float(spec.split("=", 1)[1])
+            except ValueError:
+                continue
+            if best is None or abs(p - 0.5) < abs(best[1] - 0.5):  # the line nearest a coin flip says most
+                best = (line, p)
+        if not best:
+            continue
+        line, p = best
+        r = sizes.get(stat) or DEFAULT_SIZE[stat]
+        lo, hi = 0.3, 40.0
+        for _ in range(50):  # P(over line) rises with the mean
+            mid = (lo + hi) / 2
+            lo, hi = (mid, hi) if p_over(line, mid, r) < p else (lo, mid)
+        mu = (lo + hi) / 2
+        out[stat] = {"mean": round(mu, 2), "source": "sportybet",
+                     "over": {f"{l}": round(p_over(l, mu, r), 3) for l in LINES[stat]}}
+    return out or None
+
+
 class SetPieceModel:
     def __init__(self):
         # league -> stat -> [home avg, away avg]
