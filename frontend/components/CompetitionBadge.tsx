@@ -33,6 +33,8 @@ export function CompetitionBadge({ name, fallbackEmoji, size = 14, className, sp
         title={name}
         className={clsx("inline-block object-contain shrink-0", className)}
         style={{ width: size, height: size }}
+        // Some badge hosts refuse hotlinked images based on the Referer
+        referrerPolicy="no-referrer"
         onError={() => setBroken(true)}
       />
     );

@@ -450,3 +450,42 @@ class TestSofaScore:
         report = asyncio.run(intl.fetch_international(days_ahead=3, client=client, today=date(2026, 9, 23),
                                                       odds_api_key=""))
         assert [f["match_id"] for f in report["fixtures"]] == ["espn:1"]
+
+
+class TestCompetitionLogos:
+    def test_espn_scoreboard_carries_the_league_badge(self):
+        data = {**NATIONS, "leagues": [{"name": "UEFA Nations League",
+                                        "logos": [{"href": "https://a.espncdn.com/i/leaguelogos/soccer/500/2395.png"}]}]}
+        [f] = intl.parse_espn(data, "uefa.nations")[0]
+        assert f["competition_logo"] == "https://a.espncdn.com/i/leaguelogos/soccer/500/2395.png"
+
+    def test_sofascore_badge_comes_from_the_tournament_id(self):
+        ev = sofa_event(1, "Nigeria", "Ghana")
+        ev["tournament"]["uniqueTournament"]["id"] = 851
+        [f] = intl.parse_sofascore({"events": [ev]})[0]
+        assert f["competition_logo"] == "https://api.sofascore.app/api/v1/unique-tournament/851/image"
+
+    def test_espn_badge_preferred_per_competition(self):
+        ts = pd.Timestamp("2026-09-24T16:00Z")
+        fixtures = [
+            intl._fixture("sofa:1", "Nigeria", "Ghana", ts, "International Friendly Games", None, competition_logo="sofa.png"),
+            intl._fixture("espn:2", "Wales", "Iceland", ts, "International Friendly", None, competition_logo="espn.png"),
+            intl._fixture("sofa:3", "Egypt", "Angola", ts, "AFCON Qualifying", None, competition_logo="afcon.png"),
+            intl._fixture("espn:4", "Spain", "Italy", ts, "UEFA Nations League", None),
+        ]
+        assert intl.competition_logos(fixtures) == {"INT-FRI": "espn.png", "INT-AFCQ": "afcon.png"}
+
+    def test_logo_endpoint_serves_captured_badges_by_display_name(self, monkeypatch):
+        monkeypatch.setattr(main, "_get_redis", lambda: None)
+        monkeypatch.setattr(main, "_intl_logos", {})
+        ts = pd.Timestamp("2026-09-24T16:00Z")
+        main._remember_competition_logos([
+            intl._fixture("espn:2", "Wales", "Iceland", ts, "AFCON Qualifying", None, competition_logo="afcon.png")])
+        r = TestClient(main.app).get("/api/competition-logo", params={"name": "AFCON Qualifiers"}).json()
+        assert (r["logo"], r["source"]) == ("afcon.png", "fixture-source")
+
+    def test_club_competitions_are_not_affected(self, monkeypatch):
+        monkeypatch.setattr(main, "_intl_logos", {"INT": "other.png"})
+        assert main._international_competition_logo("World Cup") is None
+        assert main._international_competition_logo("Premier League") is None
+        assert main._international_competition_logo("Other internationals") == "other.png"

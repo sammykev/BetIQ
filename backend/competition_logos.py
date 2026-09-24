@@ -57,6 +57,15 @@ _NAME_ALIASES = {
     "eredivisie":        "Dutch Eredivisie",
     "primeira liga":     "Portuguese Primeira Liga",
     "brasileirão":       "Brazilian Serie A",
+    # International competitions, by the names the site shows them under
+    # (international_fixtures.COMPETITIONS); the fixtures' own badges are
+    # tried first, this is the fallback
+    "international friendlies": "International Friendlies",
+    "world cup qualifiers":     "FIFA World Cup Qualifying",
+    "euro qualifiers":          "UEFA European Championship Qualifying",
+    "afcon qualifiers":         "African Cup of Nations Qualifying",
+    "africa cup of nations":    "African Cup of Nations",
+    "asian cup qualifiers":     "AFC Asian Cup Qualifying",
     "brasileirao":       "Brazilian Serie A",
 }
 

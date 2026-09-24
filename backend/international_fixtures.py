@@ -68,6 +68,8 @@ def is_international(league_code: str) -> bool:
 ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports/soccer"
 ODDS_API_BASE = "https://api.the-odds-api.com/v4"
 SOFASCORE_BASE = "https://api.sofascore.com/api/v1/sport/football/scheduled-events"
+# A competition's badge, by SofaScore's uniqueTournament id
+SOFASCORE_LOGO = "https://api.sofascore.app/api/v1/unique-tournament/{id}/image"
 IMPERSONATE = os.getenv("SPORTYBET_IMPERSONATE", "chrome131")
 # Days of SofaScore schedule fetched around today (one request per day)
 SOFASCORE_DAYS_AHEAD, SOFASCORE_DAYS_BACK = 7, 3
@@ -132,7 +134,8 @@ def _parse_time(value: str) -> Optional[datetime]:
 
 
 def _fixture(match_id: str, home: str, away: str, kickoff: datetime, source_competition: str,
-             odds_sport: Optional[str], home_crest=None, away_crest=None) -> Dict:
+             odds_sport: Optional[str], home_crest=None, away_crest=None,
+             competition_logo: Optional[str] = None) -> Dict:
     code, name, flag = competition(source_competition)
     return {
         "match_id": match_id,
@@ -145,12 +148,25 @@ def _fixture(match_id: str, home: str, away: str, kickoff: datetime, source_comp
         "flag": flag,
         "model_league": LEAGUE_CODE,
         "odds_sport": odds_sport,
+        "competition_logo": competition_logo,
     }
+
+
+def competition_logos(fixtures: Iterable[Dict]) -> Dict[str, str]:
+    """{league code: badge URL} from the fixtures' own sources. ESPN's CDN
+    first (built for embedding), else SofaScore's."""
+    logos: Dict[str, str] = {}
+    for f in sorted(fixtures, key=lambda f: not str(f.get("match_id", "")).startswith("espn:")):
+        if f.get("competition_logo") and f["league"] not in logos:
+            logos[f["league"]] = f["competition_logo"]
+    return logos
 
 
 def parse_espn(data: Dict, slug: str) -> Tuple[List[Dict], List[Dict]]:
     """(upcoming fixtures, regulation-time results) from one ESPN scoreboard."""
     name, odds_sport = ESPN_COMPETITIONS.get(slug, (slug, None))
+    league = ((data or {}).get("leagues") or [{}])[0]
+    logo = next((l.get("href") for l in league.get("logos") or [] if l.get("href")), None)
     fixtures, results = [], []
     for ev in (data or {}).get("events") or []:
         comp = (ev.get("competitions") or [{}])[0]
@@ -169,7 +185,7 @@ def parse_espn(data: Dict, slug: str) -> Tuple[List[Dict], List[Dict]]:
         if state == "pre":
             fixtures.append(_fixture(
                 f"espn:{ev.get('id')}", h_name, a_name, kickoff, name, odds_sport,
-                (home.get("team") or {}).get("logo"), (away.get("team") or {}).get("logo"),
+                (home.get("team") or {}).get("logo"), (away.get("team") or {}).get("logo"), logo,
             ))
         elif state == "post" and status.get("completed"):
             if any(tag in (status.get("name") or "").upper() for tag in _NOT_REGULATION):
@@ -193,7 +209,9 @@ def parse_sofascore(data: Dict) -> Tuple[List[Dict], List[Dict]]:
     for ev in (data or {}).get("events") or []:
         home, away = ev.get("homeTeam") or {}, ev.get("awayTeam") or {}
         h_name, a_name = (home.get("name") or "").strip(), (away.get("name") or "").strip()
-        comp = ((ev.get("tournament") or {}).get("uniqueTournament") or ev.get("tournament") or {}).get("name") or ""
+        unique = (ev.get("tournament") or {}).get("uniqueTournament") or {}
+        comp = (unique or ev.get("tournament") or {}).get("name") or ""
+        logo = SOFASCORE_LOGO.format(id=unique["id"]) if unique.get("id") else None
         if not h_name or not a_name or "club" in comp.lower():
             continue
         if "national" in home or "national" in away:
@@ -210,7 +228,8 @@ def parse_sofascore(data: Dict) -> Tuple[List[Dict], List[Dict]]:
 
         status = ev.get("status") or {}
         if status.get("type") == "notstarted":
-            fixtures.append(_fixture(f"sofa:{ev.get('id')}", h_name, a_name, kickoff, comp, None))
+            fixtures.append(_fixture(f"sofa:{ev.get('id')}", h_name, a_name, kickoff, comp, None,
+                                     competition_logo=logo))
         elif status.get("type") == "finished" and (status.get("description") or "Ended") == "Ended":
             hs, as_ = ev.get("homeScore") or {}, ev.get("awayScore") or {}
             try:

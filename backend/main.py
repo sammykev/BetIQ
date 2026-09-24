@@ -864,6 +864,43 @@ async def _sync_football_data(force: bool = False) -> Optional[Dict[str, list]]:
 _intl_status: Dict[str, Any] = {"at": None, "fixtures": 0, "sources": {}, "errors": []}
 
 
+# {international league code: badge URL}, captured from the fixture sources
+# (ESPN, SofaScore) and kept in Redis so restarts keep them
+INTL_LOGOS_KEY = "betiq:intl:competition_logos"
+_intl_logos: Dict[str, str] = {}
+
+
+def _remember_competition_logos(fixtures: list) -> None:
+    found = intl.competition_logos(fixtures)
+    if not found:
+        return
+    _intl_logos.update(found)
+    r = _get_redis()
+    if r:
+        try:
+            r.hset(INTL_LOGOS_KEY, mapping=found)
+        except Exception as e:
+            print(f"[International] Could not save competition logos: {e}")
+
+
+def _international_competition_logo(name: str) -> Optional[str]:
+    """The captured badge for one of our international competitions, by the
+    display name the site shows ("AFCON Qualifiers"), else None."""
+    code = {display: c for c, display, _, _ in intl.COMPETITIONS}.get(name)
+    if code is None and name == intl.LEAGUE_INFO["name"]:
+        code = intl.LEAGUE_CODE
+    if code is None:
+        return None
+    if code not in _intl_logos:
+        r = _get_redis()
+        if r:
+            try:
+                _intl_logos.update(r.hgetall(INTL_LOGOS_KEY) or {})
+            except Exception:
+                pass
+    return _intl_logos.get(code)
+
+
 async def _fetch_international_fixtures() -> list:
     """Upcoming national-team fixtures; [] when every source fails."""
     try:
@@ -874,6 +911,7 @@ async def _fetch_international_fixtures() -> list:
         return []
     _intl_status.update(at=datetime.now(timezone.utc), fixtures=len(report["fixtures"]),
                         sources=report["sources"], errors=report["errors"])
+    _remember_competition_logos(report["fixtures"])
     print(f"[International] {len(report['fixtures'])} fixtures — ESPN {report['sources']['espn']}, "
           f"Odds API {report['sources']['odds_api']}; errors {report['errors'] or 'none'}")
     return report["fixtures"]
@@ -3428,6 +3466,11 @@ async def get_competition_logo(name: str, sport: str = "Soccer"):
     league isn't one of ours). Cached server-side (Redis, 30 days).
     """
     from competition_logos import lookup_competition_logo
+
+    # International competitions: the badge their fixture source supplied
+    logo = _international_competition_logo(name)
+    if logo:
+        return {"name": name, "sport": sport, "logo": logo, "source": "fixture-source"}
 
     logo = await _get_football_competition_emblem(name)
     source = "football-data.org" if logo else None
