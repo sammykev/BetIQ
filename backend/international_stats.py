@@ -32,6 +32,11 @@ START = date(2019, 1, 1)
 RECHECK_DAYS = 3
 SOFA_DAY = "https://api.sofascore.com/api/v1/sport/football/scheduled-events/{day}"
 SOFA_STATS = "https://api.sofascore.com/api/v1/event/{id}/statistics"
+SOFA_EVENT = "https://api.sofascore.com/api/v1/event/{id}"
+# Our club leagues, by SofaScore uniqueTournament id: their referees (the
+# league CSVs name them only for England). From CLUB_REFEREES_FROM on.
+CLUB_TOURNAMENTS = {17: "PL", 18: "ELC", 8: "PD", 23: "SA", 35: "BL1", 44: "BL2", 34: "FL1", 37: "DED", 238: "PPL"}
+CLUB_REFEREES_FROM = date(2021, 7, 1)
 AF_BASE = "https://v3.football.api-sports.io"
 SOFA_PAUSE = 0.8  # seconds between SofaScore requests
 
@@ -64,6 +69,22 @@ def parse_sofa_stats(data: Any) -> Optional[Dict[str, int]]:
             "HR": r[0], "AR": r[1]}
 
 
+def parse_sofa_referee(data: Any) -> Optional[Dict[str, Any]]:
+    """{name, games, yellow, red} from a SofaScore event page's referee
+    (career totals at the time it's read), or None."""
+    ref = ((data or {}).get("event") or {}).get("referee") or {}
+    name = (ref.get("name") or "").strip()
+    if not name:
+        return None
+    def n(k):
+        try:
+            return int(ref.get(k) or 0)
+        except (TypeError, ValueError):
+            return 0
+    return {"name": name, "games": n("games"), "yellow": n("yellowCards"),
+            "red": n("redCards") + n("yellowRedCards")}
+
+
 def parse_af_fixtures(data: Any) -> List[Dict[str, Any]]:
     """API-Football fixtures that are national-team matches (country "World")."""
     out = []
@@ -71,7 +92,8 @@ def parse_af_fixtures(data: Any) -> List[Dict[str, Any]]:
         league, teams = f.get("league") or {}, f.get("teams") or {}
         if league.get("country") != "World":
             continue
-        out.append({"id": (f.get("fixture") or {}).get("id"), "league": league.get("name") or "",
+        referee = ((f.get("fixture") or {}).get("referee") or "").split(",")[0].strip() or None
+        out.append({"id": (f.get("fixture") or {}).get("id"), "league": league.get("name") or "", "referee": referee,
                     "home": (teams.get("home") or {}).get("name") or "", "away": (teams.get("away") or {}).get("name") or "",
                     "home_id": (teams.get("home") or {}).get("id"), "away_id": (teams.get("away") or {}).get("id")})
     return out
@@ -105,7 +127,8 @@ def match_key(day: str, home: str, away: str) -> str:
 
 # ── storage ──────────────────────────────────────────────────────────────
 def empty() -> Dict[str, Any]:
-    return {"rows": {}, "sofa_days": [], "af_tried": [], "runs": []}
+    # club_refs: {date|home|away (SofaScore names): referee}; referees: {name: career}
+    return {"rows": {}, "sofa_days": [], "af_tried": [], "runs": [], "club_refs": {}, "referees": {}}
 
 
 def load(r) -> Dict[str, Any]:
@@ -134,10 +157,52 @@ def rows_frame(data: Dict[str, Any]):
     teams by their one-per-nation key, league = our competition code."""
     import pandas as pd
     rows = [{"Date": pd.Timestamp(r["date"]), "HomeTeam": intl.team_key(r["home"]), "AwayTeam": intl.team_key(r["away"]),
-             "league": intl.competition(r.get("competition", ""))[0],
+             "league": intl.competition(r.get("competition", ""))[0], "Referee": r.get("referee"),
              **{k: r[k] for k in ("HC", "AC", "HY", "AY", "HR", "AR")}}
             for r in data.get("rows", {}).values()]
     return pd.DataFrame(rows).sort_values("Date").reset_index(drop=True) if rows else pd.DataFrame()
+
+
+def add_club_referees(history, club_refs: Dict[str, str]):
+    """The club history (league CSV rows) with referees filled in from
+    club_refs where the CSV names none. Matched by date (±1 day: SofaScore
+    dates are UTC) and both team names, clearly (sportybet.team_similarity)."""
+    import pandas as pd
+    from sportybet import team_similarity
+    if history is None or history.empty or not club_refs:
+        return history
+    by_day: Dict[str, List[Tuple[str, str, str]]] = {}
+    for key, name in club_refs.items():
+        day, _, teams = key.partition("|")
+        home, _, away = teams.partition("|")
+        if name and home and away:
+            by_day.setdefault(day, []).append((home, away, name))
+    out = history.copy()
+    if "Referee" not in out.columns:
+        out["Referee"] = None
+    missing = out["Referee"].isna() | (out["Referee"].astype(str).str.strip() == "")
+    missing &= out["Date"] >= pd.Timestamp(CLUB_REFEREES_FROM - timedelta(days=1))
+    seen: Dict[Tuple[str, str], float] = {}  # few distinct names: compare each pair once
+
+    def similar(a: str, b: str) -> float:
+        if (a, b) not in seen:
+            seen[(a, b)] = team_similarity(a, b)
+        return seen[(a, b)]
+
+    filled = []
+    for i, row in out[missing].iterrows():
+        d = pd.Timestamp(row["Date"]).date()
+        best, best_score = None, 0.0
+        for day in (d, d - timedelta(days=1), d + timedelta(days=1)):
+            for home, away, name in by_day.get(day.isoformat(), []):
+                sh, sa = similar(row["HomeTeam"], home), similar(row["AwayTeam"], away)
+                if min(sh, sa) >= 0.8 and sh + sa > best_score:
+                    best, best_score = name, sh + sa
+        if best:
+            filled.append((i, best))
+    for i, name in filled:
+        out.at[i, "Referee"] = name
+    return out
 
 
 def summary(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -146,7 +211,10 @@ def summary(data: Dict[str, Any]) -> Dict[str, Any]:
     sources: Dict[str, int] = {}
     for r in rows:
         sources[r.get("source", "?")] = sources.get(r.get("source", "?"), 0) + 1
+    club_refs = data.get("club_refs") or {}
     return {"matches": len(rows), "sources": sources,
+            "with_referee": sum(1 for r in rows if r.get("referee")),
+            "club_referees": sum(1 for v in club_refs.values() if v), "referees_known": len(data.get("referees") or {}),
             "first": min((r["date"] for r in rows), default=None), "last": max((r["date"] for r in rows), default=None),
             "days_scanned": len(days), "oldest_day_scanned": days[0] if days else None,
             "backfill_complete": bool(days) and days[0] <= START.isoformat(),
@@ -206,19 +274,55 @@ async def collect_sofascore(session, data: Dict[str, Any], deadline: float, toda
             await asyncio.sleep(pause)
             row = parse_sofa_stats(stats) if stats else None
             if row:
+                referee = await _referee(session, ev.get("id"), data, pause)
                 data["rows"][key] = {"date": kickoff.date().isoformat(), "home": home, "away": away,
-                                     "competition": comp, "source": "sofascore", "id": ev.get("id"), **row}
+                                     "competition": comp, "source": "sofascore", "id": ev.get("id"),
+                                     "referee": referee, **row}
                 report["matches"] += 1
             else:
                 report["no_stats"] += 1
                 if key not in {m["key"] for m in missing}:
                     missing.append({"key": key, "date": kickoff.date().isoformat(), "home": home, "away": away,
                                     "competition": comp})
+        if day >= CLUB_REFEREES_FROM:
+            report["club_referees"] = report.get("club_referees", 0) + await _club_referees(session, listing, data, pause)
         done.add(day.isoformat())
         report["days"] += 1
     data["sofa_days"] = sorted(done)
     data["missing"] = [m for m in missing if m["key"] not in data["rows"]]
     return report
+
+
+async def _referee(session, event_id: Any, data: Dict[str, Any], pause: float) -> Optional[str]:
+    """The referee of one SofaScore event (their career record kept too)."""
+    page, _ = await _get(session, SOFA_EVENT.format(id=event_id), intl._SOFASCORE_HEADERS)
+    await asyncio.sleep(pause)
+    ref = parse_sofa_referee(page) if page else None
+    if not ref:
+        return None
+    data.setdefault("referees", {})[ref["name"]] = {k: ref[k] for k in ("games", "yellow", "red")}
+    return ref["name"]
+
+
+async def _club_referees(session, listing: Dict, data: Dict[str, Any], pause: float) -> int:
+    """Referees of one day's finished matches in our club leagues."""
+    found = 0
+    refs = data.setdefault("club_refs", {})
+    for ev in (listing or {}).get("events") or []:
+        tournament = ((ev.get("tournament") or {}).get("uniqueTournament") or {}).get("id")
+        if tournament not in CLUB_TOURNAMENTS or (ev.get("status") or {}).get("type") != "finished":
+            continue
+        try:
+            day = datetime.fromtimestamp(int(ev["startTimestamp"]), timezone.utc).date().isoformat()
+        except (KeyError, TypeError, ValueError):
+            continue
+        key = f"{day}|{(ev.get('homeTeam') or {}).get('name', '')}|{(ev.get('awayTeam') or {}).get('name', '')}"
+        if key in refs:
+            continue
+        name = await _referee(session, ev.get("id"), data, pause)
+        refs[key] = name or ""  # "" = none named: don't ask again
+        found += bool(name)
+    return found
 
 
 async def collect_api_football(session, data: Dict[str, Any], api_key: str, budget: int) -> Dict[str, Any]:
@@ -258,7 +362,8 @@ async def collect_api_football(session, data: Dict[str, Any], api_key: str, budg
         tried.add(m["key"])
         if row:
             data["rows"][m["key"]] = {"date": m["date"], "home": m["home"], "away": m["away"],
-                                      "competition": m["competition"], "source": "api-football", "id": best["id"], **row}
+                                      "competition": m["competition"], "source": "api-football", "id": best["id"],
+                                      "referee": best.get("referee"), **row}
             report["matches"] += 1
     data["af_tried"] = sorted(tried)
     data["missing"] = [m for m in data.get("missing", []) if m["key"] not in data["rows"]]

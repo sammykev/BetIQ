@@ -1145,7 +1145,7 @@ async def _run_pipeline():
         _history_df = history  # keep for H2H lookups
         global _set_pieces
         try:
-            _set_pieces = await asyncio.to_thread(set_pieces.SetPieceModel.fit, history)
+            _set_pieces = await asyncio.to_thread(set_pieces.SetPieceModel.fit, _with_club_referees(history))
         except Exception as e:
             print(f"[Pipeline] Corners/bookings model failed (non-fatal): {e}")
         try:
@@ -4488,6 +4488,19 @@ def _with_priced_set_pieces(pred: Dict, event: Optional[Dict]) -> Dict:
     priced = set_pieces.from_prices(event, getattr(_set_pieces, "size", None)) or {}
     extra = {k: v for k, v in priced.items() if k not in have}
     return {**pred, "set_pieces": {**have, **extra}} if extra else pred
+
+
+def _with_club_referees(history: pd.DataFrame) -> pd.DataFrame:
+    """The club history with the referees the nightly collector found
+    (the league CSVs name them only for England). Unchanged on any error."""
+    import international_stats
+    import model_store
+    try:
+        data = international_stats.load(model_store._client())
+        return international_stats.add_club_referees(history, data.get("club_refs") or {})
+    except Exception as e:
+        print(f"[Pipeline] Club referees not added: {e}")
+        return history
 
 
 def _load_international_set_pieces() -> None:

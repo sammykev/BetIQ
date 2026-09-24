@@ -135,6 +135,106 @@ class TestCollect:
         assert frame.iloc[0]["league"] == "INT-WCQ" and frame.iloc[0]["HC"] == 12
 
 
+def club_event(eid, home, away, day, tournament=17, status="finished"):
+    ev = sofa_event(eid, home, away, day, status)
+    ev["tournament"] = {"uniqueTournament": {"id": tournament, "name": "League"}}
+    ev["homeTeam"]["national"] = ev["awayTeam"]["national"] = False
+    return ev
+
+
+def referee_page(name, games=100, yellow=400, red=10, yellow_red=2):
+    return {"event": {"referee": {"name": name, "games": games, "yellowCards": yellow,
+                                  "redCards": red, "yellowRedCards": yellow_red}}}
+
+
+class TestReferees:
+    def test_parse_referee(self):
+        assert ist.parse_sofa_referee(referee_page("Anthony Taylor")) == {
+            "name": "Anthony Taylor", "games": 100, "yellow": 400, "red": 12}
+        assert ist.parse_sofa_referee({"event": {}}) is None
+        assert ist.parse_sofa_referee(None) is None
+
+    def test_api_football_referee_drops_the_country(self):
+        fixtures = {"response": [{"fixture": {"id": 5, "referee": "C. Turpin, France"},
+                                  "league": {"country": "World", "name": "Friendlies"},
+                                  "teams": {"home": {"id": 1, "name": "Spain"}, "away": {"id": 2, "name": "Malta"}}},
+                                 {"fixture": {"id": 6, "referee": None}, "league": {"country": "World", "name": "Friendlies"},
+                                  "teams": {"home": {"id": 3, "name": "A"}, "away": {"id": 4, "name": "B"}}}]}
+        assert [f["referee"] for f in ist.parse_af_fixtures(fixtures)] == ["C. Turpin", None]
+
+    def test_collects_international_and_club_referees(self):
+        data = ist.empty()
+        session = Session({
+            "event/1/statistics": sofa_stats(12, 1, 0, 2),
+            "event/1": referee_page("Clément Turpin"),
+            "event/7": referee_page("Anthony Taylor", games=300),
+            "event/8": {"event": {}},
+            "scheduled-events/2025-03-22": sofa_day([
+                sofa_event(1, "Spain", "Malta", "2025-03-22"),
+                club_event(7, "Arsenal", "Chelsea", "2025-03-22"),
+                club_event(8, "Burnley", "Leeds United", "2025-03-22", tournament=18),
+                club_event(9, "Boca", "River", "2025-03-22", tournament=155),        # not our league
+                club_event(10, "Everton", "Fulham", "2025-03-22", status="notstarted")]),
+        })
+        rep = asyncio.run(ist.collect_sofascore(session, data, float("inf"), date(2025, 3, 23), pause=0))
+        [row] = data["rows"].values()
+        assert row["referee"] == "Clément Turpin"
+        assert data["club_refs"] == {"2025-03-22|Arsenal|Chelsea": "Anthony Taylor", "2025-03-22|Burnley|Leeds United": ""}
+        assert rep["club_referees"] == 1
+        assert data["referees"]["Anthony Taylor"]["games"] == 300
+        assert not any("event/9" in url or "event/10" in url for url, _ in session.calls)
+        assert ist.rows_frame(data).iloc[0]["Referee"] == "Clément Turpin"
+        s = ist.summary(data)
+        assert (s["with_referee"], s["club_referees"], s["referees_known"]) == (1, 1, 2)
+
+    def test_old_days_skip_club_referees(self):
+        data = ist.empty()
+        session = Session({"scheduled-events/2020-03-22": sofa_day([club_event(7, "Arsenal", "Chelsea", "2020-03-22")])})
+        asyncio.run(ist.collect_sofascore(session, {**data, "sofa_days": []}, float("inf"), date(2020, 3, 23), pause=0))
+        assert not any("event/7" in url for url, _ in session.calls)
+
+    def test_known_matches_are_not_asked_again(self):
+        data = {**ist.empty(), "club_refs": {"2025-03-22|Arsenal|Chelsea": ""}}
+        session = Session({})
+        n = asyncio.run(ist._club_referees(session, sofa_day([club_event(7, "Arsenal", "Chelsea", "2025-03-22")]), data, 0))
+        assert n == 0 and session.calls == []
+
+
+class TestClubReferees:
+    def history(self):
+        return pd.DataFrame([
+            {"Date": pd.Timestamp("2025-03-22"), "HomeTeam": "Man United", "AwayTeam": "Man City", "Referee": None, "league": "PL"},
+            {"Date": pd.Timestamp("2025-03-22"), "HomeTeam": "Real Madrid", "AwayTeam": "Getafe", "Referee": None, "league": "PD"},
+            {"Date": pd.Timestamp("2025-03-23"), "HomeTeam": "Arsenal", "AwayTeam": "Chelsea", "Referee": "M Oliver", "league": "PL"},
+            {"Date": pd.Timestamp("2020-03-22"), "HomeTeam": "Lazio", "AwayTeam": "Roma", "Referee": None, "league": "SA"},
+        ])
+
+    def test_fills_missing_referees_by_date_and_teams(self):
+        refs = {"2025-03-21|Real Madrid|Getafe": "José Munuera",          # a day off: UTC date
+                "2025-03-22|Manchester City|Manchester United": "Wrong",  # the reverse fixture
+                "2025-03-23|Arsenal|Chelsea": "Someone Else",             # CSV already names one
+                "2020-03-22|Lazio|Roma": "Too Early",
+                "2025-03-22|Burnley|Leeds": ""}
+        out = ist.add_club_referees(self.history(), refs)
+        assert [r if isinstance(r, str) else None for r in out["Referee"]] == [None, "José Munuera", "M Oliver", None]
+        # Short names match SofaScore's full ones
+        out = ist.add_club_referees(self.history(), {"2025-03-22|Manchester United|Manchester City": "Simon Hooper"})
+        assert out.loc[0, "Referee"] == "Simon Hooper"
+
+    def test_no_data_leaves_history_alone(self):
+        h = self.history()
+        assert ist.add_club_referees(h, {}) is h
+        no_col = h.drop(columns=["Referee"])
+        out = ist.add_club_referees(no_col, {"2025-03-22|Real Madrid|Getafe": "José Munuera"})
+        assert out["Referee"].tolist()[1] == "José Munuera"
+
+    def test_pipeline_helper_survives_redis_errors(self, monkeypatch):
+        import model_store
+        monkeypatch.setattr(model_store, "_client", lambda: (_ for _ in ()).throw(RuntimeError("no redis")))
+        h = self.history()
+        assert main._with_club_referees(h) is h
+
+
 class TestPredictions:
     def test_only_approved_stats_are_used(self, monkeypatch):
         class Model:
