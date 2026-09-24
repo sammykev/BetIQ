@@ -25,7 +25,7 @@ Win chance treats the matches as independent and is the model's estimate.
 
 import math
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
 
@@ -169,14 +169,18 @@ def _bookmaker_price(pred: Dict, market: str, code: str) -> Optional[float]:
 
 
 def candidates(pred: Dict, sportybet_event: Optional[Dict] = None,
-               min_prob: float = 0.6, markets: Optional[set] = None) -> List[Option]:
-    """The pickable selections for one prediction, each with its best price."""
+               min_prob: float = 0.6, markets: Optional[set] = None,
+               allowed: Optional[Callable[[str, str], bool]] = None) -> List[Option]:
+    """The pickable selections for one prediction, each with its best price.
+    `allowed(market, code)` can veto picks (e.g. markets SportyBet codes can't take yet)."""
     if not all(isinstance(pred.get(k), (int, float))
                for k in ("p_home", "p_draw", "p_away", "p_over15", "p_over25")):
         return []
     out = []
     for market, market_name, code, label, prob_of in _PICKS:
         if markets and market not in markets:
+            continue
+        if allowed and not allowed(market, code):
             continue
         prob = prob_of(pred)
         if prob is None:
@@ -288,3 +292,31 @@ def optimize(groups: List[List[Option]], lo: float, hi: float,
         "within_target": lo <= total <= hi,
         "estimated_prices": sum(o.odds_source == "estimated" for o in picks),
     }
+
+
+MARKET_NAMES = {m: n for m, n, *_ in _PICKS}
+
+
+def why_empty(preds: List[Dict], markets: Optional[set], min_prob: float,
+              allowed: Optional[Callable[[str, str], bool]] = None) -> List[Dict[str, Any]]:
+    """Per market, why no match gave a pick: no data for these matches (e.g.
+    corners for internationals), the best probability under the minimum, or
+    every pick vetoed by `allowed` (not bookable yet)."""
+    usable = [p for p in preds if all(isinstance(p.get(k), (int, float)) for k in ("p_home", "p_over25"))]
+    out = []
+    for market in sorted(markets or MARKET_NAMES, key=list(MARKET_NAMES).index):
+        picks = [(code, fn) for m, _, code, _, fn in _PICKS if m == market]
+        per_match = [[v for _, fn in picks if isinstance(v := fn(p), (int, float))] for p in usable]
+        with_data = sum(1 for vals in per_match if vals)
+        best = max((v for vals in per_match for v in vals), default=None)
+        if allowed and not any(allowed(market, code) for code, _ in picks):
+            reason = "not_bookable"
+        elif not with_data:
+            reason = "no_data"
+        elif best is not None and best < min_prob:
+            reason = "below_minimum"
+        else:
+            continue
+        out.append({"market": market, "name": MARKET_NAMES[market], "reason": reason,
+                    "matches_with_data": with_data, "best": round(best, 3) if best is not None else None})
+    return out

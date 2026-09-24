@@ -542,6 +542,70 @@ def _betsapi_to_prediction(ev: Dict, flag: str, sport: str) -> Optional[Dict]:
     }
 
 
+def _surface(tournament: str) -> str:
+    t = tournament.lower()
+    if any(x in t for x in ("wimbledon", "halle", "queen", "grass", "eastbourne", "s-hertogenbosch", "mallorca")):
+        return "Grass"
+    if any(x in t for x in ("roland", "french", "clay", "barcelona", "monte", "madrid", "rome", "hamburg", "gstaad",
+                            "umag", "kitzbuhel", "bastad", "estoril", "buenos aires", "rio", "santiago")):
+        return "Clay"
+    return "Hard"
+
+
+def sportybet_prediction(ev: Dict, sport: str) -> Optional[Dict]:
+    """A prediction for one SportyBet tennis / table-tennis event: its
+    match-winner prices with the margin taken out, blended with our tennis
+    Elo where we know both players (table tennis: the prices alone)."""
+    import sportybet
+    prices = sportybet.winner_prices(ev)
+    p1, p2 = ev.get("homeTeamName") or "", ev.get("awayTeamName") or ""
+    if not prices or not p1 or not p2:
+        return None
+    try:
+        start = datetime.fromtimestamp(int(ev["estimateStartTime"]) / 1000, timezone.utc)
+    except (KeyError, TypeError, ValueError):
+        return None
+    o1, o2 = prices
+    m1, m2 = (1 / o1) / (1 / o1 + 1 / o2), (1 / o2) / (1 / o1 + 1 / o2)
+    tournament = ev.get("_tournament") or ("Tennis" if sport == "tennis" else "Table Tennis")
+    surface = _surface(tournament) if sport == "tennis" else None
+    blended = _apply_tennis_elo(p1, p2, surface, m1, m2) if sport == "tennis" else {"p1_win": m1, "p2_win": m2}
+    p_home, p_away = blended["p1_win"], blended["p2_win"]
+    tip, code, conf = (f"{p1} Win", "1", p_home) if p_home >= p_away else (f"{p2} Win", "2", p_away)
+    return {
+        "home": p1, "away": p2,
+        "date": start.strftime("%Y-%m-%d"), "time": start.strftime("%H:%M"),
+        "sport": sport, "league": tournament, "league_name": tournament,
+        "flag": "🎾" if sport == "tennis" else "🏓",
+        "tip_1x2": tip, "tip_code": code, "tip_goals": "",
+        "goals_type": "value" if conf > 0.65 else "normal", "goals_confidence": round(conf, 3),
+        "p_home": round(p_home, 3), "p_draw": 0, "p_away": round(p_away, 3), "p_over15": 0, "p_over25": 0,
+        **({"surface": surface} if surface else {}),
+        "odds_home": round(o1, 2), "odds_away": round(o2, 2),
+        "source": "sportybet", "sportybet_event_id": ev.get("eventId"),
+        "model": "elo+market" if blended.get("blend_weight") else "market",
+    }
+
+
+async def _sportybet_sport(sport: str) -> List[Dict]:
+    try:
+        import sportybet
+        events, report = await sportybet.fetch_sport_events(sport)
+        print(f"[Sports] SportyBet {sport}: {' · '.join(report)}")
+    except Exception as e:
+        print(f"[Sports] SportyBet {sport} failed: {e}")
+        return []
+    return [p for p in (sportybet_prediction(ev, sport) for ev in events) if p]
+
+
+def _merge_sources(primary: List[Dict], extra: List[Dict]) -> List[Dict]:
+    """primary + the extra events it doesn't already have (same players, same day)."""
+    def key(p):
+        return (p.get("date"), frozenset(x.lower().replace(".", "").strip() for x in (p.get("home", ""), p.get("away", ""))))
+    seen = {key(p) for p in primary}
+    return primary + [p for p in extra if key(p) not in seen]
+
+
 FALLBACK_TENNIS_KEYS = [
     "tennis_atp_french_open", "tennis_wtp_french_open",
     "tennis_atp_wimbledon", "tennis_wtp_wimbledon",
@@ -553,14 +617,13 @@ FALLBACK_TENNIS_KEYS = [
 ]
 
 async def fetch_tennis_predictions() -> List[Dict]:
-    results = []
+    # Primary: SportyBet's own tennis listing (every match it offers, with its prices)
+    results = await _sportybet_sport("tennis")
 
-    # Primary: BetsAPI (covers all ATP/WTA/ITF year-round)
-    betsapi_events = await _fetch_betsapi(BETSAPI_SPORTS["tennis"])
-    for ev in betsapi_events:
-        p = _betsapi_to_prediction(ev, "🎾", "tennis")
-        if p:
-            results.append(p)
+    # Then BetsAPI (ATP/WTA/ITF) for anything SportyBet doesn't list
+    betsapi = [p for p in (_betsapi_to_prediction(ev, "🎾", "tennis")
+                           for ev in await _fetch_betsapi(BETSAPI_SPORTS["tennis"])) if p]
+    results = _merge_sources(results, betsapi)
 
     # Secondary: The Odds API (for Grand Slams — better odds accuracy)
     if ODDS_API_KEY:
@@ -594,14 +657,13 @@ async def fetch_tennis_predictions() -> List[Dict]:
 TABLE_TENNIS_KEYS = ["table_tennis", "table_tennis_wtt", "table_tennis_ittf"]
 
 async def fetch_table_tennis_predictions() -> List[Dict]:
-    results = []
+    # Primary: SportyBet's own table-tennis listing
+    results = await _sportybet_sport("table_tennis")
 
-    # Primary: BetsAPI covers table tennis year-round
-    betsapi_events = await _fetch_betsapi(BETSAPI_SPORTS["table_tennis"])
-    for ev in betsapi_events:
-        p = _betsapi_to_prediction(ev, "🏓", "table_tennis")
-        if p:
-            results.append(p)
+    # Then BetsAPI for anything SportyBet doesn't list
+    betsapi = [p for p in (_betsapi_to_prediction(ev, "🏓", "table_tennis")
+                           for ev in await _fetch_betsapi(BETSAPI_SPORTS["table_tennis"])) if p]
+    results = _merge_sources(results, betsapi)
 
     # Secondary: The Odds API (only during major WTT events)
     if ODDS_API_KEY and not results:
@@ -724,6 +786,41 @@ async def fetch_event_detail(sport: str, home: str, away: str, date: str) -> Opt
             print(f"[Sports Detail] {sport_key} error: {e}")
 
     return None
+
+
+def structure_sportybet_detail(ev: Dict, sport: str) -> Dict:
+    """A SportyBet match page (every market) in the sport modal's shape."""
+    home, away = ev.get("homeTeamName", ""), ev.get("awayTeamName", "")
+    try:
+        start = datetime.fromtimestamp(int(ev["estimateStartTime"]) / 1000, timezone.utc)
+        date_str, time_str = start.strftime("%Y-%m-%d"), start.strftime("%H:%M")
+    except (KeyError, TypeError, ValueError):
+        date_str = time_str = ""
+    markets = []
+    for m in ev.get("markets") or []:
+        outs = []
+        for o in m.get("outcomes") or []:
+            try:
+                price = float(o.get("odds"))
+            except (TypeError, ValueError):
+                continue
+            if price > 1 and o.get("isActive", 1):
+                label = str(o.get("desc") or o.get("id"))
+                outs.append({"name": label, "label": label, "odds": round(price, 2), "point": None})
+        if len(outs) < 2:
+            continue
+        booked = sum(1 / o["odds"] for o in outs)
+        for o in outs:
+            o["implied"] = round((1 / o["odds"]) / booked, 3)
+        name = str(m.get("desc") or m.get("name") or m.get("id"))
+        spec = m.get("specifier") or ""
+        markets.append({"id": f"{m.get('id')}|{spec}", "name": f"{name} ({spec.split('=')[-1]})" if spec else name,
+                        "icon": "🎾" if sport == "tennis" else "🏓", "outcomes": outs})
+    winner = next((m for m in markets if m["id"].startswith("186|")), markets[0] if markets else None)
+    best = max(winner["outcomes"], key=lambda o: o["implied"]) if winner else None
+    return {"home": home, "away": away, "date": date_str, "time": time_str, "sport": sport,
+            "sport_key": "sportybet", "markets": markets[:40],
+            "best_pick": {"label": best["label"], "odds": best["odds"], "confidence": best["implied"]} if best else None}
 
 
 def _structure_event_detail(event: Dict, sport: str, sport_key: str) -> Dict:

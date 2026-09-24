@@ -6,6 +6,7 @@ import { useUser } from "@clerk/nextjs";
 import { Check, Copy, Loader2, Sparkles, Ticket, AlertTriangle, ExternalLink, Link2 } from "lucide-react";
 import { AppShell } from "@/components/shell/AppShell";
 import { PageHeader } from "@/components/shell/PageHeader";
+import { CodeCheck } from "@/components/CodeCheck";
 import { useBetSlip } from "@/lib/useBetSlip";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
 import type { SlipSelection } from "@/lib/slip";
@@ -49,7 +50,7 @@ function offBy(total: number, target: number) {
   return Math.abs(d) < 0.05 ? "exact" : `${d > 0 ? "+" : "−"}${Math.abs(d).toFixed(1)}%`;
 }
 const short = (x: number) => (x >= 1000 ? `${x / 1000}K` : `${x}x`);
-const CONFIDENCE = [0.6, 0.7, 0.8];
+const CONFIDENCE = [0.5, 0.6, 0.7, 0.8];
 const DAYS = [{ label: "Today", n: 1 }, { label: "2 days", n: 2 }, { label: "3 days", n: 3 }, { label: "Week", n: 7 }];
 // Each chip covers one or more backend markets (optimizer.py _PICKS). `needs`
 // are the booking_slip.VERIFIED markets SportyBet must confirm before codes
@@ -112,6 +113,7 @@ export default function OptimizerPage() {
   const authFetch = useAuthedFetch();
   const slip = useBetSlip();
 
+  const [mode, setMode] = useState<"build" | "code">("build");
   const [targetOdds, setTargetOdds] = useState(10);
   const [typed, setTyped] = useState("10");
   const [tolerance, setTolerance] = useState(0.05);
@@ -217,9 +219,17 @@ export default function OptimizerPage() {
         <PageHeader
           eyebrow="Strategy engine"
           title="Optimizer"
-          description="Pick a target total. BetIQ searches every upcoming match for the slip that reaches it with the best chance of every pick winning."
+          description="Build a slip for the odds you want, or paste a SportyBet code and we'll rate it and make it more likely to win."
         />
 
+        <div className="flex gap-1.5" role="tablist" aria-label="Optimizer mode">
+          {([["build", "Build a slip"], ["code", "Check my SportyBet code"]] as const).map(([id, label]) => (
+            <button key={id} role="tab" aria-selected={mode === id} onClick={() => setMode(id)}
+              className={clsx("chip", mode === id ? "chip-active" : "chip-idle")}>{label}</button>
+          ))}
+        </div>
+
+        {mode === "code" ? <CodeCheck /> : <>
         {/* Settings */}
         <section className="card p-5 space-y-5">
           <div className="space-y-3">
@@ -273,8 +283,8 @@ export default function OptimizerPage() {
               ))}
               {unconfirmed.length > 0 && (
                 <p className="basis-full text-[11px] text-n-500">
-                  {unconfirmed.map(m => m.label).join(" & ")}: our picks work, but SportyBet codes skip them until
-                  we&apos;ve confirmed SportyBet&apos;s market.
+                  {unconfirmed.map(m => m.label).join(" & ")}: SportyBet hasn&apos;t confirmed these markets yet, so
+                  codes can&apos;t include them. Untick &quot;Only matches SportyBet lists&quot; to use them anyway.
                 </p>
               )}
             </Setting>
@@ -312,7 +322,7 @@ export default function OptimizerPage() {
             <AlertTriangle size={16} className="shrink-0 mt-0.5" />
             <div className="space-y-2">
               <p>{result.error}</p>
-              {bookableOnly && result.matches_considered === 0 && (
+              {bookableOnly && result.matches_considered === 0 && /SportyBet/.test(result.error) && (
                 <button onClick={() => { setBookableOnly(false); run(false); }}
                   className="chip chip-idle">Try all matches, not just SportyBet-listed ones</button>
               )}
@@ -407,6 +417,7 @@ export default function OptimizerPage() {
             </div>
           </section>
         )}
+        </>}
       </div>
     </AppShell>
   );

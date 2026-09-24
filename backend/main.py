@@ -3508,7 +3508,26 @@ async def set_prefs(request: Request, body: Dict[str, Any]):
     return {"ok": True}
 
 
-SPORTS = ("basketball", "tennis", "table-tennis")
+# "table_tennis" is how a table-tennis prediction names its sport (the event modal uses it)
+SPORTS = ("basketball", "tennis", "table-tennis", "table_tennis")
+
+
+def _sportybet_event_id(sport: str, home: str, away: str, day: str) -> Optional[str]:
+    """The SportyBet event behind a tennis / table-tennis prediction, from the cached list."""
+    key = "table-tennis" if sport.startswith("table") else sport
+    cached = None
+    r = _get_redis()
+    if r:
+        try:
+            cached = json.loads(r.get(f"betiq:sports:{key}") or "null")
+        except Exception:
+            cached = None
+    if cached is None:
+        cached = (_sports_memory_cache.get(key) or (None,))[0]
+    for p in cached or []:
+        if p.get("home") == home and p.get("away") == away and p.get("date") == day and p.get("sportybet_event_id"):
+            return str(p["sportybet_event_id"])
+    return None
 
 
 def _check_sport(sport: str) -> None:
@@ -3587,10 +3606,11 @@ async def get_sport_predictions(sport: str):
 
     if r:
         try:
-            r.setex(cache_key, CACHE_TTL, _json.dumps(data))
+            # An empty list (a source down) is retried in 5 minutes, not an hour
+            r.setex(cache_key, CACHE_TTL if data else 300, _json.dumps(data))
         except Exception:
             pass
-    else:
+    elif data:
         _sports_memory_cache[sport] = (data, _time.monotonic())
 
     return drop_started_events(data)
@@ -3928,7 +3948,20 @@ async def get_sport_event_detail(sport: str, home: str, away: str, date: str):
         except Exception:
             pass
 
-    detail = await fetch_event_detail(sport, home, away, date)
+    detail = None
+    # Matches taken from SportyBet's listing: its own match page has every market
+    event_id = _sportybet_event_id(sport, home, away, date)
+    if event_id:
+        try:
+            import sportybet
+            from sports_fetcher import structure_sportybet_detail
+            ev = await sportybet.event_page(event_id)
+            if ev:
+                detail = structure_sportybet_detail(ev, "table_tennis" if sport.startswith("table") else sport)
+        except Exception as e:
+            print(f"[Sports Detail] SportyBet {event_id}: {e}")
+    if not detail:
+        detail = await fetch_event_detail(sport, home, away, date)
     if not detail:
         raise HTTPException(status_code=404, detail="Event not found")
 
@@ -3977,9 +4010,25 @@ async def get_value_bets():
     print(f"[ValueBets] Prediction dates: {dates[:5]}")
 
     try:
+        import value_bets as vb
+        now = datetime.now(timezone.utc)
+        today, clock = now.date().isoformat(), now.strftime("%H:%M")
+        upcoming = [p for p in preds if p.get("sport") in (None, "football")
+                    and (p.get("date", "") > today or (p.get("date") == today and (p.get("time") or "99:99") > clock))
+                    and _within_window(p.get("date", ""))]
+        # SportyBet's own prices for linked matches (bookable), then The Odds
+        # API's cached 1X2 odds for matches SportyBet doesn't list
+        found: Dict[str, Dict] = {}
+        for p in upcoming:
+            v = vb.best_value(p, _linked_event(p))
+            if v:
+                found[_sb_key(p["home"], p["away"], p["date"])] = v
         odds_index, _ = _load_cached_live_odds()
-        value_bets = compute_value_bets(preds, odds_index)
-        print(f"[ValueBets] Found {len(value_bets)} value bets from {len(odds_index)} cached odds entries")
+        for v in compute_value_bets(upcoming, odds_index):
+            found.setdefault(_sb_key(v["home"], v["away"], v["date"]), v)
+        value_bets = sorted(found.values(), key=lambda x: -x["edge"])
+        print(f"[ValueBets] Found {len(value_bets)} value bets ({sum(v.get('bookie') == 'SportyBet' for v in value_bets)} "
+              f"priced by SportyBet, {len(odds_index)} cached Odds API entries)")
 
         if r:
             try:
@@ -4276,7 +4325,11 @@ async def _market_map(events: List[Dict], links: Dict[str, Dict], report: List[s
     rank = {"PL": 0, "PD": 1, "SA": 2, "BL1": 3, "FL1": 4}
     club = [(key, ev) for key, ev in links.items() if not intl.is_international(league.get(key, ""))]
     club.sort(key=lambda kv: rank.get(league.get(kv[0], ""), 9))
-    for _, probe in club[:2]:
+    probes = [ev for _, ev in club[:2]]
+    # None linked (an international break): any top-league match SportyBet lists
+    top = re.compile(r"premier league|laliga|la liga|serie a|bundesliga|ligue 1", re.I)
+    probes += [ev for ev in events if top.search(ev.get("_tournament") or "") and "women" not in (ev.get("_tournament") or "").lower()][:2]
+    for probe in probes[:3]:
         try:
             page = await sportybet.event_market_details(str(probe["eventId"]))
             details.update(page)
@@ -4413,6 +4466,39 @@ def _linked_event(selection: Dict[str, Any]) -> Optional[Dict]:
     return _sb_links.get(_sb_key(selection.get("home", ""), selection.get("away", ""), selection.get("date", "")))
 
 
+def _bookable_markets():
+    """(market, code) → whether a SportyBet code can take the pick now:
+    trusted markets always, VERIFIED ones once SportyBet's own labels
+    confirmed them. Reads the confirmed markets once."""
+    import booking_slip
+    confirmed = {k for k, v in _sb_market_map().items() if (v or {}).get("ok")}
+
+    def ok(market: str, code: str) -> bool:
+        if not booking_slip.sportybet_ids(market, code):
+            return False
+        kind = booking_slip.verified_kind(market, code)
+        return not kind or kind in confirmed
+    return ok
+
+
+def _explain_empty(reasons: List[Dict], matches: int, days: int, min_prob: float) -> str:
+    """One sentence per market saying why it gave no picks."""
+    span = f"the {matches} match{'es' if matches != 1 else ''} in the next {days} day{'s' if days != 1 else ''}"
+    parts = []
+    for r in reasons:
+        if r["reason"] == "no_data":
+            extra = (" Corners and cards come from club-league match stats, so internationals have none."
+                     if r["market"] in ("corners_ou", "cards_ou", "home_corners_ou", "away_corners_ou", "corners_1x2") else "")
+            parts.append(f"{r['name']}: no predictions for {span}.{extra}")
+        elif r["reason"] == "below_minimum":
+            parts.append(f"{r['name']}: the likeliest pick is {round(r['best'] * 100)}%, under your "
+                         f"{round(min_prob * 100)}% minimum.")
+        else:
+            parts.append(f"{r['name']}: SportyBet hasn't confirmed this market yet, so codes can't include it. "
+                         "Untick \"Only matches SportyBet lists\" to build the slip anyway.")
+    return " ".join(parts) or f"None of {span} has a pick at {round(min_prob * 100)}% or more."
+
+
 @app.post("/api/optimizer")
 async def optimize_slip(body: Dict[str, Any]):
     """
@@ -4453,9 +4539,16 @@ async def optimize_slip(body: Dict[str, Any]):
                           f"day{'s' if days != 1 else ''} yet (or we haven't linked them since the last restart). "
                           "Untick \"Only matches SportyBet lists\", or pick more days."),
                 "matches_considered": 0, "target": [lo, hi], "target_odds": target}
-    groups = [optimizer.candidates(p, linked[id(p)], min_prob, markets) for p in preds]
-    result = await asyncio.to_thread(optimizer.optimize, groups, lo, hi, max_games)
+    # Bookable-only slips skip markets SportyBet hasn't confirmed yet (a code
+    # couldn't take those picks)
+    allowed = _bookable_markets() if bookable_only else None
+    groups = [optimizer.candidates(p, linked[id(p)], min_prob, markets, allowed) for p in preds]
     considered = sum(1 for g in groups if g)
+    if considered == 0:
+        reasons = optimizer.why_empty(preds, markets, min_prob, allowed)
+        return {"error": _explain_empty(reasons, len(preds), days, min_prob), "reasons": reasons,
+                "matches_considered": 0, "target": [lo, hi], "target_odds": target}
+    result = await asyncio.to_thread(optimizer.optimize, groups, lo, hi, max_games)
     if result is None and lo <= target <= hi:
         # Nothing inside the tolerance: the nearest slip within ±25% of the
         # target, flagged as off target (within_target is False)
@@ -4470,6 +4563,69 @@ async def optimize_slip(body: Dict[str, Any]):
                           "Allow more games or days, add markets, or lower the minimum confidence."),
                 "matches_considered": considered, "target": [lo, hi], "target_odds": target}
     return {**result, "target": [lo, hi], "target_odds": round(target, 2), "matches_considered": considered}
+
+
+def _prediction_for_leg(sel: Dict[str, Any], by_event: Dict[str, Dict]) -> Optional[Dict]:
+    """Our prediction for a booking-code leg: by the SportyBet event we
+    linked it to, else by team names within a day of kick-off; tennis and
+    table tennis from their cached lists."""
+    import sportybet
+    if sel["eventId"] in by_event:
+        return by_event[sel["eventId"]]
+    for sport in ("tennis", "table-tennis"):
+        for p in _cached_sport_predictions(sport):
+            if str(p.get("sportybet_event_id")) == sel["eventId"]:
+                return p
+    try:
+        day = datetime.fromtimestamp(int(sel["start"]) / 1000, timezone.utc).date()
+    except (TypeError, ValueError, KeyError):
+        return None
+    near = {(day + timedelta(days=o)).isoformat() for o in (-1, 0, 1)}
+    best, score = None, 0.0
+    for p in _predictions_cache:
+        if p.get("date") in near and p.get("sport") in (None, "football"):
+            s = min(sportybet.team_similarity(p["home"], sel["home"]), sportybet.team_similarity(p["away"], sel["away"]))
+            if s >= 0.8 and s > score:
+                best, score = p, s
+    return best
+
+
+def _cached_sport_predictions(sport: str) -> List[Dict]:
+    r = _get_redis()
+    if r:
+        try:
+            return json.loads(r.get(f"betiq:sports:{sport}") or "[]")
+        except Exception:
+            return []
+    return (_sports_memory_cache.get(sport) or ([],))[0]
+
+
+@app.post("/api/optimizer/code")
+async def optimize_code(body: Dict[str, Any]):
+    """
+    Check a SportyBet booking code with the model: each leg's chance, a
+    better pick where there is one, and two improved slips (code_check.py).
+    Body: {"code": "ABC123"}.
+    """
+    import code_check
+    import sportybet
+    code = str(body.get("code") or "").strip()
+    try:
+        selections = await sportybet.load_share_code(code)
+    except sportybet.SportyBetError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        print(f"[CodeCheck] {code}: {e}")
+        raise HTTPException(status_code=502, detail="Couldn't reach SportyBet to load that code. Try again in a minute.")
+    if not _sb_links:
+        _linked_event({})
+    by_key = {_sb_key(p.get("home", ""), p.get("away", ""), p.get("date", "")): p for p in _predictions_cache}
+    by_event = {str(ev.get("eventId")): by_key[k] for k, ev in _sb_links.items() if k in by_key}
+    confirmed = {k: str(v["id"]) for k, v in _sb_market_map().items() if (v or {}).get("ok")}
+    report = await asyncio.to_thread(
+        code_check.analyse, selections, lambda sel: _prediction_for_leg(sel, by_event),
+        _linked_event, confirmed, _bookable_markets())
+    return {"code": code.upper(), **report}
 
 
 @app.post("/api/booking/convert")

@@ -15,6 +15,8 @@ export interface SlipSelection {
   code: string;          // model option code: "1", "1X", "O25", "BTTS-Y", …
   label: string;         // "Arsenal Win", "Over 2.5"
   prob?: number | null;  // model probability of this outcome
+  /** A leg kept from a SportyBet code that we don't model: booked by SportyBet's own ids */
+  sb?: { eventId: string; marketId: string; specifier: string; outcomeId: string };
 }
 
 export const MAX_SLIP = 30;
@@ -64,7 +66,8 @@ const SPORTYBET_FIXED = new Set([
 const LINE_MARKETS = ["goals_ou", "corners_ou", "cards_ou", "home_goals_ou", "away_goals_ou",
                       "home_corners_ou", "away_corners_ou"];
 
-export function bookableOnSportybet(s: Pick<SlipSelection, "market" | "code">) {
+export function bookableOnSportybet(s: Pick<SlipSelection, "market" | "code"> & { sb?: SlipSelection["sb"] }) {
+  if (s.sb) return true;
   if (SPORTYBET_FIXED.has(`${s.market}:${s.code}`)) return true;
   // Over/under lines (goals, corners, bookings, team totals): half lines only, e.g. O25, U105
   if (LINE_MARKETS.includes(s.market)) return /^[OU]\d{1,2}5$/.test(s.code);

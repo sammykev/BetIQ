@@ -139,6 +139,10 @@ def _near(day: Optional[str], date_str: str) -> bool:
 # are asked for separately so a listing that refuses them still loads.
 BASE_MARKETS = "1,18,10,29,11,26,60"
 MARKETS = BASE_MARKETS + ",166,139"
+# Asked for too, only so each market's SportyBet name can confirm it
+# (booking_slip.VERIFIED): team totals, handicap, double chance & total,
+# clean sheets, win to nil, corner markets. Not stored with the links.
+LABEL_MARKETS = MARKETS + ",19,20,16,547,31,32,33,34,162,169,170"
 
 
 def _now_ms() -> int:
@@ -317,7 +321,8 @@ def slim_event(ev: Dict) -> Dict:
         "awayTeamName": ev.get("awayTeamName"),
         "estimateStartTime": ev.get("estimateStartTime"),
         "markets": [
-            {"id": m.get("id"), "specifier": m.get("specifier") or "", "desc": _label(m),
+            {"id": m.get("id"), "specifier": m.get("specifier") or "",
+             **({"desc": _label(m)} if str(m.get("id")) in ("166", "139") else {}),
              "outcomes": [{"id": o.get("id"), "odds": o.get("odds"), "isActive": o.get("isActive", 1)}
                           for o in m.get("outcomes") or []]}
             for m in ev.get("markets") or [] if str(m.get("id")) in BOOKED_MARKETS
@@ -339,18 +344,21 @@ async def fetch_catalog(session: Optional[AsyncSession] = None) -> Tuple[List[Di
          {"sportId": FOOTBALL, "marketId": MARKETS, "pageSize": 100, "option": 1}, 40),
     ]
     for name, path, params, max_pages in feeds:
-        note = ""
-        try:
-            events, pages, total = await _paged(session, path, params, max_pages)
-        except Exception as e:
-            events, pages, total, note = [], 0, None, f" ({e})"
-        if not events:  # retry without the corners/bookings markets
+        note, events, pages, total, error = "", [], 0, None, None
+        # Every market we'd like names for first; fewer if SportyBet refuses the list
+        for markets, fallback in ((LABEL_MARKETS, ""), (MARKETS, " — without the extra markets"),
+                                  (BASE_MARKETS, " — without corners/bookings markets")):
             try:
-                events, pages, total = await _paged(session, path, {**params, "marketId": BASE_MARKETS}, max_pages)
-                note += " — without corners/bookings markets" if events else ""
+                events, pages, total = await _paged(session, path, {**params, "marketId": markets}, max_pages)
             except Exception as e:
-                report.append(f"{name}: {e}")
+                error = e
                 continue
+            if events:
+                note = fallback
+                break
+        if not events and error is not None:
+            report.append(f"{name}: {error}")
+            continue
         added = sum(1 for e in events if e["eventId"] not in merged)
         for e in events:
             merged.setdefault(e["eventId"], e)
@@ -366,6 +374,60 @@ async def fetch_catalog(session: Optional[AsyncSession] = None) -> Tuple[List[Di
     except Exception as e:
         report.append(f"commonThumbnailEvents: {e}")
     return list(merged.values()), report
+
+
+# ------------------------------------------------------------------ #
+# Other sports (tennis, table tennis): SportyBet's own listings
+# ------------------------------------------------------------------ #
+
+SPORT_IDS = {"tennis": "sr:sport:5", "table_tennis": "sr:sport:20"}
+WINNER_MARKET = "186"  # Betradar "Winner": outcome 4 = first player, 5 = second
+
+
+async def fetch_sport_events(sport: str, session: Optional[AsyncSession] = None,
+                             max_pages: int = 12) -> Tuple[List[Dict], List[str]]:
+    """Every upcoming (today included) event SportyBet lists for a sport,
+    with its match-winner prices, and one report line per feed."""
+    session = session or shared_session()
+    merged: Dict[str, Dict] = {}
+    report: List[str] = []
+    for today in ("true", "false"):
+        try:
+            events, pages, total = await _paged(session, "/factsCenter/pcUpcomingEvents", {
+                "sportId": SPORT_IDS[sport], "marketId": WINNER_MARKET, "pageSize": 100, "todayGames": today}, max_pages)
+        except Exception as e:
+            report.append(f"{sport} {'today' if today == 'true' else 'upcoming'}: {e}")
+            continue
+        for e in events:
+            merged.setdefault(e["eventId"], e)
+        report.append(f"{sport} {'today' if today == 'true' else 'upcoming'}: {len(events)} events"
+                      + (f" (SportyBet says {total})" if total is not None else ""))
+    return list(merged.values()), report
+
+
+def winner_prices(ev: Dict) -> Optional[Tuple[float, float]]:
+    """(first player's odds, second player's) from an event's winner market."""
+    for m in ev.get("markets") or []:
+        outs = [o for o in m.get("outcomes") or [] if o.get("isActive", 1)]
+        if str(m.get("id")) != WINNER_MARKET or len(outs) != 2:
+            continue
+        by_id = {str(o.get("id")): o for o in outs}
+        first, second = (by_id["4"], by_id["5"]) if {"4", "5"} <= set(by_id) else (outs[0], outs[1])
+        try:
+            a, b = float(first.get("odds")), float(second.get("odds"))
+        except (TypeError, ValueError):
+            return None
+        return (a, b) if a > 1 and b > 1 else None
+    return None
+
+
+async def event_page(event_id: str, session: Optional[AsyncSession] = None) -> Optional[Dict]:
+    """One event with every market SportyBet offers on it (its match page)."""
+    data = await _request(session or shared_session(), "GET", "/factsCenter/event",
+                          params={"eventId": event_id, "productId": 3})
+    found: List[Dict] = []
+    _collect_events(data.get("data"), found)
+    return found[0] if found else None
 
 
 # ------------------------------------------------------------------ #
@@ -549,6 +611,47 @@ async def share_selections(selections: List[Dict[str, str]],
     unavailable = {key for key, _ in _outcome_keys(data.get("unavailableOutcomes") or [])}
     return {"code": str(code), "url": data.get("shareURL") or SHARE_URL.format(code=code),
             "odds": odds, "unavailable": unavailable}
+
+
+SHARE_CODE = re.compile(r"^[A-Za-z0-9]{4,16}$")
+
+
+def parse_share(data: Any) -> List[Dict[str, Any]]:
+    """The selections in a loaded booking code: one per chosen outcome, with
+    its event, market and SportyBet's current price."""
+    events: List[Dict] = []
+    _collect_events(data, events)
+    out: List[Dict[str, Any]] = []
+    for ev in events:
+        for m in ev.get("markets") or []:
+            for o in m.get("outcomes") or []:
+                try:
+                    odds = float(o.get("odds"))
+                except (TypeError, ValueError):
+                    odds = None
+                out.append({
+                    "eventId": str(ev.get("eventId")), "home": ev.get("homeTeamName") or "",
+                    "away": ev.get("awayTeamName") or "", "start": ev.get("estimateStartTime"),
+                    "tournament": ev.get("_tournament") or "",
+                    "sport_id": str(sport.get("id") or "") if isinstance(sport := ev.get("sport"), dict) else "",
+                    "marketId": str(m.get("id") or ""), "specifier": m.get("specifier") or "",
+                    "market": _label(m), "outcomeId": str(o.get("id") or ""),
+                    "outcome": str(o.get("desc") or o.get("id") or ""), "odds": odds,
+                    "active": bool(o.get("isActive", 1)),
+                })
+    return out
+
+
+async def load_share_code(code: str, session: Optional[AsyncSession] = None) -> List[Dict[str, Any]]:
+    """A booking code's selections (see parse_share). Raises SportyBetError
+    when SportyBet doesn't know the code."""
+    if not SHARE_CODE.match(code or ""):
+        raise SportyBetError("That doesn't look like a SportyBet booking code")
+    data = await _request(session or shared_session(), "GET", f"/orders/share/{code.upper()}")
+    selections = parse_share(data.get("data"))
+    if not selections:
+        raise SportyBetError("SportyBet returned no games for that code (expired or already started?)")
+    return selections
 
 
 # ------------------------------------------------------------------ #

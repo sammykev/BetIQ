@@ -24,6 +24,7 @@ interface ValueBet {
   edge: number;
   overround: number;
   bookie: string;
+  value_market_name?: string;  // SportyBet-priced value bets: which market
 }
 
 function ValueBetCard({ v, onClick }: { v: ValueBet; onClick?: () => void }) {
@@ -78,7 +79,7 @@ function ValueBetCard({ v, onClick }: { v: ValueBet; onClick?: () => void }) {
             +{v.edge}% EDGE
           </span>
           <div className="min-w-0 flex-1">
-            <p className={clsx("font-display font-bold text-[11px] uppercase tracking-[0.14em]", big ? "text-ink/60" : "text-n-400")}>Value pick</p>
+            <p className={clsx("font-display font-bold text-[11px] uppercase tracking-[0.14em]", big ? "text-ink/60" : "text-n-400")}>{v.value_market_name ?? "Value pick"}</p>
             <p className="font-display font-extrabold text-xl uppercase leading-tight truncate">{v.value_label}</p>
           </div>
           <div className="text-right shrink-0">

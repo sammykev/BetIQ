@@ -209,6 +209,22 @@ def _event_odds(event: Dict, ids: Dict[str, str]) -> Optional[float]:
     return None
 
 
+_SB_FIELDS = {"eventId": re.compile(r"^sr:[a-z_]+:\d{1,12}$"), "marketId": re.compile(r"^\d{1,6}$"),
+              "specifier": re.compile(r"^[\w=.|+:-]{0,80}$"), "outcomeId": re.compile(r"^[\w-]{1,24}$")}
+
+
+def raw_ids(s: Dict[str, Any]) -> Optional[Dict[str, str]]:
+    """A selection carrying SportyBet's own ids (a leg kept from a booking code
+    we don't model), validated; None when it doesn't carry them."""
+    sb = s.get("sb")
+    if not isinstance(sb, dict):
+        return None
+    out = {k: str(sb.get(k) or "") for k in _SB_FIELDS}
+    if not all(rx.match(out[k]) for k, rx in _SB_FIELDS.items()):
+        raise ValueError("invalid SportyBet selection")
+    return out
+
+
 def validate(selections: Any) -> List[Dict[str, Any]]:
     """Well-formed selections, at most one per match (the last one wins)."""
     if not isinstance(selections, list):
@@ -222,6 +238,7 @@ def validate(selections: Any) -> List[Dict[str, Any]]:
                 raise ValueError(f"selection is missing '{field}'")
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", s["date"]):
             raise ValueError("date must be YYYY-MM-DD")
+        raw_ids(s)
         by_match[selection_key(s)] = s
     if not by_match:
         raise ValueError("the slip is empty")
@@ -259,6 +276,11 @@ async def to_sportybet(
     for s in selections:
         pick = {"key": selection_key(s), "home": s["home"], "away": s["away"],
                 "label": s.get("label") or s["code"], "odds": None}
+        raw = raw_ids(s)
+        if raw:  # booked exactly as SportyBet had it
+            to_book.append((len(picks), raw, {"eventId": raw["eventId"], "markets": []}))
+            picks.append({**pick, "status": "matched"})
+            continue
         ids = sportybet_ids(s["market"], s["code"])
         if not ids:
             picks.append({**pick, "status": "unsupported",
