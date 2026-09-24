@@ -42,6 +42,36 @@ function AccuracyChart({ daily }: { daily: { date: string; won: number; lost: nu
   );
 }
 
+/* ───────────── shared model (backend/model_store.py) ───────────── */
+function SharedModelLine({ model }: {
+  model?: { source: string | null; rows: number | null; size: number | null; trained_at: string; max_age_hours: number } | null;
+}) {
+  if (!model) {
+    return (
+      <p className="text-xs text-amber-400">
+        No shared model yet, so the server trains its own after every restart. Add the UPSTASH_REDIS_URL
+        secret on GitHub and run the &quot;Train model&quot; workflow.
+      </p>
+    );
+  }
+  const hours = (Date.now() - new Date(model.trained_at).getTime()) / 3600000;
+  const age = hours < 1 ? `${Math.max(1, Math.round(hours * 60))} min ago`
+    : hours < 48 ? `${Math.round(hours)} h ago` : `${Math.round(hours / 24)} days ago`;
+  const by = model.source === "github-actions" ? "GitHub Actions" : model.source === "api-server" ? "this server" : model.source ?? "unknown";
+  const stale = hours > model.max_age_hours;
+  return (
+    <p className={clsx("text-xs", stale ? "text-amber-400" : "text-slate-400")}>
+      <span className="text-slate-300 font-semibold">Model:</span>{" "}
+      trained by {by} {age}
+      {model.rows ? ` · ${model.rows.toLocaleString("en-US")} matches` : ""}
+      {model.size ? ` · ${(model.size / 1e6).toFixed(1)} MB` : ""}
+      {stale
+        ? ` · older than ${model.max_age_hours} h, so a restart trains instead. Check the "Train model" workflow on GitHub.`
+        : " · restarts load it in seconds"}
+    </p>
+  );
+}
+
 /* ───────────── main page ───────────── */
 export default function AdminPage() {
   const [secret, setSecret]       = useState("");
@@ -620,6 +650,7 @@ export default function AdminPage() {
                 : "Not synced since the last restart"}
             </span>
           </div>
+          <SharedModelLine model={dataStatus.shared_model} />
           <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
             {Object.entries(dataStatus.leagues as Record<string, { latest_match: string }>).map(([div, l]) => {
               const days = Math.floor((Date.now() - new Date(l.latest_match).getTime()) / 86400000);
