@@ -1,15 +1,15 @@
 import { clerkClient } from "@clerk/nextjs/server";
 import { Resend } from "resend";
 import { NextRequest, NextResponse } from "next/server";
+import { isAdminRequest } from "@/lib/serverAdmin";
 
-const ADMIN_SECRET = process.env.ADMIN_SECRET || "";
 const resend = new Resend(process.env.RESEND_API_KEY || "");
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    if (!ADMIN_SECRET || body.secret !== ADMIN_SECRET)
+    if (!(await isAdminRequest(req)))
       return NextResponse.json({ error: "forbidden" }, { status: 403 });
+    const body = await req.json();
 
     const { subject, message } = body;
     if (!subject || !message)

@@ -121,7 +121,7 @@ class TestDataStatus:
         monkeypatch.setattr(main, "_predictor", m)
         monkeypatch.setattr(main, "_predictions_cache", [
             {"home": "Manchester United FC", "away": "Paris FC", "league": "PL"}])
-        r = TestClient(main.app).get("/api/admin/data-status", params={"secret": "s3cret"}).json()
+        r = TestClient(main.app).get("/api/admin/data-status", headers={"X-Admin-Secret": "s3cret"}).json()
         assert r["leagues"]["E0"]["latest_match"] == "2026-08-04"
         assert r["renamed"] == {"Manchester United FC": "Man United"}
         assert [t["team"] for t in r["thin_history"]] == ["Paris FC"]

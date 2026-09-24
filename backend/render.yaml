@@ -15,6 +15,10 @@ services:
         sync: false
       - key: CLERK_AUTHORIZED_PARTIES
         sync: false
+      # Clerk user ids allowed into the admin page, comma-separated (the page
+      # shows yours). ADMIN_SECRET then only matters for scripts.
+      - key: ADMIN_USER_IDS
+        sync: false
       # SportyBet booking (sportybet.py). Defaults work; set SPORTYBET_PROXY only
       # if the admin "Test live booking" check shows SportyBet refusing this server.
       # Days ahead to fetch and predict (main.PREDICTION_DAYS)

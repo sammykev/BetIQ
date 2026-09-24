@@ -9,7 +9,9 @@ import {
   UserPlus, UserMinus, MousePointerClick,
 } from "lucide-react";
 import clsx from "clsx";
+import { useAuth } from "@clerk/nextjs";
 import { TrackRecord } from "@/components/TrackRecord";
+import { useAuthedFetch } from "@/lib/useAuthedFetch";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
 
@@ -74,10 +76,22 @@ function SharedModelLine({ model }: {
 
 /* ───────────── main page ───────────── */
 export default function AdminPage() {
+  // Admin access (backend require_admin): your Clerk sign-in if your user id
+  // is in ADMIN_USER_IDS, else the admin secret — kept in memory only and
+  // sent as the X-Admin-Secret header, never in a URL or request body.
+  const { isLoaded: clerkLoaded } = useAuth();
+  const authedFetch = useAuthedFetch();
   const [secret, setSecret]       = useState("");
   const [authed, setAuthed]       = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState(false);
+  const [whoami, setWhoami]       = useState<{ user_id: string | null; clerk_admins_configured: boolean } | null>(null);
+
+  const adminFetch = useCallback((url: string, init: RequestInit = {}) => {
+    const headers = new Headers(init.headers);
+    if (secret.trim()) headers.set("X-Admin-Secret", secret.trim());
+    return authedFetch(url, { ...init, headers });
+  }, [authedFetch, secret]);
 
   // Config state
   const [paywallEnabled, setPaywallEnabled]   = useState<boolean | null>(null);
@@ -119,14 +133,14 @@ export default function AdminPage() {
   };
 
   const post = useCallback(async (path: string, body: object) => {
-    const r = await fetch(`${API}${path}`, {
+    const r = await adminFetch(`${API}${path}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ secret, ...body }),
+      body: JSON.stringify(body),
     });
     if (!r.ok) throw new Error(await r.text());
     return r.json();
-  }, [secret]);
+  }, [adminFetch]);
 
   const loadAll = useCallback(async () => {
     const [pw, maint, ban, feat, h] = await Promise.all([
@@ -144,29 +158,36 @@ export default function AdminPage() {
     setHealth(h);
 
     // Load heavy data in background
-    fetch(`${API}/api/admin/stats?secret=${encodeURIComponent(secret)}`).then(r => r.json()).then(setStats).catch(() => {});
-    fetch(`${API}/api/admin/revenue?secret=${encodeURIComponent(secret)}`).then(r => r.json()).then(setRevenue).catch(() => {});
-    fetch(`${API}/api/admin/popular?secret=${encodeURIComponent(secret)}`).then(r => r.json()).then(setPopular).catch(() => {});
-    fetch(`${API}/api/admin/data-status?secret=${encodeURIComponent(secret)}`).then(r => r.ok ? r.json() : null).then(setDataStatus).catch(() => {});
-    fetch("/api/admin/subscribers").then(r => r.json()).then(setSubs).catch(() => {});
-    fetch(`/api/admin/users?secret=${encodeURIComponent(secret)}`).then(r => r.json()).then(setUsers).catch(() => {});
-  }, [secret]);
+    adminFetch(`${API}/api/admin/stats`).then(r => r.json()).then(setStats).catch(() => {});
+    adminFetch(`${API}/api/admin/revenue`).then(r => r.json()).then(setRevenue).catch(() => {});
+    adminFetch(`${API}/api/admin/popular`).then(r => r.json()).then(setPopular).catch(() => {});
+    adminFetch(`${API}/api/admin/data-status`).then(r => r.ok ? r.json() : null).then(setDataStatus).catch(() => {});
+    adminFetch("/api/admin/subscribers").then(r => r.json()).then(setSubs).catch(() => {});
+    adminFetch("/api/admin/users").then(r => r.json()).then(setUsers).catch(() => {});
+  }, [adminFetch]);
 
   useEffect(() => { if (authed) loadAll(); }, [authed, loadAll]);
 
-  const handleAuth = async () => {
+  // Signed in as an admin? Then no secret is needed at all.
+  const checkAdmin = useCallback(async (withSecret: boolean) => {
     setAuthLoading(true); setAuthError(false);
     try {
-      const r = await fetch(`${API}/api/config/paywall`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ secret, enabled: true }),
-      });
-      if (r.ok) { setPaywallEnabled((await r.json()).enabled); setAuthed(true); }
-      else setAuthError(true);
-    } catch { setAuthError(true); }
+      const r = await adminFetch(`${API}/api/admin/whoami`);
+      const d = await r.json();
+      setWhoami(d);
+      if (d.admin) setAuthed(true);
+      else if (withSecret) setAuthError(true);
+    } catch { if (withSecret) setAuthError(true); }
     finally { setAuthLoading(false); }
-  };
+  }, [adminFetch]);
+
+  useEffect(() => {
+    if (clerkLoaded) checkAdmin(false);
+    // Only once Clerk is ready; later checks come from the form
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clerkLoaded]);
+
+  const handleAuth = () => checkAdmin(true);
 
   const toggle = async (key: "paywall" | "maintenance") => {
     setToggling(key);
@@ -214,10 +235,10 @@ export default function AdminPage() {
     if (!grantEmail) return;
     setGrantLoading(true); setGrantMsg(null);
     try {
-      const res = await fetch("/api/admin/grant", {
+      const res = await adminFetch("/api/admin/grant", {
         method: grantAction === "grant" ? "POST" : "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ secret, email: grantEmail }),
+        body: JSON.stringify({ email: grantEmail }),
       });
       const d = await res.json();
       setGrantMsg(d.ok ? `✅ ${d.action} for ${d.email}` : `❌ ${d.error}`);
@@ -230,10 +251,10 @@ export default function AdminPage() {
     if (!blastSubject || !blastMsg) return;
     setBlastLoading(true); setBlastResult(null);
     try {
-      const res = await fetch("/api/admin/blast", {
+      const res = await adminFetch("/api/admin/blast", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ secret, subject: blastSubject, message: blastMsg }),
+        body: JSON.stringify({ subject: blastSubject, message: blastMsg }),
       });
       const d = await res.json();
       setBlastResult(d.error ? `❌ ${d.error}` : `✅ Sent to ${d.sent} users (${d.total_premium} premium total)`);
@@ -268,6 +289,16 @@ export default function AdminPage() {
               <p className="text-slate-500 text-xs">Authorised access only</p>
             </div>
           </div>
+          {whoami?.user_id && (
+            <div className="text-xs text-slate-400 bg-slate-800 rounded-xl p-3 space-y-1">
+              <p>You&apos;re signed in, but this account isn&apos;t an admin. To sign in with it instead of the secret,
+                add its user id to <span className="text-slate-200">ADMIN_USER_IDS</span> on Render and Vercel:</p>
+              <p className="font-mono text-green-400 break-all select-all">{whoami.user_id}</p>
+            </div>
+          )}
+          {!whoami?.user_id && (
+            <p className="text-xs text-slate-500">Sign in to the site with an admin account to skip the secret.</p>
+          )}
           <input type="password" placeholder="Admin secret" value={secret}
             onChange={e => setSecret(e.target.value)}
             onKeyDown={e => e.key === "Enter" && handleAuth()}
@@ -557,7 +588,7 @@ export default function AdminPage() {
             onClick={async () => {
               setSbChecking(true); setSbCheck(null);
               try {
-                const r = await fetch(`${API}/api/admin/sportybet-check?secret=${encodeURIComponent(secret)}`);
+                const r = await adminFetch(`${API}/api/admin/sportybet-check`);
                 setSbCheck(r.ok ? await r.json() : { ok: false, steps: [{ step: "Request", ok: false, detail: `HTTP ${r.status}` }] });
               } catch (e) {
                 setSbCheck({ ok: false, steps: [{ step: "Request", ok: false, detail: String(e) }] });
@@ -597,7 +628,7 @@ export default function AdminPage() {
             onClick={async () => {
               setIntlChecking(true); setIntlCheck(null);
               try {
-                const r = await fetch(`${API}/api/admin/international-check?secret=${encodeURIComponent(secret)}`);
+                const r = await adminFetch(`${API}/api/admin/international-check`);
                 setIntlCheck(r.ok ? await r.json() : { error: `HTTP ${r.status}` });
               } catch (e) {
                 setIntlCheck({ error: String(e) });
@@ -697,7 +728,7 @@ export default function AdminPage() {
       )}
 
       {/* ── Model backtest ── */}
-      <TrackRecord secret={secret} />
+      <TrackRecord adminFetch={adminFetch} />
 
       {/* ── AI & Chatbot ── */}
       <section className="bg-slate-900 border border-slate-700 rounded-xl p-5 space-y-4">

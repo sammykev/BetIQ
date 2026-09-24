@@ -152,16 +152,16 @@ class TestEndpoint:
         path = tmp_path / "m.json"
         path.write_text(json.dumps({"matches": 12}))
         monkeypatch.setattr(backtest, "METRICS_PATH", str(path))
-        r = TestClient(main.app).get(self.URL, params={"secret": "s3cret"}).json()
+        r = TestClient(main.app).get(self.URL, headers={"X-Admin-Secret": "s3cret"}).json()
         assert r == {"available": True, "matches": 12}
 
     def test_missing_file(self, tmp_path, monkeypatch):
         monkeypatch.setattr(backtest, "METRICS_PATH", str(tmp_path / "nope.json"))
-        assert TestClient(main.app).get(self.URL, params={"secret": "s3cret"}).json() == {"available": False}
+        assert TestClient(main.app).get(self.URL, headers={"X-Admin-Secret": "s3cret"}).json() == {"available": False}
 
     @pytest.mark.parametrize("secret", ["", "wrong"])
     def test_admin_only(self, secret):
-        assert TestClient(main.app).get(self.URL, params={"secret": secret}).status_code == 403
+        assert TestClient(main.app).get(self.URL, headers={"X-Admin-Secret": secret}).status_code == 403
 
     def test_old_public_path_is_gone(self):
         assert TestClient(main.app).get("/api/model/metrics").status_code == 404

@@ -1,11 +1,9 @@
 import { clerkClient } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
-
-const ADMIN_SECRET = process.env.ADMIN_SECRET || "";
+import { isAdminRequest } from "@/lib/serverAdmin";
 
 export async function GET(req: NextRequest) {
-  const secret = req.nextUrl.searchParams.get("secret") || "";
-  if (!ADMIN_SECRET || secret !== ADMIN_SECRET)
+  if (!(await isAdminRequest(req)))
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
 
   try {

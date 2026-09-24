@@ -1,14 +1,13 @@
 import { clerkClient } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
-
-const ADMIN_SECRET = process.env.ADMIN_SECRET || "";
+import { isAdminRequest } from "@/lib/serverAdmin";
 
 // POST — grant premium  |  DELETE — revoke premium
 async function handleGrant(req: NextRequest, grant: boolean) {
   try {
-    const body = await req.json();
-    if (!ADMIN_SECRET || body.secret !== ADMIN_SECRET)
+    if (!(await isAdminRequest(req)))
       return NextResponse.json({ error: "forbidden" }, { status: 403 });
+    const body = await req.json();
 
     const email = (body.email || "").toLowerCase().trim();
     if (!email) return NextResponse.json({ error: "missing_email" }, { status: 400 });

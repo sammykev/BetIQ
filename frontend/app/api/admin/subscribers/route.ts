@@ -1,7 +1,10 @@
 import { clerkClient } from "@clerk/nextjs/server";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { isAdminRequest } from "@/lib/serverAdmin";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  if (!(await isAdminRequest(req)))
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
   try {
     const client = await clerkClient();
     const { data: users, totalCount } = await client.users.getUserList({ limit: 500 });

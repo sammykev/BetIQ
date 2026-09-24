@@ -6,7 +6,7 @@ import { fetchModelMetrics, type ModelMetrics, type PickTierRow } from "@/lib/ap
 
 // How the model did on matches it hadn't seen: a monthly walk-forward
 // backtest (backend/backtest.py). Admin dashboard only — the endpoint needs
-// the admin secret. Renders nothing until metrics exist.
+// admin access (adminFetch). Renders nothing until metrics exist.
 
 const pct = (x: number | null | undefined, digits = 0) =>
   x === null || x === undefined ? "–" : `${(x * 100).toFixed(digits)}%`;
@@ -50,10 +50,10 @@ function TierRows({ title, rows }: { title: string; rows: PickTierRow[] }) {
   );
 }
 
-export function TrackRecord({ secret }: { secret: string }) {
+export function TrackRecord({ adminFetch }: { adminFetch: (url: string) => Promise<Response> }) {
   const [m, setM] = useState<ModelMetrics | null>(null);
 
-  useEffect(() => { fetchModelMetrics(secret).then(setM); }, [secret]);
+  useEffect(() => { fetchModelMetrics(adminFetch).then(setM); }, [adminFetch]);
   if (!m || !m.period || !m.matches) return null;
 
   const tier = (kind: string, t: string) => m.picks.by_tier.find(r => r.kind === kind && r.tier === t);

@@ -197,9 +197,10 @@ export interface ModelMetrics {
   without_odds?: { match_result: { model: ProbScores; market: ProbScores }; straight?: PickTierRow; double?: PickTierRow };
 }
 
-export async function fetchModelMetrics(secret: string): Promise<ModelMetrics | null> {
+/** `adminFetch` adds the admin credentials (see app/betiq-hq). */
+export async function fetchModelMetrics(adminFetch: (url: string) => Promise<Response>): Promise<ModelMetrics | null> {
   try {
-    const res = await fetch(`${API_URL}/api/admin/model-metrics?secret=${encodeURIComponent(secret)}`);
+    const res = await adminFetch(`${API_URL}/api/admin/model-metrics`);
     if (!res.ok) return null;
     const data = await res.json();
     return data && data.available === true && Array.isArray(data.calibration) ? data : null;

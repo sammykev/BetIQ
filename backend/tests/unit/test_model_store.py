@@ -127,8 +127,8 @@ def test_training_script_skips_without_redis(monkeypatch, capsys):
 def test_admin_data_status_reports_the_shared_model(redis, monkeypatch):
     from fastapi.testclient import TestClient
     monkeypatch.setattr(main, "ADMIN_SECRET", "s3cret")
-    assert TestClient(main.app).get("/api/admin/data-status", params={"secret": "s3cret"}).json()["shared_model"] is None
+    assert TestClient(main.app).get("/api/admin/data-status", headers={"X-Admin-Secret": "s3cret"}).json()["shared_model"] is None
     model_store.publish(b"model", MODEL_CACHE_VERSION, {"source": "github-actions", "rows": 38012})
-    shared = TestClient(main.app).get("/api/admin/data-status", params={"secret": "s3cret"}).json()["shared_model"]
+    shared = TestClient(main.app).get("/api/admin/data-status", headers={"X-Admin-Secret": "s3cret"}).json()["shared_model"]
     assert (shared["source"], shared["rows"], shared["size"]) == ("github-actions", 38012, 5)
     assert shared["trained_at"].endswith("+00:00") and shared["max_age_hours"] == model_store.MAX_AGE_HOURS

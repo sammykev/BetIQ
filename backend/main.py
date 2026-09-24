@@ -16,7 +16,7 @@ from typing import List, Dict, Any, Optional
 
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, BackgroundTasks, HTTPException, Request
+from fastapi import FastAPI, BackgroundTasks, Depends, HTTPException, Request
 from auth import auth_enforced, optional_user, require_user
 from grading import grade_prediction, regrade, to_goals
 from team_names import UCL_ALIASES, TeamResolver
@@ -68,6 +68,33 @@ def _get_redis():
         return None
 
 app = FastAPI(title="Sport Bet Predictions API", version="2.0.0")
+
+# Admins: Clerk user ids (comma-separated) whose session token grants admin,
+# so the admin page needs no shared secret in the browser. ADMIN_SECRET
+# still works for scripts, but only in the X-Admin-Secret header — never in
+# a URL (URLs end up in server logs and browser history) or a request body.
+ADMIN_USER_IDS = {u.strip() for u in os.getenv("ADMIN_USER_IDS", "").split(",") if u.strip()}
+
+
+async def _admin_identity(request: Request):
+    """(how this request is an admin — "secret" / "clerk" — or None,
+    the signed-in Clerk user id if any)."""
+    import hmac
+    import auth
+    given = request.headers.get("x-admin-secret", "").strip()
+    if ADMIN_SECRET and given and hmac.compare_digest(given, ADMIN_SECRET):
+        return "secret", None
+    uid = await auth.optional_user(request)
+    if uid and uid in ADMIN_USER_IDS:
+        return "clerk", uid
+    return None, uid
+
+
+async def require_admin(request: Request) -> str:
+    via, _ = await _admin_identity(request)
+    if not via:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return via
 
 app.add_middleware(
     CORSMiddleware,
@@ -1855,9 +1882,8 @@ def _archive_past_predictions():
 
 
 @app.get("/api/admin/sportybet-check")
-async def sportybet_check(secret: str = ""):
+async def sportybet_check(_admin: str = Depends(require_admin)):
     """Book a real one-pick SportyBet code from this server and report each step."""
-    _check_admin(secret)
     import sportybet
     today = date.today().isoformat()
     upcoming = [{"home": p.get("home"), "away": p.get("away")} for p in _predictions_cache
@@ -1866,10 +1892,9 @@ async def sportybet_check(secret: str = ""):
 
 
 @app.get("/api/admin/international-check")
-async def international_check(secret: str = ""):
+async def international_check(_admin: str = Depends(require_admin)):
     """Fetch international fixtures now, report what each source returned,
     and publish them without waiting for the next pipeline run."""
-    _check_admin(secret)
     global _predictions_cache, _last_updated
     fixtures = await _fetch_international_fixtures()
     published = 0
@@ -1906,10 +1931,9 @@ def _shared_model_status() -> Optional[Dict[str, Any]]:
 
 
 @app.get("/api/admin/data-status")
-async def data_status(secret: str = ""):
+async def data_status(_admin: str = Depends(require_admin)):
     """How fresh the training data is, and which upcoming teams the model
     knows little or nothing about (a name it couldn't match, or a new club)."""
-    _check_admin(secret)
     leagues: Dict[str, Dict[str, Any]] = {}
     for path in sorted(glob.glob(os.path.join(FOOTBALL_DATA_DIR, "*.csv"))):
         div = os.path.basename(path).split("_")[0]
@@ -1947,9 +1971,8 @@ async def data_status(secret: str = ""):
 
 
 @app.get("/api/admin/model-metrics")
-async def model_metrics(secret: str = ""):
+async def model_metrics(_admin: str = Depends(require_admin)):
     """Walk-forward backtest results (generated offline by backtest.py). Admin only."""
-    _check_admin(secret)
     from backtest import METRICS_PATH
     try:
         with open(METRICS_PATH) as f:
@@ -2213,8 +2236,7 @@ async def upload_basketball_csv(request: Request):
     from fastapi import UploadFile, File
     import shutil
 
-    if request.headers.get("x-admin-secret") != ADMIN_SECRET:
-        raise HTTPException(status_code=403, detail="Admin access only")
+    await require_admin(request)
 
     form = await request.form()
     upload = form.get("file")
@@ -2307,8 +2329,7 @@ async def upload_tennis_csv(request: Request):
     Protected by ADMIN_SECRET header.
     Form fields: file (required), tour (atp|wta, optional)
     """
-    if request.headers.get("x-admin-secret") != ADMIN_SECRET:
-        raise HTTPException(status_code=403, detail="Admin access only")
+    await require_admin(request)
 
     form = await request.form()
     upload = form.get("file")
@@ -2345,7 +2366,7 @@ async def upload_tennis_csv(request: Request):
 
 
 @app.get("/api/admin/model-status")
-async def model_status():
+async def model_status(_admin: str = Depends(require_admin)):
     """Return status of all trained models."""
     status: Dict[str, Any] = {}
 
@@ -2746,14 +2767,17 @@ async def explain_match(home: str, away: str):
     return result
 
 
-def _check_admin(secret: str):
-    if not ADMIN_SECRET or secret.strip() != ADMIN_SECRET:
-        raise HTTPException(status_code=403, detail="Forbidden")
+@app.get("/api/admin/whoami")
+async def admin_whoami(request: Request):
+    """Whether this request is an admin (the admin page's sign-in check).
+    A signed-in non-admin sees their Clerk user id, to add to ADMIN_USER_IDS."""
+    via, uid = await _admin_identity(request)
+    return {"admin": bool(via), "via": via, "user_id": uid,
+            "clerk_admins_configured": bool(ADMIN_USER_IDS)}
 
 
 @app.get("/api/admin/stats")
-async def admin_stats(secret: str = ""):
-    _check_admin(secret)
+async def admin_stats(_admin: str = Depends(require_admin)):
     r = _get_redis()
     if not r:
         return {"error": "no_redis"}
@@ -2826,8 +2850,7 @@ async def admin_stats(secret: str = ""):
 
 
 @app.get("/api/admin/revenue")
-async def admin_revenue(secret: str = ""):
-    _check_admin(secret)
+async def admin_revenue(_admin: str = Depends(require_admin)):
     paystack_key = os.getenv("PAYSTACK_SECRET_KEY", "")
     if not paystack_key:
         return {"error": "no_paystack_key"}
@@ -2872,8 +2895,7 @@ async def get_banner():
 
 
 @app.post("/api/admin/banner")
-async def set_banner(body: Dict[str, Any]):
-    _check_admin(body.get("secret", ""))
+async def set_banner(body: Dict[str, Any], _admin: str = Depends(require_admin)):
     r = _get_redis()
     if not r:
         raise HTTPException(status_code=503, detail="No Redis")
@@ -2899,8 +2921,7 @@ async def get_maintenance():
 
 
 @app.post("/api/config/maintenance")
-async def set_maintenance(body: Dict[str, Any]):
-    _check_admin(body.get("secret", ""))
+async def set_maintenance(body: Dict[str, Any], _admin: str = Depends(require_admin)):
     r = _get_redis()
     if not r:
         raise HTTPException(status_code=503, detail="No Redis")
@@ -2910,8 +2931,7 @@ async def set_maintenance(body: Dict[str, Any]):
 
 
 @app.post("/api/admin/clear-cache")
-async def clear_cache(body: Dict[str, Any]):
-    _check_admin(body.get("secret", ""))
+async def clear_cache(body: Dict[str, Any], _admin: str = Depends(require_admin)):
     r = _get_redis()
     if not r:
         raise HTTPException(status_code=503, detail="No Redis")
@@ -2939,8 +2959,7 @@ async def get_featured():
 
 
 @app.post("/api/admin/featured")
-async def set_featured(body: Dict[str, Any]):
-    _check_admin(body.get("secret", ""))
+async def set_featured(body: Dict[str, Any], _admin: str = Depends(require_admin)):
     r = _get_redis()
     if not r:
         raise HTTPException(status_code=503, detail="No Redis")
@@ -3650,8 +3669,7 @@ async def track_league(body: Dict[str, Any]):
 
 
 @app.get("/api/admin/popular")
-async def get_popular(secret: str = ""):
-    _check_admin(secret)
+async def get_popular(_admin: str = Depends(require_admin)):
     r = _get_redis()
     if not r: return {"matches": [], "leagues": []}
     try:
@@ -3825,12 +3843,8 @@ async def get_paywall_state():
 
 
 @app.post("/api/config/paywall")
-async def set_paywall_state(body: Dict[str, Any], request: Any = None):
+async def set_paywall_state(body: Dict[str, Any], _admin: str = Depends(require_admin)):
     """Admin-only endpoint — toggle paywall on or off."""
-    from fastapi import Request
-    admin_secret = (body.get("secret") or "").strip()
-    if not ADMIN_SECRET or admin_secret != ADMIN_SECRET:
-        raise HTTPException(status_code=403, detail="Forbidden")
 
     enabled = bool(body.get("enabled", True))
     r = _get_redis()

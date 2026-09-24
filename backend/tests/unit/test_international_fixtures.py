@@ -306,7 +306,7 @@ class TestAdminCheck:
         monkeypatch.setattr(main, "ADMIN_SECRET", "s3cret")
 
     def test_admin_only(self):
-        assert TestClient(main.app).get(self.URL, params={"secret": "nope"}).status_code == 403
+        assert TestClient(main.app).get(self.URL, headers={"X-Admin-Secret": "nope"}).status_code == 403
 
     def test_fetches_reports_and_publishes(self, monkeypatch):
         fx = intl._fixture("espn:5", "Ivory Coast", "Ghana", pd.Timestamp("2026-09-24T16:00Z"), "AFCON Qualifying", None)
@@ -326,7 +326,7 @@ class TestAdminCheck:
         monkeypatch.setattr(main, "_save_predictions_cache", lambda: None)
         monkeypatch.setattr(main, "_load_cached_live_odds", lambda: ({}, None))
 
-        r = TestClient(main.app).get(self.URL, params={"secret": "s3cret"}).json()
+        r = TestClient(main.app).get(self.URL, headers={"X-Admin-Secret": "s3cret"}).json()
         assert (r["fixtures"], r["published"]) == (1, 1)
         assert r["by_competition"] == {"AFCON Qualifying": 1} and r["errors"] == ["espn uefa.euroq: HTTP 400"]
         assert sorted(p["home"] for p in main._predictions_cache) == ["Arsenal", "Ivory Coast"]
