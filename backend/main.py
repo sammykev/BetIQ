@@ -3939,6 +3939,46 @@ def _linked_event(selection: Dict[str, Any]) -> Optional[Dict]:
     return _sb_links.get(_sb_key(selection["home"], selection["away"], selection["date"]))
 
 
+@app.post("/api/optimizer")
+async def optimize_slip(body: Dict[str, Any]):
+    """
+    Build the slip with the best win chance whose total odds land in a target
+    range (optimizer.py). Body: {min_odds, max_odds, max_games?, min_prob?,
+    days?, leagues?: [codes], markets?: [ids], bookable_only?}.
+    """
+    import optimizer
+    try:
+        lo, hi = float(body.get("min_odds", 2)), float(body.get("max_odds", 5))
+        max_games = int(body.get("max_games", optimizer.MAX_GAMES))
+        min_prob = min(0.95, max(0.5, float(body.get("min_prob", 0.6))))
+        days = min(PREDICTION_DAYS, max(1, int(body.get("days", 3))))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid optimizer settings")
+    if not (1.01 <= lo <= hi <= 1_000_000):
+        raise HTTPException(status_code=400, detail="Target odds need 1.01 ≤ min ≤ max ≤ 1,000,000")
+    leagues = set(body.get("leagues") or [])
+    markets = set(body.get("markets") or []) or None
+    bookable_only = bool(body.get("bookable_only"))
+
+    now = datetime.now(timezone.utc)
+    today, last = now.date().isoformat(), (now.date() + timedelta(days=days - 1)).isoformat()
+    kicked_off = now.strftime("%H:%M")
+    preds = [p for p in _predictions_cache
+             if p.get("sport") in (None, "football")
+             and today <= p.get("date", "") <= last
+             and not (p.get("date") == today and (p.get("time") or "99:99") <= kicked_off)
+             and (not leagues or p.get("league") in leagues)
+             and (not bookable_only or p.get("sportybet"))]
+    groups = [optimizer.candidates(p, _linked_event(p), min_prob, markets) for p in preds]
+    result = await asyncio.to_thread(optimizer.optimize, groups, lo, hi, max_games)
+    considered = sum(1 for g in groups if g)
+    if result is None:
+        return {"error": (f"No slip from {considered} matches reaches {lo:g}–{hi:g}x. "
+                          "Widen the range, allow more games or days, or lower the minimum confidence."),
+                "matches_considered": considered, "target": [lo, hi]}
+    return {**result, "target": [lo, hi], "matches_considered": considered}
+
+
 @app.post("/api/booking/convert")
 async def convert_slip(body: Dict[str, Any]):
     """

@@ -139,9 +139,10 @@ async def _pc_upcoming(session: AsyncSession, max_pages: int = 10) -> List[Dict]
     """The desktop site's "Upcoming" football list, page by page."""
     events: List[Dict] = []
     for page in range(1, max_pages + 1):
+        # The parameters sportybet.com's Upcoming page (and public scrapers) use
         data = (await _request(session, "GET", "/factsCenter/pcUpcomingEvents", params={
             "sportId": FOOTBALL, "marketId": MARKETS, "pageSize": 100, "pageNum": page,
-            "option": 1, "_t": _now_ms()})).get("data") or {}
+            "todayGames": "false", "_t": _now_ms()})).get("data") or {}
         found: List[Dict] = []
         _collect_events(data, found)
         seen = {e["eventId"] for e in events}

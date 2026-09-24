@@ -504,3 +504,21 @@ class TestSharedSession:
         assert asyncio.run(sportybet.share_selections(one))["code"] == "KEEP01"   # reconnected once
         assert asyncio.run(sportybet.share_selections(one))["code"] == "KEEP01"   # same connection again
         assert len(made) == 2 and len(made[1].calls) == 2
+
+
+def test_an_empty_sportybet_listing_is_reported_as_unreachable_not_missing():
+    async def fetch(date):
+        return []
+
+    async def share(sels):
+        raise AssertionError("nothing to book")
+    out = asyncio.run(to_sportybet([sel(), sel(home="Leeds", away="Hull")], fetch, sportybet.find_event, share))
+    assert {p["reason"] for p in out["picks"]} == {"Couldn't load SportyBet's match list"}
+    assert out["error"].startswith("Couldn't reach SportyBet's match list")
+
+
+def test_upcoming_listing_uses_the_sites_parameters():
+    s = FakeSession({"/factsCenter/pcUpcomingEvents": ok({"totalNum": 0, "tournaments": []})})
+    asyncio.run(sportybet._pc_upcoming(s, max_pages=1))
+    params = s.calls[0][2]["params"]
+    assert params["todayGames"] == "false" and "option" not in params and params["sportId"] == "sr:sport:1"

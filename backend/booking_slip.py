@@ -109,6 +109,7 @@ async def to_sportybet(
     picks: List[Dict[str, Any]] = []
     to_book: List[Tuple[int, Dict[str, str], Dict]] = []  # (pick index, ids, event)
     events_by_date: Dict[str, List[Dict]] = {}
+    listing_down = False  # SportyBet always lists football: an empty list means we couldn't load it
 
     for s in selections:
         pick = {"key": selection_key(s), "home": s["home"], "away": s["away"],
@@ -122,6 +123,11 @@ async def to_sportybet(
         if event is None:
             if s["date"] not in events_by_date:
                 events_by_date[s["date"]] = await fetch_events(s["date"])
+            if not events_by_date[s["date"]]:
+                listing_down = True
+                picks.append({**pick, "status": "not_found",
+                              "reason": "Couldn't load SportyBet's match list"})
+                continue
             event = find_event(s["home"], s["away"], events_by_date[s["date"]])
         event_id = event and str(event.get("eventId") or "")
         if not event_id:
@@ -133,7 +139,9 @@ async def to_sportybet(
     result: Dict[str, Any] = {"platform": "sportybet", "code": None, "share_url": None,
                               "picks": picks, "total_odds": None, "error": None}
     if not to_book:
-        result["error"] = ("SportyBet isn't listing any of these matches right now."
+        result["error"] = ("Couldn't reach SportyBet's match list from our server. Try again in a few minutes."
+                           if listing_down else
+                           "SportyBet isn't listing any of these matches right now."
                            if any(p["status"] == "not_found" for p in picks)
                            else "None of these picks can go in a SportyBet code.")
         return result
