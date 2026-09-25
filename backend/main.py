@@ -1022,22 +1022,34 @@ async def _fetch_international_fixtures() -> list:
     return report["fixtures"]
 
 
+# Whether the club model uses league strength (predictor.LEAGUE_STRENGTH):
+# the European/cup check's verdict, read with the matches (_club_cup_rows)
+_club_league_strength = False
+
+
 def _club_cup_rows(club_names: set, codes: Optional[set] = None) -> pd.DataFrame:
     """ESPN's European and cup matches (club_cups.py) with club names
-    resolved to the league data's; `codes` defaults to the approved sets."""
+    resolved to the league data's; `codes` defaults to the approved sets,
+    each as full training rows or ratings-only rows (StrengthOnly) as the
+    check chose."""
     import club_cups
     import model_store
+    global _club_league_strength
     try:
         data = club_cups.load(model_store._client())
     except Exception as e:
         print(f"[Pipeline] Club cups not loaded: {e}")
         return pd.DataFrame()
-    df = club_cups.rows_frame(data, codes if codes is not None else club_cups.approved(data))
+    _club_league_strength = club_cups.league_strength(data)
+    modes = club_cups.modes(data)
+    df = club_cups.rows_frame(data, codes if codes is not None else set(modes))
     if df.empty:
         return df
+    df["StrengthOnly"] = df["league"].map(lambda c: modes.get(c) == "strength")
     if club_names:
         df = TeamResolver(club_names, aliases=UCL_ALIASES).resolve_frame(df)
-    print(f"[Pipeline] +{len(df)} European/cup matches from ESPN")
+    print(f"[Pipeline] +{len(df)} European/cup matches from ESPN "
+          f"({int(df['StrengthOnly'].sum())} for ratings only)")
     return df
 
 
@@ -1123,6 +1135,7 @@ def _assemble_training_data():
 
 def _train_new(combined: pd.DataFrame) -> LeaguePredictor:
     predictor = LeaguePredictor()
+    predictor.use_league_strength = _club_league_strength
     # Seed national team Elo from FIFA rankings BEFORE training
     # This prevents unknown national teams (Ecuador, Algeria etc.) from
     # starting at 1500 and looking equal to Germany/France/Brazil
@@ -2158,10 +2171,15 @@ def _snapshot_matchdays(r) -> int:
     """Store each football prediction as its match day's pre-match entry
     (refreshed until kick-off, then locked). Returns dates written."""
     import matchday
+    import price_book
     by_date: Dict[str, List[Dict]] = {}
     for p in _predictions_cache:
         if p.get("sport") in (None, "football") and p.get("date"):
-            by_date.setdefault(p["date"], []).append(p)
+            try:
+                priced = price_book.prices(p, _linked_event(p))
+            except Exception:
+                priced = None
+            by_date.setdefault(p["date"], []).append({**p, "_sb_prices": priced} if priced else p)
     now = datetime.now(timezone.utc)
     written = 0
     for d, preds in by_date.items():
@@ -2373,6 +2391,22 @@ async def get_accuracy(days: int = 30):
 async def get_history(date: str):
     """A date's predictions in the old shape (outcome / actual_result / score)."""
     return [_legacy_view(e) for e in _md_day_view(_date_param(date).isoformat()).values()]
+
+
+@app.get("/api/admin/edge-report")
+async def edge_report(days: int = 60, _admin: str = Depends(require_admin)):
+    """Flat-stake profit at SportyBet's pre-match prices over the last `days`
+    days, by market and by the edge the model claimed (price_book.py)."""
+    import price_book
+    days = max(1, min(int(days), 118))
+    r = _get_redis()
+    if not r:
+        raise HTTPException(status_code=503, detail="No Redis")
+    today = date.today()
+    dates = [(today - timedelta(days=i)).isoformat() for i in range(1, days + 1)]
+    stored = await asyncio.to_thread(_md_many, r, dates)
+    entries = [e for d in dates for e in (stored.get(d) or {}).values()]
+    return {"days": days, **price_book.report(entries)}
 
 
 @app.get("/api/calendar")

@@ -94,6 +94,10 @@ def walk_forward(matches: pd.DataFrame, start: str, end: str,
         for _, r in test.iterrows():
             day = str(r["Date"].date())
             league = str(r.get("league", "") or "")
+            if r.get("StrengthOnly") in (True,):  # numpy bools too; NaN (a league row) is not
+                # European / cup match in ratings-only mode: moves ratings, isn't scored
+                model._strength_update(r["HomeTeam"], r["AwayTeam"], r["Result"], league)
+                continue
             oh, od, oa = _odds(r.get("B365H")), _odds(r.get("B365D")), _odds(r.get("B365A"))
             feats = model._feats(r["HomeTeam"], r["AwayTeam"], *((0, 0, 0) if hide_odds else (oh, od, oa)),
                                  match_date=day, league=league)
@@ -201,6 +205,42 @@ def _roi(profits: List[float]) -> Dict[str, Any]:
     }
 
 
+EV_THRESHOLDS = (0.0, 0.03, 0.05, 0.08, 0.12)
+
+
+def value_scan(records: List[Dict]) -> Dict[str, List[Dict[str, Any]]]:
+    """Flat 1-unit bets wherever the model's expected value at the
+    bookmaker's price (p × odds − 1) reaches a threshold — at most one bet
+    per match and market (its best outcome): 1X2 and over/under 2.5. The
+    money test: positive ROI over many bets means the model finds prices the
+    bookmaker got wrong."""
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    for market in ("1x2", "ou25"):
+        rows = []
+        for thr in EV_THRESHOLDS:
+            profits, odds_sum = [], 0.0
+            for r in records:
+                if market == "1x2":
+                    options = [(r["p_home"], r["odds_home"], r["result"] == "H"),
+                               (r["p_draw"], r["odds_draw"], r["result"] == "D"),
+                               (r["p_away"], r["odds_away"], r["result"] == "A")]
+                else:
+                    over = r["home_goals"] + r["away_goals"] > 2
+                    options = [(r["p_over25"], r.get("odds_over25"), over),
+                               (1 - r["p_over25"], r.get("odds_under25"), not over)]
+                priced = [(p * o - 1, o, won) for p, o, won in options if o and o > 1]
+                if not priced:
+                    continue
+                ev, o, won = max(priced)
+                if ev >= thr:
+                    profits.append(o - 1 if won else -1.0)
+                    odds_sum += o
+            n = len(profits)
+            rows.append({"min_ev": thr, **_roi(profits), "avg_odds": round(odds_sum / n, 2) if n else None})
+        out[market] = rows
+    return out
+
+
 def summarize(records: List[Dict]) -> Dict[str, Any]:
     """Headline metrics from walk_forward() records."""
     with_odds = [r for r in records if _market_1x2(r)]
@@ -304,7 +344,8 @@ def summarize(records: List[Dict]) -> Dict[str, Any]:
         "calibration": calibration(records),
         "picks": {"by_tier": by_tier, "by_code": by_code},
         "goals_tips": {"by_tip": goals_by_tip, "by_tier": goals_by_tier, "all": _goals_row("all")},
-        "betting": {"all_straight_tips": _roi(straight), "value_bets": _roi(value), "edge_threshold": VALUE_EDGE},
+        "betting": {"all_straight_tips": _roi(straight), "value_bets": _roi(value), "edge_threshold": VALUE_EDGE,
+                    "value_scan": value_scan(records)},
         "by_league": by_league,
     }
 

@@ -104,26 +104,59 @@ class TestCollect:
 
 
 class TestCheck:
-    def test_uses_a_set_only_if_it_lowers_log_loss(self, monkeypatch):
+    def test_picks_the_best_way_that_beats_the_league_data(self, monkeypatch):
         import backtest
         league = pd.DataFrame([{"Date": pd.Timestamp(f"2025-0{m}-{d:02d}"), "HomeTeam": "A", "AwayTeam": "B",
                                 "FTHG": 1, "FTAG": 0, "Result": "H", "league": "PL"}
                                for m in (1, 2, 3) for d in range(1, 29) for _ in range(6)])
+        seen = []
 
-        def walk_forward(data, start, end, log=None):
-            # 400 league test matches; the Europe set makes the model surer of the right answer
-            p = 0.7 if (data["league"] == "CL").any() else 0.5
+        def walk_forward(data, start, end, make_model=None, log=None):
+            model = make_model()
+            strength = data["StrengthOnly"].fillna(False).astype(bool) if "StrengthOnly" in data else None
+            europe = (data["league"] == "CL")
+            # Europe as ratings-only rows helps most, as full rows a little; cups hurt
+            p = 0.5
+            if europe.any():
+                p = 0.7 if (strength is not None and strength[europe].all() and model.use_league_strength) else 0.55
+            if (data["league"] == "FAC").any():
+                p -= 0.1
+            seen.append((model.use_league_strength, round(p, 2)))
             return [{"league": "PL", "date": f"{start}-{i}", "home": "A", "away": "B", "result": "H",
-                     "p_home": p, "p_draw": (1 - p) / 2, "p_away": (1 - p) / 2} for i in range(400)]
+                     "p_home": p, "p_draw": (1 - p) / 2, "p_away": (1 - p) / 2, "odds_home": 2.0, "odds_draw": 3.5,
+                     "odds_away": 4.0, "home_goals": 1, "away_goals": 0, "p_over25": 0.5} for i in range(400)]
         monkeypatch.setattr(backtest, "walk_forward", walk_forward)
         europe = pd.DataFrame([{"Date": pd.Timestamp("2025-01-10"), "HomeTeam": "A", "AwayTeam": "C", "FTHG": 1,
                                 "FTAG": 1, "Result": "D", "league": "CL"}])
         cups = pd.DataFrame([{"Date": pd.Timestamp("2025-01-10"), "HomeTeam": "A", "AwayTeam": "D", "FTHG": 3,
                               "FTAG": 0, "Result": "H", "league": "FAC"}])
-        got = cc.check(league, {"europe": europe, "cups": cups, "none": pd.DataFrame()}, log=lambda *_: None)
+        got = cc.check(league, {"europe": europe, "cups": cups}, log=lambda *_: None)
+        assert got["config"] == {"name": "europe_strength", "league_strength": True, "sets": {"europe": "strength"}}
         assert got["use"] == {"europe": True, "cups": False}
-        assert got["scores"]["europe"]["with"] < got["scores"]["europe"]["league_only"]
-        assert got["scores"]["none"] == {"skipped": "no matches"}
+        assert got["scores"]["europe_full"]["with"] < got["scores"]["europe_full"]["league_only"]
+        assert got["scores"]["cups_full"]["with"] > got["scores"]["cups_full"]["league_only"]
+        assert "value_roi_with" in got["scores"]["europe_strength"]
+        # Stored verdicts turn into row modes and the model setting
+        data = {"check": got}
+        assert cc.modes(data) == {c: "strength" for c in cc.EUROPE_CODES} and cc.league_strength(data)
+        assert cc.approved(data) == cc.EUROPE_CODES
+
+    def test_nothing_used_when_nothing_helps(self, monkeypatch):
+        import backtest
+        league = pd.DataFrame([{"Date": pd.Timestamp(f"2025-0{m}-{d:02d}"), "HomeTeam": "A", "AwayTeam": "B",
+                                "FTHG": 1, "FTAG": 0, "Result": "H", "league": "PL"}
+                               for m in (1, 2, 3) for d in range(1, 29) for _ in range(6)])
+        monkeypatch.setattr(backtest, "walk_forward", lambda data, start, end, make_model=None, log=None: [
+            {"league": "PL", "date": f"{start}-{i}", "home": "A", "away": "B", "result": "H", "p_home": 0.5,
+             "p_draw": 0.25, "p_away": 0.25, "odds_home": 2.0, "odds_draw": 3.5, "odds_away": 4.0,
+             "home_goals": 1, "away_goals": 0, "p_over25": 0.5} for i in range(400)])
+        got = cc.check(league, {"europe": pd.DataFrame(), "cups": pd.DataFrame()}, log=lambda *_: None)
+        assert got["config"] is None and got["use"] == {"europe": False, "cups": False}
+        assert got["scores"]["europe_full"] == {"skipped": "no matches"}
+        assert not cc.league_strength({"check": got}) and cc.modes({"check": got}) == {}
+
+    def test_old_verdicts_mean_full_rows(self):
+        assert cc.modes({"check": {"use": {"europe": True, "cups": False}}}) == {c: "full" for c in cc.EUROPE_CODES}
 
 
 class TestTraining:
@@ -138,6 +171,12 @@ class TestTraining:
         monkeypatch.setattr(cc, "load", lambda r: data)
         df = main._club_cup_rows({"Man United", "Bayern Munich"})
         assert list(df["league"]) == ["EL"] and df.iloc[0]["HomeTeam"] == "Man United"
+        assert not df.iloc[0]["StrengthOnly"] and main._club_league_strength is False
+        data["check"] = {"use": {"europe": True}, "config": {"name": "europe_strength", "league_strength": True,
+                                                            "sets": {"europe": "strength"}}}
+        df = main._club_cup_rows({"Man United", "Bayern Munich"})
+        assert bool(df.iloc[0]["StrengthOnly"]) and main._club_league_strength is True
+        assert main._train_new.__module__ == "main"
         assert main._club_cup_rows(set(), {"EFLC"}).iloc[0]["AwayTeam"] == "Grimsby Town"
 
 

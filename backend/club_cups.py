@@ -300,15 +300,28 @@ def rows_frame(data: Dict[str, Any], codes: Optional[set] = None):
     return df.sort_values("Date").reset_index(drop=True)
 
 
+def modes(data: Dict[str, Any]) -> Dict[str, str]:
+    """{competition code: "full" | "strength"} — how the last check said each
+    approved set goes into training (see check / CONFIGS)."""
+    check = data.get("check") or {}
+    sets = (check.get("config") or {}).get("sets")
+    if sets is None:  # a check from before the ratings-only mode: full rows
+        sets = {n: "full" for n, on in (check.get("use") or {}).items() if on}
+    out: Dict[str, str] = {}
+    for name, codes in (("europe", EUROPE_CODES), ("cups", CUP_CODES)):
+        if sets.get(name):
+            out.update({c: sets[name] for c in codes})
+    return out
+
+
 def approved(data: Dict[str, Any]) -> set:
     """Competition codes the last check said improve the league predictions."""
-    check = data.get("check") or {}
-    out = set()
-    if (check.get("use") or {}).get("europe"):
-        out |= EUROPE_CODES
-    if (check.get("use") or {}).get("cups"):
-        out |= CUP_CODES
-    return out
+    return set(modes(data))
+
+
+def league_strength(data: Dict[str, Any]) -> bool:
+    """Whether the last check chose league strength (predictor.LEAGUE_STRENGTH)."""
+    return bool(((data.get("check") or {}).get("config") or {}).get("league_strength"))
 
 
 def summary(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -326,32 +339,55 @@ def summary(data: Dict[str, Any]) -> Dict[str, Any]:
 CHECK_MONTHS = 3          # test months (the latest full ones in the league data)
 MIN_GAIN = 0.001          # 1X2 log loss must drop by at least this much
 
+# The ways the matches can go into training, each tried against the league
+# data alone: (name, sets as full training rows, sets as ratings-only rows,
+# league strength on). "Ratings only" rows move team Elo and the leagues'
+# strength offsets (predictor.LEAGUE_STRENGTH), not form or the training set.
+CONFIGS = [
+    ("league_strength", (), (), True),
+    ("europe_full", ("europe",), (), False),
+    ("cups_full", ("cups",), (), False),
+    ("europe_strength", (), ("europe",), True),
+    ("cups_strength", (), ("cups",), True),
+    ("both_strength", (), ("europe", "cups"), True),
+]
+
 
 def _test_months(league) -> List[Tuple[str, str]]:
     """The latest CHECK_MONTHS months with at least 150 league matches."""
-    import pandas as pd
     counts = league.groupby(league["Date"].dt.to_period("M")).size()
     months = [p for p, n in counts.items() if n >= 150][-CHECK_MONTHS:]
     return [(str(p.start_time.date()), str(p.end_time.date())) for p in months]
 
 
 def check(league, extras: Dict[str, Any], log=print) -> Dict[str, Any]:
-    """Walk-forward on the latest league months: the model trained on the
-    league data alone vs with each set of extra matches ({"europe": df,
-    "cups": df}, names already resolved to the league data's). Scored on the
-    same league matches (1X2 log loss). A set is used if it lowers it."""
+    """Walk-forward on the latest league months: the model on the league data
+    alone vs each way of adding the extra matches ({"europe": df, "cups": df},
+    names already resolved to the league data's) — as full training rows, or
+    as ratings-only rows with league strength on. Scored on the same league
+    matches (1X2 log loss; value-bet profit at Bet365's prices reported too).
+    The best way that beats the league data alone by MIN_GAIN is used."""
     import pandas as pd
     import backtest
+    from predictor import LeaguePredictor
     months = _test_months(league)
     if not months:
         return {"use": {}, "reason": "no league months to test on", "at": datetime.now(timezone.utc).isoformat()}
     league_codes = set(league["league"].dropna().astype(str))
+    have = {name for name, df in extras.items() if df is not None and not df.empty}
 
-    def run(extra) -> Dict[tuple, Dict]:
-        data = league if extra is None or extra.empty else pd.concat([league, extra], ignore_index=True)
+    def run(full: Tuple[str, ...], strength: Tuple[str, ...], ls: bool) -> Dict[tuple, Dict]:
+        parts = [league] + [extras[n].assign(StrengthOnly=False) for n in full] \
+            + [extras[n].assign(StrengthOnly=True) for n in strength]
+        data = pd.concat(parts, ignore_index=True) if len(parts) > 1 else league
+
+        def make():
+            m = LeaguePredictor()
+            m.use_league_strength = ls
+            return m
         out = {}
         for start, end in months:
-            for r in backtest.walk_forward(data, start, end, log=lambda *_: None):
+            for r in backtest.walk_forward(data, start, end, make_model=make, log=lambda *_: None):
                 if r["league"] in league_codes:
                     out[(r["date"], r["home"], r["away"])] = r
         return out
@@ -360,19 +396,32 @@ def check(league, extras: Dict[str, Any], log=print) -> Dict[str, Any]:
         return backtest._scores_1x2([backtest._model_1x2(recs[k]) for k in keys],
                                     [recs[k]["result"] for k in keys])["log_loss"]
 
+    def money(recs: Dict[tuple, Dict], keys) -> Optional[float]:
+        row = next(r for r in backtest.value_scan([recs[k] for k in keys])["1x2"] if r["min_ev"] == 0.05)
+        return row["roi"]
+
     log(f"[Check] league only, months {months}")
-    base = run(None)
-    result: Dict[str, Any] = {"months": months, "use": {}, "scores": {}}
-    for name, extra in extras.items():
-        if extra is None or extra.empty:
+    base = run((), (), False)
+    result: Dict[str, Any] = {"months": months, "scores": {}, "config": None}
+    best, best_ll = None, None
+    for name, full, strength, ls in CONFIGS:
+        if not set(full + strength) <= have:
             result["scores"][name] = {"skipped": "no matches"}
             continue
-        log(f"[Check] + {name} ({len(extra)} matches)")
-        with_extra = run(extra)
-        keys = sorted(set(base) & set(with_extra))
-        b, w = logloss(base, keys), logloss(with_extra, keys)
+        log(f"[Check] {name}")
+        recs = run(full, strength, ls)
+        keys = sorted(set(base) & set(recs))
+        b, w = logloss(base, keys), logloss(recs, keys)
         result["scores"][name] = {"league_only": round(b, 5), "with": round(w, 5), "matches": len(keys),
-                                  "extra_rows": len(extra)}
-        result["use"][name] = len(keys) >= 300 and w <= b - MIN_GAIN
+                                  "value_roi_league_only": money(base, keys), "value_roi_with": money(recs, keys)}
+        if len(keys) >= 300 and w <= b - MIN_GAIN and (best_ll is None or w < best_ll):
+            best, best_ll = (name, full, strength, ls), w
+    if best:
+        name, full, strength, ls = best
+        result["config"] = {"name": name, "league_strength": ls,
+                            "sets": {**{n: "full" for n in full}, **{n: "strength" for n in strength}}}
+    # The older shape, read by approved() and the admin panel
+    sets = (result["config"] or {}).get("sets") or {}
+    result["use"] = {n: bool(sets.get(n)) for n in ("europe", "cups")}
     result["at"] = datetime.now(timezone.utc).isoformat()
     return result

@@ -67,6 +67,9 @@ def snapshot(pred: Dict) -> Dict[str, Any]:
     ref = pred.get("referee")
     if isinstance(ref, dict) and ref.get("name"):
         out["referee"] = ref["name"]
+    # SportyBet's prices for the outcomes we model (price_book.py), kept till kick-off
+    if pred.get("_sb_prices"):
+        out["prices"] = pred["_sb_prices"]
     return out
 
 
@@ -233,7 +236,8 @@ def public(entry: Dict) -> Dict[str, Any]:
             "score": [res["hg"], res["ag"]] if res.get("hg") is not None and res.get("ag") is not None else None,
             "corners": res.get("corners"), "bookings": res.get("bookings"),
             "shots": res.get("shots"), "sot": res.get("sot"),
-            "pred": entry.get("pred") or {}, "grades": entry.get("grades"), "locked": bool(entry.get("locked"))}
+            "pred": {k: v for k, v in (entry.get("pred") or {}).items() if k != "prices"},
+            "grades": entry.get("grades"), "locked": bool(entry.get("locked"))}
 
 
 def day_summary(entries: Iterable[Dict]) -> Dict[str, Any]:

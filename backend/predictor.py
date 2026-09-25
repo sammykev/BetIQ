@@ -73,6 +73,25 @@ COMPETITION_K: Dict[str, float] = {
 }
 
 
+# ── League strength ──────────────────────────────────────────────────────
+# Team Elo is earned inside a league, so a 1600 in the Eredivisie and a 1600
+# in the Premier League aren't the same team. With LEAGUE_STRENGTH on, each
+# domestic league gets an Elo offset — started from the priors below and
+# learned from matches between leagues (European competitions and domestic
+# cups, fed as "strength only" rows: they move ratings, never form or the
+# training set) — and a team changing league (promotion, relegation) keeps
+# its real strength: Elo + old offset - new offset. On only when the
+# walk-forward check says it helps (see club_cups.check).
+LEAGUE_STRENGTH = False
+DOMESTIC_LEAGUES = {"PL", "ELC", "EL1", "EL2", "PD", "SD", "SA", "SB", "BL1", "BL2", "FL1", "FL2", "DED", "JPL",
+                    "PPL", "SPL", "D1", "GSL", "BSA"}
+LEAGUE_OFFSET_PRIOR = {"PL": 0.0, "PD": -15.0, "SA": -25.0, "BL1": -25.0, "FL1": -60.0, "PPL": -90.0,
+                       "DED": -100.0, "ELC": -170.0, "BL2": -190.0, "SD": -190.0, "SB": -200.0, "FL2": -230.0,
+                       "EL1": -280.0, "EL2": -360.0, "JPL": -110.0, "SPL": -150.0, "GSL": -150.0, "BSA": -80.0}
+LEAGUE_K = 6.0          # league offset learning rate per cross-league match
+STRENGTH_TEAM_K = 0.5   # share of the normal Elo K a strength-only match moves the teams by
+
+
 def _dc_tau(i: int, j: int, mu_h: float, mu_a: float, rho: float) -> float:
     """Dixon-Coles correction factor for low-scoring scorelines (0-0, 1-0, 0-1, 1-1)."""
     if i == 0 and j == 0:
@@ -382,7 +401,56 @@ class LeaguePredictor:
         self.dc_rho: float = -0.13                  # Dixon-Coles correlation (estimated in train())
         self.league_stats: Dict[str, dict] = {}     # league_code -> {avg_goals, home_win_rate}
         self.use_shots = USE_SHOTS                   # False / True / "goals" (see SHOT_COLS)
+        self.use_league_strength = LEAGUE_STRENGTH   # see LEAGUE_STRENGTH
+        self.team_league: Dict[str, str] = {}        # team -> its latest domestic league
+        self.league_offset: Dict[str, float] = {}    # league -> Elo offset (see LEAGUE_STRENGTH)
         self._league_sot: List[float] = []           # shots on target per team-match, for the default
+
+    # ── league strength ──────────────────────────────────────────────────
+    def _offset(self, team: str) -> float:
+        if not getattr(self, "use_league_strength", False):
+            return 0.0
+        league = getattr(self, "team_league", {}).get(team)
+        if league is None:
+            return 0.0
+        offsets = self.league_offset
+        return offsets.get(league, LEAGUE_OFFSET_PRIOR.get(league, 0.0))
+
+    def strength(self, team: str) -> float:
+        """Elo on one scale across leagues: the team's Elo plus its league's offset."""
+        return self.elo.get(team) + self._offset(team)
+
+    def _note_league(self, team: str, league: str) -> None:
+        """Record a team's domestic league; on a change, carry its strength over."""
+        if not league or league not in DOMESTIC_LEAGUES:
+            return
+        old = self.team_league.get(team)
+        if old == league:
+            return
+        if old is not None and getattr(self, "use_league_strength", False) and team in self.elo.ratings:
+            before = self._offset(team)
+            self.team_league[team] = league
+            self.elo.ratings[team] += before - self._offset(team)
+            return
+        self.team_league[team] = league
+
+    def _strength_update(self, home: str, away: str, result: str, competition: str = "") -> None:
+        """A European / cup match: moves the teams' Elo (by a share of the usual
+        K) and, between two leagues, the leagues' offsets. Nothing else."""
+        if self._ready:
+            home, away = self.canon(home), self.canon(away)
+        if result not in ("H", "D", "A"):
+            return
+        diff = self.strength(home) - self.strength(away) + EloSystem.HOME_ADV
+        exp = 1.0 / (1.0 + 10 ** (-diff / 400))
+        delta = {"H": 1.0, "D": 0.5, "A": 0.0}[result] - exp
+        k = EloSystem.K * COMPETITION_K.get(competition, 1.0) * STRENGTH_TEAM_K
+        self.elo.ratings[home] = self.elo.get(home) + k * delta
+        self.elo.ratings[away] = self.elo.get(away) - k * delta
+        lh, la = self.team_league.get(home), self.team_league.get(away)
+        if getattr(self, "use_league_strength", False) and lh and la and lh != la:
+            for lg, sign in ((lh, 1.0), (la, -1.0)):
+                self.league_offset[lg] = self.league_offset.get(lg, LEAGUE_OFFSET_PRIOR.get(lg, 0.0)) + sign * LEAGUE_K * delta
 
     def cols(self, odds: bool = True, target: str = "win") -> List[str]:
         """The feature columns a model trains and predicts on: target "win"
@@ -444,8 +512,8 @@ class LeaguePredictor:
         a_form = _ewm(as_["pts"]) if as_["pts"] else 1.0
         h_var = float(np.std(hs["gf"][-6:])) if len(hs["gf"]) >= 3 else 0.8
         a_var = float(np.std(as_["gf"][-6:])) if len(as_["gf"]) >= 3 else 0.8
-        h_elo = self.elo.get(home)
-        a_elo = self.elo.get(away)
+        h_elo = self.strength(home)
+        a_elo = self.strength(away)
         h_yc = _ewm(hs["yc"]) if hs["yc"] else 1.5
         a_yc = _ewm(as_["yc"]) if as_["yc"] else 1.5
 
@@ -575,6 +643,9 @@ class LeaguePredictor:
             home, away = self.canon(home), self.canon(away)
         self._init(home)
         self._init(away)
+        if competition in DOMESTIC_LEAGUES:
+            self._note_league(home, competition)
+            self._note_league(away, competition)
         # Shots on target, where the source has them (the league CSVs, ESPN)
         if _known(hst) and _known(ast):
             hst, ast = float(hst), float(ast)
@@ -666,8 +737,11 @@ class LeaguePredictor:
         self.league_stats = {}
         self.dc_rho = -0.13
         self._league_sot = []
+        self.team_league, self.league_offset = {}, {}
         if not hasattr(self, "use_shots"):
             self.use_shots = USE_SHOTS
+        if not hasattr(self, "use_league_strength"):
+            self.use_league_strength = LEAGUE_STRENGTH
 
         has_odds = all(c in matches.columns for c in ["B365H", "B365D", "B365A"])
         if has_odds:
@@ -723,7 +797,12 @@ class LeaguePredictor:
             print(f"[Predictor] DC rho estimation failed, using default: {_e}")
 
         rows = []
-        for _, r in matches.iterrows():
+        strength_only = matches["StrengthOnly"].fillna(False).astype(bool) if "StrengthOnly" in matches.columns \
+            else pd.Series(False, index=matches.index)
+        for idx, r in matches.iterrows():
+            if strength_only[idx]:
+                self._strength_update(r["HomeTeam"], r["AwayTeam"], r["Result"], str(r.get("league", "") or ""))
+                continue
             oh = float(r.get("B365H") or 0)
             od = float(r.get("B365D") or 0)
             oa = float(r.get("B365A") or 0)
@@ -773,6 +852,9 @@ class LeaguePredictor:
             "dc_rho": self.dc_rho,
             "league_stats": self.league_stats,
             "use_shots": getattr(self, "use_shots", False),
+            "use_league_strength": getattr(self, "use_league_strength", False),
+            "team_league": getattr(self, "team_league", {}),
+            "league_offset": getattr(self, "league_offset", {}),
             "_league_sot": getattr(self, "_league_sot", []),
             "data_mtime": data_mtime,
         }
@@ -794,6 +876,9 @@ class LeaguePredictor:
         inst.dc_rho               = payload.get("dc_rho", -0.13)
         inst.league_stats         = payload.get("league_stats", {})
         inst.use_shots            = payload.get("use_shots", False)
+        inst.use_league_strength  = payload.get("use_league_strength", False)
+        inst.team_league          = payload.get("team_league", {})
+        inst.league_offset        = payload.get("league_offset", {})
         inst._league_sot          = payload.get("_league_sot", [])
         inst._ready               = True
         return inst
@@ -1134,8 +1219,8 @@ class LeaguePredictor:
                     best_pick = {"market": m["name"], "market_id": m["id"], **opt}
 
         # --- Elo context ---
-        elo_h = self.elo.get(home)
-        elo_a = self.elo.get(away)
+        elo_h = self.strength(home)
+        elo_a = self.strength(away)
         elo_gap = elo_h - elo_a  # positive = home stronger
         # Implied win prob from Elo alone (includes home advantage)
         elo_win_prob = round(1 / (1 + 10 ** (-(elo_gap + EloSystem.HOME_ADV) / 400)), 3)

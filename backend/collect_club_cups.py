@@ -60,7 +60,8 @@ def main() -> int:
     check = data.get("check") or {}
     last = check.get("at")
     stale = (not last or (datetime.now(timezone.utc) - datetime.fromisoformat(last)).days >= 7
-             or len(data["rows"]) > 1.2 * (check.get("rows") or 0))
+             or len(data["rows"]) > 1.2 * (check.get("rows") or 0)
+             or "config" not in check)  # a check from before the ratings-only mode
     if not args.no_check and data["rows"] and stale:
         from main import _club_cup_rows, _load_football_data_csvs
         league = _load_football_data_csvs()

@@ -30,6 +30,65 @@ function StatChecks({ scores, use }: { scores: Record<string, any>; use: Record<
   );
 }
 
+const MARKET_LABELS: Record<string, string> = {
+  "1x2": "Result", double_chance: "Double chance", goals_ou: "Goals over/under", btts: "Both score",
+  corners_ou: "Corners", cards_ou: "Bookings", dc_goals: "Double chance & goals", handicap: "Handicap",
+  home_goals_ou: "Home goals", away_goals_ou: "Away goals",
+};
+
+const roiText = (r: any) => (r?.bets ? `${r.roi >= 0 ? "+" : ""}${(r.roi * 100).toFixed(1)}% · ${num(r.bets)} bets` : "no bets yet");
+
+/** Flat 1-unit bets at SportyBet's last pre-match price (price_book.py):
+ * every priced outcome, and the ones the model rated as value. */
+function EdgeReport() {
+  const { get } = useAdmin();
+  const [rep, setRep] = useState<any>(null);
+  const [days, setDays] = useState(60);
+  useEffect(() => { setRep(null); get(`/api/admin/edge-report?days=${days}`).then(setRep).catch(() => setRep({ error: true })); }, [days]);
+  if (!rep) return <Skeleton rows={3} />;
+  if (rep.error) return <p className="text-xs text-n-400">Couldn&apos;t load the report.</p>;
+  const tone = (r: any) => (!r?.bets ? "text-n-400" : r.roi > 0 ? "text-accent" : "text-danger");
+  return (
+    <div className="space-y-3">
+      <div className="flex gap-1.5">
+        {[30, 60, 118].map(d => (
+          <button key={d} onClick={() => setDays(d)}
+            className={clsx("rounded-full px-2.5 py-1 text-xs", d === days ? "bg-accent/15 text-accent" : "bg-surface-sunken text-n-300")}>
+            {d} days
+          </button>
+        ))}
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        <Stat label="Matches priced" value={num(rep.matches ?? 0)} />
+        <Stat label="Every priced outcome" value={rep.all_priced?.bets ? `${(rep.all_priced.roi * 100).toFixed(1)}%` : "—"}
+          sub={rep.all_priced?.bets ? `${num(rep.all_priced.bets)} bets · SportyBet's margin shows here` : undefined} />
+        <Stat label={`Model value (edge ≥ ${Math.round(rep.min_ev * 100)}%)`}
+          value={rep.value?.bets ? `${(rep.value.roi * 100).toFixed(1)}%` : "—"}
+          tone={rep.value?.bets ? (rep.value.roi > 0 ? "accent" : "danger") : undefined}
+          sub={rep.value?.bets ? `${num(rep.value.bets)} bets, ${rep.value.won} won` : undefined} />
+      </div>
+      {rep.by_market?.length > 0 && (
+        <ul className="grid gap-1.5 text-xs">
+          {rep.by_market.map((m: any) => (
+            <li key={m.market} className="rounded-lg bg-surface-sunken px-2.5 py-1.5 flex flex-wrap justify-between gap-2">
+              <span className="text-n-200">{MARKET_LABELS[m.market] ?? m.market}</span>
+              <span className="tnum text-n-400">all {roiText(m.all)} · <span className={tone(m.value)}>value {roiText(m.value)}</span></span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {rep.by_edge?.some((b: any) => b.bets) && (
+        <p className="text-[11px] text-n-500 tnum">
+          By claimed edge: {rep.by_edge.filter((b: any) => b.bets).map((b: any) => `${b.edge} ${(b.roi * 100).toFixed(1)}% (${b.bets})`).join(" · ")}
+        </p>
+      )}
+      <p className="text-[11px] text-n-500">
+        A market is only worth betting once its value bets stay profitable over hundreds of bets; a few dozen is mostly luck.
+      </p>
+    </div>
+  );
+}
+
 /** Shots and shots-on-target markets: club model (checked on each league
  * data refresh) and international (checked nightly). */
 function Shots({ club, intl }: { club: any; intl: any }) {
@@ -328,6 +387,11 @@ export function PredictionsSection() {
       <Card title="International corners & cards" icon={<Globe2 size={15} />}
         subtitle="Collected nightly from ESPN, topped up by API-Football; lower score is better">
         {!data ? <Skeleton rows={2} /> : <InternationalSetPieces info={data.international_set_pieces} />}
+      </Card>
+
+      <Card title="Profit at SportyBet prices" icon={<Target size={15} />}
+        subtitle="Every outcome we model that SportyBet priced before kick-off, settled at full time: where the model beats SportyBet, and where it doesn't">
+        <EdgeReport />
       </Card>
 
       <Card title="Shots & shots on target" icon={<Target size={15} />}
