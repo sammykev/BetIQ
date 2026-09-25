@@ -62,8 +62,9 @@ def test_fixtures_without_odds_use_the_no_odds_models(model, monkeypatch):
 
     model.predict_match("Arsenal", "Chelsea")
     model.predict_match("Arsenal", "Chelsea", 1.8, 3.5, 4.5)
-    assert used[0] == ("win_noodds", NO_ODDS_COLS)
-    assert used[1] == ("win", FEATURE_COLS)
+    assert used[0] == ("win_noodds", model.cols(odds=False))
+    assert used[1] == ("win", model.cols())
+    assert set(model.cols(odds=False)) >= set(NO_ODDS_COLS) and set(model.cols()) >= set(FEATURE_COLS)
 
 
 def test_probabilities_are_valid(model):

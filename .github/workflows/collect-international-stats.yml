@@ -1,9 +1,13 @@
-# Collects corners and cards for international matches (SofaScore, topped
-# up by API-Football) into Upstash Redis, then tests the international
-# corners/bookings model on them — see backend/collect_international_stats.py.
-# The first runs backfill history a chunk at a time; after that each run
-# only adds the latest matches. Needs the UPSTASH_REDIS_URL secret (same as
-# Render); APIFOOTBALL_KEY is optional.
+# Nightly data for the models, into Upstash Redis:
+# 1. International matches' corners and cards (ESPN, topped up by
+#    API-Football), then a test of the international corners/bookings
+#    model — backend/collect_international_stats.py.
+# 2. European competitions and domestic cups (ESPN) for the club model,
+#    with a weekly check that they improve its league predictions —
+#    backend/collect_club_cups.py.
+# The first runs backfill history; after that each run adds the latest
+# matches. Needs the UPSTASH_REDIS_URL secret (same as Render);
+# APIFOOTBALL_KEY is optional.
 name: Collect international stats
 
 on:
@@ -12,8 +16,11 @@ on:
   workflow_dispatch:
     inputs:
       minutes:
-        description: "Minutes of SofaScore collection"
-        default: "150"
+        description: "Minutes of international collection"
+        default: "60"
+      cup_minutes:
+        description: "Minutes of European/cup collection"
+        default: "100"
 
 concurrency:
   group: collect-international-stats
@@ -25,7 +32,7 @@ permissions:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 200
+    timeout-minutes: 240
     defaults:
       run:
         working-directory: backend
@@ -44,5 +51,13 @@ jobs:
         env:
           UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
           APIFOOTBALL_KEY: ${{ secrets.APIFOOTBALL_KEY }}
-          INTL_STATS_MINUTES: ${{ github.event.inputs.minutes || '150' }}
+          INTL_STATS_MINUTES: ${{ github.event.inputs.minutes || '60' }}
         run: python collect_international_stats.py
+
+      # European competitions and domestic cups for the club model, then a
+      # weekly check that they improve its league predictions (club_cups.py)
+      - name: Collect club cups and test
+        env:
+          UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
+          CLUB_CUPS_MINUTES: ${{ github.event.inputs.cup_minutes || '100' }}
+        run: python collect_club_cups.py

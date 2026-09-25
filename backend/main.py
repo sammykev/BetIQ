@@ -564,7 +564,7 @@ def _load_football_data_csvs() -> pd.DataFrame:
             df["FTAG"] = pd.to_numeric(df["FTAG"], errors="coerce")
 
             # Parse odds columns
-            for col in ["B365H", "B365D", "B365A", "B365>2.5", "B365<2.5"]:
+            for col in ["B365H", "B365D", "B365A", "B365>2.5", "B365<2.5", "HS", "AS", "HST", "AST"]:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors="coerce")
 
@@ -572,7 +572,8 @@ def _load_football_data_csvs() -> pd.DataFrame:
 
             keep = ["Date", "HomeTeam", "AwayTeam", "Result", "FTHG", "FTAG",
                     "B365H", "B365D", "B365A", "B365>2.5", "B365<2.5",  # O/U odds: backtest baseline
-                    "HC", "AC", "HY", "AY", "HR", "AR", "Referee", "league"]
+                    "HC", "AC", "HY", "AY", "HR", "AR", "HS", "AS", "HST", "AST",  # shots: model features
+                    "Referee", "league"]
             df = df[[c for c in keep if c in df.columns]]
             dfs.append(df)
         except Exception as e:
@@ -1009,6 +1010,35 @@ async def _fetch_international_fixtures() -> list:
     return report["fixtures"]
 
 
+def _club_cup_rows(club_names: set, codes: Optional[set] = None) -> pd.DataFrame:
+    """ESPN's European and cup matches (club_cups.py) with club names
+    resolved to the league data's; `codes` defaults to the approved sets."""
+    import club_cups
+    import model_store
+    try:
+        data = club_cups.load(model_store._client())
+    except Exception as e:
+        print(f"[Pipeline] Club cups not loaded: {e}")
+        return pd.DataFrame()
+    df = club_cups.rows_frame(data, codes if codes is not None else club_cups.approved(data))
+    if df.empty:
+        return df
+    if club_names:
+        df = TeamResolver(club_names, aliases=UCL_ALIASES).resolve_frame(df)
+    print(f"[Pipeline] +{len(df)} European/cup matches from ESPN")
+    return df
+
+
+def _club_cups_status() -> Dict[str, Any]:
+    """The European/cup collection and its check, for the admin panel."""
+    import club_cups
+    import model_store
+    try:
+        return club_cups.summary(club_cups.load(model_store._client()))
+    except Exception as e:
+        return {"error": str(e)}
+
+
 def _assemble_training_data():
     """(history for H2H lookups, training matches, newest data mtime), or None
     without data. Shared by the pipeline and train_model.py."""
@@ -1034,7 +1064,10 @@ def _assemble_training_data():
     if not ucl_df.empty and club_names:
         ucl_df = TeamResolver(club_names, aliases=UCL_ALIASES).resolve_frame(ucl_df)
 
-    parts = [df for df in [fd_df, epl_df, ucl_df, intl_df] if not df.empty]
+    # European competitions and domestic cups from ESPN (club_cups.py), the
+    # sets the nightly check found to improve the league predictions
+    cups_df = _club_cup_rows(club_names)
+    parts = [df for df in [fd_df, epl_df, ucl_df, intl_df, cups_df] if not df.empty]
     if not parts:
         print("[Pipeline] No training data found!")
         return None
@@ -2047,6 +2080,7 @@ async def data_status(_admin: str = Depends(require_admin)):
         "international_set_pieces": {**_intl_sp_info, "active": _intl_set_pieces is not None},
         "referees": _referee_status(),
         "matchday": _md_status,
+        "club_cups": _club_cups_status(),
     }
 
 

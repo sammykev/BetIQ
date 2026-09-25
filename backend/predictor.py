@@ -25,7 +25,7 @@ from team_names import TeamResolver
 warnings.filterwarnings("ignore")
 
 MODEL_CACHE_PATH = os.path.join(os.path.dirname(__file__), "data", "model_cache.joblib")
-MODEL_CACHE_VERSION = 5  # bump when FEATURE_COLS or saved fields change
+MODEL_CACHE_VERSION = 6  # bump when FEATURE_COLS or saved fields change
 
 
 # ── FIFA ranking-calibrated starting Elo for national teams ───────────────
@@ -168,6 +168,16 @@ FEATURE_COLS = [
 # never saw the league-average stand-in during training, so a separate set
 # trained without them predicts those fixtures from team strength alone.
 NO_ODDS_COLS = [c for c in FEATURE_COLS if not c.startswith("Impl_")]
+
+# Shots on target (league CSVs' HST/AST): a steadier read of a team's
+# strength than goals, which a couple of lucky finishes can swing. Rolling
+# averages for and against; teams with no shot data (national teams, old UCL
+# rows) get the league average, so their matches still train. On only when
+# the walk-forward backtest says it helps (USE_SHOTS).
+SHOT_COLS = ["Home_SOT_For", "Away_SOT_For", "Home_SOT_Against", "Away_SOT_Against",
+             "SOT_Atk_vs_Def", "SOT_Def_vs_Atk"]
+USE_SHOTS = False  # set by the walk-forward backtest (see SHOT_COLS)
+DEFAULT_SOT = 4.3  # shots on target per team per match, top European leagues
 
 
 def _rounded_probs(p_h: float, p_d: float, p_a: float, p_o15: float, p_o25: float) -> Dict:
@@ -367,6 +377,13 @@ class LeaguePredictor:
         self.h2h: Dict[str, Dict] = {}              # "teamA:teamB" -> {a_wins,draws,b_wins,total_goals,n}
         self.dc_rho: float = -0.13                  # Dixon-Coles correlation (estimated in train())
         self.league_stats: Dict[str, dict] = {}     # league_code -> {avg_goals, home_win_rate}
+        self.use_shots: bool = USE_SHOTS
+        self._league_sot: List[float] = []           # shots on target per team-match, for the default
+
+    def cols(self, odds: bool = True) -> List[str]:
+        """The feature columns this model trains and predicts on."""
+        base = FEATURE_COLS if odds else NO_ODDS_COLS
+        return base + SHOT_COLS if getattr(self, "use_shots", False) else list(base)
 
     # ------------------------------------------------------------------ #
     # Internal helpers
@@ -395,6 +412,8 @@ class LeaguePredictor:
                 "home_ga": [],      # goals conceded when playing at home
                 "away_gf": [],      # goals scored when playing away
                 "away_ga": [],      # goals conceded when playing away
+                "sotf": [],         # shots on target for
+                "sota": [],         # shots on target against
             }
 
     # League-average implied odds — used when market odds aren't available at prediction time
@@ -490,6 +509,15 @@ class LeaguePredictor:
             h2h_home_rate = self._avg_impl.get("H", 0.46)
             h2h_draw_rate = self._avg_impl.get("D", 0.27)
 
+        # ── Shots on target ──────────────────────────────────────────────────
+        league_sot = getattr(self, "_league_sot", [])
+        sot_default = float(np.mean(league_sot[-4000:])) if len(league_sot) >= 20 else DEFAULT_SOT
+        def _sot(team_stats: dict, key: str) -> float:
+            vals = team_stats.get(key) or []
+            return _ewm(vals) if len(vals) >= 3 else sot_default
+        h_sotf, h_sota = _sot(hs, "sotf"), _sot(hs, "sota")
+        a_sotf, a_sota = _sot(as_, "sotf"), _sot(as_, "sota")
+
         # ── League context features ───────────────────────────────────────────
         lg_stats = self.league_stats.get(league, {})
         league_avg_goals   = lg_stats.get("avg_goals",    xg_h + xg_a)
@@ -520,6 +548,10 @@ class LeaguePredictor:
             "H2H_Draw_Rate":  round(h2h_draw_rate, 4),
             "League_Avg_Goals":   round(league_avg_goals, 4),
             "League_Home_WinRate": round(league_home_wr, 4),
+            "Home_SOT_For": round(h_sotf, 4), "Away_SOT_For": round(a_sotf, 4),
+            "Home_SOT_Against": round(h_sota, 4), "Away_SOT_Against": round(a_sota, 4),
+            "SOT_Atk_vs_Def": round(h_sotf - a_sota, 4),
+            "SOT_Def_vs_Atk": round(a_sotf - h_sota, 4),
             "_has_odds": has_odds,  # routes predict_proba; not a model feature
         }
 
@@ -530,11 +562,21 @@ class LeaguePredictor:
         hrc: float = None, arc: float = None,
         match_date: str = None,
         competition: str = "",
+        hst: float = None, ast: float = None,
     ):
         if self._ready:
             home, away = self.canon(home), self.canon(away)
         self._init(home)
         self._init(away)
+        # Shots on target, where the source has them (the league CSVs, ESPN)
+        if _known(hst) and _known(ast):
+            hst, ast = float(hst), float(ast)
+            for team, f, a in ((home, hst, ast), (away, ast, hst)):
+                self.team_stats[team].setdefault("sotf", []).append(f)
+                self.team_stats[team].setdefault("sota", []).append(a)
+            if not hasattr(self, "_league_sot"):
+                self._league_sot = []
+            self._league_sot += [hst, ast]
         # Reject NaN goals — can come from CSV rows with missing scores
         try:
             fthg, ftag = float(fthg), float(ftag)
@@ -616,6 +658,9 @@ class LeaguePredictor:
         self.h2h = {}
         self.league_stats = {}
         self.dc_rho = -0.13
+        self._league_sot = []
+        if not hasattr(self, "use_shots"):
+            self.use_shots = USE_SHOTS
 
         has_odds = all(c in matches.columns for c in ["B365H", "B365D", "B365A"])
         if has_odds:
@@ -690,15 +735,16 @@ class LeaguePredictor:
                 arc=r.get("AwayRedCards") or r.get("AR"),
                 match_date=match_date_str,
                 competition=lg,
+                hst=r.get("HST"), ast=r.get("AST"),
             )
 
-        df = pd.DataFrame(rows).dropna(subset=FEATURE_COLS)
-        X = df[FEATURE_COLS]
+        df = pd.DataFrame(rows).dropna(subset=self.cols())
+        X = df[self.cols()]
 
         y_win = df["Result"].map({"A": 0, "D": 1, "H": 2})
         y_o15 = (df["TotalGoals"] >= 2).astype(int)
         y_o25 = (df["TotalGoals"] >= 3).astype(int)
-        for suffix, cols in (("", FEATURE_COLS), ("_noodds", NO_ODDS_COLS)):
+        for suffix, cols in (("", self.cols()), ("_noodds", self.cols(odds=False))):
             X = df[cols]
             self.models["win" + suffix] = _fit_calibrated(X, y_win, multiclass=True)
             self.models["o15" + suffix] = _fit_calibrated(X, y_o15)
@@ -720,6 +766,8 @@ class LeaguePredictor:
             "h2h": self.h2h,
             "dc_rho": self.dc_rho,
             "league_stats": self.league_stats,
+            "use_shots": getattr(self, "use_shots", False),
+            "_league_sot": getattr(self, "_league_sot", []),
             "data_mtime": data_mtime,
         }
 
@@ -739,6 +787,8 @@ class LeaguePredictor:
         inst.h2h                  = payload.get("h2h", {})
         inst.dc_rho               = payload.get("dc_rho", -0.13)
         inst.league_stats         = payload.get("league_stats", {})
+        inst.use_shots            = payload.get("use_shots", False)
+        inst._league_sot          = payload.get("_league_sot", [])
         inst._ready               = True
         return inst
 
@@ -796,7 +846,7 @@ class LeaguePredictor:
         """(p_home, p_draw, p_away, p_over15, p_over25) for one feature row.
         Fixtures without odds use the models trained without odds features."""
         no_odds = not feats.get("_has_odds", True) and "win_noodds" in self.models
-        suffix, cols = ("_noodds", NO_ODDS_COLS) if no_odds else ("", FEATURE_COLS)
+        suffix, cols = ("_noodds", self.cols(odds=False)) if no_odds else ("", self.cols())
         X = pd.DataFrame([feats])[cols]
         wp = self.models["win" + suffix].predict_proba(X)[0]
         p_a, p_d, p_h = float(wp[0]), float(wp[1]), float(wp[2])

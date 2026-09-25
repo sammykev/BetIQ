@@ -148,6 +148,30 @@ function TicketsAndResults({ info, tickets }: { info: any; tickets: any }) {
   );
 }
 
+/** European competitions and domestic cups from ESPN, and whether training uses them. */
+function ClubCups({ info }: { info: any }) {
+  if (!info || info.error) return <p className="text-xs text-n-500">European/cup data: {info?.error ?? "not loaded"}</p>;
+  if (!info.matches) {
+    return <p className="text-xs text-n-400">European and cup matches: none collected yet. They come from the nightly &quot;Collect international stats&quot; workflow on GitHub.</p>;
+  }
+  const check = info.check ?? {};
+  const scores = check.scores ?? {};
+  const label = (k: string) => (k === "europe" ? "European competitions" : "Domestic cups");
+  return (
+    <div className="text-xs text-n-400 space-y-1">
+      <p>European and cup matches from ESPN: <span className="text-n-0 font-semibold tnum">{num(info.matches)}</span>
+        {" "}({num(info.with_shots)} with shots){info.first ? ` · ${info.first} → ${info.last}` : ""}</p>
+      {["europe", "cups"].map(k => scores[k] && (
+        <p key={k}>
+          {label(k)}: {scores[k].skipped ?? `log loss ${scores[k].with} vs ${scores[k].league_only} without, on ${scores[k].matches} league matches`}
+          {" · "}<span className={check.use?.[k] ? "text-accent font-semibold" : "text-n-500"}>{check.use?.[k] ? "used in training" : "not used"}</span>
+        </p>
+      ))}
+      {!check.at && <p className="text-n-500">Not checked yet: the weekly check runs after the collection.</p>}
+    </div>
+  );
+}
+
 function SharedModel({ model }: { model: any }) {
   if (!model) return <p className="text-xs text-warn">No shared model yet, so restarts train on the server. Run the &quot;Train model&quot; workflow on GitHub.</p>;
   const stale = (Date.now() - new Date(model.trained_at).getTime()) / 3600000 > model.max_age_hours;
@@ -293,6 +317,7 @@ export function PredictionsSection() {
         {!data ? <Skeleton rows={3} /> : (
           <>
             <SharedModel model={data.shared_model} />
+            <ClubCups info={data.club_cups} />
             {data.leagues && (
               <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-9 gap-2">
                 {Object.entries(data.leagues as Record<string, { latest_match: string }>).map(([div, l]) => {

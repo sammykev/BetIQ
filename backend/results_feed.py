@@ -12,7 +12,8 @@ bookings where the source has them.
 
 Every result: {"date" (UTC kick-off date), "home", "away", "status",
 "minute", "hg", "ag", "aet", "corners": [h, a] | None, "bookings": [h, a] |
-None (yellow 1, red 2 — SportyBet's booking points), "source"}.
+None (yellow 1, red 2 — SportyBet's booking points), "shots" / "sot" (shots,
+shots on target): [h, a] | None (finished matches, ESPN only), "source"}.
 """
 
 import glob
@@ -91,6 +92,9 @@ def parse_espn(data: Dict) -> List[Dict]:
             if None not in corners:
                 res["corners"] = corners
             res["bookings"] = _bookings(comp, home, away)
+            for key, names in (("shots", ("totalShots",)), ("sot", ("shotsOnTarget",))):
+                pair = [_stat(home, *names), _stat(away, *names)]
+                res[key] = pair if None not in pair else None
         out.append(res)
     return out
 
