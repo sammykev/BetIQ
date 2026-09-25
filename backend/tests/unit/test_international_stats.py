@@ -278,59 +278,60 @@ def espn_match(home, away, day, stats=True):
     return {"date": f"{day}T19:00Z", "competitions": [comp]}
 
 
+CSV = """date,home_team,away_team,home_score,away_score,tournament,city,country,neutral
+2025-03-05,Spain,Malta,2,0,Friendly,Madrid,Spain,FALSE
+2025-03-06,Chad,Mali,0,0,FIFA World Cup qualification,N'Djamena,Chad,FALSE
+2025-03-07,Fiji,Tonga,1,1,Pacific Games,Suva,Fiji,FALSE
+2018-12-01,Old,Match,1,0,Friendly,X,Y,FALSE
+"""
+
+
 class TestEspn:
-    def test_months_newest_first_and_recheck(self):
-        data = {**ist.empty(), "espn_months": ["fifa.friendly|2025-01"]}
-        months = ist.espn_months(data, date(2025, 3, 10))
-        keys = [k for k, *_ in months]
-        assert keys[0].endswith("|2025-03") and keys[-1].endswith("|2019-01")
-        assert "fifa.friendly|2025-01" not in keys           # done and not recent
-        first = months[0]
-        assert (first[2], first[3]) == (date(2025, 3, 1), date(2025, 3, 9))  # up to yesterday
+    def test_calendar_from_the_results_file(self):
+        cal = ist.espn_calendar_from_csv(CSV, date(2025, 3, 20))
+        assert cal["2025-03-05"] == {"fifa.friendly"}
+        assert "fifa.worldq.caf" in cal["2025-03-06"] and "fifa.worldq.uefa" in cal["2025-03-06"]
+        assert "2025-03-07" not in cal and "2018-12-01" not in cal   # not on ESPN / before START
+        assert cal["2025-03-19"] == set(ist.intl.ESPN_COMPETITIONS)  # recent days: everything
+
+    def test_todo_newest_first_and_recheck(self):
+        cal = {"2025-03-05": {"fifa.friendly"}, "2025-03-19": {"uefa.nations"}, "2025-01-01": {"fifa.friendly"}}
+        data = {**ist.empty(), "espn_days": ["2025-01-01|fifa.friendly", "2025-03-19|uefa.nations"]}
+        todo = ist.espn_todo(data, cal, date(2025, 3, 20))
+        assert [k for k, *_ in todo] == ["2025-03-19|uefa.nations", "2025-03-05|fifa.friendly"]
 
     def test_collects_rows_and_queues_the_rest(self):
         data = ist.empty()
         session = Session({
-            "fifa.friendly/scoreboard": {"__params": {"dates": "20250301-20250309", "limit": 500},
+            "fifa.friendly/scoreboard": {"__params": {"dates": "20250305", "limit": 200},
                                          "events": [espn_match("Spain", "Malta", "2025-03-05"),
-                                                    espn_match("Chad", "Mali", "2025-03-06", stats=False)]},
+                                                    espn_match("Chad", "Mali", "2025-03-05", stats=False)]},
+            "uefa.nations/scoreboard": (400, {"code": 400, "message": "Failed to get events endpoint."}),
         })
-        rep = asyncio.run(ist.collect_espn(session, data, float("inf"), date(2025, 3, 10), pause=0))
+        cal = {"2025-03-05": {"fifa.friendly", "uefa.nations"}}
+        rep = asyncio.run(ist.collect_espn(session, data, float("inf"), date(2025, 3, 20), pause=0, calendar=cal))
         [row] = data["rows"].values()
         assert (row["source"], row["HC"], row["AC"], row["HY"], row["AY"]) == ("espn", 6, 2, 0, 3)
-        assert rep["matches"] == 1 and rep["no_stats"] == 1
+        assert rep["matches"] == 1 and rep["no_stats"] == 1 and rep["statuses"] == {"200": 1, "400": 1}
         assert [m["home"] for m in data["missing"]] == ["Chad"]
-        assert "fifa.friendly|2025-03" in data["espn_months"]
-        frame = ist.rows_frame(data)
-        assert frame.iloc[0]["league"] == "INT-FRI" or frame.iloc[0]["league"].startswith("INT")
-        # A second run doesn't add the same match twice
-        asyncio.run(ist.collect_espn(session, data, float("inf"), date(2025, 3, 10), pause=0))
-        assert len(data["rows"]) == 1 and len(data["missing"]) == 1
+        assert set(data["espn_days"]) == {"2025-03-05|fifa.friendly", "2025-03-05|uefa.nations"}
+        assert data["espn_backfill_done"] and ist.summary(data)["backfill_complete"]
+        assert ist.rows_frame(data).iloc[0]["league"].startswith("INT")
+        # Done days aren't read again; nothing is added twice
+        rep2 = asyncio.run(ist.collect_espn(session, data, float("inf"), date(2025, 3, 20), pause=0, calendar=cal))
+        assert rep2["requests"] == 0 and len(data["rows"]) == 1
 
     def test_stops_when_blocked(self):
         data = ist.empty()
+        cal = {"2025-03-05": {"fifa.friendly", "uefa.nations"}}
         rep = asyncio.run(ist.collect_espn(Session({"scoreboard": (403, {})}), data, float("inf"),
-                                           date(2025, 3, 10), pause=0))
-        assert rep["stopped"] == "HTTP 403" and rep["requests"] == 1 and data["espn_months"] == []
-        assert rep["statuses"] == {"403": 1}
+                                           date(2025, 3, 20), pause=0, calendar=cal))
+        assert rep["stopped"] == "HTTP 403" and rep["requests"] == 1 and data["espn_days"] == []
+        assert not data.get("espn_backfill_done")
 
-    def test_month_refused_then_read_by_week(self):
+    def test_stops_early_when_nothing_works(self):
         data = ist.empty()
-        weeks = {"20250301-20250307": [espn_match("Spain", "Malta", "2025-03-05")],
-                 "20250308-20250309": [espn_match("Italy", "Wales", "2025-03-08")]}
-
-        class Weekly(Session):
-            async def get(self, url, headers=None, params=None, timeout=None):
-                self.calls.append((url, params))
-                if "fifa.friendly" in url and params["dates"] in weeks:
-                    return Resp(200, espn_board(*weeks[params["dates"]]))
-                return Resp(400, {"message": "bad range"})
-        rep = asyncio.run(ist.collect_espn(Weekly({}), data, float("inf"), date(2025, 3, 10), pause=0))
-        assert rep["matches"] == 2 and "fifa.friendly|2025-03" in data["espn_months"]
-        assert rep["statuses"]["400"] > 0 and rep["errors"][0].startswith("HTTP 400")
-
-    def test_summary_counts_espn_progress(self):
-        slugs = list(ist.intl.ESPN_COMPETITIONS)
-        data = {**ist.empty(), "espn_months": [f"{s}|2019-01" for s in slugs]}
-        s = ist.summary(data)
-        assert s["oldest_day_scanned"] == "2019-01-01" and s["backfill_complete"]
+        cal = {f"2025-0{m}-{d:02d}": {"fifa.friendly"} for m in (1, 2) for d in range(1, 28)}
+        rep = asyncio.run(ist.collect_espn(Session({"scoreboard": (500, {})}), data, float("inf"),
+                                           date(2025, 3, 20), pause=0, calendar=cal))
+        assert rep["requests"] == 30 and rep["stopped"].startswith("every request failed")

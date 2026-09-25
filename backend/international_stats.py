@@ -5,9 +5,10 @@ the international corners/bookings model (set_pieces.fit_international).
 Three sources, run from GitHub Actions (collect_international_stats.py):
 
 - ESPN's public scoreboards (the main source: SofaScore answers GitHub and
-  Render with a 403): each national-team competition a month at a time,
-  finished matches with corners (team statistics) and cards (match
-  events). Matches ESPN lists without stats go to API-Football's list.
+  Render with a 403): a competition-day per request, on the days the
+  international results file had matches, finished matches with corners
+  (team statistics) and cards (match events). Matches ESPN lists without
+  stats go to API-Football's list.
 - SofaScore: each day's national-team matches (the same filter as the
   fixtures, international_fixtures.sofascore_internationals), then each
   finished match's statistics. The backfill walks back from yesterday to
@@ -216,18 +217,16 @@ def summary(data: Dict[str, Any]) -> Dict[str, Any]:
     for r in rows:
         sources[r.get("source", "?")] = sources.get(r.get("source", "?"), 0) + 1
     club_refs = data.get("club_refs") or {}
-    espn = data.get("espn_months") or []
-    # How far back the backfill has got, by either source
-    espn_oldest = min((m.split("|")[1] + "-01" for m in espn
-                       if all(f"{slug}|{m.split('|')[1]}" in espn for slug in intl.ESPN_COMPETITIONS)), default=None)
-    oldest = min((d for d in (days[0] if days else None, espn_oldest) if d), default=None)
+    espn = data.get("espn_days") or []
+    oldest = min((d for d in (days[0] if days else None, min(espn, default=None)) if d), default=None)
+    oldest = oldest[:10] if oldest else None
     return {"matches": len(rows), "sources": sources,
             "with_referee": sum(1 for r in rows if r.get("referee")),
             "club_referees": sum(1 for v in club_refs.values() if v), "referees_known": len(data.get("referees") or {}),
             "first": min((r["date"] for r in rows), default=None), "last": max((r["date"] for r in rows), default=None),
             "days_scanned": len(days), "oldest_day_scanned": oldest,
-            "espn_months_scanned": len(espn),
-            "backfill_complete": bool(oldest) and oldest <= START.isoformat(),
+            "espn_days_scanned": len(espn),
+            "backfill_complete": bool(data.get("espn_backfill_done")) or (bool(days) and days[0] <= START.isoformat()),
             "last_run": (data.get("runs") or [None])[-1]}
 
 
@@ -344,104 +343,134 @@ async def _club_referees(session, listing: Dict, data: Dict[str, Any], pause: fl
     return found
 
 
-ESPN_RECHECK_MONTHS = 2   # this month and last are re-read every run (stats arrive late)
+ESPN_RECHECK_DAYS = 3     # recent days are re-read every run (stats arrive late)
 ESPN_PAUSE = 0.3
+# The international results file's competitions → ESPN scoreboards. ESPN
+# refuses date ranges ("Failed to get events endpoint"), so it's read a day
+# at a time — only the days that file says had matches in that competition.
+ESPN_TOURNAMENTS = {
+    "Friendly": ["fifa.friendly"],
+    "FIFA World Cup qualification": ["fifa.worldq.uefa", "fifa.worldq.conmebol", "fifa.worldq.concacaf",
+                                     "fifa.worldq.caf", "fifa.worldq.afc"],
+    "UEFA Nations League": ["uefa.nations"],
+    "UEFA Euro qualification": ["uefa.euroq"],
+    "African Cup of Nations qualification": ["caf.nations_qual"],
+    "CONCACAF Nations League": ["concacaf.nations.league"],
+    "FIFA World Cup": ["fifa.world"],
+    "UEFA Euro": ["uefa.euro"],
+    "African Cup of Nations": ["caf.nations"],
+    "Copa América": ["conmebol.america"],
+    "Gold Cup": ["concacaf.gold"],
+    "AFC Asian Cup": ["afc.asian.cup"],
+}
+ESPN_NAMES = {**{slug: name for slug, (name, _) in intl.ESPN_COMPETITIONS.items()},
+              "fifa.world": "FIFA World Cup", "uefa.euro": "UEFA Euro", "caf.nations": "Africa Cup of Nations",
+              "conmebol.america": "Copa América", "concacaf.gold": "CONCACAF Gold Cup", "afc.asian.cup": "AFC Asian Cup"}
 
 
-def espn_months(data: Dict[str, Any], today: date) -> List[Tuple[str, str, date, date]]:
-    """(progress key, competition slug, first day, last day) to read,
-    newest month first: the recent months always, older ones until done."""
-    done = set(data.get("espn_months") or [])
+def espn_calendar_from_csv(text: str, today: date) -> Dict[str, set]:
+    """{date: ESPN competitions to read} from the international results
+    file, plus the last few days in every competition (not in it yet)."""
+    import csv
+    import io
+    cal: Dict[str, set] = {}
+    for row in csv.DictReader(io.StringIO(text or "")):
+        d = (row.get("date") or "")[:10]
+        slugs = ESPN_TOURNAMENTS.get((row.get("tournament") or "").strip())
+        if slugs and START.isoformat() <= d < today.isoformat():
+            cal.setdefault(d, set()).update(slugs)
+    for i in range(1, ESPN_RECHECK_DAYS + 1):
+        cal.setdefault((today - timedelta(days=i)).isoformat(), set()).update(intl.ESPN_COMPETITIONS)
+    return cal
+
+
+async def espn_calendar(session, today: date) -> Dict[str, set]:
+    """The calendar from the latest international results file (the local
+    copy if the download fails)."""
+    from football_data_sync import INTERNATIONAL_PATH, INTERNATIONAL_URL
+    text = None
+    try:
+        r = await session.get(INTERNATIONAL_URL, timeout=60)
+        if r.status_code == 200:
+            text = r.text
+    except Exception:
+        pass
+    if not text and os.path.exists(INTERNATIONAL_PATH):
+        with open(INTERNATIONAL_PATH, encoding="utf-8") as f:
+            text = f.read()
+    return espn_calendar_from_csv(text or "", today)
+
+
+def espn_todo(data: Dict[str, Any], calendar: Dict[str, set], today: date) -> List[Tuple[str, str, date]]:
+    """(progress key, competition, day) to read, newest first: recent days
+    always, older ones until done."""
+    done = set(data.get("espn_days") or [])
+    recent = {(today - timedelta(days=i)).isoformat() for i in range(1, ESPN_RECHECK_DAYS + 1)}
     out = []
-    m, i = date(today.year, today.month, 1), 0
-    while m >= date(START.year, START.month, 1):
-        nxt = date(m.year + (m.month == 12), m.month % 12 + 1, 1)
-        end = min(nxt - timedelta(days=1), today - timedelta(days=1))
-        if end >= m:
-            for slug in intl.ESPN_COMPETITIONS:
-                k = f"{slug}|{m:%Y-%m}"
-                if i < ESPN_RECHECK_MONTHS or k not in done:
-                    out.append((k, slug, m, end))
-        m = date(m.year - (m.month == 1), (m.month - 2) % 12 + 1, 1)
-        i += 1
+    for d in sorted(calendar, reverse=True):
+        for slug in sorted(calendar[d]):
+            k = f"{d}|{slug}"
+            if d in recent or k not in done:
+                out.append((k, slug, date.fromisoformat(d)))
     return out
 
 
 async def collect_espn(session, data: Dict[str, Any], deadline: float, today: date,
-                       pause: float = ESPN_PAUSE) -> Dict[str, Any]:
-    """Finished national-team matches with corners and cards from ESPN, a
-    competition-month per request (a week at a time if ESPN refuses the
-    month), newest first, until the deadline."""
+                       pause: float = ESPN_PAUSE, calendar: Optional[Dict[str, set]] = None) -> Dict[str, Any]:
+    """Finished national-team matches with corners and cards from ESPN, one
+    competition-day per request, newest first, until the deadline."""
     import results_feed
-    report: Dict[str, Any] = {"requests": 0, "matches": 0, "no_stats": 0, "stopped": None,
-                              "months_done": 0, "statuses": {}, "errors": []}
+    if calendar is None:
+        calendar = await espn_calendar(session, today)
+    todo = espn_todo(data, calendar, today)
+    report: Dict[str, Any] = {"to_read": len(todo), "requests": 0, "matches": 0, "no_stats": 0, "stopped": None,
+                              "statuses": {}, "errors": []}
     errors: List[str] = []
-    done = set(data.get("espn_months") or [])
+    done = set(data.get("espn_days") or [])
     missing = data.setdefault("missing", [])
     missing_keys = {m["key"] for m in missing}
-
-    async def board(slug: str, first: date, last: date) -> Tuple[Optional[Any], Optional[int]]:
-        page, status = await _get(session, f"{intl.ESPN_BASE}/{slug}/scoreboard", intl._ESPN_HEADERS,
-                                  {"dates": f"{first:%Y%m%d}-{last:%Y%m%d}", "limit": 500}, errors)
-        report["requests"] += 1
-        report["statuses"][str(status)] = report["statuses"].get(str(status), 0) + 1
-        await asyncio.sleep(pause)
-        return page, status
-
-    def failing() -> bool:
-        return report["requests"] >= 30 and not report["statuses"].get("200")
-
-    for k, slug, first, last in espn_months(data, today):
+    for k, slug, day in todo:
         if time.monotonic() > deadline:
             report["stopped"] = "time"
             break
-        if failing():
+        if report["requests"] >= 30 and not report["statuses"].get("200"):
             report["stopped"] = "every request failed (see errors)"
             break
-        page, status = await board(slug, first, last)
-        pages = [page] if page is not None else []
-        if page is None and status not in (403, 429):
-            # Refused the whole month: try it a week at a time
-            ok = True
-            d = first
-            while d <= last:
-                wk_page, status = await board(slug, d, min(last, d + timedelta(days=6)))
-                if wk_page is None:
-                    ok = False
-                    break
-                pages.append(wk_page)
-                d += timedelta(days=7)
-            if not ok:
-                pages = []
-        if not pages:
+        page, status = await _get(session, f"{intl.ESPN_BASE}/{slug}/scoreboard", intl._ESPN_HEADERS,
+                                  {"dates": f"{day:%Y%m%d}", "limit": 200}, errors)
+        report["requests"] += 1
+        report["statuses"][str(status)] = report["statuses"].get(str(status), 0) + 1
+        await asyncio.sleep(pause)
+        if page is None:
             if status in (403, 429):
                 report["stopped"] = f"HTTP {status}"
                 break
-            continue  # try this month again next run
-        comp = intl.ESPN_COMPETITIONS[slug][0]
-        for pg in pages:
-            for res in results_feed.parse_espn(pg):
-                if res["status"] != "finished" or res.get("aet") or res.get("hg") is None:
-                    continue
-                key = match_key(res["date"], res["home"], res["away"])
-                if key in data["rows"]:
-                    continue
-                if res.get("corners") and res.get("bookings"):
-                    data["rows"][key] = {"date": res["date"], "home": res["home"], "away": res["away"],
-                                         "competition": comp, "source": "espn",
-                                         "HC": res["corners"][0], "AC": res["corners"][1],
-                                         # Booking points (yellow 1, red 2) as yellows: the model adds HY + 2·HR
-                                         "HY": res["bookings"][0], "AY": res["bookings"][1], "HR": 0, "AR": 0}
-                    report["matches"] += 1
-                elif key not in missing_keys:
-                    report["no_stats"] += 1
-                    missing.append({"key": key, "date": res["date"], "home": res["home"], "away": res["away"],
-                                    "competition": comp})
-                    missing_keys.add(key)
+            if status == 400:
+                done.add(k)  # ESPN's answer for a competition with nothing that day
+            continue  # anything else: try again next run
+        comp = ESPN_NAMES.get(slug, slug)
+        for res in results_feed.parse_espn(page):
+            if res["status"] != "finished" or res.get("aet") or res.get("hg") is None:
+                continue
+            key = match_key(res["date"], res["home"], res["away"])
+            if key in data["rows"]:
+                continue
+            if res.get("corners") and res.get("bookings"):
+                data["rows"][key] = {"date": res["date"], "home": res["home"], "away": res["away"],
+                                     "competition": comp, "source": "espn",
+                                     "HC": res["corners"][0], "AC": res["corners"][1],
+                                     # Booking points (yellow 1, red 2) as yellows: the model adds HY + 2·HR
+                                     "HY": res["bookings"][0], "AY": res["bookings"][1], "HR": 0, "AR": 0}
+                report["matches"] += 1
+            elif key not in missing_keys:
+                report["no_stats"] += 1
+                missing.append({"key": key, "date": res["date"], "home": res["home"], "away": res["away"],
+                                "competition": comp})
+                missing_keys.add(key)
         done.add(k)
-        report["months_done"] += 1
-    data["espn_months"] = sorted(done)
-    # A few distinct failures, for the run log
+    data["espn_days"] = sorted(done)
+    if not report["stopped"] and todo:
+        data["espn_backfill_done"] = True
     report["errors"] = list(dict.fromkeys(errors))[:5]
     return report
 
