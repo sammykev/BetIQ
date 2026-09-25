@@ -46,3 +46,12 @@ def _fresh_rate_limits():
     security._admin_failures = security.SlidingWindow()
     security._logged = security.SlidingWindow()
     yield
+
+
+@pytest.fixture(autouse=True)
+def _fresh_matchday_caches():
+    """The match-day endpoints' short read caches start empty in each test."""
+    import main
+    for cache in (main._md_read_cache, main._strip_cache, main._accuracy_cache):
+        cache.clear()
+    yield

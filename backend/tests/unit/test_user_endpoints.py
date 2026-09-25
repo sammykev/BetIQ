@@ -17,11 +17,21 @@ from tests.unit.test_auth import ISSUER, _StubJWKS, token
 
 class FakeRedis:
     def __init__(self):
-        self.kv, self.z = {}, {}
+        self.kv, self.z, self.sets, self.h = {}, {}, {}, {}
 
     def get(self, k): return self.kv.get(k)
+    def mget(self, keys): return [self.kv.get(k) for k in keys]
     def set(self, k, v, ex=None): self.kv[k] = v
+    def expire(self, k, s): pass
     def incr(self, k): self.kv[k] = str(int(self.kv.get(k) or 0) + 1)
+    def sadd(self, k, *v): self.sets.setdefault(k, set()).update(v)
+    def srem(self, k, *v): self.sets.setdefault(k, set()).difference_update(v)
+    def smembers(self, k): return set(self.sets.get(k, set()))
+    def scard(self, k): return len(self.sets.get(k, set()))
+    def hincrby(self, k, f, n=1):
+        self.h.setdefault(k, {})[f] = self.h.setdefault(k, {}).get(f, 0) + n
+        return self.h[k][f]
+    def hgetall(self, k): return dict(self.h.get(k, {}))
     def zincrby(self, name, amount, member):
         zs = self.z.setdefault(name, {})
         zs[member] = zs.get(member, 0) + amount

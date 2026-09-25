@@ -146,8 +146,9 @@ class TestHistoryEndpoints:
         monkeypatch.setattr(main, "_predictions_cache", [])
         redis.set("betiq:history:2026-09-20", json.dumps([
             {**PRED, "outcome": "won", "actual_result": "D", "score": "1-1"},      # goals push
-            {**PRED, "outcome": "won", "actual_result": "H", "score": "2-1"},      # goals won
-            {**PRED, "tip_code": "?", "outcome": "pending", "actual_result": "A", "score": "0-1"},  # void; goals lost
+            {**PRED, "home": "Leeds", "outcome": "won", "actual_result": "H", "score": "2-1"},      # goals won
+            {**PRED, "home": "Fulham", "tip_code": "?", "outcome": "pending", "actual_result": "A",
+             "score": "0-1"},  # void; goals lost
         ]))
         day = client.get("/api/calendar?month=2026-09").json()["2026-09-20"]
         assert (day["won"], day["lost"], day["pending"]) == (2, 0, 0)
@@ -163,25 +164,6 @@ class TestHistoryEndpoints:
         assert client.post("/api/feedback/result", json=body).status_code == 403
         r = client.post("/api/feedback/result", json=body, headers={"X-Admin-Secret": "s3cret"})
         assert r.status_code == 200
-        [p] = json.loads(redis.get("betiq:history:2026-09-20"))
+        [p] = client.get("/api/history?date=2026-09-20").json()
         assert (p["outcome"], p["goals_outcome"], p["score"]) == ("won", "push", "1-1")
-
-
-class TestArchive:
-    def test_archive_grades_from_results_csv(self, redis, monkeypatch, tmp_path):
-        csv = tmp_path / "results.csv"
-        pd.DataFrame([
-            {"Date": "2026-09-20", "HomeTeam": "Arsenal", "AwayTeam": "Chelsea", "Result": "D", "FTHG": 1, "FTAG": 1},
-            {"Date": "2026-09-20", "HomeTeam": "Everton", "AwayTeam": "Fulham", "Result": "H", "FTHG": 1, "FTAG": 0},
-        ]).to_csv(csv, index=False)
-        monkeypatch.setattr(main, "RESULTS_CSV", str(csv))
-        monkeypatch.setattr(main, "_predictions_cache", [
-            {**PRED, "date": "2026-09-20"},
-            {"home": "Everton", "away": "Fulham", "date": "2026-09-20", "tip_code": "?", "tip_goals": "Over 1.0 (Asian)"},
-            {"home": "Leeds", "away": "Burnley", "date": "2026-09-20", "tip_code": "1", "tip_goals": "Skip"},
-        ])
-        main._archive_past_predictions()
-        by_home = {p["home"]: p for p in json.loads(redis.get("betiq:history:2026-09-20"))}
-        assert (by_home["Arsenal"]["outcome"], by_home["Arsenal"]["goals_outcome"]) == ("won", "push")
-        assert (by_home["Everton"]["outcome"], by_home["Everton"]["goals_outcome"]) == ("void", "push")
-        assert by_home["Leeds"]["outcome"] == "pending"
+        assert "betiq:md:2026-09-20" in redis.kv  # stored in the match-day format from now on

@@ -18,7 +18,7 @@ from typing import List, Dict, Any, Optional, Tuple
 import httpx
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, BackgroundTasks, Depends, HTTPException, Request
+from fastapi import FastAPI, BackgroundTasks, Depends, HTTPException, Query, Request
 from auth import auth_enforced, optional_user, require_user
 from grading import grade_prediction, regrade, to_goals
 from team_names import UCL_ALIASES, TeamResolver
@@ -380,7 +380,7 @@ def _load_predictions_cache():
                 _predictions_cache = saved.get("predictions", [])
                 _last_updated = saved.get("last_updated")
                 print(f"[Cache] Restored {len(_predictions_cache)} predictions from Redis.")
-                _backfill_history_from_cache(r)
+                _snapshot_matchdays(r)
                 return
         except Exception as e:
             print(f"[Cache] Redis load error: {e}")
@@ -396,27 +396,6 @@ def _load_predictions_cache():
             print(f"[Cache] Disk load error: {e}")
 
 
-def _backfill_history_from_cache(r):
-    """Write each date's predictions to betiq:history:{date} if missing — fills gaps from before the feature was deployed."""
-    if not _predictions_cache:
-        return
-    from collections import defaultdict
-    by_date: dict = defaultdict(list)
-    for p in _predictions_cache:
-        d = p.get("date", "")
-        if d:
-            by_date[d].append({**p, "outcome": "pending", "actual_result": None})
-    filled = 0
-    for d, preds in by_date.items():
-        try:
-            if not r.exists(f"betiq:history:{d}"):
-                r.set(f"betiq:history:{d}", json.dumps(preds), ex=90 * 86400)
-                filled += 1
-        except Exception:
-            pass
-    if filled:
-        print(f"[Cache] Backfilled {filled} date(s) into prediction history.")
-
 def _save_predictions_cache():
     payload = json.dumps({"predictions": _predictions_cache, "last_updated": _last_updated})
     r = _get_redis()
@@ -429,29 +408,13 @@ def _save_predictions_cache():
         except Exception as e:
             print(f"[Cache] Redis save error: {e}")
 
-    # 2. Persist each date's predictions to history keys NOW (as pending).
-    #    This ensures history survives even if the match rolls off the upcoming cache.
-    #    _archive_past_predictions() will later upgrade pending → won/lost via results CSV.
+    # 2. Match days: each match's latest pre-match prediction, locked at
+    #    kick-off (graded once the result is in: _refresh_matchdays)
     if r and _predictions_cache:
-        from collections import defaultdict
-        by_date: dict = defaultdict(list)
-        for p in _predictions_cache:
-            d = p.get("date", "")
-            if d:
-                by_date[d].append({**p, "outcome": "pending", "actual_result": None})
-        saved_dates = 0
-        for d, preds in by_date.items():
-            key = f"betiq:history:{d}"
-            try:
-                # Only write if no settled outcomes exist yet for this date
-                existing = r.get(key)
-                if not existing:
-                    r.set(key, json.dumps(preds), ex=90 * 86400)  # 90-day TTL
-                    saved_dates += 1
-            except Exception:
-                pass
-        if saved_dates:
-            print(f"[Cache] Persisted {saved_dates} new date(s) to prediction history.")
+        try:
+            _snapshot_matchdays(r)
+        except Exception as e:
+            print(f"[MatchDay] Snapshot error: {e}")
 
     # 3. Disk fallback
     try:
@@ -1200,7 +1163,6 @@ async def _run_pipeline():
 
         # Archive yesterday's predictions from the OLD cache before we start
         # overwriting it below.
-        _archive_past_predictions()
 
         predictions = []
         fixtures: list = []  # pre-init so the block below is safe when API_KEY is unset
@@ -1411,69 +1373,44 @@ async def _fetch_and_save_results():
 
 
 async def _web_search_missing_results():
-    """
-    For past predictions still marked 'pending' in Redis history,
-    use Groq web search to find the actual result,
-    then update the history and feed into the live model.
-    """
+    """Matches from the last 7 days still without a result a day after
+    kick-off (neither ESPN nor the league CSVs had them — cups, small
+    friendlies): ask the web (Groq), at most 5 a run."""
+    import matchday
     from llm_service import GROQ_API_KEY, fetch_missing_results
     if not GROQ_API_KEY:
         return
-    from datetime import date as _date, timedelta
-
     r = _get_redis()
     if not r:
         return
-
-    today = _date.today()
+    now = datetime.now(timezone.utc)
     searched = 0
-
-    # Check the last 7 days of history for pending predictions
     for days_ago in range(1, 8):
-        d = (today - timedelta(days=days_ago)).isoformat()
+        d = (now.date() - timedelta(days=days_ago)).isoformat()
         try:
-            raw = r.get(f"betiq:history:{d}")
-            if not raw:
-                continue
-            preds = json.loads(raw)
-            still_pending = [p for p in preds if p.get("outcome") == "pending"]
-            if not still_pending:
-                continue
-
-            changed = False
-            for pred in still_pending:
-                if searched >= 5:  # cap to save Groq quota
-                    break
-                try:
-                    res = await fetch_missing_results(pred["home"], pred["away"], d)
-                    if res.get("found"):
-                        pred.update(grade_prediction(
-                            pred, result=res["result"],
-                            home_goals=to_goals(res.get("home_goals")),
-                            away_goals=to_goals(res.get("away_goals")),
-                        ))
-                        pred["source"] = "web_search"
-                        changed = True
-                        searched += 1
-
-                        # Feed into live model
-                        if _predictor:
-                            _predictor._update(
-                                pred["home"], pred["away"], res["result"],
-                                res["home_goals"], res["away_goals"]
-                            )
-                        print(f"[WebResults] Found via web: {pred['home']} {pred.get('score', res['result'])} {pred['away']} → {pred['outcome']}")
-                    await asyncio.sleep(1)
-                except Exception:
-                    pass
-
-            if changed:
-                r.set(f"betiq:history:{d}", json.dumps(preds), ex=90 * 86400)
+            day = _md_load(r, d)
         except Exception:
-            pass
-
-    if searched:
-        print(f"[WebResults] Found and applied {searched} missing results via web search")
+            continue
+        changed = False
+        for e in day.values():
+            if searched >= 5:
+                break
+            res = e.get("result") or {}
+            ko = matchday.kickoff(e)
+            if res.get("status") in ("finished", "postponed") or not ko or now - ko < timedelta(hours=24):
+                continue
+            searched += 1
+            try:
+                found = await fetch_missing_results(e["home"], e["away"], d)
+            except Exception:
+                continue
+            hg, ag = to_goals(found.get("home_goals")), to_goals(found.get("away_goals"))
+            if found.get("found") and hg is not None and ag is not None:
+                changed |= matchday.apply_result(e, {"status": "finished", "hg": hg, "ag": ag, "source": "web_search"})
+                print(f"[WebResults] {e['home']} {hg}-{ag} {e['away']} ({d})")
+            await asyncio.sleep(1)
+        if changed:
+            _md_save(r, d, day)
 
 
 # ------------------------------------------------------------------ #
@@ -2004,71 +1941,6 @@ def _sim_name(a: str, b: str) -> bool:
     return SequenceMatcher(None, n(a), n(b)).ratio() >= 0.6
 
 
-def _archive_past_predictions():
-    """
-    Compare past predictions against real results and store outcomes in Redis.
-    Called at the end of each pipeline run.
-    """
-    if not _predictions_cache:
-        return
-    today = date.today().isoformat()
-    past = [p for p in _predictions_cache if p.get("date", "") < today]
-    if not past:
-        return
-
-    results_df = pd.DataFrame()
-    if os.path.exists(RESULTS_CSV):
-        try:
-            results_df = pd.read_csv(RESULTS_CSV, parse_dates=["Date"])
-        except Exception:
-            pass
-
-    by_date: Dict[str, List] = {}
-
-    for pred in past:
-        d = pred.get("date", "")
-        entry = grade_prediction(pred)  # pending until a result matches
-
-        if not results_df.empty:
-            day = results_df[results_df["Date"].dt.date.astype(str) == d]
-            for _, res in day.iterrows():
-                if (_sim_name(pred.get("home",""), str(res.get("HomeTeam",""))) and
-                        _sim_name(pred.get("away",""), str(res.get("AwayTeam","")))):
-                    entry = grade_prediction(
-                        pred, result=str(res.get("Result", "")),
-                        home_goals=to_goals(res.get("FTHG")),
-                        away_goals=to_goals(res.get("FTAG")),
-                    )
-                    break
-
-        by_date.setdefault(d, []).append(entry)
-
-    r = _get_redis()
-    for d, preds in by_date.items():
-        if r:
-            try:
-                has_settled = any(p.get("outcome") != "pending" for p in preds)
-                existing_raw = r.get(f"betiq:history:{d}")
-
-                if not existing_raw:
-                    # First time — write regardless
-                    r.set(f"betiq:history:{d}", json.dumps(preds), ex=90 * 86400)
-                elif has_settled:
-                    # We have real results — always overwrite (upgrades pending → won/lost)
-                    existing = json.loads(existing_raw)
-                    # Merge: keep any manually submitted results not in our archive
-                    result_map = {f"{p['home']}:{p['away']}": p for p in preds}
-                    for ex_p in existing:
-                        key2 = f"{ex_p['home']}:{ex_p['away']}"
-                        if key2 not in result_map:
-                            result_map[key2] = ex_p
-                    r.set(f"betiq:history:{d}", json.dumps(list(result_map.values())), ex=90 * 86400)
-            except Exception as e:
-                print(f"[History] Redis error for {d}: {e}")
-    settled_count = sum(1 for preds in by_date.values() if any(p.get("outcome") != "pending" for p in preds))
-    print(f"[History] Archived {len(past)} predictions across {len(by_date)} dates ({settled_count} dates with results).")
-
-
 @app.get("/api/admin/sportybet-check")
 async def sportybet_check(_admin: str = Depends(require_admin)):
     """Book a real one-pick SportyBet code from this server and report each step."""
@@ -2174,6 +2046,7 @@ async def data_status(_admin: str = Depends(require_admin)):
         "sportybet_links": _sb_link_status,
         "international_set_pieces": {**_intl_sp_info, "active": _intl_set_pieces is not None},
         "referees": _referee_status(),
+        "matchday": _md_status,
     }
 
 
@@ -2188,86 +2061,401 @@ async def model_metrics(_admin: str = Depends(require_admin)):
         return {"available": False}
 
 
+# ── Match days: pre-match predictions, results, grades (matchday.py) ──────
+MD_KEY = "betiq:md:{}"
+MD_TTL = 120 * 86400
+MD_DAYS_BACK, MD_DAYS_AHEAD = 7, 14      # what the site's date strip shows
+MD_LIVE_MINUTES = 15                      # live scores: how often while matches are on
+_md_status: Dict[str, Any] = {"at": None, "trigger": None, "report": None}
+_md_read_cache: Dict[str, Tuple[float, Dict]] = {}
+
+
+def _md_load(r, d: str) -> Dict[str, Dict]:
+    """One date's entries ({match key: entry}); the old history format
+    (betiq:history:{date}) is converted on the fly."""
+    import matchday
+    raw = r.get(MD_KEY.format(d))
+    if raw:
+        return json.loads(raw)
+    legacy = r.get(f"betiq:history:{d}")
+    if legacy:
+        day = {}
+        for p in json.loads(legacy):
+            if p.get("home") and p.get("away"):
+                day[matchday.key(p["home"], p["away"])] = matchday.from_legacy({**p, "date": p.get("date") or d})
+        return day
+    return {}
+
+
+def _md_save(r, d: str, day: Dict[str, Dict]) -> None:
+    r.set(MD_KEY.format(d), json.dumps(day, separators=(",", ":")), ex=MD_TTL)
+    _md_read_cache.pop(d, None)
+
+
+def _md_many(r, dates: List[str]) -> Dict[str, Dict[str, Dict]]:
+    """Several dates in one request (MGET); dates only in the old format are
+    read one by one."""
+    raws = r.mget([MD_KEY.format(d) for d in dates]) if dates else []
+    out = {}
+    for d, raw in zip(dates, raws):
+        out[d] = json.loads(raw) if raw else (_md_load(r, d) if d < date.today().isoformat() else {})
+    return out
+
+
+def _snapshot_matchdays(r) -> int:
+    """Store each football prediction as its match day's pre-match entry
+    (refreshed until kick-off, then locked). Returns dates written."""
+    import matchday
+    by_date: Dict[str, List[Dict]] = {}
+    for p in _predictions_cache:
+        if p.get("sport") in (None, "football") and p.get("date"):
+            by_date.setdefault(p["date"], []).append(p)
+    now = datetime.now(timezone.utc)
+    written = 0
+    for d, preds in by_date.items():
+        day = _md_load(r, d)
+        if matchday.merge_predictions(day, preds, now):
+            _md_save(r, d, day)
+            written += 1
+    return written
+
+
+def _md_day_view(d: str) -> Dict[str, Dict]:
+    """A date's entries for the site: stored (cached a minute), with the
+    current predictions merged in for matches not yet started."""
+    import matchday
+    hit = _md_read_cache.get(d)
+    if hit and time.time() - hit[0] < 60:
+        day = hit[1]
+    else:
+        r = _get_redis()
+        try:
+            day = _md_load(r, d) if r else {}
+        except Exception:
+            day = {}
+        _md_read_cache[d] = (time.time(), day)
+    if d >= date.today().isoformat():
+        day = json.loads(json.dumps(day))  # the cached copy stays as stored
+        matchday.merge_predictions(day, [p for p in _predictions_cache
+                                         if p.get("date") == d and p.get("sport") in (None, "football")],
+                                   datetime.now(timezone.utc))
+    return day
+
+
+async def _refresh_matchdays(days_back: int = 1, trigger: str = "schedule") -> Dict[str, Any]:
+    """Scores for matches that have kicked off in the last `days_back` days
+    (ESPN live/final, then the league CSVs for stats and anything missed);
+    grades them, then settles booked tickets."""
+    import matchday
+    import results_feed
+    r = _get_redis()
+    if not r:
+        return {"skipped": "no Redis"}
+    now = datetime.now(timezone.utc)
+    today = now.date()
+    dates = [(today - timedelta(days=i)).isoformat() for i in range(days_back + 1)]
+    days = _md_many(r, dates)
+    need = {d: {k: e for k, e in day.items() if matchday.needs_result(e, now)} for d, day in days.items()}
+    need = {d: v for d, v in need.items() if v}
+    report: Dict[str, Any] = {"dates": sorted(need), "matches": sum(len(v) for v in need.values()),
+                              "updated": 0, "requests": 0, "errors": [], "unmatched": 0}
+    if need:
+        pairs = set()
+        for entries in need.values():
+            for e in entries.values():
+                day0 = date.fromisoformat(e["date"])
+                for slug in results_feed.slugs_for(e.get("league") or ""):
+                    pairs.add((day0, slug))
+                    if (e.get("time") or "12:00") < "06:00":  # ESPN files it under the US date
+                        pairs.add((day0 - timedelta(days=1), slug))
+        espn: List[Dict] = []
+        if pairs:
+            from curl_cffi.requests import AsyncSession
+            try:
+                async with AsyncSession(impersonate=intl.IMPERSONATE, timeout=20) as client:
+                    for d0, slug in sorted(pairs):
+                        got = await results_feed.fetch_espn(client, [d0], [slug])
+                        espn += got["results"]
+                        report["requests"] += got["requests"]
+                        report["errors"] += got["errors"]
+            except Exception as e:
+                report["errors"].append(f"ESPN: {type(e).__name__}")
+        near = {(date.fromisoformat(d) + timedelta(days=o)).isoformat() for d in need for o in (-1, 0, 1)}
+        try:
+            csv = await asyncio.to_thread(results_feed.csv_results, near)
+        except Exception as e:
+            csv = []
+            report["errors"].append(f"CSV: {type(e).__name__}")
+        for d, entries in need.items():
+            day, changed = days[d], False
+            matched = set()
+            for source in (espn, csv):
+                for k, res in matchday.match_results(entries, source):
+                    matched.add(k)
+                    if matchday.apply_result(day[k], res):
+                        changed = True
+                        report["updated"] += 1
+            report["unmatched"] += sum(1 for k in entries if k not in matched
+                                       and (matchday.kickoff(entries[k]) or now) < now - timedelta(hours=3))
+            if changed:
+                _md_save(r, d, day)
+    report["errors"] = report["errors"][:20]
+    try:
+        report["tickets"] = await asyncio.to_thread(_settle_tickets, r)
+    except Exception as e:
+        report["tickets"] = {"error": str(e)}
+    _md_status.update(at=now.isoformat(timespec="seconds"), trigger=trigger, report=report)
+    if report["updated"]:
+        print(f"[MatchDay] {trigger}: {report['updated']} results updated over {report['dates']}")
+    return report
+
+
+async def _matchday_live() -> None:
+    await _refresh_matchdays(1, "live")
+
+
+async def _matchday_sweep() -> None:
+    await _refresh_matchdays(MD_DAYS_BACK, "sweep")
+
+
+def _legacy_view(e: Dict) -> Dict[str, Any]:
+    """A match-day entry in the old history shape (admin stats, /api/history)."""
+    import grading
+    res, g = e.get("result") or {}, e.get("grades") or {}
+    finished = res.get("status") == "finished" and res.get("hg") is not None and not res.get("aet")
+    tip = (g.get("tip") or {}).get("verdict")
+    return {**{f: e.get(f) for f in ("home", "away", "date", "time", "league", "league_name", "flag")},
+            **(e.get("pred") or {}),
+            "outcome": tip or ("void" if finished else "pending"),
+            "actual_result": grading.result_from_score(int(res["hg"]), int(res["ag"])) if finished else None,
+            "score": f"{res['hg']}-{res['ag']}" if finished else None,
+            "goals_outcome": (g.get("goals") or {}).get("verdict")}
+
+
 def _read_history(r, d: str) -> List[Dict]:
-    """A date's archived predictions, re-settled so entries graded by older
-    code (1X/2X always lost, no goals verdict) read correctly."""
-    raw = r.get(f"betiq:history:{d}")
-    return [regrade(p) for p in json.loads(raw)] if raw else []
+    return [_legacy_view(e) for e in _md_load(r, d).values()]
+
+
+def _date_param(value: str) -> date:
+    try:
+        return date.fromisoformat(value)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD")
+
+
+@app.get("/api/matchday")
+async def get_matchday(date_: str = Query("", alias="date")):
+    """One day's matches: the pre-match prediction, the score (live or
+    final) and how each market's pick did. From 90 days back to the last
+    predicted day."""
+    import matchday
+    today = date.today()
+    d = _date_param(date_ or today.isoformat())
+    if not (today - timedelta(days=90) <= d <= today + timedelta(days=PREDICTION_DAYS + 1)):
+        raise HTTPException(status_code=400, detail="date out of range")
+    day = _md_day_view(d.isoformat())
+    matches = sorted((matchday.public(e) for e in day.values()),
+                     key=lambda m: (m.get("league_name") or "", m.get("time") or "", m.get("home") or ""))
+    return {"date": d.isoformat(), "today": today.isoformat(), "matches": matches,
+            "summary": matchday.day_summary(day.values()),
+            "updated": _md_status.get("at")}
+
+
+_strip_cache: Dict[str, Tuple[float, Any]] = {}
+
+
+@app.get("/api/matchday/strip")
+async def get_matchday_strip():
+    """The date strip: 7 days back to 14 ahead, each with its match count,
+    how many are live / finished, and how our tips did."""
+    import matchday
+    today = date.today()
+    hit = _strip_cache.get("strip")
+    if hit and time.time() - hit[0] < 60 and hit[1]["today"] == today.isoformat():
+        return hit[1]
+    dates = [(today + timedelta(days=o)).isoformat() for o in range(-MD_DAYS_BACK, MD_DAYS_AHEAD + 1)]
+    r = _get_redis()
+    try:
+        stored = _md_many(r, dates) if r else {}
+    except Exception:
+        stored = {}
+    upcoming: Dict[str, int] = {}
+    for p in _predictions_cache:
+        if p.get("sport") in (None, "football") and p.get("date"):
+            upcoming[p["date"]] = upcoming.get(p["date"], 0) + 1
+    days = []
+    for d in dates:
+        s = matchday.day_summary((stored.get(d) or {}).values())
+        if d >= today.isoformat():
+            s["total"] = max(s["total"], upcoming.get(d, 0))
+        days.append({"date": d, **s})
+    out = {"today": today.isoformat(), "days": days}
+    _strip_cache["strip"] = (time.time(), out)
+    return out
+
+
+_accuracy_cache: Dict[int, Tuple[float, Any]] = {}
+
+
+@app.get("/api/accuracy")
+async def get_accuracy(days: int = 30):
+    """The model's track record over the last `days` days (7–90): each
+    market's hit rate next to the probability we gave, calibration, the
+    1X2 Brier score against the bookmaker's, by league and by day."""
+    import matchday
+    days = max(1, min(int(days), 90))
+    hit = _accuracy_cache.get(days)
+    if hit and time.time() - hit[0] < 600:
+        return hit[1]
+    r = _get_redis()
+    if not r:
+        return {"days": days, "matches": 0, "markets": {}, "calibration": [], "brier": {}, "leagues": [], "daily": []}
+    today = date.today()
+    dates = [(today - timedelta(days=i)).isoformat() for i in range(days, -1, -1)]
+    out = {"days": days, **matchday.accuracy(await asyncio.to_thread(_md_many, r, dates))}
+    _accuracy_cache[days] = (time.time(), out)
+    return out
 
 
 @app.get("/api/history")
 async def get_history(date: str):
-    """Return predictions for a specific date with outcomes (won/lost/pending/void)
-    and goals_outcome (won/lost/push/half_won/half_lost/None)."""
-    r = _get_redis()
-    if r:
-        try:
-            data = _read_history(r, date)
-            if data:
-                return data
-        except Exception:
-            pass
-    # Fall back to current predictions cache (works for today + upcoming)
-    from_cache = [
-        {**p, "outcome": "pending", "actual_result": None}
-        for p in _predictions_cache
-        if p.get("date") == date
-    ]
-    if from_cache:
-        return from_cache
-    return []
+    """A date's predictions in the old shape (outcome / actual_result / score)."""
+    return [_legacy_view(e) for e in _md_day_view(_date_param(date).isoformat()).values()]
 
 
 @app.get("/api/calendar")
 async def get_calendar(month: str = ""):
-    """Return per-date prediction summary for a given month (YYYY-MM)."""
+    """Per-date summary for a month (YYYY-MM), in the old shape."""
     import calendar as cal_lib
-    if not month:
-        month = datetime.utcnow().strftime("%Y-%m")
+    import matchday
+    month = month or datetime.utcnow().strftime("%Y-%m")
     try:
         year, m = map(int, month.split("-"))
-    except ValueError:
+        days_in_month = cal_lib.monthrange(year, m)[1]
+    except (ValueError, cal_lib.IllegalMonthError):
         raise HTTPException(status_code=400, detail="month must be YYYY-MM")
-
-    days_in_month = cal_lib.monthrange(year, m)[1]
-    summary: Dict[str, Any] = {}
+    dates = [f"{year:04d}-{m:02d}-{d:02d}" for d in range(1, days_in_month + 1)]
     r = _get_redis()
-
-    # Debug: log what dates exist in cache
-    cache_dates = sorted({p.get("date","") for p in _predictions_cache if p.get("date","").startswith(month)})
-    print(f"[Calendar] {month}: {len(_predictions_cache)} in cache, dates in month: {cache_dates}")
-
-    for day in range(1, days_in_month + 1):
-        d = f"{month}-{day:02d}"
-        data: List[Dict] = []
-
-        if r:
-            try:
-                data = _read_history(r, d)
-            except Exception:
-                pass
-
-        if not data:
-            # Fall back to live predictions cache
-            current = [p for p in _predictions_cache
-                       if (p.get("date") or p.get("Date",""))[:10] == d]
-            if current:
-                data = [{**p, "outcome": "pending", "actual_result": None} for p in current]
-
-        if data:
-            won     = sum(1 for p in data if p.get("outcome") == "won")
-            lost    = sum(1 for p in data if p.get("outcome") == "lost")
-            pending = sum(1 for p in data if p.get("outcome") == "pending")
-            # Goals tips: half results count with their side; pushes are refunds
-            goals = [p.get("goals_outcome") for p in data]
-            summary[d] = {
-                "total": len(data), "won": won, "lost": lost, "pending": pending,
-                "goals_won":  sum(1 for g in goals if g in ("won", "half_won")),
-                "goals_lost": sum(1 for g in goals if g in ("lost", "half_lost")),
-            }
-
-    print(f"[Calendar] {month}: returning {len(summary)} days with data")
+    stored = _md_many(r, dates) if r else {}
+    summary: Dict[str, Any] = {}
+    for d in dates:
+        entries = list((stored.get(d) or {}).values())
+        if not entries:
+            continue
+        s = matchday.day_summary(entries)
+        summary[d] = {"total": s["total"], "won": s["tip"][0], "lost": s["tip"][1],
+                      "pending": s["total"] - s["finished"], "goals_won": s["goals"][0], "goals_lost": s["goals"][1]}
     return summary
+
+
+# ── Tickets: booking codes per account, settled from the match days ──────
+TICKETS_OPEN_KEY = "betiq:tickets:open"       # accounts with unsettled tickets
+TICKETS_STATS_KEY = "betiq:tickets:stats"
+TICKET_SOURCES = {"slip", "optimizer", "code_check", "chat", "match", "other"}
+
+
+def _record_ticket(uid: str, ticket: Dict[str, Any]) -> None:
+    import tickets
+    r = _get_redis()
+    if not r or not ticket.get("legs"):
+        return
+    key = _ukey(uid, "tickets")
+    raw = r.get(key)
+    items: List[Dict] = [t for t in (json.loads(raw) if raw else []) if t.get("code") != ticket["code"]]
+    items.insert(0, ticket)
+    r.set(key, json.dumps(items[:tickets.MAX_TICKETS], separators=(",", ":")), ex=365 * 86400)
+    r.sadd(TICKETS_OPEN_KEY, uid)
+    r.hincrby(TICKETS_STATS_KEY, "created", 1)
+    r.hincrby(TICKETS_STATS_KEY, f"source:{ticket.get('source') or 'other'}", 1)
+    r.incr(f"betiq:tickets:day:{date.today().isoformat()}")
+    r.expire(f"betiq:tickets:day:{date.today().isoformat()}", 90 * 86400)
+
+
+def _settle_tickets(r) -> Dict[str, int]:
+    """Grade the legs of every open ticket whose matches have finished."""
+    import matchday
+    import tickets
+    uids = [u.decode() if isinstance(u, bytes) else u for u in (r.smembers(TICKETS_OPEN_KEY) or [])]
+    days: Dict[str, Dict] = {}
+    report = {"accounts": len(uids), "settled": 0, "legs": 0}
+    today = date.today()
+
+    def result_for(leg: Dict) -> Optional[Dict]:
+        k = matchday.key(leg.get("home", ""), leg.get("away", ""))
+        try:
+            d0 = date.fromisoformat(leg.get("date") or "")
+        except ValueError:
+            return None
+        for d in (d0, d0 - timedelta(days=1), d0 + timedelta(days=1)):
+            ds = d.isoformat()
+            if ds not in days:
+                days[ds] = _md_load(r, ds) if d <= today else {}
+            e = days[ds].get(k)
+            if e:
+                return e.get("result")
+        return None
+
+    for uid in uids:
+        key = _ukey(uid, "tickets")
+        raw = r.get(key)
+        items: List[Dict] = json.loads(raw) if raw else []
+        changed = False
+        for t in items:
+            if t.get("status") in ("pending", "open"):
+                before = sum(1 for l in t.get("legs") or [] if l.get("status") != "pending")
+                if tickets.settle(t, result_for):
+                    changed = True
+                    report["legs"] += sum(1 for l in t.get("legs") or [] if l.get("status") != "pending") - before
+                    if t["status"] in ("won", "lost", "void"):
+                        report["settled"] += 1
+                        r.hincrby(TICKETS_STATS_KEY, t["status"], 1)
+        if changed:
+            r.set(key, json.dumps(items, separators=(",", ":")), ex=365 * 86400)
+        # Nothing left to settle (or only legs we can't settle, all played)
+        def open_(t):
+            if t.get("status") == "pending":
+                return True
+            last = max((l.get("date") or "" for l in t.get("legs") or []), default="")
+            return t.get("status") == "open" and last >= (today - timedelta(days=3)).isoformat()
+        if not any(open_(t) for t in items):
+            r.srem(TICKETS_OPEN_KEY, uid)
+    return report
+
+
+@app.get("/api/admin/tickets")
+async def admin_tickets(_admin: str = Depends(require_admin)):
+    """Booking codes made by signed-in accounts: totals, by source, settled
+    win rate, and codes per day for the last 14 days."""
+    r = _get_redis()
+    if not r:
+        return {"error": "no_redis"}
+    stats = {(k.decode() if isinstance(k, bytes) else k): int(v) for k, v in (r.hgetall(TICKETS_STATS_KEY) or {}).items()}
+    today = date.today()
+    dates = [(today - timedelta(days=i)).isoformat() for i in range(13, -1, -1)]
+    counts = r.mget([f"betiq:tickets:day:{d}" for d in dates])
+    won, lost = stats.get("won", 0), stats.get("lost", 0)
+    return {"created": stats.get("created", 0), "won": won, "lost": lost, "void": stats.get("void", 0),
+            "hit_rate": round(won / (won + lost), 3) if won + lost else None,
+            "sources": {k.split(":", 1)[1]: v for k, v in stats.items() if k.startswith("source:")},
+            "daily": [{"date": d, "codes": int(c or 0)} for d, c in zip(dates, counts)],
+            "open_accounts": r.scard(TICKETS_OPEN_KEY)}
+
+
+@app.get("/api/user/tickets")
+async def get_tickets(request: Request, uid: str = ""):
+    """The account's booking codes, each leg settled from the result, plus
+    codes saved before tracking (no legs to settle)."""
+    import tickets
+    uid = await require_user(request, uid)
+    r = _get_redis()
+    if not r:
+        return {"tickets": [], "summary": tickets.summary([]), "older": []}
+    raw = r.get(_ukey(uid, "tickets"))
+    items: List[Dict] = json.loads(raw) if raw else []
+    tracked = {t.get("code") for t in items}
+    old_raw = r.get(_ukey(uid, "codes"))
+    older = [c for c in (json.loads(old_raw) if old_raw else []) if c.get("code") not in tracked]
+    return {"tickets": items, "summary": tickets.summary(items), "older": older[:50]}
 
 
 @app.post("/api/feedback/result")
@@ -2295,28 +2483,21 @@ async def submit_match_result(body: Dict[str, Any], _admin: str = Depends(requir
     _audit(_admin, "result", match=f"{home} v {away} {date_s}", result=result,
            score=f"{home_s}-{away_s}" if home_s is not None and away_s is not None else None)
 
-    # Update Redis history entry with actual result
+    # Grade the match day's entry (needs the score: 1X2 alone can't settle goals markets)
     r = _get_redis()
-    if r:
+    if r and home_s is not None and away_s is not None:
+        import matchday
         try:
-            raw = r.get(f"betiq:history:{date_s}")
-            if raw:
-                preds = json.loads(raw)
-                updated = 0
-                for p in preds:
-                    h_sim = _sim_name(p.get("home",""), home)
-                    a_sim = _sim_name(p.get("away",""), away)
-                    if h_sim and a_sim:
-                        p.update(grade_prediction(
-                            p, result=result,
-                            home_goals=to_goals(home_s), away_goals=to_goals(away_s),
-                        ))
-                        updated += 1
-                if updated:
-                    r.set(f"betiq:history:{date_s}", json.dumps(preds), ex=90*86400)
-                    print(f"[Feedback] Updated {updated} predictions for {home} vs {away}")
+            day = _md_load(r, date_s)
+            hit = matchday.match_results(day, [{"date": date_s, "home": home, "away": away}])
+            for k, _ in hit:
+                matchday.apply_result(day[k], {"status": "finished", "hg": int(home_s), "ag": int(away_s),
+                                               "source": "admin"})
+            if hit:
+                _md_save(r, date_s, day)
+                print(f"[Feedback] Graded {home} vs {away} ({date_s})")
         except Exception as e:
-            print(f"[Feedback] Redis update error: {e}")
+            print(f"[Feedback] Match day update error: {e}")
 
     # Also append to results CSV so next training run picks it up
     try:
@@ -2652,7 +2833,7 @@ async def debug_calendar_status(_admin: str = Depends(require_admin)):
     if r:
         try:
             redis_keys = [k.decode() if isinstance(k, bytes) else k
-                          for k in r.keys("betiq:history:*")]
+                          for k in r.keys("betiq:md:*")]
         except Exception:
             pass
     return {
@@ -3252,6 +3433,7 @@ ADMIN_JOBS = {
     "traffic_flush": ("Save traffic counts", lambda: asyncio.to_thread(_flush_traffic)),
     "referees": ("Find referees for upcoming matches", lambda: _refresh_referees("manual")),
     "football_sync": ("Download league results (football-data.co.uk)", lambda: _manual_football_sync()),
+    "matchday_sweep": ("Scores and grades for the last 7 days", lambda: _refresh_matchdays(MD_DAYS_BACK, "manual")),
 }
 
 
@@ -4916,7 +5098,7 @@ async def optimize_code(body: Dict[str, Any]):
 
 
 @app.post("/api/booking/convert")
-async def convert_slip(body: Dict[str, Any]):
+async def convert_slip(request: Request, body: Dict[str, Any]):
     """
     Turn the bet slip into a booking code on the chosen platform.
     Body: {"platform": "sportybet", "selections": [{home, away, date, market, code, label?}]}
@@ -4931,9 +5113,27 @@ async def convert_slip(body: Dict[str, Any]):
         selections = booking_slip.validate(body.get("selections"))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return await booking_slip.to_sportybet(
+    result = await booking_slip.to_sportybet(
         selections, sportybet.fetch_events_for_date, sportybet.find_event, sportybet.share_selections,
         linked=_linked_event, market_map=_sb_market_map())
+    # Every code a signed-in account makes becomes a ticket, settled leg by
+    # leg as the results come in (Dashboard → Tickets)
+    if result.get("code"):
+        import auth
+        import tickets
+        uid = await auth.optional_user(request)
+        if not uid and not auth.auth_enforced():
+            uid = str(body.get("uid") or "")[:64] or None
+        if uid:
+            source = body.get("source") if body.get("source") in TICKET_SOURCES else "other"
+            try:
+                _record_ticket(uid, tickets.new_ticket(
+                    result["code"], selections, result.get("picks") or [], source, result.get("share_url"),
+                    result.get("total_odds"), datetime.now(timezone.utc).isoformat(timespec="seconds")))
+                result["tracked"] = True
+            except Exception as e:
+                print(f"[Tickets] Couldn't record {result['code']}: {e}")
+    return result
 
 
 ADMIN_SECRET = os.getenv("ADMIN_SECRET", "")
@@ -5039,6 +5239,8 @@ async def startup():
     scheduler.add_job(_link_sportybet_events, "interval", minutes=SB_LINK_MINUTES, id="sportybet_links")
     scheduler.add_job(_flush_traffic, "interval", minutes=TRAFFIC_FLUSH_MINUTES, id="traffic_flush")
     scheduler.add_job(_refresh_referees, "interval", hours=REFEREE_HOURS, id="referees")
+    scheduler.add_job(_matchday_live, "interval", minutes=MD_LIVE_MINUTES, id="matchday_live")
+    scheduler.add_job(_matchday_sweep, "interval", hours=3, id="matchday_sweep")
     scheduler.start()
 
 
