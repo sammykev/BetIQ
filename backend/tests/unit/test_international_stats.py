@@ -291,7 +291,7 @@ class TestEspn:
     def test_collects_rows_and_queues_the_rest(self):
         data = ist.empty()
         session = Session({
-            "fifa.friendly/scoreboard": {"__params": {"dates": "20250301-20250309", "limit": 1000},
+            "fifa.friendly/scoreboard": {"__params": {"dates": "20250301-20250309", "limit": 500},
                                          "events": [espn_match("Spain", "Malta", "2025-03-05"),
                                                     espn_match("Chad", "Mali", "2025-03-06", stats=False)]},
         })
@@ -312,6 +312,22 @@ class TestEspn:
         rep = asyncio.run(ist.collect_espn(Session({"scoreboard": (403, {})}), data, float("inf"),
                                            date(2025, 3, 10), pause=0))
         assert rep["stopped"] == "HTTP 403" and rep["requests"] == 1 and data["espn_months"] == []
+        assert rep["statuses"] == {"403": 1}
+
+    def test_month_refused_then_read_by_week(self):
+        data = ist.empty()
+        weeks = {"20250301-20250307": [espn_match("Spain", "Malta", "2025-03-05")],
+                 "20250308-20250309": [espn_match("Italy", "Wales", "2025-03-08")]}
+
+        class Weekly(Session):
+            async def get(self, url, headers=None, params=None, timeout=None):
+                self.calls.append((url, params))
+                if "fifa.friendly" in url and params["dates"] in weeks:
+                    return Resp(200, espn_board(*weeks[params["dates"]]))
+                return Resp(400, {"message": "bad range"})
+        rep = asyncio.run(ist.collect_espn(Weekly({}), data, float("inf"), date(2025, 3, 10), pause=0))
+        assert rep["matches"] == 2 and "fifa.friendly|2025-03" in data["espn_months"]
+        assert rep["statuses"]["400"] > 0 and rep["errors"][0].startswith("HTTP 400")
 
     def test_summary_counts_espn_progress(self):
         slugs = list(ist.intl.ESPN_COMPETITIONS)

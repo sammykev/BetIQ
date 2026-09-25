@@ -232,16 +232,25 @@ def summary(data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # ── collection ───────────────────────────────────────────────────────────
-async def _get(session, url: str, headers: Optional[Dict] = None, params: Optional[Dict] = None) -> Tuple[Optional[Any], Optional[int]]:
+async def _get(session, url: str, headers: Optional[Dict] = None, params: Optional[Dict] = None,
+               errors: Optional[List[str]] = None) -> Tuple[Optional[Any], Optional[int]]:
+    """(JSON, HTTP status); (None, status or None) on failure. `errors`, if
+    given, collects a short description of each failure for the run log."""
     try:
         r = await session.get(url, headers=headers, params=params, timeout=30)
-    except Exception:
+    except Exception as e:
+        if errors is not None:
+            errors.append(f"{type(e).__name__}: {str(e)[:120]}")
         return None, None
     if r.status_code != 200:
+        if errors is not None:
+            errors.append(f"HTTP {r.status_code}: {(getattr(r, 'text', '') or '')[:120]}")
         return None, r.status_code
     try:
         return r.json(), 200
     except ValueError:
+        if errors is not None:
+            errors.append(f"not JSON: {(getattr(r, 'text', '') or '')[:120]}")
         return None, r.status_code
 
 
@@ -361,47 +370,79 @@ def espn_months(data: Dict[str, Any], today: date) -> List[Tuple[str, str, date,
 async def collect_espn(session, data: Dict[str, Any], deadline: float, today: date,
                        pause: float = ESPN_PAUSE) -> Dict[str, Any]:
     """Finished national-team matches with corners and cards from ESPN, a
-    competition-month per request, newest first, until the deadline."""
+    competition-month per request (a week at a time if ESPN refuses the
+    month), newest first, until the deadline."""
     import results_feed
-    report: Dict[str, Any] = {"requests": 0, "matches": 0, "no_stats": 0, "stopped": None}
+    report: Dict[str, Any] = {"requests": 0, "matches": 0, "no_stats": 0, "stopped": None,
+                              "months_done": 0, "statuses": {}, "errors": []}
+    errors: List[str] = []
     done = set(data.get("espn_months") or [])
     missing = data.setdefault("missing", [])
     missing_keys = {m["key"] for m in missing}
+
+    async def board(slug: str, first: date, last: date) -> Tuple[Optional[Any], Optional[int]]:
+        page, status = await _get(session, f"{intl.ESPN_BASE}/{slug}/scoreboard", intl._ESPN_HEADERS,
+                                  {"dates": f"{first:%Y%m%d}-{last:%Y%m%d}", "limit": 500}, errors)
+        report["requests"] += 1
+        report["statuses"][str(status)] = report["statuses"].get(str(status), 0) + 1
+        await asyncio.sleep(pause)
+        return page, status
+
+    def failing() -> bool:
+        return report["requests"] >= 30 and not report["statuses"].get("200")
+
     for k, slug, first, last in espn_months(data, today):
         if time.monotonic() > deadline:
             report["stopped"] = "time"
             break
-        page, status = await _get(session, f"{intl.ESPN_BASE}/{slug}/scoreboard", intl._ESPN_HEADERS,
-                                  {"dates": f"{first:%Y%m%d}-{last:%Y%m%d}", "limit": 1000})
-        report["requests"] += 1
-        await asyncio.sleep(pause)
-        if page is None:
+        if failing():
+            report["stopped"] = "every request failed (see errors)"
+            break
+        page, status = await board(slug, first, last)
+        pages = [page] if page is not None else []
+        if page is None and status not in (403, 429):
+            # Refused the whole month: try it a week at a time
+            ok = True
+            d = first
+            while d <= last:
+                wk_page, status = await board(slug, d, min(last, d + timedelta(days=6)))
+                if wk_page is None:
+                    ok = False
+                    break
+                pages.append(wk_page)
+                d += timedelta(days=7)
+            if not ok:
+                pages = []
+        if not pages:
             if status in (403, 429):
                 report["stopped"] = f"HTTP {status}"
                 break
             continue  # try this month again next run
         comp = intl.ESPN_COMPETITIONS[slug][0]
-        for res in results_feed.parse_espn(page):
-            if res["status"] != "finished" or res.get("aet") or res.get("hg") is None:
-                continue
-            key = match_key(res["date"], res["home"], res["away"])
-            if key in data["rows"]:
-                continue
-            if res.get("corners") and res.get("bookings"):
-                data["rows"][key] = {"date": res["date"], "home": res["home"], "away": res["away"],
-                                     "competition": comp, "source": "espn",
-                                     "HC": res["corners"][0], "AC": res["corners"][1],
-                                     # Booking points (yellow 1, red 2) as yellows: the model adds HY + 2·HR
-                                     "HY": res["bookings"][0], "AY": res["bookings"][1], "HR": 0, "AR": 0}
-                report["matches"] += 1
-            else:
-                report["no_stats"] += 1
-                if key not in missing_keys:
+        for pg in pages:
+            for res in results_feed.parse_espn(pg):
+                if res["status"] != "finished" or res.get("aet") or res.get("hg") is None:
+                    continue
+                key = match_key(res["date"], res["home"], res["away"])
+                if key in data["rows"]:
+                    continue
+                if res.get("corners") and res.get("bookings"):
+                    data["rows"][key] = {"date": res["date"], "home": res["home"], "away": res["away"],
+                                         "competition": comp, "source": "espn",
+                                         "HC": res["corners"][0], "AC": res["corners"][1],
+                                         # Booking points (yellow 1, red 2) as yellows: the model adds HY + 2·HR
+                                         "HY": res["bookings"][0], "AY": res["bookings"][1], "HR": 0, "AR": 0}
+                    report["matches"] += 1
+                elif key not in missing_keys:
+                    report["no_stats"] += 1
                     missing.append({"key": key, "date": res["date"], "home": res["home"], "away": res["away"],
                                     "competition": comp})
                     missing_keys.add(key)
         done.add(k)
+        report["months_done"] += 1
     data["espn_months"] = sorted(done)
+    # A few distinct failures, for the run log
+    report["errors"] = list(dict.fromkeys(errors))[:5]
     return report
 
 
