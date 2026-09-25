@@ -71,3 +71,10 @@ jobs:
       - name: Probe ESPN (European/cup competitions)
         if: github.event.inputs.probe == 'true'
         run: python collect_club_cups.py --probe
+
+      # SportyBet market names vs our label check (booking_slip.VERIFIED)
+      - name: Probe SportyBet markets
+        if: github.event.inputs.probe == 'true'
+        env:
+          UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
+        run: python probe_sportybet_markets.py
