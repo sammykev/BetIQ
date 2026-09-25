@@ -126,7 +126,7 @@ async def fetch(client, preds: List[Dict], known: Dict[str, Dict], today: date,
     return out, report
 
 
-AF_DAYS = 3          # today and the next two days: one request a day
+AF_DAYS = 2          # today and tomorrow (the free plan's limit): one request a day
 AF_DAILY_CAP = 12    # of the key's 100 a day (the nightly collector uses up to 85)
 
 

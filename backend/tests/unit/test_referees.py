@@ -194,16 +194,16 @@ class TestPredictions:
             {"fixture": {"id": 1, "referee": "Michael Oliver, England"},
              "teams": {"home": {"name": "A"}, "away": {"name": "B"}}}] if d == day else []})
         rep = asyncio.run(main._refresh_referees("manual"))
-        assert calls == [(today + timedelta(days=o)).isoformat() for o in range(3)]
+        assert calls == [(today + timedelta(days=o)).isoformat() for o in range(2)]
         assert main._referees["appointments"][f"A|B|{day}"] == {"name": "Michael Oliver", "career": None,
                                                                 "source": "api-football"}
         assert rep["api_football"]["found"] == 1 and main._predictions_cache[0]["referee"]["name"] == "Michael Oliver"
-        assert main._referee_status()["api_football_calls_today"] == 3
+        assert main._referee_status()["api_football_calls_today"] == 2
 
         # Within the daily cap only
         main._referees["_af_calls"] = {today.isoformat(): referees.AF_DAILY_CAP}
         rep = asyncio.run(main._refresh_referees("manual"))
-        assert "used today" in rep["api_football"]["skipped"] and len(calls) == 3
+        assert "used today" in rep["api_football"]["skipped"] and len(calls) == 2
 
 
 class TestApiFootball:

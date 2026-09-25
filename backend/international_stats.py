@@ -15,7 +15,8 @@ Three sources, run from GitHub Actions (collect_international_stats.py):
   START a chunk at a time, newest first; the last few days are re-checked
   every run (stats arrive after the final whistle).
 - API-Football (APIFOOTBALL_KEY): fills matches ESPN or SofaScore listed
-  without stats, within a daily request budget (the free plan allows 100).
+  without stats, within a daily request budget (the free plan allows 100
+  requests a day, for yesterday to tomorrow only).
 
 Rows and progress live in Redis as one gzip'd JSON blob (small: ~100 bytes
 a match), read by the API server when it fits the model.
@@ -475,14 +476,21 @@ async def collect_espn(session, data: Dict[str, Any], deadline: float, today: da
     return report
 
 
-async def collect_api_football(session, data: Dict[str, Any], api_key: str, budget: int) -> Dict[str, Any]:
-    """Fill matches SofaScore had no stats for, newest first, within `budget` requests."""
+AF_FREE_DAYS_BACK = 1  # API-Football's free plan only allows yesterday to tomorrow
+
+
+async def collect_api_football(session, data: Dict[str, Any], api_key: str, budget: int,
+                               today: Optional[date] = None) -> Dict[str, Any]:
+    """Fill matches listed without stats, newest first, within `budget`
+    requests — only ones the free plan can reach (from yesterday on)."""
     from difflib import SequenceMatcher
     headers = {"x-apisports-key": api_key}
     tried = set(data.get("af_tried") or [])
     report = {"requests": 0, "matches": 0, "stopped": None}
     by_date: Dict[str, List[Dict]] = {}
-    todo = sorted((m for m in data.get("missing", []) if m["key"] not in tried and m["key"] not in data["rows"]),
+    earliest = ((today or datetime.now(timezone.utc).date()) - timedelta(days=AF_FREE_DAYS_BACK)).isoformat()
+    todo = sorted((m for m in data.get("missing", [])
+                   if m["key"] not in tried and m["key"] not in data["rows"] and m["date"] >= earliest),
                   key=lambda m: m["date"], reverse=True)
 
     def sim(a: str, b: str) -> float:
@@ -535,7 +543,7 @@ async def run(r, minutes: float, api_key: str = "", af_budget: int = 90,
     report["sofascore"] = await collect_sofascore(session, data, deadline, today)
     report["espn"] = await collect_espn(session, data, deadline, today)
     if api_key:
-        report["api_football"] = await collect_api_football(session, data, api_key, af_budget)
+        report["api_football"] = await collect_api_football(session, data, api_key, af_budget, today)
     report["seconds"] = round(time.monotonic() - started)
     report["total_matches"] = len(data["rows"])
     data["runs"] = (data.get("runs") or [])[-19:] + [report]

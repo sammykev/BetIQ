@@ -112,13 +112,19 @@ class TestCollect:
             "/fixtures": {"response": [{"fixture": {"id": 9}, "league": {"country": "World", "name": "WCQ Africa"},
                                         "teams": {"home": {"id": 1, "name": "Chad"}, "away": {"id": 2, "name": "Mali"}}}]},
         })
-        rep = asyncio.run(ist.collect_api_football(session, data, "k", budget=5))
+        rep = asyncio.run(ist.collect_api_football(session, data, "k", budget=5, today=date(2025, 3, 23)))
         assert rep == {"requests": 2, "matches": 1, "stopped": None}
         assert list(data["rows"].values())[0]["source"] == "api-football" and data["missing"] == []
         # Out of budget: nothing marked as tried, so the next run tries again
         data2 = {**ist.empty(), "missing": [{"key": "k2", "date": "2025-03-23", "home": "A", "away": "B", "competition": ""}]}
-        rep2 = asyncio.run(ist.collect_api_football(Session({}), data2, "k", budget=0))
+        rep2 = asyncio.run(ist.collect_api_football(Session({}), data2, "k", budget=0, today=date(2025, 3, 23)))
         assert rep2["stopped"] == "budget" and data2["af_tried"] == []
+
+    def test_api_football_skips_dates_the_free_plan_refuses(self):
+        data = {**ist.empty(), "missing": [{"key": "old", "date": "2025-03-01", "home": "A", "away": "B", "competition": ""}]}
+        session = Session({})
+        rep = asyncio.run(ist.collect_api_football(session, data, "k", budget=5, today=date(2025, 3, 23)))
+        assert rep["requests"] == 0 and session.calls == [] and data["af_tried"] == []
 
     def test_storage_round_trip(self):
         class R:
