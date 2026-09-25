@@ -180,6 +180,11 @@ class TestPredictions:
         self._blocked_sofascore(monkeypatch)
         rep = asyncio.run(main._refresh_referees("manual"))
         assert rep["errors"] and main._referees["appointments"] == {f"A|B|{day}": {"name": "Calm Ref"}}
+        assert "api_football" not in rep  # every match already has its referee: nothing to ask for
+        # A match without one, and no API-Football key: said so
+        monkeypatch.setattr(main, "_predictions_cache", [{"home": "A", "away": "B", "date": day},
+                                                         {"home": "C", "away": "D", "date": day}])
+        rep = asyncio.run(main._refresh_referees("manual"))
         assert "APIFOOTBALL_KEY" in rep["api_football"]["skipped"]
         assert main._referee_status()["count"] == 1
 

@@ -3432,6 +3432,7 @@ ADMIN_JOBS = {
     "fbref_refresh": ("Refresh corners/cards data (FBref)", lambda: _load_fbref_data()),
     "traffic_flush": ("Save traffic counts", lambda: asyncio.to_thread(_flush_traffic)),
     "referees": ("Find referees for upcoming matches", lambda: _refresh_referees("manual")),
+    "fd_referees": ("Collect past referees (football-data.org)", lambda: _collect_fd_referees("manual")),
     "football_sync": ("Download league results (football-data.co.uk)", lambda: _manual_football_sync()),
     "matchday_sweep": ("Scores and grades for the last 7 days", lambda: _refresh_matchdays(MD_DAYS_BACK, "manual")),
 }
@@ -4829,15 +4830,23 @@ async def _refresh_referees(trigger: str = "schedule") -> Dict[str, Any]:
             report = {"errors": [f"{type(e).__name__}: {e}"]}
         report["source"] = "sofascore"
 
+        # football-data.org: every competition it covers, in one request
+        # (a SofaScore find, with the referee's career record, still wins)
+        report["football_data"] = await _football_data_referees(preds, today)
+        fd = report["football_data"].pop("found_map", {})
+        found = {**fd, **{k: v for k, v in found.items() if v.get("source") not in ("football-data", "api-football")}}
+
+        # API-Football for what's still missing, when SofaScore is blocked
+        still = [p for p in preds if referees.key(p["home"], p["away"], p["date"]) not in found]
         api_key = os.getenv("APIFOOTBALL_KEY", "").strip()
-        if referees.blocked(report) or not report.get("days"):
+        if still and (referees.blocked(report) or not report.get("days")):
             if not api_key:
-                report["api_football"] = {"skipped": "set APIFOOTBALL_KEY on Render to use API-Football instead"}
+                report["api_football"] = {"skipped": "set APIFOOTBALL_KEY on Render to use API-Football too"}
             elif _af_referee_calls() + referees.AF_DAYS > referees.AF_DAILY_CAP:
                 report["api_football"] = {"skipped": f"used today's {referees.AF_DAILY_CAP} requests"}
             else:
                 async with httpx.AsyncClient(timeout=30) as client:
-                    af, af_report = await referees.fetch_api_football(client, preds, today, api_key)
+                    af, af_report = await referees.fetch_api_football(client, still, today, api_key)
                 _af_referee_calls(af_report["requests"])
                 report["api_football"] = af_report
                 # A SofaScore find (with the referee's career record) wins
@@ -4856,6 +4865,62 @@ async def _refresh_referees(trigger: str = "schedule") -> Dict[str, Any]:
         return report
 
 
+async def _football_data_referees(preds: List[Dict], today: date) -> Dict[str, Any]:
+    """Appointed referees from football-data.org for our predictions in the
+    next few days: {"listed", "with_referee", "found", "found_map"} or why not."""
+    import referee_sources
+    import referees
+    if not API_KEY:
+        return {"skipped": "FOOTBALL_DATA_API_KEY not set"}
+    try:
+        fd = FootballDataClient(API_KEY)
+        async with httpx.AsyncClient() as hc:
+            listed = await referee_sources.upcoming(lambda url: fd._get(hc, url), today)
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {e}"}
+    events = [{"homeTeamName": m["home"], "awayTeamName": m["away"], "day": m["date"], "referee": m["referee"]}
+              for m in listed if m["referee"]]
+    last = (today + timedelta(days=4)).isoformat()
+    soon = [p for p in preds if today.isoformat() <= (p.get("date") or "") <= last]
+    found = {k: {"name": ev["referee"], "career": None, "source": "football-data"}
+             for k, ev in referees.match(soon, events).items()}
+    return {"listed": len(listed), "with_referee": len(events), "found": len(found), "found_map": found}
+
+
+# ── Past referees from football-data.org, for the cards model ──
+_fd_refs_status: Dict[str, Any] = {"at": None, "report": None, "refs": 0, "seasons_done": 0}
+
+
+def _fd_refs_load(r) -> Dict[str, Any]:
+    import gzip
+    import referee_sources
+    raw = r.get(referee_sources.REFS_KEY) if r else None
+    return json.loads(gzip.decompress(raw)) if raw else {}
+
+
+async def _collect_fd_referees(trigger: str = "schedule") -> Dict[str, Any]:
+    """Referees of past matches in every football-data.org competition (the
+    current season and four before), kept in Redis for _with_club_referees.
+    A first run reads ~55 seasons at the free plan's pace (~7 minutes)."""
+    import gzip
+    import model_store
+    import referee_sources
+    if not API_KEY:
+        return {"skipped": "FOOTBALL_DATA_API_KEY not set"}
+    r = model_store._client()  # binary: the blob is gzip'd
+    if r is None:
+        return {"skipped": "no Redis"}
+    state = _fd_refs_load(r)
+    fd = FootballDataClient(API_KEY)
+    async with httpx.AsyncClient() as hc:
+        report = await referee_sources.collect_past(lambda url: fd._get(hc, url), state, date.today(), asyncio.sleep)
+    r.set(referee_sources.REFS_KEY, gzip.compress(json.dumps(state, separators=(",", ":")).encode()))
+    _fd_refs_status.update(at=state.get("at"), report=report, refs=len(state.get("refs") or {}),
+                           seasons_done=len(state.get("done") or []), trigger=trigger)
+    print(f"[Referees] football-data.org: {report['found']} new past referees, {report['requests']} requests")
+    return report
+
+
 def _referee_status() -> Dict[str, Any]:
     import referees
     appointed = _appointments()
@@ -4869,17 +4934,30 @@ def _referee_status() -> Dict[str, Any]:
             "trigger": _referees.get("trigger"), "report": _referees.get("report"),
             "appointments": shown[:60], "count": len(appointed),
             "api_football_calls_today": _af_referee_calls(), "api_football_cap": referees.AF_DAILY_CAP,
+            "past": _fd_refs_status,
             "on_predictions": sum(1 for p in _predictions_cache if p.get("referee"))}
 
 
 def _with_club_referees(history: pd.DataFrame) -> pd.DataFrame:
-    """The club history with the referees the nightly collector found
-    (the league CSVs name them only for England). Unchanged on any error."""
+    """The club history with referees from football-data.org and the
+    nightly collector (the league CSVs name them only for England).
+    Unchanged on any error."""
     import international_stats
     import model_store
+    refs: Dict[str, str] = {}
     try:
-        data = international_stats.load(model_store._client())
-        return international_stats.add_club_referees(history, data.get("club_refs") or {})
+        refs.update(international_stats.load(model_store._client()).get("club_refs") or {})
+    except Exception as e:
+        print(f"[Pipeline] SofaScore club referees not loaded: {e}")
+    try:
+        state = _fd_refs_load(model_store._client())
+        refs.update(state.get("refs") or {})
+        _fd_refs_status.update(at=state.get("at"), report=state.get("report"), refs=len(state.get("refs") or {}),
+                               seasons_done=len(state.get("done") or []))
+    except Exception as e:
+        print(f"[Pipeline] football-data.org referees not loaded: {e}")
+    try:
+        return international_stats.add_club_referees(history, refs)
     except Exception as e:
         print(f"[Pipeline] Club referees not added: {e}")
         return history
@@ -5239,6 +5317,9 @@ async def startup():
     scheduler.add_job(_link_sportybet_events, "interval", minutes=SB_LINK_MINUTES, id="sportybet_links")
     scheduler.add_job(_flush_traffic, "interval", minutes=TRAFFIC_FLUSH_MINUTES, id="traffic_flush")
     scheduler.add_job(_refresh_referees, "interval", hours=REFEREE_HOURS, id="referees")
+    # Past referees: daily, first 10 minutes after start (after the pipeline's own football-data requests)
+    scheduler.add_job(_collect_fd_referees, "interval", hours=24, id="fd_referees",
+                      next_run_time=datetime.now() + timedelta(minutes=10))
     scheduler.add_job(_matchday_live, "interval", minutes=MD_LIVE_MINUTES, id="matchday_live")
     scheduler.add_job(_matchday_sweep, "interval", hours=3, id="matchday_sweep")
     scheduler.start()

@@ -64,11 +64,13 @@ function InternationalSetPieces({ info }: { info: any }) {
 }
 
 /** Referees appointed to upcoming matches (SofaScore), which scale the cards forecast. */
-function Referees({ info, onRun, running }: { info: any; onRun: () => void; running: boolean }) {
+function Referees({ info, onRun, running, onRunPast }: { info: any; onRun: () => void; running: boolean; onRunPast?: () => void }) {
   const rep = info?.report ?? {};
   const errors: string[] = rep.errors ?? [];
   const blocked = errors.some(e => / 403| 429/.test(e));
   const af = rep.api_football;
+  const fd = rep.football_data;
+  const past = info?.past ?? {};
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -78,9 +80,13 @@ function Referees({ info, onRun, running }: { info: any; onRun: () => void; runn
         <Stat label="Last check" value={info?.at ? ago(info.at) : "Never"}
           sub={info?.trigger === "github" ? "by the GitHub job" : info?.trigger ? `by ${info.trigger}` : undefined} />
       </div>
+      {fd && (
+        <p className={clsx("text-xs", fd.skipped || fd.error ? "text-warn" : "text-n-400")}>
+          football-data.org: {fd.skipped ?? fd.error ?? `${fd.with_referee} of ${fd.listed} listed matches have a referee · ${fd.found} matched to our predictions`}
+        </p>
+      )}
       {blocked ? (
-        <p className="text-xs text-warn">SofaScore blocks this server, so referees come from the &quot;Find referees&quot; job on GitHub
-          (every 3 hours) and from API-Football.</p>
+        <p className="text-xs text-n-500">SofaScore blocks this server (it has career records when it works); football-data.org and API-Football cover it.</p>
       ) : errors.length > 0 && (
         <p className="text-xs text-warn">SofaScore: {errors.slice(0, 3).join(" · ")}{errors.length > 3 ? ` (+${errors.length - 3})` : ""}</p>
       )}
@@ -105,7 +111,18 @@ function Referees({ info, onRun, running }: { info: any; onRun: () => void; runn
         <p className="text-xs text-n-400">None named yet. Referees are usually announced two to four days before kick-off;
           this checks every 3 hours and after each predictions rebuild.</p>
       )}
-      <Btn onClick={onRun} busy={running}>Check now</Btn>
+      <div className="rounded-lg bg-surface-sunken px-3 py-2 text-xs text-n-300 space-y-1">
+        <p className="font-semibold text-n-0">Past referees, for the referee ratings</p>
+        <p className="text-n-400">
+          {past.refs ? `${num(past.refs)} matches over ${past.seasons_done} finished seasons from football-data.org${past.at ? ` · updated ${ago(past.at)}` : ""}`
+            : "Not collected yet: runs daily (first ~7 minutes after a restart), or start it below."}
+          {past.report?.failed?.length ? ` · couldn't read: ${past.report.failed.slice(0, 4).join(", ")}` : ""}
+        </p>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Btn onClick={onRun} busy={running}>Check now</Btn>
+        {onRunPast && <Btn onClick={onRunPast}>Collect past referees</Btn>}
+      </div>
     </div>
   );
 }
@@ -266,8 +283,9 @@ export function PredictionsSection() {
       </Card>
 
       <Card title="Referees" icon={<Flag size={15} />}
-        subtitle="Appointed referees for upcoming matches (SofaScore); they adjust the cards forecast">
-        {!data ? <Skeleton rows={2} /> : <Referees info={data.referees} onRun={runReferees} running={refRunning} />}
+        subtitle="Appointed referees for upcoming matches (football-data.org, SofaScore, API-Football); they adjust the cards forecast">
+        {!data ? <Skeleton rows={2} /> : <Referees info={data.referees} onRun={runReferees} running={refRunning}
+          onRunPast={async () => { try { await post("/api/admin/jobs/fd_referees/run"); flash("ok", "Collecting past referees — about 7 minutes"); } catch { flash("err", "Couldn't start it"); } }} />}
       </Card>
 
       <Card title="Training data" icon={<Database size={15} />}
