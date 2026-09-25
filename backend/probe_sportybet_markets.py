@@ -38,6 +38,9 @@ def saved_check(pattern: str) -> None:
           json.dumps({k: v for k, v in labels.items() if re.search(pattern, v, re.I)}))
     for line in (status.get("report") or [])[-8:]:
         print("  report:", line)
+    print("  every label the server saw:")
+    for mid, label in labels.items():
+        print(f"    {mid}: {label}")
 
 
 async def live(pattern: str, pages: int) -> None:
