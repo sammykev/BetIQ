@@ -32,7 +32,10 @@ _YES = "74"
 # Over/under markets: model market → SportyBet market (lines go in the specifier)
 _LINE_MARKETS = {"goals_ou": "18", "corners_ou": "166", "cards_ou": "139",
                  "home_goals_ou": "19", "away_goals_ou": "20",
-                 "home_corners_ou": "169", "away_corners_ou": "170"}
+                 "home_corners_ou": "169", "away_corners_ou": "170",
+                 # Shots: ids unknown until SportyBet's page confirms them (VERIFIED)
+                 "shots_ou": "?shots", "sot_ou": "?sot", "home_shots_ou": "?home_shots",
+                 "away_shots_ou": "?away_shots", "home_sot_ou": "?home_sot", "away_sot_ou": "?away_sot"}
 _OU_CODE = re.compile(r"^([OU])(\d{1,2})5$")  # O25 → over 2.5, U105 → under 10.5
 _HANDICAP_CODE = re.compile(r"^([HA])([+-])(\d)\.5$")  # H-1.5 → home -1.5
 _DC_GOALS_CODE = re.compile(r"^(1X|X2|12)&([OU])(\d)5$")  # 1X&O15 → home or draw & over 1.5
@@ -91,6 +94,18 @@ VERIFIED: Dict[str, Dict[str, Any]] = {
     "corners_1x2": {"guess": "162", "name": "most corners", "must": [r"corner", r"1x2|most|race|winner|result"],
                     "not": r"1st|first|half|handicap|total|over|under|odd|even|range|next|min",
                     "outcomes": {"1": r"\bhome\b|^1$", "2": r"draw|^x$", "3": r"\baway\b|^2$"}},
+    # Shots and shots on target: no id to guess — found by label on SportyBet's
+    # match page ("Total shots", "{$competitor1} total shots on target", …)
+    **{kind: {"guess": f"?{kind[:-3]}", "name": name, "must": must,
+              "not": _NOT_TOTAL + extra + r"|player|anytime|blocked|woodwork|post|\bbar\b|foul|offside",
+              "outcomes": {_OVER: r"over", _UNDER: r"under"}}
+       for kind, name, must, extra in (
+           ("shots_ou", "total shots", [r"\bshots?\b"], r"|target|\bhome\b|\baway\b|team"),
+           ("sot_ou", "total shots on target", [r"shots? on target"], r"|\bhome\b|\baway\b|team"),
+           ("home_shots_ou", "home team shots", [r"\bhome\b", r"\bshots?\b"], r"|target|\baway\b"),
+           ("away_shots_ou", "away team shots", [r"\baway\b", r"\bshots?\b"], r"|target|\bhome\b"),
+           ("home_sot_ou", "home team shots on target", [r"\bhome\b", r"shots? on target"], r"|\baway\b"),
+           ("away_sot_ou", "away team shots on target", [r"\baway\b", r"shots? on target"], r"|\bhome\b"))},
 }
 _KIND_BY_GUESS = {spec["guess"]: kind for kind, spec in VERIFIED.items()}
 

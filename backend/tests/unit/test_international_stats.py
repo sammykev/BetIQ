@@ -270,13 +270,14 @@ def espn_board(*events):
     return {"events": list(events)}
 
 
-def espn_match(home, away, day, stats=True):
+def espn_match(home, away, day, stats=True, shots=False):
     team = lambda tid, name, corners: {"id": tid, "displayName": name}
+    shot = lambda s, st: [{"name": "totalShots", "displayValue": s}, {"name": "shotsOnTarget", "displayValue": st}] if shots else []
     comp = {"competitors": [
         {"homeAway": "home", "score": "2", "team": team("1", home, 0),
-         "statistics": [{"name": "wonCorners", "displayValue": "6"}] if stats else []},
+         "statistics": ([{"name": "wonCorners", "displayValue": "6"}] if stats else []) + shot("15", "6")},
         {"homeAway": "away", "score": "0", "team": team("2", away, 0),
-         "statistics": [{"name": "wonCorners", "displayValue": "2"}] if stats else []}],
+         "statistics": ([{"name": "wonCorners", "displayValue": "2"}] if stats else []) + shot("4", "1")}],
         "details": [{"yellowCard": True, "team": {"id": "2"}}, {"redCard": True, "team": {"id": "2"}}] if stats else None,
         "status": {"type": {"state": "post", "name": "STATUS_FULL_TIME", "completed": True}}}
     if not stats:
@@ -341,3 +342,38 @@ class TestEspn:
         rep = asyncio.run(ist.collect_espn(Session({"scoreboard": (500, {})}), data, float("inf"),
                                            date(2025, 3, 20), pause=0, calendar=cal))
         assert rep["requests"] == 30 and rep["stopped"].startswith("every request failed")
+
+
+class TestShots:
+    def test_new_matches_keep_their_shots(self):
+        data = ist.empty()
+        session = Session({"fifa.friendly/scoreboard": {"events": [espn_match("Spain", "Malta", "2025-03-05", shots=True)]}})
+        asyncio.run(ist.collect_espn(session, data, float("inf"), date(2025, 3, 20), pause=0,
+                                     calendar={"2025-03-05": {"fifa.friendly"}}))
+        [row] = data["rows"].values()
+        assert (row["HS"], row["AS"], row["HST"], row["AST"]) == (15, 4, 6, 1)
+        assert ist.summary(data)["with_shots"] == 1
+        frame = ist.rows_frame(data)
+        assert frame.iloc[0]["HST"] == 6
+
+    def test_backfill_reads_old_days_again_once(self):
+        data = ist.empty()
+        key = ist.match_key("2025-03-05", "Spain", "Malta")
+        data["rows"][key] = {"date": "2025-03-05", "home": "Spain", "away": "Malta", "competition": "Friendly",
+                             "source": "espn", "HC": 6, "AC": 2, "HY": 0, "AY": 3, "HR": 0, "AR": 0}
+        data["espn_days"] = ["2025-03-05|fifa.friendly", "2024-01-01|fifa.friendly"]
+        session = Session({"fifa.friendly/scoreboard": {"events": [espn_match("Spain", "Malta", "2025-03-05", shots=True)]}})
+        rep = asyncio.run(ist.collect_espn(session, data, float("inf"), date(2025, 3, 20), pause=0,
+                                           calendar={"2025-03-05": {"fifa.friendly"}}))
+        assert rep["shots_backfill"] == {"to_read": 1, "requests": 1, "added": 1, "stopped": None}
+        assert data["rows"][key]["HST"] == 6 and "2025-03-05|fifa.friendly" in data["shots_days"]
+        rep2 = asyncio.run(ist.collect_espn(session, data, float("inf"), date(2025, 3, 20), pause=0,
+                                            calendar={"2025-03-05": {"fifa.friendly"}}))
+        assert rep2["requests"] == 0 and rep2["shots_backfill"]["to_read"] == 0
+
+    def test_shots_check_needs_enough_matches(self):
+        import pandas as pd
+        import set_pieces
+        import shots
+        r = set_pieces.tune_international(pd.DataFrame(), model_cls=shots.ShotModel)
+        assert r["use"] == {} and "not enough" in r["reason"]

@@ -70,6 +70,10 @@ const MARKETS: { id: string; label: string; ids: string[]; needs?: string[] }[] 
   { id: "team_corners", label: "Team corners", ids: ["home_corners_ou", "away_corners_ou", "corners_1x2"],
     needs: ["home_corners_ou", "away_corners_ou", "corners_1x2"] },
   { id: "cards", label: "Cards", ids: ["cards_ou"], needs: ["cards_ou"] },
+  { id: "shots", label: "Shots", ids: ["shots_ou", "home_shots_ou", "away_shots_ou"],
+    needs: ["shots_ou", "home_shots_ou", "away_shots_ou"] },
+  { id: "sot", label: "Shots on target", ids: ["sot_ou", "home_sot_ou", "away_sot_ou"],
+    needs: ["sot_ou", "home_sot_ou", "away_sot_ou"] },
 ];
 // Cards are SportyBet's "Total bookings": yellow 1, red 2
 
@@ -121,8 +125,10 @@ export default function OptimizerPage() {
   const [days, setDays] = useState(3);
   const [maxGames, setMaxGames] = useState(30);
   const [markets, setMarkets] = useState<string[]>(MARKETS.map(m => m.id));
+  // On when SportyBet confirmed at least one of the chip's markets (the
+  // server only books the confirmed ones)
   const confirmed = (m: (typeof MARKETS)[number], s: LinkStatus | null) =>
-    !m.needs || !s || m.needs.every(k => s.markets?.[k]);
+    !m.needs || !s || m.needs.some(k => s.markets?.[k]);
   const [link, setLink] = useState<LinkStatus | null>(null);
 
   useEffect(() => {

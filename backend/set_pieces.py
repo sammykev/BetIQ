@@ -112,6 +112,27 @@ def p_over(line: float, mu: float, r: Optional[float]) -> float:
     return 1.0 - _nb_cdf(int(math.floor(line)), mu, r)
 
 
+def rescale(p: float, scale: Optional[float]) -> float:
+    """p pulled towards 0.5 in log-odds (scale < 1) — see fit_scale."""
+    if not scale or scale == 1.0:
+        return p
+    p = min(max(p, 1e-6), 1 - 1e-6)
+    return 1.0 / (1.0 + math.exp(-scale * math.log(p / (1 - p))))
+
+
+SCALES = [round(0.5 + 0.05 * i, 2) for i in range(12)]   # 0.5 … 1.05
+
+
+def fit_scale(pairs: Iterable[Tuple[float, float]], lines: Iterable[float], size: Optional[float]) -> float:
+    """The log-odds scale that minimises the lines' Brier score over (mean,
+    actual) pairs: < 1 when the model's far-from-50% calls come in less
+    often than it says."""
+    probs = [(p_over(line, mu, size), 1.0 if y > line else 0.0) for mu, y in pairs for line in lines]
+    if len(probs) < 500:
+        return 1.0
+    return min(SCALES, key=lambda k: sum((rescale(p, k) - hit) ** 2 for p, hit in probs))
+
+
 def _nb_pmf(k: int, mu: float, r: Optional[float]) -> float:
     if r is None:
         return math.exp(k * math.log(mu) - mu - math.lgamma(k + 1))
@@ -185,7 +206,26 @@ class SetPieceModel:
     decay, prior, gamma, team_gamma, league_decay, min_matches, and
     seed_leagues — a competition seen for the first time starts from the
     average over all competitions rather than its first match (for
-    internationals, where many competitions have few matches)."""
+    internationals, where many competitions have few matches).
+
+    Which stats it models is set by the class attributes below (shots.py
+    reuses it for shots and shots on target)."""
+
+    STATS: Tuple[str, ...] = STATS
+    TEAM_OF: Dict[str, Tuple[str, str]] = {"corners": TEAM_STATS}  # stat → its (home, away) team stats
+    REQUIRED: Tuple[str, ...] = ("HC", "AC", "HY", "AY", "HR", "AR")
+    LINES: Dict[str, Tuple[float, ...]] = LINES
+    DEFAULT_SIZE: Dict[str, float] = {"corners": 75.0, "bookings": 16.0}
+    RACE = "corners"   # a "who gets more" market for this stat (corners_1x2)
+    SCALE = False      # fit a log-odds scale per stat on the walk-forward errors (fit_scale)
+
+    @staticmethod
+    def counts(row) -> Optional[Dict[str, Tuple[float, float]]]:
+        return _counts(row)
+
+    @classmethod
+    def all_stats(cls) -> Tuple[str, ...]:
+        return cls.STATS + tuple(t for pair in cls.TEAM_OF.values() for t in pair)
 
     def __init__(self, params: Optional[Dict] = None):
         self.params = dict(params or {})
@@ -196,7 +236,8 @@ class SetPieceModel:
         # team -> stat -> [weight, for ratio sum, against ratio sum]
         self.team: Dict[str, Dict[str, List[float]]] = {}
         self.matches: Dict[str, int] = {}
-        self.size: Dict[str, Optional[float]] = {s: None for s in STATS + TEAM_STATS}  # NB size r
+        self.size: Dict[str, Optional[float]] = {s: None for s in self.all_stats()}  # NB size r
+        self.scale: Dict[str, float] = {}                                           # see fit_scale
         self.league_of: Dict[str, str] = {}
 
     # ---------------------------------------------------------------- #
@@ -232,15 +273,15 @@ class SetPieceModel:
         gamma, team_gamma = self._p("gamma"), self._p("team_gamma")
         league = league if league in self.league else self.league_of.get(home)
         out = {}
-        for stat in STATS:
+        for stat in self.STATS:
             avgs = self._league_avgs(league, stat)
             if not avgs:
                 return None
             fh, ah = self._rating(home, stat)
             fa, aa = self._rating(away, stat)
             out[stat] = (avgs[0] * (fh * aa) ** gamma, avgs[1] * (fa * ah) ** gamma)
-            if stat == "corners":
-                out["corners_team"] = (avgs[0] * (fh * aa) ** team_gamma, avgs[1] * (fa * ah) ** team_gamma)
+            if stat in self.TEAM_OF:
+                out[f"{stat}_team"] = (avgs[0] * (fh * aa) ** team_gamma, avgs[1] * (fa * ah) ** team_gamma)
         factor = self.referee_factor(referee, career)
         if factor != 1.0:
             out["bookings"] = (out["bookings"][0] * factor, out["bookings"][1] * factor)
@@ -288,7 +329,7 @@ class SetPieceModel:
         df = matches.sort_values("Date")
         for rec in df.itertuples(index=False):
             row = rec._asdict()
-            counts = _counts(row)
+            counts = cls.counts(row)
             if counts is None:
                 continue
             league = row.get("league") or ""
@@ -296,12 +337,14 @@ class SetPieceModel:
             if test_from is None or row["Date"] >= test_from:
                 exp = model.expected(row["HomeTeam"], row["AwayTeam"], league, referee)
                 if exp:
-                    for stat in STATS:
+                    for stat in cls.STATS:
                         base = sum(model._league_avgs(league, stat))
                         rows.append((row["Date"], stat, sum(exp[stat]), sum(counts[stat]), base))
-                    avgs = model._league_avgs(league, "corners")
-                    for side, stat in enumerate(TEAM_STATS):
-                        rows.append((row["Date"], stat, exp["corners_team"][side], counts["corners"][side], avgs[side]))
+                    for stat, team_stats in cls.TEAM_OF.items():
+                        avgs = model._league_avgs(league, stat)
+                        for side, team_stat in enumerate(team_stats):
+                            rows.append((row["Date"], team_stat, exp[f"{stat}_team"][side], counts[stat][side],
+                                         avgs[side]))
             model.update(row["HomeTeam"], row["AwayTeam"], league, counts, referee)
         return model, rows
 
@@ -320,7 +363,7 @@ class SetPieceModel:
     def fit(cls, matches: pd.DataFrame, params: Optional[Dict] = None) -> Optional["SetPieceModel"]:
         """The model after every match with stats, with spreads fitted on its own
         walk-forward errors (the first season is warm-up)."""
-        cols = {"Date", "HomeTeam", "AwayTeam", "HC", "AC", "HY", "AY", "HR", "AR"}
+        cols = {"Date", "HomeTeam", "AwayTeam", *cls.REQUIRED}
         if matches is None or matches.empty or not cols <= set(matches.columns):
             return None
         data = matches.dropna(subset=list(cols))
@@ -328,8 +371,11 @@ class SetPieceModel:
             return None
         warm_up = data["Date"].min() + pd.Timedelta(days=365)
         model, rows = cls.replay(data, test_from=warm_up, params=params)
-        for stat in STATS + TEAM_STATS:
+        for stat in cls.all_stats():
             model.size[stat] = cls.fit_size((m, y) for _, s, m, y, _ in rows if s == stat)
+            if cls.SCALE:
+                model.scale[stat] = fit_scale([(m, y) for _, s, m, y, _ in rows if s == stat],
+                                              cls.LINES[stat], model.size[stat])
         return model
 
     # ---------------------------------------------------------------- #
@@ -341,39 +387,44 @@ class SetPieceModel:
         if not exp:
             return None
         out = {}
-        means = {**{stat: sum(exp[stat]) for stat in STATS},
-                 "corners_home": exp["corners_team"][0], "corners_away": exp["corners_team"][1]}
+        means = {stat: sum(exp[stat]) for stat in self.STATS}
+        for stat, (home_stat, away_stat) in self.TEAM_OF.items():
+            means[home_stat], means[away_stat] = exp[f"{stat}_team"]
         for stat, mu in means.items():
             out[stat] = {"mean": round(mu, 2),
-                         "over": {f"{line}": round(p_over(line, mu, self.size.get(stat)), 3)
-                                  for line in LINES[stat]}}
-        race = most_corners(means["corners_home"], means["corners_away"],
-                            self.size.get("corners_home"), self.size.get("corners_away"))
-        out["corners_1x2"] = {k: round(v, 3) for k, v in race.items()}
+                         "over": {f"{line}": round(rescale(p_over(line, mu, self.size.get(stat)),
+                                                           self.scale.get(stat)), 3)
+                                  for line in self.LINES[stat]}}
+        if self.RACE in self.TEAM_OF:
+            h, a = self.TEAM_OF[self.RACE]
+            race = most_corners(means[h], means[a], self.size.get(h), self.size.get(a))
+            out[f"{self.RACE}_1x2"] = {k: round(v, 3) for k, v in race.items()}
         return out
 
 
 def score(matches: pd.DataFrame, params: Optional[Dict], start: pd.Timestamp,
-          end: Optional[pd.Timestamp] = None) -> Dict[str, Dict[str, float]]:
+          end: Optional[pd.Timestamp] = None, model_cls=None) -> Dict[str, Dict[str, float]]:
     """Walk-forward Brier score, summed over each stat's lines, for matches in
     [start, end): {stat: {"model", "baseline", "matches"}} — spreads fitted on
     the errors before `start`, baseline = the competition average."""
-    data = matches.dropna(subset=["HC", "AC", "HY", "AY", "HR", "AR"])
+    model_cls = model_cls or SetPieceModel
+    data = matches.dropna(subset=list(model_cls.REQUIRED))
     warm_up = data["Date"].min() + pd.Timedelta(days=365)
-    _, rows = SetPieceModel.replay(data, test_from=warm_up, params=params)
+    _, rows = model_cls.replay(data, test_from=warm_up, params=params)
     out = {}
-    for stat in STATS + TEAM_STATS:
+    for stat in model_cls.all_stats():
         before = [(m, y, b) for d, s, m, y, b in rows if s == stat and d < start]
         test = [(m, y, b) for d, s, m, y, b in rows if s == stat and d >= start and (end is None or d < end)]
         if not test:
             continue
-        size = SetPieceModel.fit_size((m, y) for m, y, _ in before) or DEFAULT_SIZE.get(stat.split("_")[0])
+        size = SetPieceModel.fit_size((m, y) for m, y, _ in before) or model_cls.DEFAULT_SIZE.get(stat.split("_")[0])
         base_size = SetPieceModel.fit_size((b, y) for _, y, b in before) or size
+        scale = fit_scale([(m, y) for m, y, _ in before], model_cls.LINES[stat], size) if model_cls.SCALE else None
         model_b = base_b = 0.0
         for m, y, b in test:
-            for line in LINES[stat]:
+            for line in model_cls.LINES[stat]:
                 hit = 1.0 if y > line else 0.0
-                model_b += (p_over(line, m, size) - hit) ** 2
+                model_b += (rescale(p_over(line, m, size), scale) - hit) ** 2
                 base_b += (p_over(line, b, base_size) - hit) ** 2
         out[stat] = {"model": round(model_b / len(test), 4), "baseline": round(base_b / len(test), 4),
                      "matches": len(test)}
@@ -388,10 +439,11 @@ INTERNATIONAL_GRID = [
 MIN_HOLDOUT = 200
 
 
-def tune_international(matches: pd.DataFrame, today: Optional[pd.Timestamp] = None) -> Dict:
+def tune_international(matches: pd.DataFrame, today: Optional[pd.Timestamp] = None, model_cls=None) -> Dict:
     """Pick settings on everything but the last 12 months, then test on those
     months against the competition average. The model is used ("use": True,
     per stat) only where it beats that baseline on matches it never saw."""
+    model_cls = model_cls or SetPieceModel
     today = today or pd.Timestamp.now().normalize()
     holdout = today - pd.Timedelta(days=365)
     report: Dict = {"matches": int(len(matches)), "use": {}, "params": None, "holdout": {}}
@@ -405,12 +457,12 @@ def tune_international(matches: pd.DataFrame, today: Optional[pd.Timestamp] = No
         return report
     best, best_score = None, None
     for params in INTERNATIONAL_GRID:
-        sc = score(matches[matches["Date"] < holdout], params, tune_start)
-        total = sum(v["model"] for k, v in sc.items() if k in STATS)
+        sc = score(matches[matches["Date"] < holdout], params, tune_start, model_cls=model_cls)
+        total = sum(v["model"] for k, v in sc.items() if k in model_cls.STATS)
         if best_score is None or total < best_score:
             best, best_score = params, total
     # Referees on or off (where the data names them), whichever scored better
-    if "Referee" in matches.columns and matches["Referee"].notna().any():
+    if "bookings" in model_cls.STATS and "Referee" in matches.columns and matches["Referee"].notna().any():
         with_refs = {**best, "use_referees": True}
         without = {**best, "use_referees": False}
         pre = matches[matches["Date"] < holdout]
@@ -420,7 +472,7 @@ def tune_international(matches: pd.DataFrame, today: Optional[pd.Timestamp] = No
     else:
         best = {**best, "use_referees": False}
     report["params"] = best
-    report["holdout"] = score(matches, best, holdout)
+    report["holdout"] = score(matches, best, holdout, model_cls=model_cls)
     for stat, v in report["holdout"].items():
         report["use"][stat] = v["matches"] >= MIN_HOLDOUT and v["model"] < v["baseline"]
     if not any(report["use"].values()):
@@ -428,27 +480,29 @@ def tune_international(matches: pd.DataFrame, today: Optional[pd.Timestamp] = No
     return report
 
 
-def evaluate(matches: pd.DataFrame, test_from: str) -> Dict:
+def evaluate(matches: pd.DataFrame, test_from: str, model_cls=None, params: Optional[Dict] = None) -> Dict:
     """Walk-forward check: fit spreads on errors before test_from, then score
     every line on matches from test_from on (model vs league-average
     baseline) with Brier score and calibration bins."""
+    model_cls = model_cls or SetPieceModel
     cutoff = pd.Timestamp(test_from)
-    data = matches.dropna(subset=["HC", "AC", "HY", "AY", "HR", "AR"])
+    data = matches.dropna(subset=list(model_cls.REQUIRED))
     warm_up = data["Date"].min() + pd.Timedelta(days=365)
-    _, rows = SetPieceModel.replay(data, test_from=warm_up)
+    _, rows = model_cls.replay(data, test_from=warm_up, params=params)
     report: Dict = {}
-    for stat in STATS + TEAM_STATS:
+    for stat in model_cls.all_stats():
         train = [(m, y, b) for d, s, m, y, b in rows if s == stat and d < cutoff]
         test = [(m, y, b) for d, s, m, y, b in rows if s == stat and d >= cutoff]
         size = SetPieceModel.fit_size((m, y) for m, y, _ in train)
         base_size = SetPieceModel.fit_size((b, y) for _, y, b in train)
+        scale = fit_scale([(m, y) for m, y, _ in train], model_cls.LINES[stat], size) if model_cls.SCALE else None
         lines = {}
-        for line in LINES[stat]:
+        for line in model_cls.LINES[stat]:
             model_b = base_b = 0.0
             bins: Dict[int, List[float]] = {}
             for m, y, b in test:
                 hit = 1.0 if y > line else 0.0
-                p = p_over(line, m, size)
+                p = rescale(p_over(line, m, size), scale)
                 model_b += (p - hit) ** 2
                 base_b += (p_over(line, b, base_size) - hit) ** 2
                 slot = bins.setdefault(min(int(p * 10), 9), [0, 0.0, 0.0])
@@ -464,7 +518,7 @@ def evaluate(matches: pd.DataFrame, test_from: str) -> Dict:
             }
         mae = sum(abs(m - y) for m, y, _ in test) / (len(test) or 1)
         base_mae = sum(abs(b - y) for _, y, b in test) / (len(test) or 1)
-        report[stat] = {"matches": len(test), "size": size and round(size, 1),
+        report[stat] = {"matches": len(test), "size": size and round(size, 1), "scale": scale,
                         "mae": round(mae, 3), "baseline_mae": round(base_mae, 3), "lines": lines}
     return report
 

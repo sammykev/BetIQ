@@ -167,12 +167,15 @@ def csv_results(days: Set[str], csv_dir: str = CSV_DIR) -> List[Dict]:
                 if hg is None or ag is None or pd.isna(r["Date"]):
                     continue
                 stats = {k: _int(r.get(k)) for k in ("HC", "AC", "HY", "AY", "HR", "AR")}
+                shots = {k: _int(r.get(k)) for k in ("HS", "AS", "HST", "AST")}
                 rows.append({
                     "date": r["Date"].date().isoformat(), "home": str(r["HomeTeam"]), "away": str(r["AwayTeam"]),
                     "status": "finished", "minute": None, "hg": hg, "ag": ag, "aet": False,
                     "corners": [stats["HC"], stats["AC"]] if None not in (stats["HC"], stats["AC"]) else None,
                     "bookings": ([stats["HY"] + 2 * stats["HR"], stats["AY"] + 2 * stats["AR"]]
                                  if None not in stats.values() else None),
+                    "shots": [shots["HS"], shots["AS"]] if None not in (shots["HS"], shots["AS"]) else None,
+                    "sot": [shots["HST"], shots["AST"]] if None not in (shots["HST"], shots["AST"]) else None,
                     "source": "football-data.co.uk"})
         _csv_cache.update(key=stamp, rows=rows)
     return [r for r in _csv_cache["rows"] if r["date"] in days]

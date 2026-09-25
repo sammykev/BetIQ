@@ -64,7 +64,8 @@ const SPORTYBET_FIXED = new Set([
   "corners_1x2:CR-1", "corners_1x2:CR-X", "corners_1x2:CR-2",
 ]);
 const LINE_MARKETS = ["goals_ou", "corners_ou", "cards_ou", "home_goals_ou", "away_goals_ou",
-                      "home_corners_ou", "away_corners_ou"];
+                      "home_corners_ou", "away_corners_ou", "shots_ou", "sot_ou", "home_shots_ou",
+                      "away_shots_ou", "home_sot_ou", "away_sot_ou"];
 
 export function bookableOnSportybet(s: Pick<SlipSelection, "market" | "code"> & { sb?: SlipSelection["sb"] }) {
   if (s.sb) return true;

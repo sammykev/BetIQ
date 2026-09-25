@@ -12,8 +12,9 @@ in steps of 0.01 (1%), not by a greedy guess.
 
 Markets: 1X2, double chance, goals over/under 1.5–3.5, both teams to
 score, team goals, clean sheet, win to nil, Asian handicap ±1.5/±2.5,
-double chance & goals (from predictor.goal_markets), and total corners /
-bookings, team corners and most corners (set_pieces.py, club leagues only).
+double chance & goals (from predictor.goal_markets), total corners /
+bookings, team corners and most corners (set_pieces.py), and total / team
+shots and shots on target (shots.py) — the last two club leagues only.
 
 Prices, best first: SportyBet's own (predictions linked to SportyBet events,
 see main._link_sportybet_events), the bookmaker 1X2 odds the prediction
@@ -148,11 +149,28 @@ _PICKS += [
     ("corners_1x2", "Most Corners", "CR-1", "{home} most corners", _sp("corners_1x2", key="home")),
     ("corners_1x2", "Most Corners", "CR-X", "Level on corners", _sp("corners_1x2", key="draw")),
     ("corners_1x2", "Most Corners", "CR-2", "{away} most corners", _sp("corners_1x2", key="away")),
+    # Shots and shots on target: the match's and each team's (shots.py, club leagues)
+    *[(market, name, f"{s}{line.replace('.', '')}", label.format(ou="over" if s == "O" else "under", line=line),
+       _sp(stat, line, s == "O"))
+      for market, name, stat, label, lines in (
+          ("shots_ou", "Total Shots", "shots", "{ou} {line} shots", ("20.5", "22.5", "24.5", "26.5", "28.5")),
+          ("sot_ou", "Total Shots on Target", "sot", "{ou} {line} shots on target", ("6.5", "7.5", "8.5", "9.5", "10.5")),
+          ("home_shots_ou", "Home Team Shots", "shots_home", "{{home}} {ou} {line} shots",
+           ("10.5", "11.5", "12.5", "13.5", "14.5", "15.5")),
+          ("away_shots_ou", "Away Team Shots", "shots_away", "{{away}} {ou} {line} shots",
+           ("8.5", "9.5", "10.5", "11.5", "12.5", "13.5")),
+          ("home_sot_ou", "Home Team Shots on Target", "sot_home", "{{home}} {ou} {line} shots on target",
+           ("2.5", "3.5", "4.5", "5.5", "6.5")),
+          ("away_sot_ou", "Away Team Shots on Target", "sot_away", "{{away}} {ou} {line} shots on target",
+           ("1.5", "2.5", "3.5", "4.5", "5.5")))
+      for line in lines for s in ("O", "U")],
 ]
 
 # Bookmakers keep more on corners, bookings and specials than on goals
 _MARGINS = {"corners_ou": 0.90, "cards_ou": 0.90, "home_corners_ou": 0.90, "away_corners_ou": 0.90,
-            "corners_1x2": 0.90, "clean_sheet": 0.92, "win_to_nil": 0.90, "dc_goals": 0.92}
+            "corners_1x2": 0.90, "clean_sheet": 0.92, "win_to_nil": 0.90, "dc_goals": 0.92,
+            **{m: 0.90 for m in ("shots_ou", "sot_ou", "home_shots_ou", "away_shots_ou", "home_sot_ou",
+                                  "away_sot_ou")}}
 
 
 def _bookmaker_price(pred: Dict, market: str, code: str) -> Optional[float]:

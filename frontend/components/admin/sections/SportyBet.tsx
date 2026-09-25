@@ -17,7 +17,9 @@ const MARKET_NAMES: Record<string, string> = {
   away_goals_ou: "Away team goals", "clean_sheet:H": "Home clean sheet", "clean_sheet:A": "Away clean sheet",
   "win_to_nil:H": "Home win to nil", "win_to_nil:A": "Away win to nil", handicap: "Asian handicap",
   dc_goals: "Double chance & goals", home_corners_ou: "Home team corners", away_corners_ou: "Away team corners",
-  corners_1x2: "Most corners",
+  corners_1x2: "Most corners", shots_ou: "Total shots", sot_ou: "Total shots on target",
+  home_shots_ou: "Home team shots", away_shots_ou: "Away team shots",
+  home_sot_ou: "Home team shots on target", away_sot_ou: "Away team shots on target",
 };
 
 export function SportyBetSection() {

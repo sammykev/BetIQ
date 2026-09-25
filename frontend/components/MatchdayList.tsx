@@ -110,10 +110,12 @@ function Detail({ m, onOpen }: { m: MatchdayMatch; onOpen?: (m: MatchdayMatch) =
               ))}
             </ul>
           )}
-          {(m.corners || m.bookings) && (
+          {(m.corners || m.bookings || m.sot) && (
             <p className="text-[11px] text-n-500 tnum">
-              {m.corners && `Corners ${m.corners[0]}–${m.corners[1]}`}{m.corners && m.bookings && " · "}
-              {m.bookings && `Booking points ${m.bookings[0]}–${m.bookings[1]}`}
+              {[m.sot && m.shots ? `Shots ${m.shots[0]}–${m.shots[1]} (on target ${m.sot[0]}–${m.sot[1]})`
+                  : m.sot && `Shots on target ${m.sot[0]}–${m.sot[1]}`,
+                m.corners && `Corners ${m.corners[0]}–${m.corners[1]}`,
+                m.bookings && `Booking points ${m.bookings[0]}–${m.bookings[1]}`].filter(Boolean).join(" · ")}
             </p>
           )}
         </div>

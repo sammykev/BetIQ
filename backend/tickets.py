@@ -16,9 +16,12 @@ from typing import Any, Dict, List, Optional
 
 MAX_TICKETS = 200  # per account
 
-_LINE = re.compile(r"^([OU])(\d)(\d)$")              # O25 → over 2.5
+_LINE = re.compile(r"^([OU])(\d{1,2})(\d)$")        # O25 → over 2.5, U105 → under 10.5
 _HCP = re.compile(r"^([HA])([+-])(\d(?:\.\d)?)$")      # H-1.5
 _DC = {"1X": {"H", "D"}, "X2": {"D", "A"}, "12": {"H", "A"}}
+# market → (result stat, team: 0 home / 1 away / None the match total)
+_SHOT_MARKETS = {"shots_ou": ("shots", None), "sot_ou": ("sot", None), "home_shots_ou": ("shots", 0),
+                 "away_shots_ou": ("shots", 1), "home_sot_ou": ("sot", 0), "away_sot_ou": ("sot", 1)}
 
 
 def _line(code: str) -> Optional[tuple]:
@@ -36,7 +39,7 @@ def _over_under(code: str, total: Optional[float]) -> Optional[str]:
 
 def grade_leg(market: str, code: str, result: Optional[Dict]) -> str:
     """Settle one leg from a matchday result ({"status", "hg", "ag",
-    "corners", "bookings", "aet"})."""
+    "corners", "bookings", "shots", "sot", "aet"})."""
     if not result:
         return "pending"
     status = result.get("status")
@@ -81,6 +84,12 @@ def grade_leg(market: str, code: str, result: Optional[Dict]) -> str:
         if isinstance(corners, list):
             return _over_under(code, corners[0 if market.startswith("home") else 1]) or "pending"
         return "pending"
+    elif market in _SHOT_MARKETS:
+        stat, side = _SHOT_MARKETS[market]
+        pair = result.get(stat)
+        if not isinstance(pair, list):
+            return "pending"
+        return _over_under(code, sum(pair) if side is None else pair[side]) or "pending"
     elif market == "corners_1x2":
         if isinstance(corners, list):
             most = "1" if corners[0] > corners[1] else "2" if corners[1] > corners[0] else "X"

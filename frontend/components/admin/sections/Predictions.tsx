@@ -10,7 +10,48 @@ const toneOf = (acc: number) => (acc >= 60 ? "text-accent" : acc >= 45 ? "text-w
 
 const STAT_NAMES: Record<string, string> = {
   corners: "Total corners", bookings: "Total bookings (cards)", corners_home: "Home team corners", corners_away: "Away team corners",
+  shots: "Total shots", sot: "Total shots on target", shots_home: "Home team shots", shots_away: "Away team shots",
+  sot_home: "Home team shots on target", sot_away: "Away team shots on target",
 };
+
+/** One row per stat: used or not, and its score against the average (lower is better). */
+function StatChecks({ scores, use }: { scores: Record<string, any>; use: Record<string, boolean> }) {
+  return (
+    <ul className="grid gap-1.5 sm:grid-cols-2 text-xs">
+      {Object.entries(scores).map(([stat, v]) => (
+        <li key={stat} className="rounded-lg bg-surface-sunken px-2.5 py-1.5 flex justify-between gap-2">
+          <span className="text-n-200">{STAT_NAMES[stat] ?? stat}</span>
+          <span className={clsx("tnum", use?.[stat] ? "text-accent" : "text-n-400")}>
+            {use?.[stat] ? "used" : "not used"} · score {v.model} vs {v.baseline} average · {num(v.matches)} matches
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Shots and shots-on-target markets: club model (checked on each league
+ * data refresh) and international (checked nightly). */
+function Shots({ club, intl }: { club: any; intl: any }) {
+  const check = club?.check ?? {};
+  const ic = intl?.shots_check ?? {};
+  const withShots = intl?.dataset?.with_shots ?? 0;
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        <Stat label="Club model" value={club?.active ? "In use" : "Not yet"} tone={club?.active ? "accent" : undefined}
+          sub={club?.at ? `checked ${ago(club.at)}` : club?.reason} />
+        <Stat label="International matches with shots" value={num(withShots)}
+          sub={intl?.dataset?.matches ? `of ${num(intl.dataset.matches)} collected` : undefined} />
+        <Stat label="International model" value={intl?.shots_active ? "In use" : "Not yet"}
+          tone={intl?.shots_active ? "accent" : undefined} sub={ic.at ? `checked ${ago(ic.at)}` : undefined} />
+      </div>
+      {Object.keys(check).length > 0 && <StatChecks scores={check} use={club?.use ?? {}} />}
+      {ic.reason && <p className="text-xs text-n-400">Internationals: {ic.reason}.</p>}
+      {ic.holdout && Object.keys(ic.holdout).length > 0 && <StatChecks scores={ic.holdout} use={ic.use ?? {}} />}
+    </div>
+  );
+}
 
 /** International corners/cards: data collected nightly (GitHub Actions) and
  * whether the model beat the competition average on the last 12 months. */
@@ -39,18 +80,7 @@ function InternationalSetPieces({ info }: { info: any }) {
           sub={check.at ? `checked ${ago(check.at)}` : undefined} />
       </div>
       {check.reason && <p className="text-xs text-n-400">{check.reason} — internationals use SportyBet&apos;s lines meanwhile.</p>}
-      {check.holdout && Object.keys(check.holdout).length > 0 && (
-        <ul className="grid gap-1.5 sm:grid-cols-2 text-xs">
-          {Object.entries(check.holdout as Record<string, any>).map(([stat, v]) => (
-            <li key={stat} className="rounded-lg bg-surface-sunken px-2.5 py-1.5 flex justify-between gap-2">
-              <span className="text-n-200">{STAT_NAMES[stat] ?? stat}</span>
-              <span className={clsx("tnum", check.use?.[stat] ? "text-accent" : "text-n-400")}>
-                {check.use?.[stat] ? "used" : "not used"} · score {v.model} vs {v.baseline} average · {num(v.matches)} matches
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
+      {check.holdout && Object.keys(check.holdout).length > 0 && <StatChecks scores={check.holdout} use={check.use ?? {}} />}
       {run && (
         <p className="text-[11px] text-n-500">
           Last collection {ago(run.at)}: ESPN +{run.espn?.matches ?? 0} matches ({run.espn?.requests ?? 0} requests
@@ -298,6 +328,11 @@ export function PredictionsSection() {
       <Card title="International corners & cards" icon={<Globe2 size={15} />}
         subtitle="Collected nightly from ESPN, topped up by API-Football; lower score is better">
         {!data ? <Skeleton rows={2} /> : <InternationalSetPieces info={data.international_set_pieces} />}
+      </Card>
+
+      <Card title="Shots & shots on target" icon={<Target size={15} />}
+        subtitle="Each stat is offered only where it beat the league average on matches the model hadn't seen; lower score is better">
+        {!data ? <Skeleton rows={2} /> : <Shots club={data.shots} intl={data.international_set_pieces} />}
       </Card>
 
       <Card title="Results & booking codes" icon={<Target size={15} />}

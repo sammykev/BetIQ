@@ -1,7 +1,7 @@
 """
 Collect corners/cards for international matches (international_stats.py),
-then tune and test the international corners/bookings model on them
-(set_pieces.tune_international) and store the verdict with the data, so
+then tune and test the international corners/bookings and shots models on
+them (set_pieces.tune_international) and store the verdicts with the data, so
 the API server knows whether to use it. Run by .github/workflows/
 collect-international-stats.yml; needs UPSTASH_REDIS_URL, and
 APIFOOTBALL_KEY for the API-Football top-up (85 requests a night by
@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 import international_stats
 import model_store
 import set_pieces
+import shots
 
 
 def main() -> int:
@@ -42,8 +43,13 @@ def main() -> int:
     frame = international_stats.rows_frame(data)
     verdict = set_pieces.tune_international(frame)
     data["model"] = {**verdict, "at": datetime.now(timezone.utc).isoformat()}
+    # Shots and shots on target: the same test, on the matches with shot counts
+    shot_frame = frame.dropna(subset=list(shots.ShotModel.REQUIRED)) if not frame.empty else frame
+    shot_verdict = set_pieces.tune_international(shot_frame, model_cls=shots.ShotModel)
+    data["shots_model"] = {**shot_verdict, "at": datetime.now(timezone.utc).isoformat()}
     international_stats.save(r, data)
     print("Model check:", json.dumps(data["model"], indent=1, default=str))
+    print("Shots model check:", json.dumps(data["shots_model"], indent=1, default=str))
     print("Dataset:", json.dumps(international_stats.summary(data), indent=1, default=str))
     return 0
 

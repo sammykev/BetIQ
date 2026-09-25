@@ -32,6 +32,7 @@ import international_fixtures as intl
 import security
 import traffic
 import set_pieces
+import shots
 from scrapers.fbref import load_cards, load_corners, refresh as scrape_fbref, CORNERS_CSV, CARDS_CSV
 
 load_dotenv()
@@ -196,6 +197,11 @@ _set_pieces: Optional[set_pieces.SetPieceModel] = None
 # per stat only where it beat the competition average on unseen matches
 _intl_set_pieces: Optional[set_pieces.SetPieceModel] = None
 _intl_sp_info: Dict[str, Any] = {}
+# Shots / shots on target totals (shots.py), per stat only where the last
+# season's walk-forward check beat the league average
+_shots: Optional[shots.ShotModel] = None
+_shots_info: Dict[str, Any] = {}
+_intl_shots: Optional[shots.ShotModel] = None   # the same for internationals, where their check passed
 _cards_df: pd.DataFrame = pd.DataFrame()
 _corners_df: pd.DataFrame = pd.DataFrame()
 
@@ -1189,6 +1195,10 @@ async def _run_pipeline():
             await asyncio.to_thread(_load_international_set_pieces)
         except Exception as e:
             print(f"[Pipeline] International corners/bookings model failed (non-fatal): {e}")
+        try:
+            await asyncio.to_thread(_fit_shots, history)
+        except Exception as e:
+            print(f"[Pipeline] Shots model failed (non-fatal): {e}")
         print(f"[Pipeline] {len(combined)} training matches.")
 
         # Training takes minutes of CPU. On a worker thread the API keeps
@@ -2083,7 +2093,9 @@ async def data_status(_admin: str = Depends(require_admin)):
         "international": {**_intl_status, "at": _intl_status["at"].isoformat() if _intl_status["at"] else None},
         "shared_model": _shared_model_status(),
         "sportybet_links": _sb_link_status,
-        "international_set_pieces": {**_intl_sp_info, "active": _intl_set_pieces is not None},
+        "international_set_pieces": {**_intl_sp_info, "active": _intl_set_pieces is not None,
+                                     "shots_active": _intl_shots is not None},
+        "shots": {**_shots_info, "active": _shots is not None},
         "referees": _referee_status(),
         "matchday": _md_status,
         "club_cups": _club_cups_status(),
@@ -4764,17 +4776,23 @@ def _appointments() -> Dict[str, Dict]:
 
 
 def _set_piece_extras(fx: Dict, predictor) -> Tuple[Optional[Dict], Optional[Dict]]:
-    """(corners/bookings markets, referee shown on the match) for a fixture.
+    """(corners/bookings/shots markets, referee shown on the match) for a fixture.
     Clubs from the league match stats; internationals from the international
     model where it earned it. An appointed referee scales the bookings."""
     ref = _appointments().get(_sb_key(fx["home"], fx["away"], fx.get("date", ""))) or {}
     name, career = ref.get("name"), ref.get("career")
     extras, model = None, None
-    if _set_pieces is not None and not fx.get("model_league"):
-        model = _set_pieces
-        extras = _set_pieces.markets(predictor.canon(fx["home"]), predictor.canon(fx["away"]),
-                                     fx.get("league"), name, career)
-    elif fx.get("model_league"):
+    if not fx.get("model_league"):
+        if _set_pieces is None and _shots is None:
+            return None, ({"name": name, **({"games": career.get("games")} if career else {})} if name else None)
+        home, away = predictor.canon(fx["home"]), predictor.canon(fx["away"])
+        if _set_pieces is not None:
+            model = _set_pieces
+            extras = _set_pieces.markets(home, away, fx.get("league"), name, career)
+        shot = _shot_markets(home, away, fx.get("league"))
+        if shot:
+            extras = {**(extras or {}), **shot}
+    else:
         model = _intl_set_pieces
         extras = _international_set_pieces(fx, name, career)
     if not name:
@@ -4996,11 +5014,37 @@ def _with_club_referees(history: pd.DataFrame) -> pd.DataFrame:
         return history
 
 
+def _fit_shots(history: pd.DataFrame) -> None:
+    """Fit the club shots model, and check each stat on the last 12 months'
+    matches (predicted from the ones before them) against the league average."""
+    global _shots, _shots_info
+    model = shots.ShotModel.fit(history)
+    if model is None:
+        _shots, _shots_info = None, {"reason": "no shots data in the league CSVs"}
+        return
+    last = history["Date"].max()
+    verdict = shots.check(history, str((last - pd.Timedelta(days=365)).date()))
+    _shots = model
+    _shots_info = {"check": verdict, "use": {k: v["use"] for k, v in verdict.items()},
+                   "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    print(f"[Pipeline] Shots model: {', '.join(k for k, v in verdict.items() if v['use']) or 'no stat beat the average'}")
+
+
+def _shot_markets(home: str, away: str, league: Optional[str]) -> Optional[Dict]:
+    """Shots / shots-on-target lines for a club fixture: the stats the check approved."""
+    if _shots is None:
+        return None
+    got = _shots.markets(home, away, league)
+    use = _shots_info.get("use") or {}
+    keep = {k: v for k, v in (got or {}).items() if use.get(k)}
+    return keep or None
+
+
 def _load_international_set_pieces() -> None:
     """Fit the international corners/bookings model from the collected data,
     with the settings the nightly check chose — if it beat the competition
     average there. CPU-light (well under a second); run in a thread."""
-    global _intl_set_pieces, _intl_sp_info
+    global _intl_set_pieces, _intl_sp_info, _intl_shots
     import international_stats
     import model_store
     try:
@@ -5009,30 +5053,37 @@ def _load_international_set_pieces() -> None:
         _intl_sp_info = {"error": str(e)}
         return
     verdict = data.get("model") or {}
-    _intl_sp_info = {"dataset": international_stats.summary(data), "check": verdict}
+    shot_verdict = data.get("shots_model") or {}
+    _intl_sp_info = {"dataset": international_stats.summary(data), "check": verdict, "shots_check": shot_verdict}
+    frame = international_stats.rows_frame(data)
+    _intl_shots = None
+    if any((shot_verdict.get("use") or {}).values()) and shot_verdict.get("params"):
+        _intl_shots = shots.ShotModel.fit(frame.dropna(subset=list(shots.ShotModel.REQUIRED)), shot_verdict["params"])
     use = verdict.get("use") or {}
     if not any(use.values()) or not verdict.get("params"):
         _intl_set_pieces = None
         return
-    _intl_set_pieces = set_pieces.SetPieceModel.fit(international_stats.rows_frame(data), verdict["params"])
+    _intl_set_pieces = set_pieces.SetPieceModel.fit(frame, verdict["params"])
 
 
 def _international_set_pieces(fx: Dict, referee: Optional[str] = None,
                               career: Optional[Dict] = None) -> Optional[Dict]:
-    """Corners/bookings for an international fixture, only the stats the
-    nightly check approved."""
-    if _intl_set_pieces is None:
-        return None
-    use = (_intl_sp_info.get("check") or {}).get("use") or {}
-    got = _intl_set_pieces.markets(intl.team_key(fx["home"]), intl.team_key(fx["away"]), fx.get("league"),
-                                   referee, career)
-    if not got:
-        return None
-    keep = {k: v for k, v in got.items() if use.get(k)}
-    if not (use.get("corners_home") and use.get("corners_away")):
-        keep.pop("corners_1x2", None)
-    else:
-        keep["corners_1x2"] = got["corners_1x2"]
+    """Corners/bookings/shots for an international fixture, only the stats
+    the nightly checks approved."""
+    home, away = intl.team_key(fx["home"]), intl.team_key(fx["away"])
+    keep: Dict[str, Any] = {}
+    if _intl_set_pieces is not None:
+        use = (_intl_sp_info.get("check") or {}).get("use") or {}
+        got = _intl_set_pieces.markets(home, away, fx.get("league"), referee, career) or {}
+        keep = {k: v for k, v in got.items() if use.get(k)}
+        if got and use.get("corners_home") and use.get("corners_away"):
+            keep["corners_1x2"] = got["corners_1x2"]
+        else:
+            keep.pop("corners_1x2", None)
+    if _intl_shots is not None:
+        shot_use = (_intl_sp_info.get("shots_check") or {}).get("use") or {}
+        got = _intl_shots.markets(home, away, fx.get("league")) or {}
+        keep.update({k: v for k, v in got.items() if shot_use.get(k)})
     return keep or None
 
 
@@ -5059,6 +5110,9 @@ def _explain_empty(reasons: List[Dict], matches: int, days: int, min_prob: float
         if r["reason"] == "no_data":
             extra = (" Each team's corners come from club-league match stats, so internationals have none."
                      if r["market"] in ("home_corners_ou", "away_corners_ou", "corners_1x2") else
+                     " Shots come from club-league match stats (the nine leagues with shot counts), so "
+                     "internationals and other clubs have none."
+                     if r["market"].endswith(("shots_ou", "sot_ou")) else
                      " These come from club-league stats, or for other matches from SportyBet's own line once "
                      "SportyBet lists the match with that market (tick \"Only matches SportyBet lists\")."
                      if r["market"] in ("corners_ou", "cards_ou") else "")

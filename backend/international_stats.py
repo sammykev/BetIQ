@@ -158,13 +158,24 @@ def save(r, data: Dict[str, Any]) -> int:
     return len(blob)
 
 
+SHOT_KEYS = ("HS", "AS", "HST", "AST")
+
+
+def _shots_of(res: Dict[str, Any]) -> Dict[str, int]:
+    """{HS, AS, HST, AST} from an ESPN result, or {} when it has no shot counts."""
+    if not (res.get("shots") and res.get("sot")):
+        return {}
+    return {"HS": res["shots"][0], "AS": res["shots"][1], "HST": res["sot"][0], "AST": res["sot"][1]}
+
+
 def rows_frame(data: Dict[str, Any]):
     """Rows as a DataFrame in the league CSVs' shape (set_pieces reads it):
     teams by their one-per-nation key, league = our competition code."""
     import pandas as pd
     rows = [{"Date": pd.Timestamp(r["date"]), "HomeTeam": intl.team_key(r["home"]), "AwayTeam": intl.team_key(r["away"]),
              "league": intl.competition(r.get("competition", ""))[0], "Referee": r.get("referee"),
-             **{k: r[k] for k in ("HC", "AC", "HY", "AY", "HR", "AR")}}
+             **{k: r[k] for k in ("HC", "AC", "HY", "AY", "HR", "AR")},
+             **{k: r.get(k, float("nan")) for k in SHOT_KEYS}}
             for r in data.get("rows", {}).values()]
     return pd.DataFrame(rows).sort_values("Date").reset_index(drop=True) if rows else pd.DataFrame()
 
@@ -227,6 +238,7 @@ def summary(data: Dict[str, Any]) -> Dict[str, Any]:
             "first": min((r["date"] for r in rows), default=None), "last": max((r["date"] for r in rows), default=None),
             "days_scanned": len(days), "oldest_day_scanned": oldest,
             "espn_days_scanned": len(espn),
+            "with_shots": sum(1 for r in rows if "HS" in r),
             "backfill_complete": bool(data.get("espn_backfill_done")) or (bool(days) and days[0] <= START.isoformat()),
             "last_run": (data.get("runs") or [None])[-1]}
 
@@ -455,13 +467,17 @@ async def collect_espn(session, data: Dict[str, Any], deadline: float, today: da
                 continue
             key = match_key(res["date"], res["home"], res["away"])
             if key in data["rows"]:
+                if "HS" not in data["rows"][key] and _shots_of(res):
+                    data["rows"][key].update(_shots_of(res))
+                    report["shots_added"] = report.get("shots_added", 0) + 1
                 continue
             if res.get("corners") and res.get("bookings"):
                 data["rows"][key] = {"date": res["date"], "home": res["home"], "away": res["away"],
                                      "competition": comp, "source": "espn",
                                      "HC": res["corners"][0], "AC": res["corners"][1],
                                      # Booking points (yellow 1, red 2) as yellows: the model adds HY + 2·HR
-                                     "HY": res["bookings"][0], "AY": res["bookings"][1], "HR": 0, "AR": 0}
+                                     "HY": res["bookings"][0], "AY": res["bookings"][1], "HR": 0, "AR": 0,
+                                     **_shots_of(res)}
                 report["matches"] += 1
             elif key not in missing_keys:
                 report["no_stats"] += 1
@@ -472,8 +488,49 @@ async def collect_espn(session, data: Dict[str, Any], deadline: float, today: da
     data["espn_days"] = sorted(done)
     if not report["stopped"] and todo:
         data["espn_backfill_done"] = True
+    shots_done = set(data.get("shots_days") or []) | {k for k, _, _ in todo if k in done}
+    if not report["stopped"]:
+        report["shots_backfill"] = await _backfill_shots(session, data, done, shots_done, deadline, pause, errors)
+    data["shots_days"] = sorted(shots_done)
     report["errors"] = list(dict.fromkeys(errors))[:5]
     return report
+
+
+async def _backfill_shots(session, data: Dict[str, Any], done: set, shots_done: set, deadline: float,
+                          pause: float, errors: List[str]) -> Dict[str, Any]:
+    """Read again the competition-days collected before shots were kept, for
+    the stored matches that lack them, newest first until the deadline."""
+    import results_feed
+    need = set()
+    for row in data["rows"].values():
+        if "HS" not in row:
+            d = date.fromisoformat(row["date"])
+            need |= {d.isoformat(), (d - timedelta(days=1)).isoformat()}  # ESPN dates by US time
+    todo = sorted((k for k in done - shots_done if k.split("|", 1)[0] in need), reverse=True)
+    rep: Dict[str, Any] = {"to_read": len(todo), "requests": 0, "added": 0, "stopped": None}
+    for k in todo:
+        if time.monotonic() > deadline:
+            rep["stopped"] = "time"
+            break
+        day, slug = k.split("|", 1)
+        page, status = await _get(session, f"{intl.ESPN_BASE}/{slug}/scoreboard", intl._ESPN_HEADERS,
+                                  {"dates": day.replace("-", ""), "limit": 200}, errors)
+        rep["requests"] += 1
+        await asyncio.sleep(pause)
+        if page is None:
+            if status in (403, 429):
+                rep["stopped"] = f"HTTP {status}"
+                break
+            if status == 400:
+                shots_done.add(k)
+            continue
+        for res in results_feed.parse_espn(page):
+            row = data["rows"].get(match_key(res["date"], res["home"], res["away"]))
+            if row is not None and "HS" not in row and _shots_of(res):
+                row.update(_shots_of(res))
+                rep["added"] += 1
+        shots_done.add(k)
+    return rep
 
 
 AF_FREE_DAYS_BACK = 1  # API-Football's free plan only allows yesterday to tomorrow

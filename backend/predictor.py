@@ -25,7 +25,7 @@ from team_names import TeamResolver
 warnings.filterwarnings("ignore")
 
 MODEL_CACHE_PATH = os.path.join(os.path.dirname(__file__), "data", "model_cache.joblib")
-MODEL_CACHE_VERSION = 6  # bump when FEATURE_COLS or saved fields change
+MODEL_CACHE_VERSION = 7  # bump when FEATURE_COLS or saved fields change
 
 
 # ── FIFA ranking-calibrated starting Elo for national teams ───────────────
@@ -173,10 +173,14 @@ NO_ODDS_COLS = [c for c in FEATURE_COLS if not c.startswith("Impl_")]
 # strength than goals, which a couple of lucky finishes can swing. Rolling
 # averages for and against; teams with no shot data (national teams, old UCL
 # rows) get the league average, so their matches still train. On only when
-# the walk-forward backtest says it helps (USE_SHOTS).
+# the walk-forward backtest says it helps (USE_SHOTS): True for every
+# model, "goals" for the over/under goals models only, False for none.
 SHOT_COLS = ["Home_SOT_For", "Away_SOT_For", "Home_SOT_Against", "Away_SOT_Against",
              "SOT_Atk_vs_Def", "SOT_Def_vs_Atk"]
-USE_SHOTS = False  # set by the walk-forward backtest (see SHOT_COLS)
+# Walk-forward Feb-May 2025 (1,347 matches): in every model, 1X2 log loss
+# 0.9820 → 0.9842 (worse); in the goals models only, 1X2 unchanged and
+# over 2.5 log loss 0.6871 → 0.6823, Brier 0.2467 → 0.2447.
+USE_SHOTS = "goals"
 DEFAULT_SOT = 4.3  # shots on target per team per match, top European leagues
 
 
@@ -377,13 +381,16 @@ class LeaguePredictor:
         self.h2h: Dict[str, Dict] = {}              # "teamA:teamB" -> {a_wins,draws,b_wins,total_goals,n}
         self.dc_rho: float = -0.13                  # Dixon-Coles correlation (estimated in train())
         self.league_stats: Dict[str, dict] = {}     # league_code -> {avg_goals, home_win_rate}
-        self.use_shots: bool = USE_SHOTS
+        self.use_shots = USE_SHOTS                   # False / True / "goals" (see SHOT_COLS)
         self._league_sot: List[float] = []           # shots on target per team-match, for the default
 
-    def cols(self, odds: bool = True) -> List[str]:
-        """The feature columns this model trains and predicts on."""
+    def cols(self, odds: bool = True, target: str = "win") -> List[str]:
+        """The feature columns a model trains and predicts on: target "win"
+        (the result model) or "goals" (the over/under models)."""
         base = FEATURE_COLS if odds else NO_ODDS_COLS
-        return base + SHOT_COLS if getattr(self, "use_shots", False) else list(base)
+        shots = getattr(self, "use_shots", False)
+        use = shots is True or (shots == "goals" and target == "goals")
+        return base + SHOT_COLS if use else list(base)
 
     # ------------------------------------------------------------------ #
     # Internal helpers
@@ -738,17 +745,16 @@ class LeaguePredictor:
                 hst=r.get("HST"), ast=r.get("AST"),
             )
 
-        df = pd.DataFrame(rows).dropna(subset=self.cols())
-        X = df[self.cols()]
+        df = pd.DataFrame(rows).dropna(subset=self.cols(target="goals"))
 
         y_win = df["Result"].map({"A": 0, "D": 1, "H": 2})
         y_o15 = (df["TotalGoals"] >= 2).astype(int)
         y_o25 = (df["TotalGoals"] >= 3).astype(int)
-        for suffix, cols in (("", self.cols()), ("_noodds", self.cols(odds=False))):
-            X = df[cols]
-            self.models["win" + suffix] = _fit_calibrated(X, y_win, multiclass=True)
-            self.models["o15" + suffix] = _fit_calibrated(X, y_o15)
-            self.models["o25" + suffix] = _fit_calibrated(X, y_o25)
+        for suffix, odds in (("", True), ("_noodds", False)):
+            X_win, X_goals = df[self.cols(odds)], df[self.cols(odds, target="goals")]
+            self.models["win" + suffix] = _fit_calibrated(X_win, y_win, multiclass=True)
+            self.models["o15" + suffix] = _fit_calibrated(X_goals, y_o15)
+            self.models["o25" + suffix] = _fit_calibrated(X_goals, y_o25)
         print("[Predictor] Trained calibrated result + goals models, with and without odds")
 
         self._ready = True
@@ -846,12 +852,13 @@ class LeaguePredictor:
         """(p_home, p_draw, p_away, p_over15, p_over25) for one feature row.
         Fixtures without odds use the models trained without odds features."""
         no_odds = not feats.get("_has_odds", True) and "win_noodds" in self.models
-        suffix, cols = ("_noodds", self.cols(odds=False)) if no_odds else ("", self.cols())
-        X = pd.DataFrame([feats])[cols]
+        suffix, odds = ("_noodds", False) if no_odds else ("", True)
+        row = pd.DataFrame([feats])
+        X, X_goals = row[self.cols(odds)], row[self.cols(odds, target="goals")]
         wp = self.models["win" + suffix].predict_proba(X)[0]
         p_a, p_d, p_h = float(wp[0]), float(wp[1]), float(wp[2])
-        p_o15 = float(self.models["o15" + suffix].predict_proba(X)[0][1])
-        p_o25 = float(self.models["o25" + suffix].predict_proba(X)[0][1])
+        p_o15 = float(self.models["o15" + suffix].predict_proba(X_goals)[0][1])
+        p_o25 = float(self.models["o25" + suffix].predict_proba(X_goals)[0][1])
         return p_h, p_d, p_a, p_o15, p_o25
 
     def predict_match_full(self, home: str, away: str,

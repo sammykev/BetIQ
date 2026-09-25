@@ -24,6 +24,7 @@ export interface MatchdayMatch {
   league: string; league_name: string; flag: string;
   status: MatchStatus; minute: string | null; aet: boolean;
   score: [number, number] | null; corners: [number, number] | null; bookings: [number, number] | null;
+  shots?: [number, number] | null; sot?: [number, number] | null;
   pred: MatchdayPred; grades: Record<string, Grade> | null; locked: boolean;
 }
 

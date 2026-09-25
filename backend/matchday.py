@@ -25,6 +25,8 @@ _PRED_FIELDS = ("p_home", "p_draw", "p_away", "p_over15", "p_over25", "p_over35"
 _HEADER_FIELDS = ("home", "away", "date", "time", "league", "league_name", "flag")
 # Main lines graded for corners and bookings (the model's side of each)
 SET_PIECE_LINES = {"corners": "9.5", "bookings": "4.5"}
+# Match stats kept with a result (for settling tickets): the graded ones + shots
+RESULT_STATS = (*SET_PIECE_LINES, "shots", "sot")
 
 FINISHED, LIVE, SCHEDULED, POSTPONED = "finished", "live", "scheduled", "postponed"
 MARKET_NAMES = {"tip": "Our tip (1X2 / double chance)", "goals": "Goals tip", "favourite": "Most likely result",
@@ -161,11 +163,11 @@ def apply_result(entry: Dict, res: Dict) -> bool:
         if res.get("status") != FINISHED:
             return False
         new = {k: v for k, v in old.items() if k != "at"}
-        for stat in SET_PIECE_LINES:
+        for stat in RESULT_STATS:
             if new.get(stat) is None and res.get(stat) is not None:
                 new[stat] = res[stat]
     else:
-        new = {k: res.get(k) for k in ("status", "minute", "hg", "ag", "aet", "source", *SET_PIECE_LINES)}
+        new = {k: res.get(k) for k in ("status", "minute", "hg", "ag", "aet", "source", *RESULT_STATS)}
         new = {k: v for k, v in new.items() if v is not None and v is not False}
     if {k: v for k, v in old.items() if k != "at"} == new:
         return False
@@ -230,6 +232,7 @@ def public(entry: Dict) -> Dict[str, Any]:
             "status": status, "minute": res.get("minute"), "aet": bool(res.get("aet")),
             "score": [res["hg"], res["ag"]] if res.get("hg") is not None and res.get("ag") is not None else None,
             "corners": res.get("corners"), "bookings": res.get("bookings"),
+            "shots": res.get("shots"), "sot": res.get("sot"),
             "pred": entry.get("pred") or {}, "grades": entry.get("grades"), "locked": bool(entry.get("locked"))}
 
 
