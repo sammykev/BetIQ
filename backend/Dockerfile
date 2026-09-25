@@ -1,5 +1,5 @@
-# BetIQ API. Build from the repository root — the legacy EPL and Champions
-# League CSVs live there:
+# BetIQ API. Build from the repository root — the historical EPL and Champions
+# League CSVs live in data/:
 #   docker build -f backend/Dockerfile -t betiq-api .
 # Runs on x86 and ARM; used by the server setup (deploy/vm: Google Cloud,
 # Oracle Cloud or any Ubuntu machine) and Hugging Face Spaces (deploy/huggingface).
@@ -19,8 +19,8 @@ WORKDIR /app/backend
 COPY backend/requirements.txt .
 RUN pip install -r requirements.txt
 
-# main.py reads these as ../epl-final.csv and ../champions-league-*.csv
-COPY epl-final.csv champions-league-*.csv /app/
+# main.py reads these as ../data/epl-final.csv and ../data/champions-league-*.csv
+COPY data/ /app/data/
 COPY backend/ .
 
 # data/ is a persistent volume at runtime. The copy shipped with the code

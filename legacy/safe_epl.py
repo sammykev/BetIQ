@@ -6,7 +6,7 @@ from sklearn.ensemble import RandomForestClassifier
 from datetime import datetime
 
 # --- CONFIGURATION ---
-HISTORY_FILE = 'epl-final.csv'
+HISTORY_FILE = '../data/epl-final.csv'
 NEW_FIXTURES_FILE = 'epl-2025.csv'
 OUTPUT_FOLDER = "predictions/"
 

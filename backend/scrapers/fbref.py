@@ -241,6 +241,6 @@ async def refresh(epl_csv_path: str = None):
 if __name__ == "__main__":
     import sys
     epl_path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(
-        os.path.dirname(__file__), "..", "..", "epl-final.csv"
+        os.path.dirname(__file__), "..", "..", "data", "epl-final.csv"
     )
     asyncio.run(refresh(epl_csv_path=epl_path))

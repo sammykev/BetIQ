@@ -1,6 +1,6 @@
 .git
 frontend
-predictions
+legacy
 deploy
 **/node_modules
 **/__pycache__

@@ -8,7 +8,7 @@ from datetime import datetime
 
 # --- CONFIGURATION ---
 # We load ALL csv files that start with "champions-league-"
-FILE_PATTERN = "champions-league-*.csv"
+FILE_PATTERN = "../data/champions-league-*.csv"
 OUTPUT_FOLDER = "predictions/"
 
 # --- 1. DATA LOADING & CLEANING ---

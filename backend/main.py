@@ -38,8 +38,14 @@ load_dotenv()
 
 API_KEY = os.getenv("FOOTBALL_DATA_API_KEY", "")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
-EPL_HISTORY = os.getenv("EPL_HISTORY_CSV", "../epl-final.csv")
-UCL_CSV_PATTERN = os.getenv("UCL_CSV", "../champions-league-*.csv")
+EPL_HISTORY = os.getenv("EPL_HISTORY_CSV", "../data/epl-final.csv")
+UCL_CSV_PATTERN = os.getenv("UCL_CSV", "../data/champions-league-*.csv")
+# The CSVs moved from the repository root to data/: settings that still
+# point at the root fall back to the new place
+if not os.path.exists(EPL_HISTORY):
+    EPL_HISTORY = "../data/epl-final.csv"
+if not glob.glob(UCL_CSV_PATTERN):
+    UCL_CSV_PATTERN = "../data/champions-league-*.csv"
 REDIS_URL = os.getenv("UPSTASH_REDIS_URL", "")
 H2H_CACHE_FILE = os.path.join("data", "h2h_cache.json")
 H2H_TTL_DAYS = 7
