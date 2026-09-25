@@ -121,6 +121,13 @@ class TestEndpoint:
         assert self.post(min_odds=1.1, max_odds=2, bookable_only=True).json()["matches_considered"] == 1
         assert self.post(min_odds=1.1, max_odds=2, leagues=["INT-FRI"]).json()["matches_considered"] == 1
 
+    def test_each_pick_says_whether_sportybet_can_take_it(self):
+        r = self.post(min_odds=3, max_odds=6, days=3, markets=["1x2", "double_chance"]).json()
+        linked = main._predictions_cache[0]
+        for p in r["picks"]:
+            assert p["bookable"] == (p["home"] == linked["home"] and p["away"] == linked["away"])
+        assert r["bookable_picks"] == sum(p["bookable"] for p in r["picks"])
+
     def test_unreachable_target_explains(self):
         r = self.post(min_odds=100000, max_odds=200000, max_games=2).json()
         assert "gets near" in r["error"]

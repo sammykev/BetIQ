@@ -20,10 +20,11 @@ interface OptPick {
   home: string; away: string; date: string; time: string; league: string;
   market: string; market_name: string; code: string; label: string;
   prob: number; odds: number; odds_source: "sportybet" | "bookmaker" | "estimated";
+  bookable?: boolean;  // a SportyBet code can take it (match listed, market confirmed)
 }
 interface OptResult {
   picks?: OptPick[]; games?: number; total_odds?: number; win_chance?: number;
-  within_target?: boolean; estimated_prices?: number; matches_considered?: number;
+  within_target?: boolean; estimated_prices?: number; matches_considered?: number; bookable_picks?: number;
   target?: [number, number]; target_odds?: number; error?: string;
 }
 interface BookResult { code: string | null; share_url: string | null; total_odds: number | null; error: string | null;
@@ -378,8 +379,27 @@ export default function OptimizerPage() {
                     <p className="text-xs text-warn">{failedPicks.length} pick{failedPicks.length === 1 ? " wasn't" : "s weren't"} included: {failedPicks[0].reason}</p>
                   )}
                 </div>
+              ) : result.bookable_picks === 0 ? (
+                <div className="space-y-2">
+                  <p className="text-xs text-warn flex gap-1.5">
+                    <AlertTriangle size={13} className="shrink-0 mt-0.5" />
+                    SportyBet doesn&apos;t offer these picks&apos; markets on these matches, so this slip can&apos;t become a
+                    SportyBet code. Keep it in your bet slip for a bookmaker that has them, or tick &quot;Only matches
+                    SportyBet lists&quot; for a slip SportyBet can book.
+                  </p>
+                  <button onClick={toSlip}
+                    className="w-full rounded-xl border border-n-700 text-n-200 font-semibold px-5 py-3">
+                    Put in my bet slip
+                  </button>
+                </div>
               ) : (
                 <div className="flex flex-wrap gap-2">
+                  {result.bookable_picks !== undefined && result.bookable_picks < (result.picks?.length ?? 0) && (
+                    <p className="w-full text-xs text-warn">
+                      A SportyBet code will take {result.bookable_picks} of the {result.picks?.length} picks; the ones
+                      marked &quot;not on SportyBet&quot; are left out.
+                    </p>
+                  )}
                   <button onClick={book} disabled={booking}
                     className="flex-1 min-w-[12rem] flex items-center justify-center gap-2 rounded-xl bg-brand-400 hover:bg-brand-300 text-ink font-bold px-5 py-3 disabled:opacity-50">
                     {booking ? <Loader2 size={16} className="animate-spin" /> : <Ticket size={16} />}
@@ -401,7 +421,9 @@ export default function OptimizerPage() {
                   <div className="min-w-0 flex-1">
                     <p className="text-[11px] text-n-500 truncate">{p.league} · {p.date} {p.time}</p>
                     <p className="text-sm text-n-0 font-semibold truncate">{p.home} vs {p.away}</p>
-                    <p className="text-xs text-n-400">{p.market_name}: <span className="text-n-200">{p.label}</span></p>
+                    <p className="text-xs text-n-400">{p.market_name}: <span className="text-n-200">{p.label}</span>
+                      {p.bookable === false && <span className="ml-1.5 text-[10px] font-bold uppercase tracking-wide text-warn">not on SportyBet</span>}
+                    </p>
                   </div>
                   <div className="text-right shrink-0">
                     <p className="text-sm font-bold text-n-0 tnum">{odds(p.odds)}</p>

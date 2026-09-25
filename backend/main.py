@@ -5250,6 +5250,13 @@ async def optimize_slip(body: Dict[str, Any]):
         return {"error": (f"No slip from {considered} matches gets near {target:,.2f}x. "
                           "Allow more games or days, add markets, or lower the minimum confidence."),
                 "matches_considered": considered, "target": [lo, hi], "target_odds": target}
+    # Which picks a SportyBet code can take: the match is linked to a SportyBet
+    # event and SportyBet confirmed the market (shots, for one, it doesn't offer)
+    ok = allowed or _bookable_markets()
+    events = {(p["home"], p["away"], p.get("date")): ev for p, ev in pairs}
+    for pick in result.get("picks") or []:
+        pick["bookable"] = bool(events.get((pick["home"], pick["away"], pick["date"]))) and ok(pick["market"], pick["code"])
+    result["bookable_picks"] = sum(1 for pick in result.get("picks") or [] if pick["bookable"])
     return {**result, "target": [lo, hi], "target_odds": round(target, 2), "matches_considered": considered}
 
 
