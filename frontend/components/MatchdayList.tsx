@@ -16,7 +16,9 @@ function leadPick(m: MatchdayMatch): { label: string; prob: number | null; grade
   const g = m.grades ?? {};
   if (p.tip_1x2 && p.tip_code && p.tip_code !== "?") {
     const prob = typeof p.tip_confidence === "number" ? p.tip_confidence : g.tip?.prob ?? null;
-    return { label: p.tip_1x2, prob, grade: g.tip };
+    // Short in the row ("Home win"); team names are right beside it
+    const short: Record<string, string> = { "1": "Home win", X: "Draw", "2": "Away win" };
+    return { label: short[p.tip_code] ?? p.tip_1x2, prob, grade: g.tip };
   }
   if (p.tip_goals && p.tip_goals !== "Skip") return { label: p.tip_goals, prob: p.goals_confidence ?? null, grade: g.goals };
   return { label: "No pick", prob: null };

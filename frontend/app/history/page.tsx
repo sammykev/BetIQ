@@ -10,7 +10,7 @@ import { PageHeader } from "@/components/shell/PageHeader";
 import { CompetitionBadge } from "@/components/CompetitionBadge";
 import { ColumnChart } from "@/components/admin/charts";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
-import { API, fetchAccuracy, type Accuracy, type TicketSummary } from "@/lib/matchday";
+import { API, MARKET_LABELS, fetchAccuracy, type Accuracy, type TicketSummary } from "@/lib/matchday";
 
 // The model's track record: every pick we published, graded against the
 // final score (backend matchday.py). "We said" is the average probability we
@@ -125,10 +125,10 @@ export default function TrackRecordPage() {
                 sub={m.goals ? `${m.goals.n} picks · we said ${pct(m.goals.avg_prob)}` : undefined} />
               <Tile label="Most likely result" value={pct(m.favourite?.hit_rate)}
                 sub={m.favourite ? `${m.favourite.n} matches · we said ${pct(m.favourite.avg_prob)}` : undefined} />
-              <Tile label="Accuracy score (Brier)"
+              <Tile label="Brier score"
                 value={vs ? vs.model.toFixed(3) : data.brier.model?.toFixed(3) ?? "—"}
                 tone={vs ? (vs.model <= vs.bookmaker ? "text-accent" : "text-warn") : undefined}
-                sub={vs ? `bookmaker ${vs.bookmaker.toFixed(3)} on ${vs.matches} matches · lower is better` : "lower is better"} />
+                sub={vs ? `bookmaker ${vs.bookmaker.toFixed(3)} · ${vs.matches} matches · lower is better` : "1X2 accuracy · lower is better"} />
             </div>
 
             <section className="card overflow-hidden">
@@ -144,20 +144,23 @@ export default function TrackRecordPage() {
                   <thead>
                     <tr className="text-[11px] uppercase tracking-[0.06em] text-n-500 border-y border-n-800 bg-surface-sunken/60">
                       <th className="text-left font-semibold px-4 sm:px-5 py-2">Market</th>
-                      <th className="text-right font-semibold px-3 py-2">Picks</th>
-                      <th className="text-right font-semibold px-3 py-2">We said</th>
-                      <th className="text-right font-semibold px-3 py-2">It happened</th>
+                      <th className="hidden sm:table-cell text-right font-semibold px-3 py-2">Picks</th>
+                      <th className="text-right font-semibold px-2 sm:px-3 py-2 whitespace-nowrap">We said</th>
+                      <th className="text-right font-semibold px-2 sm:px-3 py-2 whitespace-nowrap">Happened</th>
                       <th className="text-right font-semibold px-4 sm:px-5 py-2">Gap</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-n-800">
                     {markets.map(k => (
                       <tr key={k}>
-                        <td className="px-4 sm:px-5 py-2.5 text-n-0 font-medium">{m[k].name}</td>
-                        <td className="px-3 py-2.5 text-right tnum text-n-300">{m[k].n}</td>
-                        <td className="px-3 py-2.5 text-right tnum text-n-300">{pct(m[k].avg_prob)}</td>
-                        <td className="px-3 py-2.5 text-right tnum text-n-0 font-semibold">{pct(m[k].hit_rate)}</td>
-                        <td className="px-4 sm:px-5 py-2.5 text-right"><Gap said={m[k].avg_prob} happened={m[k].hit_rate} /></td>
+                        <td className="px-4 sm:px-5 py-2.5">
+                          <span className="block text-n-0 font-medium">{MARKET_LABELS[k] ?? m[k].name}</span>
+                          <span className="block sm:hidden text-[11px] text-n-500 tnum">{m[k].n} picks</span>
+                        </td>
+                        <td className="hidden sm:table-cell px-3 py-2.5 text-right tnum text-n-300">{m[k].n}</td>
+                        <td className="px-2 sm:px-3 py-2.5 text-right tnum text-n-300">{pct(m[k].avg_prob)}</td>
+                        <td className="px-2 sm:px-3 py-2.5 text-right tnum text-n-0 font-semibold">{pct(m[k].hit_rate)}</td>
+                        <td className="px-4 sm:px-5 py-2.5 text-right whitespace-nowrap"><Gap said={m[k].avg_prob} happened={m[k].hit_rate} /></td>
                       </tr>
                     ))}
                   </tbody>
@@ -182,7 +185,7 @@ export default function TrackRecordPage() {
                     <tr className="text-[11px] uppercase tracking-[0.06em] text-n-500 border-y border-n-800 bg-surface-sunken/60">
                       <th className="text-left font-semibold px-4 sm:px-5 py-2">We said</th>
                       <th className="text-right font-semibold px-3 py-2">Picks</th>
-                      <th className="text-right font-semibold px-3 py-2">It happened</th>
+                      <th className="text-right font-semibold px-3 py-2">Happened</th>
                       <th className="text-right font-semibold px-4 sm:px-5 py-2">Gap</th>
                     </tr>
                   </thead>
@@ -192,7 +195,7 @@ export default function TrackRecordPage() {
                         <td className="px-4 sm:px-5 py-2 tnum text-n-200">{b.from}–{b.to}%</td>
                         <td className="px-3 py-2 text-right tnum text-n-400">{b.n}</td>
                         <td className="px-3 py-2 text-right tnum text-n-0 font-semibold">{pct(b.happened)}</td>
-                        <td className="px-4 sm:px-5 py-2 text-right"><Gap said={b.said} happened={b.happened} /></td>
+                        <td className="px-4 sm:px-5 py-2 text-right whitespace-nowrap"><Gap said={b.said} happened={b.happened} /></td>
                       </tr>
                     ))}
                   </tbody>
