@@ -2,15 +2,19 @@
 Corners and cards for past international matches — the training data for
 the international corners/bookings model (set_pieces.fit_international).
 
-Two sources, run from GitHub Actions (collect_international_stats.py):
+Three sources, run from GitHub Actions (collect_international_stats.py):
 
+- ESPN's public scoreboards (the main source: SofaScore answers GitHub and
+  Render with a 403): each national-team competition a month at a time,
+  finished matches with corners (team statistics) and cards (match
+  events). Matches ESPN lists without stats go to API-Football's list.
 - SofaScore: each day's national-team matches (the same filter as the
   fixtures, international_fixtures.sofascore_internationals), then each
   finished match's statistics. The backfill walks back from yesterday to
   START a chunk at a time, newest first; the last few days are re-checked
   every run (stats arrive after the final whistle).
-- API-Football (APIFOOTBALL_KEY): fills matches SofaScore had no stats
-  for, within a daily request budget (the free plan allows 100).
+- API-Football (APIFOOTBALL_KEY): fills matches ESPN or SofaScore listed
+  without stats, within a daily request budget (the free plan allows 100).
 
 Rows and progress live in Redis as one gzip'd JSON blob (small: ~100 bytes
 a match), read by the API server when it fits the model.
@@ -212,12 +216,18 @@ def summary(data: Dict[str, Any]) -> Dict[str, Any]:
     for r in rows:
         sources[r.get("source", "?")] = sources.get(r.get("source", "?"), 0) + 1
     club_refs = data.get("club_refs") or {}
+    espn = data.get("espn_months") or []
+    # How far back the backfill has got, by either source
+    espn_oldest = min((m.split("|")[1] + "-01" for m in espn
+                       if all(f"{slug}|{m.split('|')[1]}" in espn for slug in intl.ESPN_COMPETITIONS)), default=None)
+    oldest = min((d for d in (days[0] if days else None, espn_oldest) if d), default=None)
     return {"matches": len(rows), "sources": sources,
             "with_referee": sum(1 for r in rows if r.get("referee")),
             "club_referees": sum(1 for v in club_refs.values() if v), "referees_known": len(data.get("referees") or {}),
             "first": min((r["date"] for r in rows), default=None), "last": max((r["date"] for r in rows), default=None),
-            "days_scanned": len(days), "oldest_day_scanned": days[0] if days else None,
-            "backfill_complete": bool(days) and days[0] <= START.isoformat(),
+            "days_scanned": len(days), "oldest_day_scanned": oldest,
+            "espn_months_scanned": len(espn),
+            "backfill_complete": bool(oldest) and oldest <= START.isoformat(),
             "last_run": (data.get("runs") or [None])[-1]}
 
 
@@ -325,6 +335,76 @@ async def _club_referees(session, listing: Dict, data: Dict[str, Any], pause: fl
     return found
 
 
+ESPN_RECHECK_MONTHS = 2   # this month and last are re-read every run (stats arrive late)
+ESPN_PAUSE = 0.3
+
+
+def espn_months(data: Dict[str, Any], today: date) -> List[Tuple[str, str, date, date]]:
+    """(progress key, competition slug, first day, last day) to read,
+    newest month first: the recent months always, older ones until done."""
+    done = set(data.get("espn_months") or [])
+    out = []
+    m, i = date(today.year, today.month, 1), 0
+    while m >= date(START.year, START.month, 1):
+        nxt = date(m.year + (m.month == 12), m.month % 12 + 1, 1)
+        end = min(nxt - timedelta(days=1), today - timedelta(days=1))
+        if end >= m:
+            for slug in intl.ESPN_COMPETITIONS:
+                k = f"{slug}|{m:%Y-%m}"
+                if i < ESPN_RECHECK_MONTHS or k not in done:
+                    out.append((k, slug, m, end))
+        m = date(m.year - (m.month == 1), (m.month - 2) % 12 + 1, 1)
+        i += 1
+    return out
+
+
+async def collect_espn(session, data: Dict[str, Any], deadline: float, today: date,
+                       pause: float = ESPN_PAUSE) -> Dict[str, Any]:
+    """Finished national-team matches with corners and cards from ESPN, a
+    competition-month per request, newest first, until the deadline."""
+    import results_feed
+    report: Dict[str, Any] = {"requests": 0, "matches": 0, "no_stats": 0, "stopped": None}
+    done = set(data.get("espn_months") or [])
+    missing = data.setdefault("missing", [])
+    missing_keys = {m["key"] for m in missing}
+    for k, slug, first, last in espn_months(data, today):
+        if time.monotonic() > deadline:
+            report["stopped"] = "time"
+            break
+        page, status = await _get(session, f"{intl.ESPN_BASE}/{slug}/scoreboard", intl._ESPN_HEADERS,
+                                  {"dates": f"{first:%Y%m%d}-{last:%Y%m%d}", "limit": 1000})
+        report["requests"] += 1
+        await asyncio.sleep(pause)
+        if page is None:
+            if status in (403, 429):
+                report["stopped"] = f"HTTP {status}"
+                break
+            continue  # try this month again next run
+        comp = intl.ESPN_COMPETITIONS[slug][0]
+        for res in results_feed.parse_espn(page):
+            if res["status"] != "finished" or res.get("aet") or res.get("hg") is None:
+                continue
+            key = match_key(res["date"], res["home"], res["away"])
+            if key in data["rows"]:
+                continue
+            if res.get("corners") and res.get("bookings"):
+                data["rows"][key] = {"date": res["date"], "home": res["home"], "away": res["away"],
+                                     "competition": comp, "source": "espn",
+                                     "HC": res["corners"][0], "AC": res["corners"][1],
+                                     # Booking points (yellow 1, red 2) as yellows: the model adds HY + 2·HR
+                                     "HY": res["bookings"][0], "AY": res["bookings"][1], "HR": 0, "AR": 0}
+                report["matches"] += 1
+            else:
+                report["no_stats"] += 1
+                if key not in missing_keys:
+                    missing.append({"key": key, "date": res["date"], "home": res["home"], "away": res["away"],
+                                    "competition": comp})
+                    missing_keys.add(key)
+        done.add(k)
+    data["espn_months"] = sorted(done)
+    return report
+
+
 async def collect_api_football(session, data: Dict[str, Any], api_key: str, budget: int) -> Dict[str, Any]:
     """Fill matches SofaScore had no stats for, newest first, within `budget` requests."""
     from difflib import SequenceMatcher
@@ -372,7 +452,8 @@ async def collect_api_football(session, data: Dict[str, Any], api_key: str, budg
 
 async def run(r, minutes: float, api_key: str = "", af_budget: int = 90,
               today: Optional[date] = None, session=None) -> Dict[str, Any]:
-    """One collection run: SofaScore until the time's up, then API-Football."""
+    """One collection run: SofaScore, then ESPN, until the time's up; then
+    API-Football for matches listed without stats."""
     today = today or datetime.now(timezone.utc).date()
     data = load(r)
     if session is None:
@@ -380,7 +461,9 @@ async def run(r, minutes: float, api_key: str = "", af_budget: int = 90,
         session = AsyncSession(impersonate=intl.IMPERSONATE, timeout=30)
     started = time.monotonic()
     report: Dict[str, Any] = {"at": datetime.now(timezone.utc).isoformat()}
-    report["sofascore"] = await collect_sofascore(session, data, started + minutes * 60, today)
+    deadline = started + minutes * 60
+    report["sofascore"] = await collect_sofascore(session, data, deadline, today)
+    report["espn"] = await collect_espn(session, data, deadline, today)
     if api_key:
         report["api_football"] = await collect_api_football(session, data, api_key, af_budget)
     report["seconds"] = round(time.monotonic() - started)

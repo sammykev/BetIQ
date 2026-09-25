@@ -258,3 +258,63 @@ class TestTuning:
     def test_needs_enough_data(self):
         r = set_pieces.tune_international(pd.DataFrame())
         assert r["use"] == {} and "not enough" in r["reason"]
+
+
+def espn_board(*events):
+    return {"events": list(events)}
+
+
+def espn_match(home, away, day, stats=True):
+    team = lambda tid, name, corners: {"id": tid, "displayName": name}
+    comp = {"competitors": [
+        {"homeAway": "home", "score": "2", "team": team("1", home, 0),
+         "statistics": [{"name": "wonCorners", "displayValue": "6"}] if stats else []},
+        {"homeAway": "away", "score": "0", "team": team("2", away, 0),
+         "statistics": [{"name": "wonCorners", "displayValue": "2"}] if stats else []}],
+        "details": [{"yellowCard": True, "team": {"id": "2"}}, {"redCard": True, "team": {"id": "2"}}] if stats else None,
+        "status": {"type": {"state": "post", "name": "STATUS_FULL_TIME", "completed": True}}}
+    if not stats:
+        comp.pop("details")
+    return {"date": f"{day}T19:00Z", "competitions": [comp]}
+
+
+class TestEspn:
+    def test_months_newest_first_and_recheck(self):
+        data = {**ist.empty(), "espn_months": ["fifa.friendly|2025-01"]}
+        months = ist.espn_months(data, date(2025, 3, 10))
+        keys = [k for k, *_ in months]
+        assert keys[0].endswith("|2025-03") and keys[-1].endswith("|2019-01")
+        assert "fifa.friendly|2025-01" not in keys           # done and not recent
+        first = months[0]
+        assert (first[2], first[3]) == (date(2025, 3, 1), date(2025, 3, 9))  # up to yesterday
+
+    def test_collects_rows_and_queues_the_rest(self):
+        data = ist.empty()
+        session = Session({
+            "fifa.friendly/scoreboard": {"__params": {"dates": "20250301-20250309", "limit": 1000},
+                                         "events": [espn_match("Spain", "Malta", "2025-03-05"),
+                                                    espn_match("Chad", "Mali", "2025-03-06", stats=False)]},
+        })
+        rep = asyncio.run(ist.collect_espn(session, data, float("inf"), date(2025, 3, 10), pause=0))
+        [row] = data["rows"].values()
+        assert (row["source"], row["HC"], row["AC"], row["HY"], row["AY"]) == ("espn", 6, 2, 0, 3)
+        assert rep["matches"] == 1 and rep["no_stats"] == 1
+        assert [m["home"] for m in data["missing"]] == ["Chad"]
+        assert "fifa.friendly|2025-03" in data["espn_months"]
+        frame = ist.rows_frame(data)
+        assert frame.iloc[0]["league"] == "INT-FRI" or frame.iloc[0]["league"].startswith("INT")
+        # A second run doesn't add the same match twice
+        asyncio.run(ist.collect_espn(session, data, float("inf"), date(2025, 3, 10), pause=0))
+        assert len(data["rows"]) == 1 and len(data["missing"]) == 1
+
+    def test_stops_when_blocked(self):
+        data = ist.empty()
+        rep = asyncio.run(ist.collect_espn(Session({"scoreboard": (403, {})}), data, float("inf"),
+                                           date(2025, 3, 10), pause=0))
+        assert rep["stopped"] == "HTTP 403" and rep["requests"] == 1 and data["espn_months"] == []
+
+    def test_summary_counts_espn_progress(self):
+        slugs = list(ist.intl.ESPN_COMPETITIONS)
+        data = {**ist.empty(), "espn_months": [f"{s}|2019-01" for s in slugs]}
+        s = ist.summary(data)
+        assert s["oldest_day_scanned"] == "2019-01-01" and s["backfill_complete"]

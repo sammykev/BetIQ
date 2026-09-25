@@ -53,8 +53,9 @@ function InternationalSetPieces({ info }: { info: any }) {
       )}
       {run && (
         <p className="text-[11px] text-n-500">
-          Last collection {ago(run.at)}: SofaScore {run.sofascore?.days ?? 0} days, +{run.sofascore?.matches ?? 0} matches
-          {run.sofascore?.stopped && run.sofascore.stopped !== "time" ? ` (stopped: ${run.sofascore.stopped})` : ""}
+          Last collection {ago(run.at)}: ESPN +{run.espn?.matches ?? 0} matches ({run.espn?.requests ?? 0} requests
+          {run.espn?.stopped && run.espn.stopped !== "time" ? `, stopped: ${run.espn.stopped}` : ""})
+          {" · "}SofaScore {run.sofascore?.stopped === "HTTP 403" ? "blocked" : `+${run.sofascore?.matches ?? 0}`}
           {run.api_football ? ` · API-Football +${run.api_football.matches} (${run.api_football.requests} requests${run.api_football.stopped && run.api_football.stopped !== "budget" ? `, ${run.api_football.stopped}` : ""})` : " · API-Football off"}
         </p>
       )}
@@ -254,7 +255,7 @@ export function PredictionsSection() {
       <TrackRecord adminFetch={trackFetch} />
 
       <Card title="International corners & cards" icon={<Globe2 size={15} />}
-        subtitle="Collected nightly from SofaScore and API-Football; lower score is better">
+        subtitle="Collected nightly from ESPN, topped up by API-Football; lower score is better">
         {!data ? <Skeleton rows={2} /> : <InternationalSetPieces info={data.international_set_pieces} />}
       </Card>
 
