@@ -5,6 +5,8 @@ import clsx from "clsx";
 import { AlertTriangle, ArrowRight, Check, CheckCircle2, Copy, ExternalLink, Flame, Loader2, Scale, ScanSearch, Shield, ShieldCheck,
   Ticket, Wand2 } from "lucide-react";
 import { useBetSlip } from "@/lib/useBetSlip";
+import { useAuthedFetch } from "@/lib/useAuthedFetch";
+import { useUser } from "@clerk/nextjs";
 import type { SlipSelection } from "@/lib/slip";
 
 // Paste a SportyBet booking code: backend/code_check.py scores every leg
@@ -64,6 +66,8 @@ function toSelection(p: Pick): SlipSelection {
 
 function ImprovedSlip({ title, blurb, slip, original }: { title: string; blurb: string; slip: Slip; original: Report["original"] }) {
   const betSlip = useBetSlip();
+  const authFetch = useAuthedFetch();
+  const { user } = useUser();
   const [booking, setBooking] = useState(false);
   const [code, setCode] = useState<{ code: string | null; url: string | null; error: string | null } | null>(null);
   const [copied, setCopied] = useState(false);
@@ -72,8 +76,8 @@ function ImprovedSlip({ title, blurb, slip, original }: { title: string; blurb: 
   const book = async () => {
     setBooking(true); setCode(null);
     try {
-      const r = await fetch(`${API}/api/booking/convert`, { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ platform: "sportybet", selections }) });
+      const r = await authFetch(`${API}/api/booking/convert`, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ platform: "sportybet", selections, source: "code_check", uid: user?.id }) });
       const d = await r.json();
       setCode({ code: d.code ?? null, url: d.share_url ?? null, error: d.code ? null : d.error ?? "SportyBet didn't return a code." });
     } catch { setCode({ code: null, url: null, error: "Couldn't reach the server. Try again." }); }

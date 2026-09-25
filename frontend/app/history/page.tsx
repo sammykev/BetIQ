@@ -1,457 +1,242 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import {
-  ChevronLeft, ChevronRight, Loader2, CheckCircle2, XCircle, Clock, MinusCircle,
-  ChevronDown, ChevronUp, X,
-} from "lucide-react";
+import Link from "next/link";
 import clsx from "clsx";
-import { fetchCalendar, fetchHistory, fetchMatchAnalysis } from "@/lib/api";
-import type { CalendarDay, GoalsOutcome, HistoryPrediction, MatchAnalysis } from "@/lib/api";
-import { MatchCard } from "@/components/MatchCard";
-import { pickProbability } from "@/lib/picks";
+import { useUser } from "@clerk/nextjs";
+import { AlertTriangle, ArrowRight, Loader2, Scale, Target, Ticket } from "lucide-react";
 import { AppShell } from "@/components/shell/AppShell";
 import { PageHeader } from "@/components/shell/PageHeader";
+import { CompetitionBadge } from "@/components/CompetitionBadge";
+import { ColumnChart } from "@/components/admin/charts";
+import { useAuthedFetch } from "@/lib/useAuthedFetch";
+import { API, fetchAccuracy, type Accuracy, type TicketSummary } from "@/lib/matchday";
 
-const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const MONTHS = ["January","February","March","April","May","June",
-                 "July","August","September","October","November","December"];
+// The model's track record: every pick we published, graded against the
+// final score (backend matchday.py). "We said" is the average probability we
+// gave those picks; "it happened" is how often they won. When the two are
+// close the probabilities can be trusted as they're shown.
 
-function dotColor(day: CalendarDay): string {
-  const settled = day.won + day.lost;
-  if (settled === 0) return "bg-sky-500";               // all pending / future
-  const rate = day.won / settled;
-  if (rate >= 0.6) return "bg-brand-500";
-  if (rate >= 0.4) return "bg-amber-400";
-  return "bg-rose-500";
-}
+const PERIODS = [7, 30, 90];
+const MARKET_ORDER = ["tip", "goals", "favourite", "ou25", "btts", "corners", "bookings"];
+const pct = (x?: number | null) => (typeof x === "number" ? `${Math.round(x * 100)}%` : "—");
 
-function OutcomeIcon({ outcome }: { outcome: string }) {
-  if (outcome === "won")  return <CheckCircle2 size={14} className="text-brand-500 shrink-0" />;
-  if (outcome === "lost") return <XCircle      size={14} className="text-rose-500 shrink-0" />;
-  if (outcome === "void") return <MinusCircle  size={14} className="text-n-500 shrink-0" aria-label="No 1X2 pick" />;
-  return                         <Clock        size={14} className="text-zinc-400 shrink-0" />;
-}
-
-const GOALS_VERDICT: Record<GoalsOutcome, { label: string; cls: string }> = {
-  won:       { label: "Won",       cls: "text-brand-700 dark:text-brand-400 bg-brand-50 dark:bg-brand-900/30 border-brand-200 dark:border-brand-800" },
-  half_won:  { label: "Half won",  cls: "text-brand-700 dark:text-brand-400 bg-brand-50 dark:bg-brand-900/30 border-brand-200 dark:border-brand-800" },
-  push:      { label: "Push · stake back", cls: "text-zinc-600 dark:text-zinc-300 bg-zinc-50 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700" },
-  half_lost: { label: "Half lost", cls: "text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-500/10 border-rose-200 dark:border-rose-500/30" },
-  lost:      { label: "Lost",      cls: "text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-500/10 border-rose-200 dark:border-rose-500/30" },
-};
-
-/** The goals tip with its verdict once the score is in. */
-function GoalsBadge({ tip, outcome }: { tip: string; outcome?: GoalsOutcome | null }) {
-  const v = outcome ? GOALS_VERDICT[outcome] : null;
+function Tile({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: string }) {
   return (
-    <span
-      className={clsx("text-[10px] font-semibold px-1.5 py-0.5 rounded-md border whitespace-nowrap",
-        v ? v.cls : "text-zinc-500 dark:text-zinc-400 border-zinc-200 dark:border-zinc-700")}
-      title={v ? `Goals tip: ${v.label}` : "Goals tip: pending"}
-    >
-      {tip}{v && ` · ${outcome === "push" ? "Push" : v.label}`}
-    </span>
-  );
-}
-
-const hasGoalsTip = (p: HistoryPrediction) => !!p.tip_goals && p.tip_goals !== "Skip";
-
-function ResultBadge({ result, score }: { result: string | null; score?: string }) {
-  if (!result) return null;
-  const label = (result === "H" ? "Home Win" : result === "A" ? "Away Win" : "Draw") + (score ? ` ${score}` : "");
-  const cls   = result === "H" ? "text-brand-700 dark:text-brand-400 bg-brand-50 dark:bg-brand-900/30 border-brand-200 dark:border-brand-800"
-              : result === "A" ? "text-sky-700 dark:text-sky-400 bg-sky-50 dark:bg-sky-500/10 border-sky-200 dark:border-sky-500/30"
-              :                  "text-zinc-500 dark:text-zinc-400 bg-zinc-50 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700";
-  return (
-    <span className={clsx("text-[10px] font-semibold px-1.5 py-0.5 rounded-md border whitespace-nowrap", cls)}>
-      {label}
-    </span>
-  );
-}
-
-function MatchDetailPanel({ p, onClose }: { p: HistoryPrediction; onClose: () => void }) {
-  const [analysis, setAnalysis] = useState<MatchAnalysis | null>(null);
-  const [loadingA, setLoadingA] = useState(true);
-
-  useEffect(() => {
-    fetchMatchAnalysis(p.home, p.away)
-      .then(setAnalysis)
-      .catch(() => {})
-      .finally(() => setLoadingA(false));
-  }, [p.home, p.away]);
-
-  const resultLabel: Record<string, string> = { H: "Home Win", D: "Draw", A: "Away Win" };
-  const tipLabel: Record<string, string>    = { "1": "Home Win", "X": "Draw", "2": "Away Win" };
-  const isCorrect = p.outcome === "won";
-
-  return (
-    <div className="card !rounded-xl p-4 space-y-3 text-sm mt-2 animate-fade-in">
-      {/* Verdict banner — only when there was a 1X2 / double-chance pick to judge */}
-      {p.actual_result && (p.outcome === "won" || p.outcome === "lost") && (
-        <div className={clsx("flex items-center gap-2 px-3 py-2 rounded-lg border",
-          isCorrect
-            ? "bg-brand-50 dark:bg-brand-900/20 border-brand-200 dark:border-brand-800"
-            : "bg-rose-50 dark:bg-rose-500/10 border-rose-200 dark:border-rose-500/30")}>
-          {isCorrect
-            ? <CheckCircle2 size={15} className="text-brand-600 dark:text-brand-400 shrink-0" />
-            : <XCircle      size={15} className="text-rose-500 shrink-0" />}
-          <div>
-            <p className={clsx("text-xs font-bold",
-              isCorrect ? "text-brand-700 dark:text-brand-400" : "text-rose-700 dark:text-rose-400")}>
-              {isCorrect ? "Prediction correct" : "Prediction incorrect"}
-            </p>
-            <p className="text-[10px] text-zinc-500 dark:text-zinc-400">
-              Result: <span className="tnum text-zinc-900 dark:text-white font-semibold">{resultLabel[p.actual_result]}{p.score && ` ${p.score}`}</span>
-              &nbsp;· Our pick: <span className="text-zinc-900 dark:text-white font-semibold">{tipLabel[p.tip_code] || p.tip_1x2}</span>
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* Our predictions */}
-      <div className="space-y-1.5">
-        <p className="text-[10px] text-zinc-400 dark:text-zinc-500 uppercase tracking-wider font-bold">Our predictions</p>
-        <div className="grid grid-cols-3 gap-2">
-          {[
-            { label: "Home win", val: `${Math.round(p.p_home * 100)}%` },
-            { label: "Draw",     val: `${Math.round(p.p_draw * 100)}%` },
-            { label: "Away win", val: `${Math.round(p.p_away * 100)}%` },
-          ].map(({ label, val }) => (
-            <div key={label} className="bg-zinc-50 dark:bg-zinc-800/60 rounded-lg px-2 py-1.5 text-center">
-              <p className="text-[10px] text-zinc-400 dark:text-zinc-500">{label}</p>
-              <p className="tnum text-xs font-bold text-zinc-900 dark:text-white">{val}</p>
-            </div>
-          ))}
-        </div>
-        <div className="flex gap-2 flex-wrap text-[11px]">
-          <span className="tnum bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 px-2 py-0.5 rounded-md font-medium">
-            1X2: {p.tip_1x2}{pickProbability(p) !== null && ` · ${Math.round(pickProbability(p)! * 100)}%`}
-          </span>
-          {hasGoalsTip(p) && (
-            <span className="tnum bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 px-2 py-0.5 rounded-md font-medium">
-              Goals: {p.tip_goals} · {Math.round(p.goals_confidence * 100)}%
-              {p.goals_outcome && <> · <span className="font-bold">{GOALS_VERDICT[p.goals_outcome].label}</span></>}
-            </span>
-          )}
-        </div>
-        {p.goals_outcome === "push" && (
-          <p className="text-[10px] text-zinc-400 dark:text-zinc-500">
-            Asian line landed exactly — bookmakers refund the stake on a push.
-          </p>
-        )}
-      </div>
-
-      {/* Model stats */}
-      {loadingA ? (
-        <div className="flex items-center gap-2 text-zinc-400 dark:text-zinc-500 text-xs py-2">
-          <Loader2 size={12} className="animate-spin" /> Loading model analysis…
-        </div>
-      ) : analysis && (
-        <div className="space-y-1.5">
-          <p className="text-[10px] text-zinc-400 dark:text-zinc-500 uppercase tracking-wider font-bold">Model stats at prediction time</p>
-          <div className="grid grid-cols-2 gap-2 text-[11px]">
-            <div className="bg-zinc-50 dark:bg-zinc-800/60 rounded-lg px-2 py-1.5">
-              <p className="text-zinc-400 dark:text-zinc-500">xG {p.home}</p>
-              <p className="tnum text-zinc-900 dark:text-white font-bold">{analysis.xg_home.toFixed(2)}</p>
-            </div>
-            <div className="bg-zinc-50 dark:bg-zinc-800/60 rounded-lg px-2 py-1.5">
-              <p className="text-zinc-400 dark:text-zinc-500">xG {p.away}</p>
-              <p className="tnum text-zinc-900 dark:text-white font-bold">{analysis.xg_away.toFixed(2)}</p>
-            </div>
-            <div className="bg-zinc-50 dark:bg-zinc-800/60 rounded-lg px-2 py-1.5 col-span-2">
-              <p className="text-zinc-400 dark:text-zinc-500">Elo</p>
-              <p className="tnum text-zinc-900 dark:text-white font-bold text-xs">
-                {p.home} {analysis.elo.home} vs {p.away} {analysis.elo.away}
-                <span className="text-zinc-400 dark:text-zinc-500 font-normal ml-1">({analysis.elo.label})</span>
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Feedback contribution note */}
-      {p.actual_result && (
-        <p className="text-[10px] text-zinc-400 dark:text-zinc-600 text-center">
-          ✓ This result has been fed back into the model to improve future accuracy
-        </p>
-      )}
-
-      <button onClick={onClose} className="text-[11px] text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors font-medium">
-        Close ↑
-      </button>
+    <div className="card px-4 py-3 min-w-0">
+      <p className="eyebrow truncate">{label}</p>
+      <p className={clsx("font-display font-extrabold text-3xl sm:text-4xl leading-none mt-1.5 tnum", tone ?? "text-n-0")}>{value}</p>
+      {sub && <p className="text-[11px] text-n-500 mt-1.5">{sub}</p>}
     </div>
   );
 }
 
-function DayPanel({ date, onClose }: { date: string; onClose: () => void }) {
-  const [preds, setPreds] = useState<HistoryPrediction[]>([]);
+/** How far the hit rate is from what we said: within 5 points reads as honest. */
+function Gap({ said, happened }: { said: number | null; happened: number | null }) {
+  if (said === null || happened === null) return <span className="text-n-500">—</span>;
+  const d = Math.round((happened - said) * 100);
+  return (
+    <span className={clsx("tnum font-semibold", Math.abs(d) <= 5 ? "text-accent" : d > 0 ? "text-info" : "text-warn")}>
+      {d > 0 ? "+" : ""}{d} pts
+    </span>
+  );
+}
+
+function MyTickets() {
+  const { user } = useUser();
+  const authFetch = useAuthedFetch();
+  const [s, setS] = useState<TicketSummary | null>(null);
+  useEffect(() => {
+    if (!user?.id) return;
+    authFetch(`${API}/api/user/tickets?uid=${encodeURIComponent(user.id)}`)
+      .then(r => (r.ok ? r.json() : null)).then(d => setS(d?.summary ?? null)).catch(() => {});
+  }, [user?.id, authFetch]);
+  if (!user) return null;
+  return (
+    <section className="card p-4 sm:p-5 space-y-3">
+      <div className="flex items-center gap-2">
+        <Ticket size={16} className="text-accent" />
+        <h2 className="font-semibold text-n-0">Your booking codes</h2>
+        <Link href="/dashboard?tab=codes" className="ml-auto text-xs font-semibold text-accent inline-flex items-center gap-1 hover:underline">
+          All tickets <ArrowRight size={12} />
+        </Link>
+      </div>
+      {!s || s.tickets === 0 ? (
+        <p className="text-sm text-n-400">Codes you generate on BetIQ while signed in are tracked here and settled leg by leg as results come in.</p>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <Tile label="Codes" value={`${s.tickets}`} sub={`${s.pending} still open`} />
+          <Tile label="Tickets won" value={`${s.won}/${s.won + s.lost}`} sub={s.hit_rate !== null ? `${pct(s.hit_rate)} of settled` : "none settled yet"} />
+          <Tile label="Legs won" value={`${s.legs_won}/${s.legs_won + s.legs_lost}`} sub={pct(s.leg_hit_rate)} />
+          <Tile label="Tickets lost" value={`${s.lost}`} />
+        </div>
+      )}
+    </section>
+  );
+}
+
+export default function TrackRecordPage() {
+  const [days, setDays] = useState(30);
+  const [data, setData] = useState<Accuracy | null>(null);
   const [loading, setLoading] = useState(true);
-  const [expanded, setExpanded] = useState<number | null>(null);
+  const [error, setError] = useState(false);
 
   useEffect(() => {
-    setLoading(true);
-    setExpanded(null);
-    fetchHistory(date).then(d => setPreds(Array.isArray(d) ? d : [])).catch(() => setPreds([])).finally(() => setLoading(false));
-  }, [date]);
+    const ctrl = new AbortController();
+    setLoading(true); setError(false);
+    fetchAccuracy(days, ctrl.signal).then(setData).catch(e => { if (e?.name !== "AbortError") setError(true); })
+      .finally(() => setLoading(false));
+    return () => ctrl.abort();
+  }, [days]);
 
-  const won     = preds.filter(p => p.outcome === "won").length;
-  const lost    = preds.filter(p => p.outcome === "lost").length;
-  const pending = preds.filter(p => p.outcome === "pending").length;
-  const settled = won + lost;
-  const accuracy = settled ? Math.round((won / settled) * 100) : null;
-  const goalsWon  = preds.filter(p => p.goals_outcome === "won" || p.goals_outcome === "half_won").length;
-  const goalsLost = preds.filter(p => p.goals_outcome === "lost" || p.goals_outcome === "half_lost").length;
-
-  // Midday avoids DST/timezone flips shifting the date
-  const fmt = (d: string) => new Date(d + "T12:00:00")
-    .toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
-
-  return (
-    <div className="card flex flex-col overflow-hidden">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-100 dark:border-zinc-800 shrink-0">
-        <div>
-          <p className="font-display font-bold uppercase tracking-wide text-lg leading-tight text-n-0">{fmt(date)}</p>
-          {accuracy !== null && (
-            <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">
-              Accuracy: <span className={clsx("tnum font-bold",
-                accuracy >= 60 ? "text-accent" :
-                accuracy >= 40 ? "text-warn" : "text-danger"
-              )}>{accuracy}%</span>
-              &nbsp;({won}W / {lost}L / {pending} pending)
-            </p>
-          )}
-          {goalsWon + goalsLost > 0 && (
-            <p className="tnum text-xs text-zinc-400 dark:text-zinc-500">
-              Goals tips: {goalsWon}W / {goalsLost}L
-            </p>
-          )}
-        </div>
-        <button onClick={onClose} className="p-2 hover:bg-n-800 rounded-lg text-n-400 hover:text-n-0 transition-colors">
-          <X size={14} />
-        </button>
-      </div>
-
-      {/* Body */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-2 max-h-[480px]">
-        {loading && (
-          <div className="flex items-center justify-center py-12 text-zinc-400 dark:text-zinc-500">
-            <Loader2 size={20} className="animate-spin mr-2" /> Loading…
-          </div>
-        )}
-        {!loading && preds.length === 0 && (
-          <p className="text-center text-zinc-400 dark:text-zinc-500 py-12 text-sm">No predictions for this date.</p>
-        )}
-        {!loading && preds.map((p, i) => (
-          <div key={i}>
-            <MatchCard
-              home={p.home}
-              away={p.away}
-              league={p.league_name}
-              flag={p.flag}
-              onClick={() => setExpanded(expanded === i ? null : i)}
-              className={clsx(
-                "!shadow-none",
-                p.outcome === "won"  ? "!border-brand-400/40" :
-                p.outcome === "lost" ? "!border-rose-500/40"   : ""
-              )}
-            >
-              <div className="flex flex-col items-end gap-1">
-                <OutcomeIcon outcome={p.outcome} />
-                <span className="text-[10px] font-bold bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 px-2 py-0.5 rounded-full whitespace-nowrap">
-                  {p.tip_1x2}
-                </span>
-                {hasGoalsTip(p) && <GoalsBadge tip={p.tip_goals} outcome={p.goals_outcome} />}
-                {p.actual_result && <ResultBadge result={p.actual_result} score={p.score} />}
-                {expanded === i
-                  ? <ChevronUp size={10} className="text-zinc-300 dark:text-zinc-600" />
-                  : <ChevronDown size={10} className="text-zinc-300 dark:text-zinc-600" />}
-              </div>
-            </MatchCard>
-            {expanded === i && (
-              <MatchDetailPanel p={p} onClose={() => setExpanded(null)} />
-            )}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-const _pad = (n: number) => String(n).padStart(2, "0");
-// Use local timezone (not UTC) so Nigerian users (UTC+1) see the correct date
-const _localDateStr = (d = new Date()) =>
-  `${d.getFullYear()}-${_pad(d.getMonth() + 1)}-${_pad(d.getDate())}`;
-
-export default function HistoryPage() {
-  const now = new Date();
-  const [year,  setYear]  = useState(now.getFullYear());
-  const [month, setMonth] = useState(now.getMonth());  // 0-indexed
-  const [summary, setSummary] = useState<Record<string, CalendarDay>>({});
-  const [loadingCal, setLoadingCal] = useState(true);
-  const [selectedDate, setSelectedDate] = useState<string | null>(null);
-
-  const monthStr = `${year}-${_pad(month + 1)}`;
-
-  useEffect(() => {
-    setLoadingCal(true);
-    fetchCalendar(monthStr)
-      .then(d => setSummary(d && typeof d === "object" && !Array.isArray(d) && !("error" in d) ? d : {}))
-      .catch(() => setSummary({}))
-      .finally(() => setLoadingCal(false));
-  }, [monthStr]);
-
-  const prevMonth = () => { if (month === 0) { setYear(y => y-1); setMonth(11); } else setMonth(m => m-1); };
-  const nextMonth = () => { if (month === 11) { setYear(y => y+1); setMonth(0);  } else setMonth(m => m+1); };
-
-  // Build calendar grid
-  const firstDay = new Date(year, month, 1).getDay();
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const cells: (number | null)[] = [
-    ...Array(firstDay).fill(null),
-    ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
-  ];
-  while (cells.length % 7 !== 0) cells.push(null);
-
-  const todayStr = _localDateStr(now);  // local timezone, not UTC
-
-  const days = Object.values(summary);
-  const monthWon = days.reduce((n, d) => n + (d.won || 0), 0);
-  const monthLost = days.reduce((n, d) => n + (d.lost || 0), 0);
-  const monthAccuracy = !loadingCal && monthWon + monthLost > 0
-    ? Math.round((monthWon / (monthWon + monthLost)) * 100) : null;
-  const goalsWon  = days.reduce((n, d) => n + (d.goals_won || 0), 0);
-  const goalsLost = days.reduce((n, d) => n + (d.goals_lost || 0), 0);
-  const goalsAccuracy = !loadingCal && goalsWon + goalsLost > 0
-    ? Math.round((goalsWon / (goalsWon + goalsLost)) * 100) : null;
-  const tone = (pct: number | null) =>
-    pct === null ? "text-zinc-500" : pct >= 60 ? "text-accent" : pct >= 40 ? "text-warn" : "text-danger";
+  const m = data?.markets ?? {};
+  const vs = data?.brier.vs_bookmaker;
+  const markets = MARKET_ORDER.filter(k => m[k]?.n);
 
   return (
     <AppShell>
       <div className="space-y-6 animate-fade-in">
-        <PageHeader
-          eyebrow="Track record"
-          title="History"
-          description="Every past prediction, graded against the real result."
-        />
-
-        {/* Month scoreboard */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-2xl">
-          {[
-            { label: "1X2 accuracy", value: monthAccuracy === null ? "–" : `${monthAccuracy}%`, cls: tone(monthAccuracy) },
-            { label: "Won", value: loadingCal ? "–" : monthWon, cls: "text-n-0" },
-            { label: "Lost", value: loadingCal ? "–" : monthLost, cls: "text-zinc-400" },
-            { label: "Goals tips", value: goalsAccuracy === null ? "–" : `${goalsAccuracy}%`, cls: tone(goalsAccuracy) },
-          ].map(({ label, value, cls }) => (
-            <div key={label} className="card px-4 py-3">
-              <p className="eyebrow truncate">{label}</p>
-              <p className={clsx("font-display font-extrabold text-3xl leading-none mt-1 tnum", cls)}>{value}</p>
-            </div>
-          ))}
-        </div>
-
-        <div className={clsx("grid gap-4", selectedDate ? "lg:grid-cols-2" : "grid-cols-1 max-w-2xl")}>
-          {/* Calendar */}
-          <div className="card overflow-hidden">
-            {/* Month header */}
-            <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-100 dark:border-zinc-800">
-              <button onClick={prevMonth} className="p-2 hover:bg-n-800 rounded-lg text-n-400 hover:text-n-0 transition-colors">
-                <ChevronLeft size={16} />
-              </button>
-              <div className="text-center">
-                <p className="font-display font-extrabold uppercase tracking-wide text-2xl leading-none text-n-0">{MONTHS[month]} {year}</p>
-                {!loadingCal && (
-                  <p className="text-[11px] text-zinc-500 mt-1">
-                    {Object.keys(summary).length} days with predictions
-                  </p>
-                )}
-              </div>
-              <button onClick={nextMonth} className="p-2 hover:bg-n-800 rounded-lg text-n-400 hover:text-n-0 transition-colors">
-                <ChevronRight size={16} />
-              </button>
-            </div>
-
-            {/* Day labels */}
-            <div className="grid grid-cols-7 px-3 pt-3">
-              {DAYS.map(d => (
-                <div key={d} className="text-[10px] text-zinc-400 dark:text-zinc-500 text-center font-semibold pb-1">{d}</div>
+        <PageHeader eyebrow="Model accountability" title="Track record"
+          description="Every prediction we published, graded against the final score. Browse day by day from the date strip on the home page."
+          right={
+            <div className="flex gap-1.5" role="group" aria-label="Period">
+              {PERIODS.map(p => (
+                <button key={p} onClick={() => setDays(p)} aria-pressed={days === p}
+                  className={clsx("chip", days === p ? "chip-active" : "chip-idle")}>{p} days</button>
               ))}
             </div>
+          } />
 
-            {/* Grid */}
-            <div className="px-3 pb-3">
-              {loadingCal ? (
-                <div className="flex items-center justify-center py-16 text-zinc-400">
-                  <Loader2 size={20} className="animate-spin" />
-                </div>
-              ) : (
-                <div className="grid grid-cols-7 gap-1">
-                  {cells.map((day, i) => {
-                    if (!day) return <div key={i} />;
-                    const dStr = `${monthStr}-${String(day).padStart(2, "0")}`;
-                    const info = summary[dStr];
-                    const isToday = dStr === todayStr;
-                    const isSelected = dStr === selectedDate;
-                    const isPast = dStr < todayStr;
-
-                    return (
-                      <button
-                        key={i}
-                        onClick={() => setSelectedDate(isSelected ? null : dStr)}
-                        className={clsx(
-                          "relative flex flex-col items-center justify-center rounded-xl aspect-square text-sm transition-all border",
-                          isSelected ? "bg-brand-400/10 border-brand-400/60" :
-                          isToday    ? "bg-n-800 border-n-700" :
-                          info       ? "bg-n-800/40 hover:bg-n-800/80 border-transparent" :
-                                       "border-transparent",
-                          info ? "cursor-pointer" : isPast ? "opacity-30 cursor-default" : "cursor-default"
-                        )}
-                        disabled={!info && isPast}
-                      >
-                        <span className={clsx(
-                          "tnum text-sm font-semibold",
-                          isSelected ? "text-accent" : isToday ? "text-n-0 font-bold" : info ? "text-n-200" : "text-n-500"
-                        )}>
-                          {day}
-                        </span>
-                        {info && (
-                          <span className={clsx("w-1.5 h-1.5 rounded-full mt-0.5", dotColor(info))} />
-                        )}
-                        {info && (
-                          <span className="tnum text-[9px] text-zinc-400 dark:text-zinc-500 leading-none">
-                            {info.total}
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            {/* Legend */}
-            <div className="flex items-center justify-center gap-4 px-4 py-3 border-t border-zinc-100 dark:border-zinc-800">
-              {[
-                { color: "bg-brand-500", label: "≥60% correct" },
-                { color: "bg-amber-400", label: "40–60%"       },
-                { color: "bg-rose-500",  label: "<40%"         },
-                { color: "bg-sky-500",   label: "Upcoming"     },
-              ].map(({ color, label }) => (
-                <div key={label} className="flex items-center gap-1.5">
-                  <span className={clsx("w-2 h-2 rounded-full shrink-0", color)} />
-                  <span className="text-[10px] text-zinc-400 dark:text-zinc-500">{label}</span>
-                </div>
-              ))}
-            </div>
+        {loading && !data ? (
+          <div className="card flex items-center justify-center gap-2 py-16 text-sm text-n-400"><Loader2 size={16} className="animate-spin" /> Loading the record…</div>
+        ) : error ? (
+          <div className="card p-6 text-sm text-n-400 flex items-center gap-2"><AlertTriangle size={16} className="text-danger" /> Couldn&apos;t load the track record. Try again shortly.</div>
+        ) : !data || data.matches === 0 ? (
+          <div className="card p-6 space-y-2">
+            <p className="font-semibold text-n-0">No graded matches in the last {days} days yet</p>
+            <p className="text-sm text-n-400">Matches are graded automatically once they finish. Check back after the next round of fixtures.</p>
           </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <Tile label="Our tips" value={pct(m.tip?.hit_rate)} tone="text-accent"
+                sub={m.tip ? `${m.tip.n} picks · we said ${pct(m.tip.avg_prob)}` : undefined} />
+              <Tile label="Goals tips" value={pct(m.goals?.hit_rate)}
+                sub={m.goals ? `${m.goals.n} picks · we said ${pct(m.goals.avg_prob)}` : undefined} />
+              <Tile label="Most likely result" value={pct(m.favourite?.hit_rate)}
+                sub={m.favourite ? `${m.favourite.n} matches · we said ${pct(m.favourite.avg_prob)}` : undefined} />
+              <Tile label="Accuracy score (Brier)"
+                value={vs ? vs.model.toFixed(3) : data.brier.model?.toFixed(3) ?? "—"}
+                tone={vs ? (vs.model <= vs.bookmaker ? "text-accent" : "text-warn") : undefined}
+                sub={vs ? `bookmaker ${vs.bookmaker.toFixed(3)} on ${vs.matches} matches · lower is better` : "lower is better"} />
+            </div>
 
-          {/* Day detail panel */}
-          {selectedDate && (
-            <DayPanel date={selectedDate} onClose={() => setSelectedDate(null)} />
-          )}
-        </div>
+            <section className="card overflow-hidden">
+              <header className="px-4 sm:px-5 pt-4 pb-3 flex items-start gap-2">
+                <Target size={16} className="text-accent mt-0.5" />
+                <div>
+                  <h2 className="font-semibold text-n-0">By market</h2>
+                  <p className="text-xs text-n-400">What we said the picks&apos; chances were, next to how often they won.</p>
+                </div>
+              </header>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-[11px] uppercase tracking-[0.06em] text-n-500 border-y border-n-800 bg-surface-sunken/60">
+                      <th className="text-left font-semibold px-4 sm:px-5 py-2">Market</th>
+                      <th className="text-right font-semibold px-3 py-2">Picks</th>
+                      <th className="text-right font-semibold px-3 py-2">We said</th>
+                      <th className="text-right font-semibold px-3 py-2">It happened</th>
+                      <th className="text-right font-semibold px-4 sm:px-5 py-2">Gap</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-n-800">
+                    {markets.map(k => (
+                      <tr key={k}>
+                        <td className="px-4 sm:px-5 py-2.5 text-n-0 font-medium">{m[k].name}</td>
+                        <td className="px-3 py-2.5 text-right tnum text-n-300">{m[k].n}</td>
+                        <td className="px-3 py-2.5 text-right tnum text-n-300">{pct(m[k].avg_prob)}</td>
+                        <td className="px-3 py-2.5 text-right tnum text-n-0 font-semibold">{pct(m[k].hit_rate)}</td>
+                        <td className="px-4 sm:px-5 py-2.5 text-right"><Gap said={m[k].avg_prob} happened={m[k].hit_rate} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="px-4 sm:px-5 py-3 text-[11px] text-n-500 border-t border-n-800">
+                Gap within ±5 points: the probabilities can be taken as shown. Positive: picks won more often than we said.
+              </p>
+            </section>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <section className="card overflow-hidden">
+                <header className="px-4 sm:px-5 pt-4 pb-3 flex items-start gap-2">
+                  <Scale size={16} className="text-accent mt-0.5" />
+                  <div>
+                    <h2 className="font-semibold text-n-0">Calibration</h2>
+                    <p className="text-xs text-n-400">Every graded pick, grouped by the chance we gave it.</p>
+                  </div>
+                </header>
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-[11px] uppercase tracking-[0.06em] text-n-500 border-y border-n-800 bg-surface-sunken/60">
+                      <th className="text-left font-semibold px-4 sm:px-5 py-2">We said</th>
+                      <th className="text-right font-semibold px-3 py-2">Picks</th>
+                      <th className="text-right font-semibold px-3 py-2">It happened</th>
+                      <th className="text-right font-semibold px-4 sm:px-5 py-2">Gap</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-n-800">
+                    {data.calibration.map(b => (
+                      <tr key={b.from}>
+                        <td className="px-4 sm:px-5 py-2 tnum text-n-200">{b.from}–{b.to}%</td>
+                        <td className="px-3 py-2 text-right tnum text-n-400">{b.n}</td>
+                        <td className="px-3 py-2 text-right tnum text-n-0 font-semibold">{pct(b.happened)}</td>
+                        <td className="px-4 sm:px-5 py-2 text-right"><Gap said={b.said} happened={b.happened} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </section>
+
+              <section className="card overflow-hidden">
+                <header className="px-4 sm:px-5 pt-4 pb-3">
+                  <h2 className="font-semibold text-n-0">By competition</h2>
+                  <p className="text-xs text-n-400">How often the most likely result happened.</p>
+                </header>
+                <ul className="divide-y divide-n-800 border-t border-n-800">
+                  {data.leagues.slice(0, 12).map(l => (
+                    <li key={l.league} className="flex items-center gap-2 px-4 sm:px-5 py-2 text-sm">
+                      <CompetitionBadge name={l.name} fallbackEmoji={l.flag} size={16} />
+                      <span className="flex-1 min-w-0 truncate text-n-0">{l.name}</span>
+                      <span className="tnum text-n-400 text-xs">{l.hits}/{l.n}</span>
+                      <span className="tnum font-semibold text-n-0 w-11 text-right">{pct(l.hit_rate)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            </div>
+
+            {data.daily.length > 1 && (
+              <section className="card p-4 sm:p-5 space-y-3">
+                <div>
+                  <h2 className="font-semibold text-n-0">Most likely result, day by day</h2>
+                  <p className="text-xs text-n-400">Share of each day&apos;s matches where our most likely result happened. Hover for the day.</p>
+                </div>
+                <ColumnChart name="Most likely result hit rate"
+                  labels={data.daily.map(d => new Date(`${d.date}T12:00:00`).toLocaleDateString(undefined, { day: "numeric", month: "short" }))}
+                  values={data.daily.map(d => Math.round(d.favourite_hit * 100))}
+                  format={n => `${n}%`} tick={Math.max(1, Math.ceil(data.daily.length / 8))} />
+              </section>
+            )}
+          </>
+        )}
+
+        <MyTickets />
+
+        <p className="text-center text-xs text-n-500">
+          Predictions are locked at kick-off: what&apos;s graded is exactly what the site showed before the match. 18+ · Gamble responsibly.
+        </p>
       </div>
     </AppShell>
   );

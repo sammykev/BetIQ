@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Home, TrendingUp, CalendarDays, LayoutDashboard, Sparkles } from "lucide-react";
+import { Home, TrendingUp, Target, LayoutDashboard, Sparkles } from "lucide-react";
 import { UserMenu } from "@/components/UserMenu";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { SlipButton, SlipDrawer } from "@/components/BetSlip";
@@ -13,7 +13,7 @@ const NAV = [
   { href: "/", label: "Predictions", icon: Home },
   { href: "/optimizer", label: "Optimizer", icon: Sparkles },
   { href: "/value-bets", label: "Value Bets", icon: TrendingUp },
-  { href: "/history", label: "History", icon: CalendarDays },
+  { href: "/history", label: "Record", icon: Target },
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
 ];
 

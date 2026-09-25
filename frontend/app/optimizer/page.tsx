@@ -177,24 +177,15 @@ export default function OptimizerPage() {
   const book = async () => {
     setBooking(true); setBooked(null);
     try {
-      const res = await fetch(`${API}/api/booking/convert`, {
+      // Signed in, the server keeps the code as a ticket (Dashboard → Tickets)
+      const res = await authFetch(`${API}/api/booking/convert`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ platform: "sportybet", selections }),
+        body: JSON.stringify({ platform: "sportybet", selections, source: "optimizer", uid: user?.id }),
       });
       const data = await res.json();
       if (!res.ok || !Array.isArray(data?.picks)) throw new Error();
       setBooked(data);
-      if (data.code && user?.id) {
-        authFetch(`${API}/api/user/codes`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ uid: user.id, entry: {
-            code: data.code, total_odds: data.total_odds, date: new Date().toISOString().slice(0, 10),
-            games: selections.map(s => ({ game: `${s.home} vs ${s.away}`, tip: s.label, odds: null })),
-          } }),
-        }).catch(() => {});
-      }
     } catch {
       setBooked({ code: null, share_url: null, total_odds: null, picks: [],
                   error: "SportyBet didn't return a code. Try again in a minute." });

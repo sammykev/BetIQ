@@ -142,31 +142,16 @@ export function SlipDrawer() {
   const book = async () => {
     setBusy(true); setFailed(null); setResult(null);
     try {
-      const res = await fetch(`${API}/api/booking/convert`, {
+      // Signed in, the server keeps the code as a ticket and settles it as
+      // the matches finish (Dashboard → Tickets)
+      const res = await authFetch(`${API}/api/booking/convert`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ platform: "sportybet", selections: items }),
+        body: JSON.stringify({ platform: "sportybet", selections: items, source: "slip", uid: user?.id }),
       });
       const data = await res.json();
       if (!res.ok || !Array.isArray(data?.picks)) throw new Error(data?.detail || "failed");
       setResult(data);
-      // Keep it in the user's code history (Dashboard → Codes), like the chat's codes
-      if (data.code && user?.id) {
-        const booked = new Map((data.picks as PickResult[]).map(p => [p.key, p]));
-        authFetch(`${API}/api/user/codes`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            uid: user.id,
-            entry: {
-              code: data.code, total_odds: data.total_odds, date: new Date().toISOString().slice(0, 10),
-              games: items.filter(s => booked.get(matchKey(s))?.status === "booked").map(s => ({
-                game: `${s.home} vs ${s.away}`, tip: s.label, odds: booked.get(matchKey(s))?.odds ?? null,
-              })),
-            },
-          }),
-        }).catch(() => {});
-      }
     } catch (e) {
       setFailed(e instanceof Error && e.message !== "failed" ? e.message : "Couldn't reach the booking service. Try again.");
     } finally {

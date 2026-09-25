@@ -1,20 +1,24 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { PredictionCard } from "@/components/PredictionCard";
 import { LeagueTabs } from "@/components/LeagueTabs";
 import { triggerRefresh } from "@/lib/api";
 import type { Prediction, League } from "@/lib/api";
-import { dayLabel } from "@/lib/matchTime";
+import { dayLabel, localDateStr } from "@/lib/matchTime";
+import { DaySummaryBar } from "@/components/DaySummaryBar";
 import { confidenceTier, headlinePick } from "@/lib/picks";
 import { predKey } from "@/components/SaveButton";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
 import {
   RefreshCw, TrendingUp, AlertTriangle, CalendarDays, Percent, Bell,
-  Brain, BarChart3, Bot, Ticket, Globe, ArrowRight, SearchX, ChevronDown,
+  Brain, BarChart3, Bot, Ticket, Globe, ArrowRight, SearchX, ChevronDown, Loader2,
 } from "lucide-react";
 import { ChatBot } from "@/components/ChatBot";
+import { DateStrip } from "@/components/DateStrip";
+import { MatchdayList } from "@/components/MatchdayList";
+import { fetchMatchday, fetchStrip, type MatchdayMatch, type MatchdayResponse, type StripResponse } from "@/lib/matchday";
 import { SportCard, type SportPrediction } from "@/components/SportCard";
 import { SportModal } from "@/components/SportModal";
 import { PaywallModal } from "@/components/PaywallModal";
@@ -49,7 +53,7 @@ const FEATURES = [
   { icon: BarChart3,    title: "Match analysis",  desc: "xG, 11 betting markets, an Elo gauge and correct-score odds for every game." },
   { icon: Bot,          title: "AI assistant",    desc: "Chat to build accumulators and get instant picks." },
   { icon: Ticket,       title: "Booking codes",   desc: "One-tap SportyBet booking code generation." },
-  { icon: CalendarDays, title: "History tracker", desc: "Every past prediction graded against the real result." },
+  { icon: CalendarDays, title: "Track record",    desc: "Every prediction graded against the final score, market by market." },
   { icon: Globe,        title: "Live team news",  desc: "Injury and lineup context pulled from the web before kick-off." },
 ];
 
@@ -248,6 +252,14 @@ export default function HomePage() {
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushSupported, setPushSupported] = useState(false);
 
+  // Match days: the date strip (7 back, 14 ahead) and the chosen day's results
+  const [strip, setStrip] = useState<StripResponse | null>(null);
+  const [day, setDay] = useState<string>(() => localDateStr());
+  const [md, setMd] = useState<MatchdayResponse | null>(null);
+  const [mdLoading, setMdLoading] = useState(false);
+  const [mdError, setMdError] = useState(false);
+  const dayPicked = useRef(false);
+
   const { user, isLoaded } = useUser();
   const authFetch = useAuthedFetch();
   const [paywallActive, setPaywallActive] = useState(true);
@@ -338,6 +350,52 @@ export default function HomePage() {
       .finally(() => setSportLoading(false));
   }, [activeSport]);
 
+  // The strip; refreshed every minute while matches are live
+  useEffect(() => {
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const load = () => fetchStrip().then(s => {
+      if (!alive) return;
+      setStrip(s);
+      if (!dayPicked.current) {
+        dayPicked.current = true;
+        // Open on today; if nothing's on today, the next day that has matches
+        const t = s.days.find(d => d.date === s.today);
+        const next = s.days.find(d => d.date > s.today && d.total > 0);
+        setDay(t && t.total > 0 ? s.today : next?.date ?? s.today);
+      }
+      timer = setTimeout(load, s.days.some(d => d.live > 0) ? 60_000 : 5 * 60_000);
+    }).catch(() => { if (alive) timer = setTimeout(load, 60_000); });
+    load();
+    return () => { alive = false; clearTimeout(timer); };
+  }, []);
+
+  const today = strip?.today ?? localDateStr();
+  const isPast = day < today;
+  const isToday = day === today;
+
+  // Results for today and past days (future days are the prediction cards)
+  useEffect(() => {
+    if (day > today) { setMd(null); return; }
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const ctrl = new AbortController();
+    const load = (first: boolean) => {
+      if (first) { setMdLoading(true); setMdError(false); }
+      fetchMatchday(day, ctrl.signal)
+        .then(d => {
+          if (!alive) return;
+          setMd(d);
+          if (d.summary.live > 0) timer = setTimeout(() => load(false), 60_000);
+        })
+        .catch(() => { if (alive && first) setMdError(true); })
+        .finally(() => { if (alive && first) setMdLoading(false); });
+    };
+    setMd(null);
+    load(true);
+    return () => { alive = false; ctrl.abort(); clearTimeout(timer); };
+  }, [day, today]);
+
   // Keep Render backend alive — ping every 10 minutes
   useEffect(() => {
     const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
@@ -413,14 +471,20 @@ export default function HomePage() {
            !_SKIP.has(p.away.trim().toLowerCase())
   );
 
-  // Counts per league for tab badges (valid predictions only)
+  // Today: matches that have kicked off show as results rows instead of cards
+  const mdKey = (home: string, away: string) => `${home.trim().toLowerCase()}|${away.trim().toLowerCase()}`;
+  const started = new Set((isToday ? md?.matches ?? [] : []).filter(m => m.status !== "scheduled").map(m => m.key));
+  const dayPredictions = validPredictions.filter(p => p.date === day && !started.has(mdKey(p.home, p.away)));
+  const playedToday: MatchdayMatch[] = isToday ? (md?.matches ?? []).filter(m => m.status !== "scheduled") : [];
+
+  // Counts per league for tab badges (the chosen day)
   const counts: Record<string, number> = {};
-  for (const p of validPredictions) {
+  for (const p of dayPredictions) {
     counts[p.league] = (counts[p.league] || 0) + 1;
   }
 
   // League + confidence narrow the pool; the quick chips then slice it
-  const pool = validPredictions
+  const pool = dayPredictions
     .filter((p) => selectedLeague === "ALL" || p.league === selectedLeague)
     .filter((p) => minConf === 0 || headlineProb(p) >= minConf);
 
@@ -443,17 +507,14 @@ export default function HomePage() {
   });
 
   // Sorted by kick-off → group under "Today", "Tomorrow", "Sat 26 Sep"…
-  const groups: { label: string; items: Prediction[] }[] = [];
-  if (sortBy === "date") {
-    for (const p of sorted) {
-      const label = dayLabel(p.date);
-      const last = groups[groups.length - 1];
-      if (last && last.label === label) last.items.push(p);
-      else groups.push({ label, items: [p] });
-    }
-  } else {
-    groups.push({ label: "", items: sorted });
-  }
+  // One day at a time (the strip picks it), so no day headings
+  const groups: { label: string; items: Prediction[] }[] = [{ label: "", items: sorted }];
+
+  const nextDay = strip?.days.find(d => d.date > day && d.total > 0)?.date;
+  const openMatchday = (m: MatchdayMatch) => {
+    const p = allPredictions.find(x => mdKey(x.home, x.away) === m.key && x.date === m.date);
+    if (p) openMatch(p);
+  };
 
   const openMatch = (p: Prediction) => {
     const API_B = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
@@ -587,6 +648,48 @@ export default function HomePage() {
         )}
 
         {activeSport === "football" && <>
+          {/* Match days: 7 back, 14 ahead */}
+          {strip ? (
+            <DateStrip days={strip.days} today={strip.today} selected={day} onSelect={d => { dayPicked.current = true; setDay(d); }} />
+          ) : (
+            <div className="flex gap-1.5 overflow-hidden">{Array.from({ length: 8 }).map((_, i) => <div key={i} className="skeleton !rounded-xl w-[58px] h-[62px] shrink-0" />)}</div>
+          )}
+
+          {isPast ? (
+            mdLoading ? (
+              <div className="card flex items-center justify-center gap-2 py-16 text-sm text-n-400"><Loader2 size={16} className="animate-spin" /> Loading results…</div>
+            ) : mdError ? (
+              <StatePanel icon={<AlertTriangle size={20} className="text-danger" />} title="Couldn't load this day"
+                body="The server may be waking up. Try again in a moment."
+                action={<button onClick={() => { const d = day; setDay(""); setTimeout(() => setDay(d), 0); }} className="btn-secondary">Retry</button>} />
+            ) : !md?.matches.length ? (
+              <StatePanel icon={<SearchX size={20} />} title={`No predictions for ${dayLabel(day)}`}
+                body="We didn't publish predictions for this day." />
+            ) : (
+              <div className="space-y-4">
+                <DaySummaryBar summary={md.summary} label={dayLabel(day)} />
+                <MatchdayList matches={md.matches} />
+              </div>
+            )
+          ) : <>
+          {playedToday.length > 0 && (
+            <section className="space-y-3">
+              <div className="flex items-baseline gap-3">
+                <h2 className="font-display font-extrabold text-2xl uppercase tracking-wide text-n-0">Live &amp; finished</h2>
+                <span className="text-xs font-semibold text-n-500 tnum">{playedToday.length}</span>
+                <span className="flex-1 h-px bg-n-800 self-center" />
+              </div>
+              {md && md.summary.finished > 0 && <DaySummaryBar summary={md.summary} label="Today so far" />}
+              <MatchdayList matches={playedToday} onOpen={openMatchday} />
+            </section>
+          )}
+          {playedToday.length > 0 && dayPredictions.length > 0 && (
+            <div className="flex items-baseline gap-3 pt-2">
+              <h2 className="font-display font-extrabold text-2xl uppercase tracking-wide text-n-0">Still to play</h2>
+              <span className="text-xs font-semibold text-n-500 tnum">{dayPredictions.length}</span>
+              <span className="flex-1 h-px bg-n-800 self-center" />
+            </div>
+          )}
           {/* Filters */}
           <div className="space-y-3">
             {/* Quick views */}
@@ -671,6 +774,18 @@ export default function HomePage() {
               body="The prediction server didn't respond. Check your connection and try again."
               action={<button onClick={retry} className="btn-secondary">Retry</button>}
             />
+          ) : dayPredictions.length === 0 ? (
+            playedToday.length > 0 && !nextDay ? null : (
+            <StatePanel
+              icon={<CalendarDays size={20} />}
+              title={isToday ? (playedToday.length ? "That's all for today" : "No matches today") : `No predictions for ${dayLabel(day)} yet`}
+              body={isToday ? "Our next predictions are a tap away." : "Predictions appear once fixtures are confirmed, up to 14 days ahead."}
+              action={nextDay ? (
+                <button onClick={() => { dayPicked.current = true; setDay(nextDay); }} className="btn-primary">
+                  Go to {dayLabel(nextDay)} <ArrowRight size={14} />
+                </button>
+              ) : undefined}
+            />)
           ) : predictions.length === 0 ? (
             <StatePanel
               icon={<SearchX size={20} />}
@@ -712,6 +827,7 @@ export default function HomePage() {
               ))}
             </div>
           )}
+          </>}
         </>}
 
         {/* Footer note */}

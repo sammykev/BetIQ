@@ -109,6 +109,27 @@ function Referees({ info, onRun, running }: { info: any; onRun: () => void; runn
   );
 }
 
+/** Booking codes made by signed-in accounts, and the match-day results job. */
+function TicketsAndResults({ info, tickets }: { info: any; tickets: any }) {
+  const rep = info?.report ?? {};
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <Stat label="Codes made" value={num(tickets?.created ?? 0)} sub={tickets ? `${num(tickets.open_accounts ?? 0)} accounts with open tickets` : undefined} />
+        <Stat label="Tickets won" value={tickets && tickets.won + tickets.lost ? `${tickets.won}/${tickets.won + tickets.lost}` : "—"}
+          sub={tickets?.hit_rate != null ? `${Math.round(tickets.hit_rate * 100)}% of settled` : "none settled yet"} tone="accent" />
+        <Stat label="Results check" value={info?.at ? ago(info.at) : "Never"} sub={info?.trigger ? `by ${info.trigger}` : undefined} />
+        <Stat label="Scores updated" value={num(rep.updated ?? 0)}
+          sub={rep.matches ? `${rep.matches} matches waiting · ${rep.unmatched ?? 0} not found` : "nothing waiting"} />
+      </div>
+      {tickets?.sources && Object.keys(tickets.sources).length > 0 && (
+        <p className="text-xs text-n-400">By source: {Object.entries(tickets.sources as Record<string, number>).map(([k, v]) => `${k.replace("_", " ")} ${v}`).join(" · ")}</p>
+      )}
+      {rep.errors?.length > 0 && <p className="text-xs text-warn">Result sources: {rep.errors.slice(0, 3).join(" · ")}</p>}
+    </div>
+  );
+}
+
 function SharedModel({ model }: { model: any }) {
   if (!model) return <p className="text-xs text-warn">No shared model yet, so restarts train on the server. Run the &quot;Train model&quot; workflow on GitHub.</p>;
   const stale = (Date.now() - new Date(model.trained_at).getTime()) / 3600000 > model.max_age_hours;
@@ -126,6 +147,7 @@ export function PredictionsSection() {
   const { get, post, flash, adminFetch } = useAdmin();
   const [stats, setStats] = useState<any>(null);
   const [data, setData] = useState<any>(null);
+  const [ticketStats, setTicketStats] = useState<any>(null);
   const [popular, setPopular] = useState<any>(null);
   const [preds, setPreds] = useState<any[]>([]);
   const [featured, setFeatured] = useState<any[]>([]);
@@ -136,6 +158,7 @@ export function PredictionsSection() {
   useEffect(() => {
     get("/api/admin/stats").then(setStats);
     get("/api/admin/data-status").then(setData);
+    get("/api/admin/tickets").then(setTicketStats);
     get("/api/admin/popular").then(setPopular);
     fetch(`${API}/api/predictions?limit=500`).then(r => r.json()).then(d => setPreds(d.predictions ?? [])).catch(() => {});
     fetch(`${API}/api/admin/featured`).then(r => r.json()).then(d => setFeatured(d.featured ?? [])).catch(() => {});
@@ -233,6 +256,12 @@ export function PredictionsSection() {
       <Card title="International corners & cards" icon={<Globe2 size={15} />}
         subtitle="Collected nightly from SofaScore and API-Football; lower score is better">
         {!data ? <Skeleton rows={2} /> : <InternationalSetPieces info={data.international_set_pieces} />}
+      </Card>
+
+      <Card title="Results & booking codes" icon={<Target size={15} />}
+        subtitle="Scores come from ESPN every 15 minutes while matches are on; every code a signed-in user makes is settled from them"
+        action={<Btn onClick={async () => { await post("/api/admin/jobs/matchday_sweep/run"); flash("ok", "Checking the last 7 days' scores…"); }}>Check now</Btn>}>
+        {!data ? <Skeleton rows={2} /> : <TicketsAndResults info={data.matchday} tickets={ticketStats} />}
       </Card>
 
       <Card title="Referees" icon={<Flag size={15} />}

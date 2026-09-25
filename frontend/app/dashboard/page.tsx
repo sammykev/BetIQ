@@ -15,6 +15,7 @@ import { PageHeader } from "@/components/shell/PageHeader";
 import { PREMIUM_PRICE_LABEL } from "@/lib/pricing";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
 import { headlinePick } from "@/lib/picks";
+import { TicketsList } from "@/components/TicketsList";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
 
@@ -77,6 +78,10 @@ export default function DashboardPage() {
   const { user, isLoaded } = useUser();
   const router = useRouter();
   const [tab, setTab] = useState<Tab>("overview");
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get("tab");
+    if (t && ["overview", "saved", "bets", "codes", "referral", "account"].includes(t)) setTab(t as Tab);
+  }, []);
 
   const [stats,  setStats]  = useState<Stats | null>(null);
   const [saves,  setSaves]  = useState<any[]>([]);
@@ -91,7 +96,6 @@ export default function DashboardPage() {
   const [betForm, setBetForm] = useState({ home: "", away: "", tip: "", stake: "", odds: "", result: "won" as "won"|"lost"|"void" });
   const [betLoading, setBetLoading] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [loadingTab, setLoadingTab] = useState(false);
 
   const uid = user?.id ?? "";
@@ -187,12 +191,6 @@ export default function DashboardPage() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const copyBooking = (code: string) => {
-    navigator.clipboard.writeText(code);
-    setCopiedCode(code);
-    setTimeout(() => setCopiedCode(null), 2000);
-  };
-
   const isPremium = (user?.publicMetadata as any)?.subscription === "premium" &&
     new Date((user?.publicMetadata as any)?.subscription_expires ?? 0) > new Date();
 
@@ -206,7 +204,7 @@ export default function DashboardPage() {
     { id: "overview",  label: "Overview",  icon: <BarChart2 size={14} /> },
     { id: "saved",     label: "Saved",     count: saves.length, icon: <Star size={14} /> },
     { id: "bets",      label: "My bets",   count: bets.length,  icon: <TrendingUp size={14} /> },
-    { id: "codes",     label: "Codes",     count: codes.length, icon: <Ticket size={14} /> },
+    { id: "codes",     label: "Tickets",   count: stats?.codes_count ?? codes.length, icon: <Ticket size={14} /> },
     { id: "referral",  label: "Referrals", icon: <Link2 size={14} /> },
     { id: "account",   label: "Account",   icon: <User size={14} /> },
   ];
@@ -424,43 +422,8 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* ── Booking codes ── */}
-        {tab === "codes" && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {codes.length === 0
-              ? <div className="md:col-span-2"><EmptyState icon={<Ticket size={20} />} title="No booking codes" body="Use the AI assistant to build an accumulator and generate your first code." /></div>
-              : codes.map((c, i) => (
-                <div key={i} className="card overflow-hidden">
-                  <div className="flex items-center justify-between gap-3 p-4 bg-gradient-to-r from-brand-400/[0.08] to-transparent">
-                    <div>
-                      <p className="eyebrow">Booking code</p>
-                      <p className="font-mono text-2xl font-bold text-n-0 tracking-[0.2em] mt-1">{c.code}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="eyebrow">Total odds</p>
-                      <p className="font-display font-extrabold text-3xl text-accent leading-none mt-1 tnum">{c.total_odds}x</p>
-                    </div>
-                  </div>
-                  <div className="px-4 py-2 border-t border-dashed border-n-700 divide-y divide-n-800/70">
-                    {(Array.isArray(c.games) ? c.games : []).map((g, j) => (
-                      <div key={j} className="flex items-center gap-2 text-sm py-2">
-                        <span className="truncate flex-1 text-n-300">{g.game}</span>
-                        <span className="text-n-0 font-semibold">{g.tip}</span>
-                        <span className="font-mono text-xs text-n-500 w-10 text-right">{g.odds}</span>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="flex items-center justify-between px-4 py-3 border-t border-n-800">
-                    <span className="font-mono text-[11px] text-n-500">{c.date}</span>
-                    <button onClick={() => copyBooking(c.code)} className="btn-primary !px-3 !py-1.5 !text-xs !rounded-lg">
-                      {copiedCode === c.code ? <Check size={12} /> : <Copy size={12} />}
-                      {copiedCode === c.code ? "Copied" : "Copy code"}
-                    </button>
-                  </div>
-                </div>
-              ))}
-          </div>
-        )}
+        {/* ── Tickets: booking codes, settled from the results ── */}
+        {tab === "codes" && <TicketsList uid={uid} authFetch={authFetch} />}
 
         {/* ── Referrals ── */}
         {tab === "referral" && (
