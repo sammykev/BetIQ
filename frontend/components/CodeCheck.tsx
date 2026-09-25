@@ -2,12 +2,14 @@
 
 import { useState } from "react";
 import clsx from "clsx";
-import { AlertTriangle, ArrowRight, Check, CheckCircle2, Copy, ExternalLink, Loader2, ScanSearch, ShieldCheck, Ticket } from "lucide-react";
+import { AlertTriangle, ArrowRight, Check, CheckCircle2, Copy, ExternalLink, Flame, Loader2, Scale, ScanSearch, Shield, ShieldCheck,
+  Ticket, Wand2 } from "lucide-react";
 import { useBetSlip } from "@/lib/useBetSlip";
 import type { SlipSelection } from "@/lib/slip";
 
 // Paste a SportyBet booking code: backend/code_check.py scores every leg
-// with the model, suggests better picks, and builds two improved slips.
+// with the model, suggests better picks, and "Refine" turns it into three
+// tickets (safe, conservative, risky), each bookable as a new code.
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
 
@@ -30,7 +32,18 @@ interface Report {
   code: string; legs: Leg[];
   original: { games: number; total_odds: number | null; win_chance: number | null; unmodelled: number };
   same_odds: Slip | null; safest: Slip | null;
+  tickets?: { safe: Slip; conservative: Slip; risky: Slip } | null;
 }
+
+const TICKETS = [
+  { id: "safe", name: "Safe", icon: Shield, tone: "text-accent",
+    blurb: "Each game's likeliest pick (odds 1.15 or more). Small payout, best chance." },
+  { id: "conservative", name: "Conservative", icon: Scale, tone: "text-info",
+    blurb: "Each game's likeliest pick that still pays 1.40 or more. A balance of payout and chance." },
+  { id: "risky", name: "Risky", icon: Flame, tone: "text-warn",
+    blurb: "A big payout (your code's odds, or double the conservative ticket's) with the best chance we can find for it." },
+] as const;
+type TicketId = (typeof TICKETS)[number]["id"];
 
 const odds = (x: number | null | undefined) => (x ? x.toFixed(2) : "—");
 const pct = (x: number | null | undefined) =>
@@ -126,6 +139,51 @@ function ImprovedSlip({ title, blurb, slip, original }: { title: string; blurb: 
   );
 }
 
+/** "Refine": the code as three tickets. All three stay mounted so a code
+ * booked on one isn't lost when switching to another. */
+function Tickets({ tickets, original }: { tickets: NonNullable<Report["tickets"]>; original: Report["original"] }) {
+  const [open, setOpen] = useState(false);
+  const [tab, setTab] = useState<TicketId>("conservative");
+
+  if (!open) {
+    return (
+      <section className="card p-5 space-y-3 text-center">
+        <p className="text-sm text-n-300">Turn your code into three tickets on the same games, from safe to risky,
+          each with its own SportyBet code.</p>
+        <button onClick={() => setOpen(true)}
+          className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl bg-brand-400 hover:bg-brand-300 text-ink font-bold px-6 py-3">
+          <Wand2 size={16} /> Refine into 3 tickets
+        </button>
+      </section>
+    );
+  }
+  return (
+    <section className="space-y-3">
+      <div className="grid grid-cols-3 gap-2" role="tablist" aria-label="Tickets">
+        {TICKETS.map(t => {
+          const slip = tickets[t.id];
+          const active = tab === t.id;
+          return (
+            <button key={t.id} role="tab" aria-selected={active} onClick={() => setTab(t.id)}
+              className={clsx("card min-w-0 px-2 py-3 sm:p-4 text-left transition-colors border",
+                active ? "border-accent/60 bg-surface" : "border-transparent opacity-80 hover:opacity-100")}>
+              <p className={clsx("flex items-center gap-1.5 text-xs sm:text-sm font-bold", t.tone)}>
+                <t.icon size={14} className="shrink-0 hidden sm:block" /> <span className="truncate">{t.name}</span></p>
+              <p className="font-display font-extrabold text-xl sm:text-2xl text-n-0 tnum mt-1">{odds(slip.total_odds)}x</p>
+              <p className="text-[11px] text-n-400 tnum">{pct(slip.win_chance)} to win</p>
+            </button>
+          );
+        })}
+      </div>
+      {TICKETS.map(t => (
+        <div key={t.id} role="tabpanel" hidden={tab !== t.id}>
+          <ImprovedSlip title={`${t.name} ticket`} blurb={t.blurb} slip={tickets[t.id]} original={original} />
+        </div>
+      ))}
+    </section>
+  );
+}
+
 export function CodeCheck() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -204,7 +262,9 @@ export function CodeCheck() {
             </ul>
           </section>
 
-          {!report.same_odds && !report.safest ? (
+          {report.tickets ? (
+            <Tickets tickets={report.tickets} original={report.original} />
+          ) : !report.same_odds && !report.safest ? (
             <p className="card p-4 text-sm text-n-400 flex items-center gap-2"><CheckCircle2 size={15} />
               None of these games are ones we predict, so there&apos;s nothing to improve.</p>
           ) : (

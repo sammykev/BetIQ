@@ -9,7 +9,11 @@ it gets our probability beside SportyBet's price. Then:
 - a better pick on the same match when the model rates one clearly higher;
 - "same odds": the slip with the best chance of winning whose total stays
   near the code's (optimizer.optimize over the code's matches only);
-- "safest": each match's likeliest pick at odds ≥ 1.15.
+- "safest": each match's likeliest pick at odds ≥ 1.15;
+- three tickets to book (the "Refine" button on the site):
+  safe = the safest slip; conservative = each match's likeliest pick paying
+  at least 1.40; risky = the best chance at the code's own total or twice
+  the conservative total, whichever is higher.
 
 Legs we can't model (a market or match we don't predict) are kept as they
 are in both slips, and booked by their SportyBet ids.
@@ -26,6 +30,8 @@ from optimizer import _PICKS, Option, candidates, optimize
 STRONG, FAIR = 0.75, 0.55
 BETTER_BY = 0.08          # a suggestion must beat the leg by this much
 SAFE_MIN_ODDS = 1.15
+CONSERVATIVE_MIN_ODDS = 1.40
+RISKY_OVER_CONSERVATIVE = 2.0   # the risky ticket pays at least this much more
 
 
 def _when(ms: Any) -> tuple:
@@ -138,7 +144,7 @@ def analyse(selections: List[Dict], find_pred: Callable[[Dict], Optional[Dict]],
 
     original = [{"prob": l["our_prob"], "odds": l["odds"]} for l in legs]
     report = {"legs": legs, "original": {k: v for k, v in _slip(original).items() if k != "picks"},
-              "same_odds": None, "safest": None}
+              "same_odds": None, "safest": None, "tickets": None}
     if groups:
         target = math.prod(original_odds)  # the modelled legs' total as booked
         best = None
@@ -153,4 +159,34 @@ def analyse(selections: List[Dict], find_pred: Callable[[Dict], Optional[Dict]],
         safest = [asdict(max([o for o in g if o.odds >= SAFE_MIN_ODDS] or g, key=lambda o: (o.prob, o.odds)))
                   for g in groups]
         report["safest"] = _slip(safest + kept)
+        report["tickets"] = _tickets(groups, kept, safest, target)
     return report
+
+
+def _likeliest(group: List[Option], min_odds: float) -> Optional[Option]:
+    pool = [o for o in group if o.odds >= min_odds]
+    return max(pool, key=lambda o: (o.prob, o.odds)) if pool else None
+
+
+def _tickets(groups: List[List[Option]], kept: List[Dict], safest: List[Dict],
+             booked_total: float) -> Dict[str, Dict[str, Any]]:
+    """Safe, conservative and risky versions of the code, on its own
+    matches (legs we can't model kept in all three)."""
+    conservative = [_likeliest(g, CONSERVATIVE_MIN_ODDS) or _likeliest(g, SAFE_MIN_ODDS) or max(g, key=lambda o: o.prob)
+                    for g in groups]
+    target = max(booked_total, math.prod(o.odds for o in conservative) * RISKY_OVER_CONSERVATIVE)
+    risky = None
+    for spread in (0.1, 0.25, 0.5):
+        best = optimize(groups, max(1.01, target * (1 - spread)), target * (1 + spread), len(groups))
+        if best and len(best["picks"]) == len(groups):
+            risky = best["picks"]
+            break
+    if risky is None:
+        # Too few matches or markets to reach it: each match's likeliest long price
+        risky = [asdict(_likeliest(g, 2.0) or c) for g, c in zip(groups, conservative)]
+    kept_odds = math.prod(k["odds"] for k in kept if k.get("odds"))
+    return {
+        "safe": _slip(safest + kept),
+        "conservative": _slip([asdict(o) for o in conservative] + kept),
+        "risky": {**_slip(risky + kept), "target_odds": round(target * kept_odds, 2)},
+    }

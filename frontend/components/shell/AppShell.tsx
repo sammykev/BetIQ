@@ -117,7 +117,8 @@ export function AppShell({ children, actions, banner, onUpgrade }: Props) {
 
       {/* ── Mobile bottom nav ── */}
       <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 border-t border-n-900 bg-canvas/95 backdrop-blur-md pb-[env(safe-area-inset-bottom)]">
-        <div className="grid grid-cols-4">
+        {/* One column per link, so all of them sit on one row */}
+        <div className="grid" style={{ gridTemplateColumns: `repeat(${NAV.length}, minmax(0, 1fr))` }}>
           {NAV.map(({ href, label, icon: Icon }) => {
             const active = isActive(href);
             return (
@@ -126,13 +127,13 @@ export function AppShell({ children, actions, banner, onUpgrade }: Props) {
                 href={href}
                 aria-current={active ? "page" : undefined}
                 className={clsx(
-                  "relative flex flex-col items-center gap-1 pt-3 pb-2.5 text-[10px] font-semibold transition-colors",
+                  "relative flex flex-col items-center gap-1 pt-3 pb-2.5 px-0.5 min-w-0 text-[10px] font-semibold transition-colors",
                   active ? "text-n-0" : "text-n-500 hover:text-n-300"
                 )}
               >
-                {active && <span className="absolute top-0 inset-x-6 h-[2px] rounded-b-full bg-accent" />}
+                {active && <span className="absolute top-0 inset-x-4 h-[2px] rounded-b-full bg-accent" />}
                 <Icon size={19} strokeWidth={active ? 2.4 : 2} className={active ? "text-accent" : undefined} />
-                {label}
+                <span className="max-w-full truncate">{label}</span>
               </Link>
             );
           })}

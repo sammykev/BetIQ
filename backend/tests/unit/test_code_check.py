@@ -74,6 +74,33 @@ class TestAnalyse:
             assert slip["unmodelled"] == 1
         assert r["safest"]["win_chance"] > r["original"]["win_chance"]
 
+    def test_three_tickets_from_safe_to_risky(self):
+        share = {"shareCode": "T3", "outcomes": SHARE["outcomes"] + [
+            {"eventId": "sr:match:3", "homeTeamName": "Leeds", "awayTeamName": "Everton", "estimateStartTime": KICKOFF_MS,
+             "markets": [market("1", [("1", 2.1, "Home")], "", "1X2")]},
+            {"eventId": "sr:match:4", "homeTeamName": "Fulham", "awayTeamName": "Brentford", "estimateStartTime": KICKOFF_MS,
+             "markets": [market("18", [("12", 1.8, "Over 2.5")], "total=2.5", "Over/Under")]}]}
+        preds = {"sr:match:1": pred(),
+                 "sr:match:3": pred(home="Leeds", away="Everton", p_home=0.48, p_draw=0.27, p_away=0.25),
+                 "sr:match:4": pred(home="Fulham", away="Brentford", p_home=0.4, p_draw=0.28, p_away=0.32, p_over25=0.55)}
+        r = code_check.analyse(sportybet.parse_share(share), lambda sel: preds.get(sel["eventId"]),
+                               lambda _: None, confirmed={})
+        t = r["tickets"]
+        safe, cons, risky = t["safe"], t["conservative"], t["risky"]
+        assert safe["total_odds"] < cons["total_odds"] < risky["total_odds"]
+        assert safe["win_chance"] > cons["win_chance"] > risky["win_chance"]
+        for ticket in (safe, cons, risky):
+            assert ticket["games"] == 4 and ticket["unmodelled"] == 1       # the unknown leg kept in all three
+            assert len({(p["home"], p["away"]) for p in ticket["picks"]}) == 4
+        rated = [p for p in cons["picks"] if p.get("prob") is not None]
+        assert all(p["odds"] >= code_check.CONSERVATIVE_MIN_ODDS for p in rated)
+        assert risky["total_odds"] >= 0.5 * risky["target_odds"]
+
+    def test_no_tickets_without_rated_games(self):
+        sels = [s for s in sportybet.parse_share(SHARE) if s["eventId"] == "sr:match:2"]
+        r = code_check.analyse(sels, lambda _: None, lambda _: None, confirmed={})
+        assert r["tickets"] is None
+
     def test_unconfirmed_markets_are_not_matched(self):
         sel = {"eventId": "sr:match:1", "marketId": "19", "specifier": "total=0.5", "outcomeId": "12"}
         assert code_check.model_pick(pred(), sel, confirmed={}) is None
