@@ -3514,7 +3514,20 @@ ADMIN_JOBS = {
     "fd_referees": ("Collect past referees (football-data.org)", lambda: _collect_fd_referees("manual")),
     "football_sync": ("Download league results (football-data.co.uk)", lambda: _manual_football_sync()),
     "matchday_sweep": ("Scores and grades for the last 7 days", lambda: _refresh_matchdays(MD_DAYS_BACK, "manual")),
+    "set_pieces_reload": ("Reload corners, cards & shots models (after the nightly checks)",
+                          lambda: _reload_set_pieces()),
 }
+
+
+async def _reload_set_pieces() -> Dict[str, Any]:
+    """Load the international corners/cards/shots models with the latest
+    nightly verdicts and re-price the current predictions — without a full
+    rebuild."""
+    await asyncio.to_thread(_load_international_set_pieces)
+    with_referee = _apply_referees()
+    return {"international_corners_cards": _intl_set_pieces is not None,
+            "international_shots": _intl_shots is not None, "club_shots": _shots is not None,
+            "predictions": len(_predictions_cache), "with_referee": with_referee}
 
 
 @app.get("/api/admin/jobs")
