@@ -150,3 +150,38 @@ class TestProbe:
         cl = got["uefa.champions"]
         assert (cl["status"], cl["events"], cl["finished"], cl["rows"], cl["calendar_len"]) == (200, 1, 1, 1, 1)
         assert got["eng.fa"]["status"] == 400 and got["eng.fa"]["events"] == 0
+
+
+class TestRoundCalendars:
+    """ESPN's calendarType "list": the season's rounds with their days."""
+    PAGE = {"leagues": [{"calendarType": "list", "calendar": [{
+        "label": "UEFA Champions League", "startDate": "2024-07-01T04:00Z", "endDate": "2025-07-01T03:59Z",
+        "entries": [
+            {"label": "League Phase", "detail": "Sep 17-Jan 29", "startDate": "2024-08-29T07:00Z", "endDate": "2025-01-31T07:59Z"},
+            {"label": "Knockout Round Playoffs", "detail": "Feb 11-19", "startDate": "2025-01-31T08:00Z", "endDate": "2025-02-21T07:59Z"},
+            {"label": "Rd of 16", "detail": "Mar 4-12", "startDate": "2025-02-21T08:00Z", "endDate": "2025-03-14T07:59Z"},
+            {"label": "Second Round", "detail": "Nov 29-Dec 1", "startDate": "2024-11-28T08:00Z", "endDate": "2025-01-09T07:59Z"},
+            {"label": "Qualifying", "detail": "Oct 9", "startDate": "2024-07-01T07:00Z", "endDate": "2024-10-14T06:59Z"},
+            {"label": "Odd", "detail": "TBD", "startDate": "2025-05-30T07:00Z", "endDate": "2025-06-01T06:59Z"}]}]}]}
+
+    def test_cup_rounds(self):
+        days = cc.calendar_days(self.PAGE, 2024, "cup")
+        for d in ("2024-09-17", "2024-10-01", "2025-01-29", "2025-02-11", "2025-02-19", "2025-03-11",
+                  "2024-11-29", "2024-12-01", "2024-10-09", "2025-05-30", "2025-06-01"):
+            assert d in days, d
+        assert "2024-09-16" not in days and "2025-01-30" not in days and "2025-02-10" not in days
+
+    def test_long_european_rounds_keep_midweek(self):
+        days = cc.calendar_days(self.PAGE, 2024, "europe")
+        assert "2024-09-17" in days and "2024-10-01" in days and "2025-03-11" in days
+        assert "2024-09-21" not in days          # a Saturday in the league phase
+        assert "2025-03-08" not in days          # Saturday within "Mar 4-12"
+        assert "2024-11-30" in days              # a 3-day round keeps all its days
+
+    def test_old_calendars_are_read_again(self):
+        data = cc.empty()
+        data["calendars"] = {"uefa.champions|2024": ["2024-07-01"]}
+        routes = {("uefa.champions", "20241015"): self.PAGE}
+        asyncio.run(cc.collect(Session(routes), data, float("inf"), date(2025, 3, 1), pause=0))
+        assert data["calendar_version"] == cc.CALENDAR_VERSION
+        assert "2024-09-17" in data["calendars"]["uefa.champions|2024"]

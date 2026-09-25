@@ -18,6 +18,7 @@ competitions and domestic cups.
 import asyncio
 import gzip
 import json
+import re
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -27,6 +28,7 @@ import international_fixtures as intl
 KEY = "betiq:club_cups:v1"
 SEASONS_BACK = 4          # the current season and the four before it
 RECHECK_DAYS = 3
+CALENDAR_VERSION = 2       # bump when calendar_days changes: calendars are read again
 PAUSE = 0.3
 
 # ESPN slug → (our code, name, kind)
@@ -69,19 +71,66 @@ def save(r, data: Dict[str, Any]) -> int:
     return len(blob)
 
 
-def calendar_days(page: Any, season: int) -> List[str]:
-    """Match days from a scoreboard's league calendar (strings or objects),
-    within the season (July to June)."""
-    lo, hi = f"{season}-07-01", f"{season + 1}-06-30"
+_MONTHS = {m: i for i, m in enumerate(["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep",
+                                          "Oct", "Nov", "Dec"], 1)}
+_DETAIL = re.compile(r"([A-Z][a-z]{2})\s+(\d{1,2})(?:\s*-\s*(?:([A-Z][a-z]{2})\s+)?(\d{1,2}))?")
+
+
+def _span(lo: date, hi: date) -> List[date]:
+    return [lo + timedelta(days=i) for i in range((hi - lo).days + 1)]
+
+
+def _detail_days(detail: str, lo: date, hi: date) -> Optional[List[date]]:
+    """The days in a round's label ("Nov 1-4", "Nov 29-Dec 1", "Oct 9",
+    "Sep 17-Jan 29"), the year taken from the round's date range."""
+    m = _DETAIL.fullmatch((detail or "").strip())
+    if not m or m.group(1) not in _MONTHS or (m.group(3) and m.group(3) not in _MONTHS):
+        return None
+    m1, d1 = _MONTHS[m.group(1)], int(m.group(2))
+    m2, d2 = (_MONTHS[m.group(3)] if m.group(3) else m1), int(m.group(4) or d1)
+    try:
+        # The year whose date sits in (or nearest) the round's range
+        start = min((date(y, m1, d1) for y in (lo.year - 1, lo.year, lo.year + 1)),
+                    key=lambda d: 0 if lo <= d <= hi else min(abs((d - lo).days), abs((d - hi).days)))
+        end = date(start.year, m2, d2)
+        if end < start:
+            end = date(start.year + 1, m2, d2)
+    except ValueError:
+        return None
+    return _span(start, end) if (end - start).days <= 200 else None
+
+
+def calendar_days(page: Any, season: int, kind: str = "cup") -> List[str]:
+    """Match days from a scoreboard's league calendar, within the season
+    (July to June). ESPN sends either a list of days, or (calendarType
+    "list") the season's rounds, each with a label of its days ("Nov 29-Dec
+    1") and the range it covers. Long European rounds (the league phase) are
+    narrowed to Tuesday-Thursday."""
+    lo_s, hi_s = f"{season}-07-01", f"{season + 1}-06-30"
     out = set()
+
+    def add(days: List[date]):
+        if kind == "europe" and len(days) > 7:
+            days = [d for d in days if d.weekday() in (1, 2, 3)]
+        out.update(d.isoformat() for d in days)
+
     for league in (page or {}).get("leagues") or []:
         for item in league.get("calendar") or []:
-            if isinstance(item, dict):
-                item = item.get("startDate") or item.get("date") or item.get("value") or ""
-            d = str(item)[:10]
-            if lo <= d <= hi:
-                out.add(d)
-    return sorted(out)
+            if not isinstance(item, dict):
+                out.add(str(item)[:10])
+                continue
+            entries = item.get("entries")
+            if not entries:
+                out.add(str(item.get("startDate") or item.get("date") or item.get("value") or "")[:10])
+                continue
+            for e in entries:
+                try:
+                    lo = date.fromisoformat(str(e.get("startDate"))[:10])
+                    hi = date.fromisoformat(str(e.get("endDate"))[:10])
+                except ValueError:
+                    continue
+                add(_detail_days(e.get("detail"), lo, hi) or _span(lo, hi))
+    return sorted(d for d in out if lo_s <= d <= hi_s)
 
 
 def fallback_days(season: int, kind: str) -> List[str]:
@@ -136,6 +185,9 @@ async def collect(session, data: Dict[str, Any], deadline: float, today: date,
     errors: List[str] = []
     done = set(data.get("days") or [])
     calendars = data.setdefault("calendars", {})
+    if data.get("calendar_version") != CALENDAR_VERSION:
+        calendars.clear()
+        data["calendar_version"] = CALENDAR_VERSION
     recent = {(today - timedelta(days=i)).isoformat() for i in range(1, RECHECK_DAYS + 1)}
     current = season_start(today)
 
@@ -159,7 +211,7 @@ async def collect(session, data: Dict[str, Any], deadline: float, today: date,
                 if status in (403, 429):
                     report["stopped"] = f"HTTP {status}"
                     break
-                days = calendar_days(page, season)
+                days = calendar_days(page, season, kind)
                 if not days:
                     days = fallback_days(season, kind)
                     report["fallback_calendars"] += 1
@@ -229,7 +281,7 @@ async def probe(session) -> Dict[str, Any]:
             "rows": sum(1 for p in parsed if row_from(p, slug)),
             "calendar_type": leagues[0].get("calendarType"), "calendar_len": len(cal),
             "calendar_head": json.dumps(cal[:2])[:400],
-            "calendar_days_2024": len(calendar_days(page, 2024)),
+            "calendar_days_2024": len(calendar_days(page, 2024, COMPETITIONS[slug][2])),
             "season": leagues[0].get("season"),
         }
         await asyncio.sleep(PAUSE)

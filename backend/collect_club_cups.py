@@ -55,16 +55,19 @@ def main() -> int:
     club_cups.save(r, data)
     print("Collection:", json.dumps(report, indent=1))
 
-    # The check: once a week (it retrains the model 9 times), or when there's none yet
-    last = (data.get("check") or {}).get("at")
-    stale = not last or (datetime.now(timezone.utc) - datetime.fromisoformat(last)).days >= 7
+    # The check: once a week (it retrains the model 9 times), when there's
+    # none yet, or when the matches have grown by a fifth since the last one
+    check = data.get("check") or {}
+    last = check.get("at")
+    stale = (not last or (datetime.now(timezone.utc) - datetime.fromisoformat(last)).days >= 7
+             or len(data["rows"]) > 1.2 * (check.get("rows") or 0))
     if not args.no_check and data["rows"] and stale:
         from main import _club_cup_rows, _load_football_data_csvs
         league = _load_football_data_csvs()
         names = set(league["HomeTeam"].dropna()) | set(league["AwayTeam"].dropna())
         extras = {"europe": _club_cup_rows(names, club_cups.EUROPE_CODES),
                   "cups": _club_cup_rows(names, club_cups.CUP_CODES)}
-        data["check"] = club_cups.check(league, extras)
+        data["check"] = {**club_cups.check(league, extras), "rows": len(data["rows"])}
         club_cups.save(r, data)
         print("Model check:", json.dumps(data["check"], indent=1))
     print("Dataset:", json.dumps({k: v for k, v in club_cups.summary(data).items() if k != "last_run"}, indent=1))
