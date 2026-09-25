@@ -4638,6 +4638,9 @@ def _catalog_summary(events: List[Dict]) -> Dict[str, Any]:
             "international": dict(sorted(tournaments.items(), key=lambda kv: -kv[1])[:20])}
 
 
+MARKET_PAGES = 3   # SportyBet match pages read to confirm market names
+
+
 async def _market_map(events: List[Dict], links: Dict[str, Dict], report: List[str]) -> Tuple[Dict, Dict]:
     """(booking_slip.resolve_markets result, {market id: label}): SportyBet's
     markets from the listing plus one linked club match's own page, which
@@ -4651,16 +4654,24 @@ async def _market_map(events: List[Dict], links: Dict[str, Dict], report: List[s
     rank = {"PL": 0, "PD": 1, "SA": 2, "BL1": 3, "FL1": 4}
     club = [(key, ev) for key, ev in links.items() if not intl.is_international(league.get(key, ""))]
     club.sort(key=lambda kv: rank.get(league.get(kv[0], ""), 9))
-    probes = [ev for _, ev in club[:2]]
+    probes = [ev for _, ev in club[:4]]
     # None linked (an international break): any top-league match SportyBet lists
     top = re.compile(r"premier league|laliga|la liga|serie a|bundesliga|ligue 1", re.I)
-    probes += [ev for ev in events if top.search(ev.get("_tournament") or "") and "women" not in (ev.get("_tournament") or "").lower()][:2]
-    for probe in probes[:3]:
+    probes += [ev for ev in events if top.search(ev.get("_tournament") or "") and "women" not in (ev.get("_tournament") or "").lower()][:4]
+    # Several pages, merged: specials such as shots are only on some matches
+    seen, read, from_pages = set(), 0, set()
+    for probe in probes:
+        if read >= MARKET_PAGES or str(probe.get("eventId")) in seen:
+            continue
+        seen.add(str(probe.get("eventId")))
         try:
             page = await sportybet.event_market_details(str(probe["eventId"]))
-            details.update(page)
+            for mid, d in page.items():   # a page's entry beats the listing's; the first page's wins
+                if mid not in from_pages:
+                    details[mid] = d
+                    from_pages.add(mid)
+            read += 1
             report.append(f"match page {probe.get('homeTeamName')} v {probe.get('awayTeamName')}: {len(page)} markets")
-            break
         except Exception as e:
             report.append(f"match page: {type(e).__name__}: {e}")
     labels = {mid: d["label"] for mid, d in sorted(details.items(), key=lambda kv: int(kv[0]) if kv[0].isdigit() else 0)}
