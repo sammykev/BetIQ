@@ -24,7 +24,16 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--minutes", type=float, default=float(os.getenv("CLUB_CUPS_MINUTES", "100")))
     ap.add_argument("--no-check", action="store_true")
+    ap.add_argument("--probe", action="store_true", help="only show what ESPN returns per competition")
     args = ap.parse_args()
+    if args.probe:
+        async def look():
+            from curl_cffi.requests import AsyncSession
+            import international_fixtures as intl
+            async with AsyncSession(impersonate=intl.IMPERSONATE, timeout=30) as session:
+                return await club_cups.probe(session)
+        print("Probe:", json.dumps(asyncio.run(look()), indent=1))
+        return 0
     r = model_store._client()
     if r is None:
         print("UPSTASH_REDIS_URL isn't set — nothing to store to. Skipping.")

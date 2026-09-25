@@ -21,6 +21,10 @@ on:
       cup_minutes:
         description: "Minutes of European/cup collection"
         default: "100"
+      probe:
+        description: "Only show what ESPN returns per European/cup competition"
+        type: boolean
+        default: false
 
 concurrency:
   group: collect-international-stats
@@ -48,6 +52,7 @@ jobs:
       - run: pip install -r requirements.txt
 
       - name: Collect and test
+        if: github.event.inputs.probe != 'true'
         env:
           UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
           APIFOOTBALL_KEY: ${{ secrets.APIFOOTBALL_KEY }}
@@ -57,7 +62,12 @@ jobs:
       # European competitions and domestic cups for the club model, then a
       # weekly check that they improve its league predictions (club_cups.py)
       - name: Collect club cups and test
+        if: github.event.inputs.probe != 'true'
         env:
           UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
           CLUB_CUPS_MINUTES: ${{ github.event.inputs.cup_minutes || '100' }}
         run: python collect_club_cups.py
+
+      - name: Probe ESPN (European/cup competitions)
+        if: github.event.inputs.probe == 'true'
+        run: python collect_club_cups.py --probe

@@ -139,3 +139,14 @@ class TestTraining:
         df = main._club_cup_rows({"Man United", "Bayern Munich"})
         assert list(df["league"]) == ["EL"] and df.iloc[0]["HomeTeam"] == "Man United"
         assert main._club_cup_rows(set(), {"EFLC"}).iloc[0]["AwayTeam"] == "Grimsby Town"
+
+
+class TestProbe:
+    def test_reports_each_competition(self):
+        routes = {("uefa.champions", "20250311"): {"leagues": [{"calendarType": "list", "calendar": ["2025-03-11T07:00Z"]}],
+                                                   "events": [ev("Arsenal", "PSV", "2025-03-11")]}}
+        got = asyncio.run(cc.probe(Session(routes)))
+        assert set(got) == set(cc.PROBE_DAYS)
+        cl = got["uefa.champions"]
+        assert (cl["status"], cl["events"], cl["finished"], cl["rows"], cl["calendar_len"]) == (200, 1, 1, 1, 1)
+        assert got["eng.fa"]["status"] == 400 and got["eng.fa"]["events"] == 0

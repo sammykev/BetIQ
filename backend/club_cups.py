@@ -199,6 +199,43 @@ async def collect(session, data: Dict[str, Any], deadline: float, today: date,
     return report
 
 
+# A day each competition certainly had matches (for probe())
+PROBE_DAYS = {
+    "uefa.champions": "2025-03-11", "uefa.europa": "2025-03-13", "uefa.europa.conf": "2025-03-13",
+    "eng.fa": "2025-03-01", "eng.league_cup": "2024-09-17", "esp.copa_del_rey": "2025-01-15",
+    "ita.coppa_italia": "2024-12-04", "ger.dfb_pokal": "2024-12-03", "fra.coupe_de_france": "2025-01-15",
+    "ned.cup": "2025-01-15", "por.taca.portugal": "2025-01-15",
+}
+
+
+async def probe(session) -> Dict[str, Any]:
+    """What ESPN returns for each competition on a known match day: the
+    calendar's shape and how many events, finished results and training
+    rows come out of it. For diagnosing a competition that collects nothing."""
+    import results_feed
+    out: Dict[str, Any] = {}
+    for slug, day in PROBE_DAYS.items():
+        errors: List[str] = []
+        page, status = await _get(session, f"{intl.ESPN_BASE}/{slug}/scoreboard",
+                                  {"dates": day.replace("-", ""), "limit": 200}, errors)
+        leagues = (page or {}).get("leagues") or [{}]
+        cal = leagues[0].get("calendar") or []
+        parsed = results_feed.parse_espn(page) if page else []
+        out[slug] = {
+            "day": day, "status": status, "errors": errors,
+            "events": len((page or {}).get("events") or []),
+            "event_dates": sorted({str(e.get("date"))[:16] for e in (page or {}).get("events") or []})[:4],
+            "finished": sum(1 for p in parsed if p["status"] == "finished"),
+            "rows": sum(1 for p in parsed if row_from(p, slug)),
+            "calendar_type": leagues[0].get("calendarType"), "calendar_len": len(cal),
+            "calendar_head": json.dumps(cal[:2])[:400],
+            "calendar_days_2024": len(calendar_days(page, 2024)),
+            "season": leagues[0].get("season"),
+        }
+        await asyncio.sleep(PAUSE)
+    return out
+
+
 def rows_frame(data: Dict[str, Any], codes: Optional[set] = None):
     """The collected matches as a DataFrame in the league CSVs' shape
     (optionally only some competitions)."""
