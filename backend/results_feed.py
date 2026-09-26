@@ -26,7 +26,7 @@ import international_fixtures as intl
 ESPN_SLUGS = {
     "PL": "eng.1", "ELC": "eng.2", "PD": "esp.1", "SA": "ita.1", "BL1": "ger.1", "BL2": "ger.2",
     "FL1": "fra.1", "DED": "ned.1", "PPL": "por.1", "BSA": "bra.1",
-    "CL": "uefa.champions", "EL": "uefa.europa", "EC": "uefa.euro", "WC": "fifa.world",
+    "CL": "uefa.champions", "EL": "uefa.europa", "UECL": "uefa.europa.conf", "EC": "uefa.euro", "WC": "fifa.world",
 }
 CSV_DIR = os.path.join(os.path.dirname(__file__), "data", "football")
 

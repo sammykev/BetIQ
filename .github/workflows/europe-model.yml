@@ -1,0 +1,43 @@
+# The European competitions model (backend/europe_model.py): weekly, replay
+# the last season of Champions, Europa and Conference League matches through
+# each way of adding the extra leagues (Belgium, Scotland, Greece, Turkey,
+# Austria, Switzerland, Denmark, Norway, Sweden, Poland, Romania) and league
+# strength; adopt one only if it beats the main model on those matches, then
+# train and publish it. "Train model" keeps it fresh nightly after that.
+# Needs the UPSTASH_REDIS_URL secret (same as Render).
+name: Europe model
+
+on:
+  schedule:
+    - cron: "15 5 * * 1"   # Mondays, after the nightly collection and training
+  workflow_dispatch:
+
+concurrency:
+  group: europe-model
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - run: pip install -r requirements.txt
+
+      - name: Check, then train and publish if adopted
+        env:
+          UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
+        run: python europe_model.py

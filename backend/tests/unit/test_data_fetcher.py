@@ -396,6 +396,7 @@ class TestNotInPlan:
         data_fetcher.NOT_IN_PLAN.clear()
         yield
         data_fetcher.NOT_IN_PLAN.clear()
+        data_fetcher.NOT_IN_PLAN |= data_fetcher.ESPN_ONLY
 
     async def test_403_is_not_retried_and_the_competition_is_skipped_after(self):
         client = _make_client()
@@ -421,3 +422,7 @@ class TestNotInPlan:
         assert data_fetcher.competition_of("https://x/v4/competitions/EL/matches?a=1") == "EL"
         assert data_fetcher.competition_of("https://x/v4/competitions/PL") == "PL"
         assert data_fetcher.competition_of("https://x/v4/matches/1/head2head") is None
+
+
+def test_espn_competitions_are_never_asked_for():
+    assert {"EL", "UECL"} <= data_fetcher.NOT_IN_PLAN

@@ -6,7 +6,8 @@ minute or two instead of many minutes on the API server's small CPU.
     python train_model.py            # needs UPSTASH_REDIS_URL
 
 Uses exactly the pipeline's data: football-data.co.uk league CSVs (synced
-first), the legacy EPL/UCL CSVs and the international results.
+first), the legacy EPL/UCL CSVs and the international results. Then the
+European competitions model, when its check adopted one (europe_model.py).
 """
 
 import asyncio
@@ -40,6 +41,15 @@ def main() -> int:
     })
     print(f"Published model v{MODEL_CACHE_VERSION}: {meta['size'] / 1e6:.1f} MB in "
           f"{meta['chunks']} chunk(s), {len(combined)} matches, {time.time() - t0:.0f}s total.")
+
+    # The European competitions model, when its weekly check adopted one
+    # (europe_model.py), so the server always has a fresh copy
+    import europe_model
+    verdict = europe_model.load_check(model_store._client())
+    if verdict.get("adopted"):
+        europe_model.train_and_publish(app, verdict["adopted"])
+    else:
+        print(f"Europe model: none adopted ({verdict.get('reason') or 'no check yet'}).")
     return 0
 
 

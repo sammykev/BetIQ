@@ -98,6 +98,9 @@ def walk_forward(matches: pd.DataFrame, start: str, end: str,
                 # European / cup match in ratings-only mode: moves ratings, isn't scored
                 model._strength_update(r["HomeTeam"], r["AwayTeam"], r["Result"], league)
                 continue
+            if r.get("Context") in (True,):  # a league the model only takes ratings from
+                model.context_update(r)
+                continue
             oh, od, oa = _odds(r.get("B365H")), _odds(r.get("B365D")), _odds(r.get("B365A"))
             feats = model._feats(r["HomeTeam"], r["AwayTeam"], *((0, 0, 0) if hide_odds else (oh, od, oa)),
                                  match_date=day, league=league)

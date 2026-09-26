@@ -187,6 +187,10 @@ security.configure(lambda: _get_redis())
 
 # --- Global state ---
 _predictor: Optional[LeaguePredictor] = None
+# The European competitions model (europe_model.py), when its check adopted
+# one: Champions League, Europa League and Conference League fixtures
+_europe_predictor: Optional[LeaguePredictor] = None
+_europe_model_info: Dict[str, Any] = {}
 _predictions_cache: List[Dict] = []
 _last_updated: Optional[str] = None
 _is_training = False
@@ -262,18 +266,19 @@ def _set_web_form_cache(team: str, form: Dict):
         pass
 
 
-def _predictor_form_summary(team: str) -> Dict:
+def _predictor_form_summary(team: str, model: Optional[LeaguePredictor] = None) -> Dict:
     """
     Return the current rolling form for a team.
     Primary source: predictor.team_stats (built from CSVs + API).
     Fallback: Redis-cached web form (fetched async in pipeline for sparse teams).
     """
-    if _predictor is None:
+    model = model or _predictor
+    if model is None:
         return {}
 
-    key   = _predictor.canon(team)
-    stats = _predictor.team_stats.get(key, {})
-    elo   = round(_predictor.elo.get(key))
+    key   = model.canon(team)
+    stats = model.team_stats.get(key, {})
+    elo   = round(model.elo.get(key))
 
     pts = stats.get("pts", [])[-10:]
     # Filter NaN values that can creep in from CSV rows with missing scores
@@ -529,7 +534,7 @@ def _h2h_is_fresh(entry: Dict) -> bool:
 
 FOOTBALL_DATA_DIR = os.path.join(os.path.dirname(__file__), "data", "football")
 
-def _load_football_data_csvs() -> pd.DataFrame:
+def _load_football_data_csvs(directory: Optional[str] = None) -> pd.DataFrame:
     """
     Load football-data.co.uk CSVs (with Bet365 odds) from data/football/*.csv.
     These files have columns: Date, HomeTeam, AwayTeam, FTHG, FTAG, FTR, B365H, B365D, B365A, HC, AC, HY, AY, HR, AR
@@ -549,7 +554,8 @@ def _load_football_data_csvs() -> pd.DataFrame:
         "T1": "TSL",
     }
 
-    csvs = sorted(glob.glob(os.path.join(FOOTBALL_DATA_DIR, "*.csv")))
+    csvs = sorted(glob.glob(os.path.join(directory or FOOTBALL_DATA_DIR, "*.csv")))
+    csvs = [c for c in csvs if not os.path.basename(c).startswith("new_")]
     if not csvs:
         return pd.DataFrame()
 
@@ -602,6 +608,77 @@ def _load_football_data_csvs() -> pd.DataFrame:
     ).sort_values("Date").reset_index(drop=True)
     print(f"[Data] football-data.co.uk: {len(combined)} matches with odds from {len(csvs)} CSVs")
     return combined
+
+
+EXTRA_DATA_DIR = os.path.join(os.path.dirname(__file__), "data", "football_extra")
+# football-data.co.uk/new/ country files → our league codes
+_NEW_LEAGUE_CODES = {"AUT": "AUT", "SWZ": "SUI", "DNK": "DEN", "NOR": "NOR", "SWE": "SWE",
+                     "POL": "POL", "ROU": "ROU", "BRA": "BSA"}
+EXTRA_SINCE = "2019-07-01"
+
+
+def _load_new_league_csv(path: str, league: str) -> pd.DataFrame:
+    """One football-data.co.uk/new/ file (Home, Away, HG, AG, Res, closing
+    odds) in the league CSVs' shape."""
+    df = pd.read_csv(path, low_memory=False)
+    df.columns = [c.strip() for c in df.columns]
+    if not all(c in df.columns for c in ("Date", "Home", "Away", "HG", "AG", "Res")):
+        return pd.DataFrame()
+    out = pd.DataFrame({
+        "Date": pd.to_datetime(df["Date"], dayfirst=True, errors="coerce"),
+        "HomeTeam": df["Home"].astype(str).str.strip(), "AwayTeam": df["Away"].astype(str).str.strip(),
+        "FTHG": pd.to_numeric(df["HG"], errors="coerce"), "FTAG": pd.to_numeric(df["AG"], errors="coerce"),
+        "Result": df["Res"], "league": league,
+    })
+    for ours, theirs in (("B365H", ("B365CH", "PSCH", "AvgCH")), ("B365D", ("B365CD", "PSCD", "AvgCD")),
+                         ("B365A", ("B365CA", "PSCA", "AvgCA"))):
+        col = next((c for c in theirs if c in df.columns), None)
+        if col:
+            out[ours] = pd.to_numeric(df[col], errors="coerce")
+    out = out.dropna(subset=["Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG"])
+    return out[out["Result"].isin(["H", "D", "A"])]
+
+
+MAIN_EXTRA_LEAGUES = {"BSA"}
+
+
+def _load_extra_leagues(known: Optional[set] = None, leagues: Optional[set] = None) -> pd.DataFrame:
+    """The extra leagues (football_data_sync.EXTRA_DIVISIONS / NEW_LEAGUES)
+    since EXTRA_SINCE, flagged Context: the model learns their clubs'
+    ratings and form from them but doesn't train on them, so its predictions
+    for the leagues it trains on don't change (predictor.train). A club
+    whose name clashes with one in `known` (the trained leagues' clubs) gets
+    its league added — two clubs must never share a history."""
+    from team_names import normalise
+    parts = []
+    main = _load_football_data_csvs(EXTRA_DATA_DIR) if os.path.isdir(EXTRA_DATA_DIR) else pd.DataFrame()
+    if not main.empty:
+        parts.append(main)
+    for path in sorted(glob.glob(os.path.join(EXTRA_DATA_DIR, "new_*.csv"))):
+        code = os.path.basename(path)[4:-4]
+        try:
+            df = _load_new_league_csv(path, _NEW_LEAGUE_CODES.get(code, code))
+        except Exception as e:
+            print(f"[Data] {os.path.basename(path)}: {e}")
+            continue
+        if not df.empty:
+            parts.append(df)
+    if not parts:
+        return pd.DataFrame()
+    df = pd.concat(parts, ignore_index=True)
+    df = df[df["Date"] >= EXTRA_SINCE]
+    if leagues is not None:
+        df = df[df["league"].isin(leagues)]
+    if df.empty:
+        return pd.DataFrame()
+    clash = {normalise(n) for n in (known or set())}
+    for col in ("HomeTeam", "AwayTeam"):
+        df[col] = [f"{n} ({lg})" if normalise(n) in clash else n for n, lg in zip(df[col], df["league"])]
+    df = df.drop_duplicates(subset=["Date", "HomeTeam", "AwayTeam"]).sort_values("Date").reset_index(drop=True)
+    df["Context"] = True
+    print(f"[Data] Extra leagues: {len(df)} matches for ratings only "
+          f"({', '.join(f'{k} {v}' for k, v in df['league'].value_counts().items())})")
+    return df
 
 
 def _load_epl_csv() -> pd.DataFrame:
@@ -847,16 +924,38 @@ def _pick_confidence(p: Dict) -> float:
     return float(tc) if isinstance(tc, (int, float)) else float(p.get("goals_confidence", 0) or 0)
 
 
+# Fixture clubs the model has no matches for (their predictions rest on
+# defaults), by name → league; in the admin data status
+_unknown_clubs: Dict[str, str] = {}
+
+
+def _note_unknown_clubs(model, fx: Dict) -> None:
+    """Remember a fixture's clubs the model has no matches for."""
+    stats = getattr(model, "team_stats", None)
+    if not isinstance(stats, dict) or fx.get("sport") not in (None, "football"):
+        return
+    canon = getattr(model, "canon", lambda n: n)
+    for side in ("home", "away"):
+        try:
+            if not (stats.get(canon(fx[side])) or {}).get("pts"):
+                _unknown_clubs[fx[side]] = fx.get("league", "")
+        except Exception:
+            pass
+
+
 def _build_predictions(predictor, fixtures: list, live_odds: dict) -> list:
     """Turn upcoming fixtures + live odds into prediction dicts (with value-bet flags)."""
     predictions = []
+    _unknown_clubs.clear()
     for fx in fixtures:
         if not _within_window(fx.get("date", "")):
             continue
         try:
             key = f"{fx['home']}:{fx['away']}:{fx.get('date','')}"
             odds = live_odds.get(key, {})
-            tip = predictor.predict_match(
+            model = _europe_predictor if (_europe_predictor is not None and predictor is _predictor
+                                         and fx.get("league") in ("CL", "EL", "UECL")) else predictor
+            tip = model.predict_match(
                 fx["home"], fx["away"],
                 odds_home=float(odds.get("1") or 0),
                 odds_draw=float(odds.get("X") or 0),
@@ -867,6 +966,7 @@ def _build_predictions(predictor, fixtures: list, live_odds: dict) -> list:
             )
             if not tip:
                 continue
+            _note_unknown_clubs(model, fx)
             # Value bet detection: model prob vs bookmaker implied prob
             tip_code = tip.get("tip_code", "?")
             if tip_code == "1" and odds.get("1") and float(odds.get("1", 0)) > 1:
@@ -913,11 +1013,12 @@ async def _sync_football_data(force: bool = False) -> Optional[Dict[str, list]]:
     last = _football_sync["at"]
     if not force and last and (datetime.now(timezone.utc) - last).total_seconds() < FOOTBALL_DATA_SYNC_HOURS * 3600:
         return None
-    from football_data_sync import sync, sync_international
+    from football_data_sync import sync, sync_extra, sync_international
     try:
         report = await sync(FOOTBALL_DATA_DIR)
-        for key, items in (await sync_international(INTERNATIONAL_CSV)).items():
-            report[key] += items
+        for extra in (await sync_international(INTERNATIONAL_CSV), await sync_extra(EXTRA_DATA_DIR)):
+            for key, items in extra.items():
+                report[key] += items
     except Exception as e:
         print(f"[DataSync] failed: {e}")
         return None
@@ -1029,7 +1130,8 @@ _europe_status: Dict[str, Any] = {"at": None, "fixtures": 0, "published": 0, "sk
 
 
 async def _fetch_europe_fixtures(predictor, training: pd.DataFrame) -> list:
-    """Upcoming Europa League fixtures from ESPN, only those where the model
+    """Upcoming Europa and Conference League fixtures from ESPN, only those
+    where the model that will predict them (the Europe model when adopted)
     has recent matches for both clubs (europe_fixtures.known)."""
     import europe_fixtures
     try:
@@ -1038,15 +1140,54 @@ async def _fetch_europe_fixtures(predictor, training: pd.DataFrame) -> list:
         print(f"[Europe] fetch failed: {e}")
         _europe_status.update(at=datetime.now(timezone.utc).isoformat(), errors=[str(e)])
         return []
-    counts = europe_fixtures.recent_counts(training)
-    keep, skipped = europe_fixtures.known(report["fixtures"], predictor.canon, counts)
+    if _europe_predictor is not None and _europe_model_info.get("recent_counts"):
+        canon, counts = _europe_predictor.canon, _europe_model_info["recent_counts"]
+    else:
+        canon, counts = predictor.canon, europe_fixtures.recent_counts(training)
+    keep, skipped = europe_fixtures.known(report["fixtures"], canon, counts)
     _europe_status.update(at=datetime.now(timezone.utc).isoformat(), fixtures=len(report["fixtures"]),
-                          published=len(keep), skipped=skipped, errors=report["errors"])
+                          published=len(keep), skipped=skipped, errors=report["errors"],
+                          sources=report["sources"],
+                          model="europe" if _europe_predictor is not None else "main")
     _remember_competition_logos(keep)
-    print(f"[Europe] {len(report['fixtures'])} Europa League fixtures, {len(keep)} published; "
-          f"{len(skipped)} skipped (a club with under {europe_fixtures.MIN_MATCHES} recent matches in our data)"
+    print(f"[Europe] {len(report['fixtures'])} Europa/Conference League fixtures ({report['sources']}), "
+          f"{len(keep)} published; {len(skipped)} skipped (a club with under "
+          f"{europe_fixtures.MIN_MATCHES} recent matches in our data)"
           f"{'; errors ' + str(report['errors']) if report['errors'] else ''}")
     return keep
+
+
+def _load_europe_model() -> None:
+    """The Europe model, if its check adopted a configuration and a fresh
+    one is published (europe_model.py; trained on GitHub Actions)."""
+    global _europe_predictor, _europe_model_info
+    import europe_model
+    import model_store
+    from predictor import MODEL_CACHE_VERSION
+    try:
+        verdict = europe_model.load_check(_get_redis())
+        if not verdict.get("adopted"):
+            _europe_predictor, _europe_model_info = None, {"check": verdict.get("reason")}
+            return
+        shared = model_store.fetch(MODEL_CACHE_VERSION, name=europe_model.MODEL_NAME)
+        if shared is None:
+            print("[Europe] Adopted, but no fresh Europe model is published — using the main model.")
+            return
+        blob, meta = shared
+        m = LeaguePredictor.from_bytes(blob)
+        if m is not None:
+            _europe_predictor, _europe_model_info = m, meta
+            print(f"[Europe] Europe model loaded ({meta.get('config')}).")
+    except Exception as e:
+        print(f"[Europe] Europe model not loaded: {e}")
+
+
+def _model_for(fx: Dict[str, Any]):
+    """The model that predicts this fixture."""
+    import europe_model
+    if _europe_predictor is not None and fx.get("league") in europe_model.EUROPE_CODES:
+        return _europe_predictor
+    return _predictor
 
 
 # Whether the club model uses league strength (predictor.LEAGUE_STRENGTH):
@@ -1112,13 +1253,20 @@ def _assemble_training_data():
     nation_names: set = set()
     if not intl_df.empty:
         nation_names = set(intl_df["HomeTeam"].dropna()) | set(intl_df["AwayTeam"].dropna())
+    # The Brasileirão as context rows (ratings and form, no training rows):
+    # no Brazilian club is in the European data, so no other prediction
+    # changes. The European extra leagues feed the Europe model only
+    # (europe_model.py), which is judged on European matches.
+    extra_df = _load_extra_leagues(club_names | nation_names, leagues=MAIN_EXTRA_LEAGUES)
     if not ucl_df.empty and club_names:
         ucl_df = TeamResolver(club_names, aliases=UCL_ALIASES).resolve_frame(ucl_df)
+    if not ucl_df.empty:
+        ucl_df = ucl_df.assign(Source="ucl")   # for europe_model; the model ignores it
 
     # European competitions and domestic cups from ESPN (club_cups.py), the
     # sets the nightly check found to improve the league predictions
     cups_df = _club_cup_rows(club_names)
-    parts = [df for df in [fd_df, epl_df, ucl_df, intl_df, cups_df] if not df.empty]
+    parts = [df for df in [fd_df, epl_df, ucl_df, intl_df, cups_df, extra_df] if not df.empty]
     if not parts:
         print("[Pipeline] No training data found!")
         return None
@@ -1156,6 +1304,7 @@ def _assemble_training_data():
         *[_mtime(os.path.join(DATA_DIR, f)) for f in os.listdir(DATA_DIR) if f.endswith(".csv")],
         # League CSVs — refreshed daily by _sync_football_data
         *[_mtime(f) for f in glob.glob(os.path.join(FOOTBALL_DATA_DIR, "*.csv"))],
+        *[_mtime(f) for f in glob.glob(os.path.join(EXTRA_DATA_DIR, "*.csv"))],
     )
     return history, combined, data_mtime
 
@@ -1274,7 +1423,8 @@ async def _run_pipeline():
             print(f"[Pipeline] +INT: {len(fixtures)} international fixtures — "
                   f"{len(predictions)} predictions published.")
 
-        # ── Europa League (ESPN; not in football-data.org's free plan) ──
+        # ── Europa and Conference League (ESPN; not in football-data.org's free plan) ──
+        await asyncio.to_thread(_load_europe_model)
         europe = await _fetch_europe_fixtures(predictor, combined)
         if europe:
             fixtures.extend(europe)
@@ -1285,7 +1435,7 @@ async def _run_pipeline():
             _predictions_cache = predictions
             _last_updated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
             _save_predictions_cache()
-            print(f"[Pipeline] +EL: {len(europe)} Europa League fixtures published.")
+            print(f"[Pipeline] +EL/UECL: {len(europe)} Europa/Conference League fixtures published.")
 
         if API_KEY:
             client = FootballDataClient(API_KEY)
@@ -1357,6 +1507,9 @@ async def _run_pipeline():
                 _last_updated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
                 _save_predictions_cache()
                 print(f"[Pipeline] Republished {len(predictions)} predictions (with live odds).")
+                if _unknown_clubs:
+                    print(f"[Pipeline] {len(_unknown_clubs)} fixture clubs the model has no matches for: "
+                          + ", ".join(f"{n} ({lg})" for n, lg in sorted(_unknown_clubs.items(), key=lambda kv: kv[1])))
 
             # ── Recent-results Elo calibration (refinement) ───────────────────
             print("[Pipeline] Fetching recent API results to calibrate Elo...")
@@ -1789,6 +1942,7 @@ def _sanitize(obj):
 # Match page: each side's last five and their last five meetings
 # ------------------------------------------------------------------ #
 _recent_md: Tuple[float, Optional[pd.DataFrame]] = (0.0, None)
+_facts_names: List[Optional[TeamResolver]] = [None]   # names in the results index
 RECENT_MD_DAYS = 10
 
 
@@ -1805,7 +1959,11 @@ def _build_results_index(combined: pd.DataFrame) -> None:
     ucl = _load_ucl_csv()
     if not ucl.empty:
         ucl = TeamResolver(names, aliases=UCL_ALIASES).resolve_frame(ucl).assign(league="CL")
-    _results_idx = match_facts.index([match_facts.frame(ucl), match_facts.frame(combined), match_facts.frame(cups)])
+    extra = _load_extra_leagues(names)      # every extra league, for their clubs' last five
+    _results_idx = match_facts.index([match_facts.frame(ucl), match_facts.frame(combined),
+                                      match_facts.frame(cups), match_facts.frame(extra)])
+    _facts_names[0] = TeamResolver(set(_results_idx["HomeTeam"]) | set(_results_idx["AwayTeam"]),
+                                   aliases=UCL_ALIASES)
     print(f"[Pipeline] Results index: {len(_results_idx)} matches.")
 
 
@@ -1854,7 +2012,13 @@ def _team_results(teams: set) -> pd.DataFrame:
 
 async def _facts_for(home: str, away: str, day: str = "") -> Dict[str, Any]:
     import match_facts
-    h, a = (_predictor.canon(home), _predictor.canon(away)) if _predictor is not None else (home, away)
+    resolver = _facts_names[0]
+    if resolver is not None:
+        h, a = resolver.resolve(home), resolver.resolve(away)
+    elif _predictor is not None:
+        h, a = _predictor.canon(home), _predictor.canon(away)
+    else:
+        h, a = home, away
     idx = await asyncio.to_thread(_team_results, {h, a})
     return match_facts.facts(idx, h, a, day or None)
 
@@ -1916,7 +2080,7 @@ async def _analysis_cached(home: str, away: str, day: str = "") -> Tuple[Dict[st
     team news change (the visitor meanwhile gets the previous one)."""
     fx, key, ko = _match_timing(home, away, day)
     news, n_info = await _match_news(home, away, day)
-    fp = match_cache.fingerprint(id(_predictor), n_info.get("at"), fx.get("odds_home"), fx.get("odds_draw"),
+    fp = match_cache.fingerprint(id(_model_for(fx)), n_info.get("at"), fx.get("odds_home"), fx.get("odds_draw"),
                                  fx.get("odds_away"), (fx.get("referee") or {}).get("name"))
     return await _mcache.get("analysis", key, lambda: _build_analysis(home, away, fx, news),
                              fp=fp, fresh_for=3600, ttl=match_cache.ttl_seconds(ko))
@@ -1934,7 +2098,8 @@ async def get_match_analysis(home: str, away: str, day: str = Query("", alias="d
 
 
 async def _build_analysis(home: str, away: str, cached_fx: Dict[str, Any], news: Dict[str, Any]) -> Optional[Dict]:
-    if _predictor is None:
+    P = _model_for(cached_fx)   # the Europe model for European fixtures, when adopted
+    if P is None:
         return None
     fx_date = cached_fx.get("date", "")
 
@@ -1952,46 +2117,46 @@ async def _build_analysis(home: str, away: str, cached_fx: Dict[str, Any], news:
     adj_def_h = 1.0 + adjustments.get("home_defense_modifier", 0.0)
     adj_def_a = 1.0 + adjustments.get("away_defense_modifier", 0.0)
     # The model's names for these teams (display names stay as given)
-    h_key, a_key = _predictor.canon(home), _predictor.canon(away)
+    h_key, a_key = P.canon(home), P.canon(away)
     if adjustments:
-        _predictor._init(h_key)
-        _predictor._init(a_key)
+        P._init(h_key)
+        P._init(a_key)
         # Temporarily scale goal lists so Dixon-Coles xG reflects the news adjustment.
         # We scale both overall gf and the venue-specific home_gf/away_gf lists.
-        orig_home_gf      = _predictor.team_stats[h_key].get("gf", [])
-        orig_home_gf_home = _predictor.team_stats[h_key].get("home_gf", [])
-        orig_away_gf      = _predictor.team_stats[a_key].get("gf", [])
-        orig_away_gf_away = _predictor.team_stats[a_key].get("away_gf", [])
+        orig_home_gf      = P.team_stats[h_key].get("gf", [])
+        orig_home_gf_home = P.team_stats[h_key].get("home_gf", [])
+        orig_away_gf      = P.team_stats[a_key].get("gf", [])
+        orig_away_gf_away = P.team_stats[a_key].get("away_gf", [])
         if adj_xg_h != 1.0:
             if orig_home_gf:
-                _predictor.team_stats[h_key]["gf"]      = [v * adj_xg_h for v in orig_home_gf]
+                P.team_stats[h_key]["gf"]      = [v * adj_xg_h for v in orig_home_gf]
             if orig_home_gf_home:
-                _predictor.team_stats[h_key]["home_gf"] = [v * adj_xg_h for v in orig_home_gf_home]
+                P.team_stats[h_key]["home_gf"] = [v * adj_xg_h for v in orig_home_gf_home]
         if adj_xg_a != 1.0:
             if orig_away_gf:
-                _predictor.team_stats[a_key]["gf"]      = [v * adj_xg_a for v in orig_away_gf]
+                P.team_stats[a_key]["gf"]      = [v * adj_xg_a for v in orig_away_gf]
             if orig_away_gf_away:
-                _predictor.team_stats[a_key]["away_gf"] = [v * adj_xg_a for v in orig_away_gf_away]
+                P.team_stats[a_key]["away_gf"] = [v * adj_xg_a for v in orig_away_gf_away]
 
     # If live odds available, re-run prediction with them for better accuracy
     if live_odds:
-        result = _predictor.predict_match_full(
+        result = P.predict_match_full(
             home, away,
             odds_home=live_odds.get("1", 0),
             odds_draw=live_odds.get("X", 0),
             odds_away=live_odds.get("2", 0),
         )
     else:
-        result = _predictor.predict_match_full(home, away)
+        result = P.predict_match_full(home, away)
 
     # Restore original stats after prediction (don't permanently alter training data)
     if adjustments:
         if adj_xg_h != 1.0:
-            _predictor.team_stats[h_key]["gf"]      = orig_home_gf
-            _predictor.team_stats[h_key]["home_gf"] = orig_home_gf_home
+            P.team_stats[h_key]["gf"]      = orig_home_gf
+            P.team_stats[h_key]["home_gf"] = orig_home_gf_home
         if adj_xg_a != 1.0:
-            _predictor.team_stats[a_key]["gf"]      = orig_away_gf
-            _predictor.team_stats[a_key]["away_gf"] = orig_away_gf_away
+            P.team_stats[a_key]["gf"]      = orig_away_gf
+            P.team_stats[a_key]["away_gf"] = orig_away_gf_away
 
     # Apply confidence modifier from web search
     conf_mod = adjustments.get("confidence_modifier", 0.0)
@@ -2026,8 +2191,8 @@ async def _build_analysis(home: str, away: str, cached_fx: Dict[str, Any], news:
 
     # Show team form stats in the response
     result["team_form"] = {
-        "home": _predictor_form_summary(home),
-        "away": _predictor_form_summary(away),
+        "home": _predictor_form_summary(home, P),
+        "away": _predictor_form_summary(away, P),
     }
 
     # Inject cards + corners markets if data is available
@@ -2291,7 +2456,9 @@ async def data_status(_admin: str = Depends(require_admin)):
         "renamed": {k: v["model_name"] for k, v in sorted(teams.items()) if v["model_name"] != k},
         "thin_history": thin,
         "international": {**_intl_status, "at": _intl_status["at"].isoformat() if _intl_status["at"] else None},
-        "europa_league": _europe_status,
+        "unknown_clubs": dict(sorted(_unknown_clubs.items(), key=lambda kv: kv[1])),
+        "europa_league": {**_europe_status, "europe_model": {k: v for k, v in _europe_model_info.items()
+                                                            if k != "recent_counts"}},
         "shared_model": _shared_model_status(),
         "sportybet_links": _sb_link_status,
         "international_set_pieces": {**_intl_sp_info, "active": _intl_set_pieces is not None,

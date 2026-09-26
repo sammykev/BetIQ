@@ -30,6 +30,18 @@ DEST_DIR = os.path.join(os.path.dirname(__file__), "data", "football")
 DEFAULT_DIVISIONS = ("E0", "E1", "SP1", "I1", "D1", "D2", "F1", "N1", "P1")
 REQUIRED = ["Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG", "FTR"]
 
+# Leagues whose clubs play in Europe (and the Brasileirão), kept apart in
+# data/football_extra/: the model learns their clubs' ratings and form from
+# them without training on them (main._load_extra_leagues). Belgium,
+# Scotland, Greece and Turkey come in the same per-season files as above;
+# the others as one file per country with every season since 2012
+# (football-data.co.uk/new/), results and closing odds.
+EXTRA_DIR = os.path.join(os.path.dirname(__file__), "data", "football_extra")
+EXTRA_DIVISIONS = ("B1", "SC0", "G1", "T1")
+NEW_BASE_URL = "https://www.football-data.co.uk/new"
+NEW_LEAGUES = ("AUT", "SWZ", "DNK", "NOR", "SWE", "POL", "ROU", "BRA")
+NEW_REQUIRED = ["Date", "Home", "Away", "HG", "AG", "Res"]
+
 INTERNATIONAL_URL = "https://raw.githubusercontent.com/martj42/international_results/master/results.csv"
 INTERNATIONAL_PATH = os.path.join(os.path.dirname(__file__), "data", "international_results.csv")
 INTERNATIONAL_REQUIRED = ["date", "home_team", "away_team", "home_score", "away_score"]
@@ -93,6 +105,61 @@ async def _get(client: httpx.AsyncClient, url: str, pause: float = RETRY_PAUSE):
             if attempt == ATTEMPTS - 1:
                 raise
         await asyncio.sleep(pause * 2 ** attempt)
+
+
+async def sync_new_leagues(dest_dir: str = EXTRA_DIR, codes: Iterable[str] = NEW_LEAGUES,
+                           client: Optional[httpx.AsyncClient] = None,
+                           pause: float = RETRY_PAUSE) -> Dict[str, list]:
+    """The one-file-per-country leagues into dest_dir/new_{code}.csv, under
+    the same rules as sync()."""
+    report: Dict[str, list] = {"updated": [], "unchanged": [], "skipped": [], "failed": []}
+    os.makedirs(dest_dir, exist_ok=True)
+    own_client = client is None
+    client = client or httpx.AsyncClient(
+        timeout=httpx.Timeout(60, connect=15), follow_redirects=True,
+        headers={"User-Agent": "BetIQ/1.0 (+https://predict-withbetiq.vercel.app)"},
+    )
+    try:
+        for code in codes:
+            name = f"new_{code}.csv"
+            path = os.path.join(dest_dir, name)
+            try:
+                res = await _get(client, f"{NEW_BASE_URL}/{code}.csv", pause)
+            except httpx.HTTPError as e:
+                report["failed"].append(f"{name}: {type(e).__name__}")
+                continue
+            if res.status_code != 200:
+                report["failed"].append(f"{name}: HTTP {res.status_code}")
+                continue
+            text = _decode(res.content)
+            played = played_matches(text, NEW_REQUIRED)
+            if not played:
+                report["failed"].append(f"{name}: not a results CSV")
+                continue
+            if os.path.exists(path):
+                with open(path, encoding="utf-8", errors="replace") as f:
+                    current = f.read()
+                if current == text:
+                    report["unchanged"].append(name)
+                    continue
+                if played < (played_matches(current, NEW_REQUIRED) or 0):
+                    report["failed"].append(f"{name}: download has fewer matches than the saved file")
+                    continue
+            _write_atomic(path, text)
+            report["updated"].append(name)
+    finally:
+        if own_client:
+            await client.aclose()
+    return report
+
+
+async def sync_extra(dest_dir: str = EXTRA_DIR, seasons: Optional[Iterable[str]] = None,
+                     today: Optional[date] = None) -> Dict[str, list]:
+    """Every extra league (EXTRA_DIVISIONS and NEW_LEAGUES)."""
+    report = await sync(dest_dir, EXTRA_DIVISIONS, seasons, today=today)
+    for key, items in (await sync_new_leagues(dest_dir)).items():
+        report[key] += items
+    return report
 
 
 def failed_files(report: Dict[str, list]) -> List[tuple]:
@@ -205,9 +272,11 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--seasons", type=int, default=2, help="how many recent seasons (default 2)")
     ap.add_argument("--dest", default=DEST_DIR)
     args = ap.parse_args(argv)
-    report = asyncio.run(sync(args.dest, seasons=recent_seasons(date.today(), args.seasons)))
-    for key, items in asyncio.run(sync_international()).items():
-        report[key] += items
+    seasons = recent_seasons(date.today(), args.seasons)
+    report = asyncio.run(sync(args.dest, seasons=seasons))
+    for extra in (asyncio.run(sync_international()), asyncio.run(sync_extra(seasons=seasons))):
+        for key, items in extra.items():
+            report[key] += items
     for key, items in report.items():
         print(f"{key:9} {len(items):3}  {' '.join(items)}")
 

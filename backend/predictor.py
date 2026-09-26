@@ -84,10 +84,13 @@ COMPETITION_K: Dict[str, float] = {
 # walk-forward check says it helps (see club_cups.check).
 LEAGUE_STRENGTH = False
 DOMESTIC_LEAGUES = {"PL", "ELC", "EL1", "EL2", "PD", "SD", "SA", "SB", "BL1", "BL2", "FL1", "FL2", "DED", "JPL",
-                    "PPL", "SPL", "D1", "GSL", "BSA"}
+                    "PPL", "SPL", "D1", "GSL", "BSA", "TSL", "AUT", "SUI", "DEN", "NOR", "SWE", "POL", "ROU"}
 LEAGUE_OFFSET_PRIOR = {"PL": 0.0, "PD": -15.0, "SA": -25.0, "BL1": -25.0, "FL1": -60.0, "PPL": -90.0,
                        "DED": -100.0, "ELC": -170.0, "BL2": -190.0, "SD": -190.0, "SB": -200.0, "FL2": -230.0,
-                       "EL1": -280.0, "EL2": -360.0, "JPL": -110.0, "SPL": -150.0, "GSL": -150.0, "BSA": -80.0}
+                       "EL1": -280.0, "EL2": -360.0, "JPL": -110.0, "SPL": -150.0, "GSL": -150.0, "BSA": -80.0,
+                       # Rough starting points (UEFA coefficients); European results move them
+                       "TSL": -140.0, "AUT": -150.0, "SUI": -160.0, "DEN": -170.0, "NOR": -180.0,
+                       "POL": -200.0, "SWE": -210.0, "ROU": -230.0}
 LEAGUE_K = 6.0          # league offset learning rate per cross-league match
 STRENGTH_TEAM_K = 0.5   # share of the normal Elo K a strength-only match moves the teams by
 
@@ -452,6 +455,15 @@ class LeaguePredictor:
             for lg, sign in ((lh, 1.0), (la, -1.0)):
                 self.league_offset[lg] = self.league_offset.get(lg, LEAGUE_OFFSET_PRIOR.get(lg, 0.0)) + sign * LEAGUE_K * delta
 
+    def context_update(self, r) -> None:
+        """A context row (a league CSV row): ratings and form, no training
+        row, no baselines."""
+        day = str(r["Date"].date()) if pd.notna(r.get("Date")) else None
+        self._update(r["HomeTeam"], r["AwayTeam"], r["Result"], r["FTHG"], r["FTAG"],
+                     hyc=r.get("HY"), ayc=r.get("AY"), hrc=r.get("HR"), arc=r.get("AR"),
+                     match_date=day, competition=str(r.get("league", "") or ""),
+                     hst=r.get("HST"), ast=r.get("AST"), baseline=False)
+
     def cols(self, odds: bool = True, target: str = "win") -> List[str]:
         """The feature columns a model trains and predicts on: target "win"
         (the result model) or "goals" (the over/under models)."""
@@ -638,7 +650,12 @@ class LeaguePredictor:
         match_date: str = None,
         competition: str = "",
         hst: float = None, ast: float = None,
+        baseline: bool = True,
     ):
+        """One played match into the ratings and rolling stats. baseline=False
+        (a context row, see train) leaves the all-matches averages alone —
+        the goals and shots baselines every team's ratings are measured
+        against."""
         if self._ready:
             home, away = self.canon(home), self.canon(away)
         self._init(home)
@@ -654,7 +671,8 @@ class LeaguePredictor:
                 self.team_stats[team].setdefault("sota", []).append(a)
             if not hasattr(self, "_league_sot"):
                 self._league_sot = []
-            self._league_sot += [hst, ast]
+            if baseline:
+                self._league_sot += [hst, ast]
         # Reject NaN goals — can come from CSV rows with missing scores
         try:
             fthg, ftag = float(fthg), float(ftag)
@@ -674,8 +692,9 @@ class LeaguePredictor:
         self.team_stats[away]["away_gf"].append(ftag)
         self.team_stats[away]["away_ga"].append(fthg)
         # League-wide baseline (used to normalise attack/defense ratings)
-        self._league_home_goals.append(fthg)
-        self._league_away_goals.append(ftag)
+        if baseline:
+            self._league_home_goals.append(fthg)
+            self._league_away_goals.append(ftag)
         pts = {"H": (3, 0), "D": (1, 1), "A": (0, 3)}[result]
         self.team_stats[home]["pts"].append(pts[0])
         self.team_stats[away]["pts"].append(pts[1])
@@ -743,6 +762,13 @@ class LeaguePredictor:
         if not hasattr(self, "use_league_strength"):
             self.use_league_strength = LEAGUE_STRENGTH
 
+        # Context rows (leagues the model learns ratings from but doesn't train
+        # on, e.g. main._load_extra_leagues): only their teams' ratings and
+        # form change, so the predictions for every other team stay the same
+        context = matches["Context"].fillna(False).astype(bool) if "Context" in matches.columns \
+            else pd.Series(False, index=matches.index)
+        trained = matches[~context]
+
         has_odds = all(c in matches.columns for c in ["B365H", "B365D", "B365A"])
         if has_odds:
             print(f"[Predictor] Training WITH bookmaker odds features ({len(matches)} matches)")
@@ -751,7 +777,7 @@ class LeaguePredictor:
 
         # Compute avg implied probs across all training data (for fallback at predict time)
         if has_odds:
-            valid_odds = matches[["B365H","B365D","B365A"]].dropna()
+            valid_odds = trained[["B365H","B365D","B365A"]].dropna()
             valid_odds = valid_odds[(valid_odds > 1).all(axis=1)]
             if len(valid_odds):
                 inv = valid_odds.apply(lambda x: 1/x)
@@ -778,8 +804,8 @@ class LeaguePredictor:
         # Estimate Dixon-Coles rho from training data using MLE approximation.
         # rho < 0 means 0-0 and 1-1 are more common than independent Poisson predicts.
         try:
-            goals_h = matches["FTHG"].dropna()
-            goals_a = matches["FTAG"].dropna()
+            goals_h = trained["FTHG"].dropna()
+            goals_a = trained["FTAG"].dropna()
             if len(goals_h) >= 100:
                 mu_h = float(goals_h.mean())
                 mu_a = float(goals_a.mean())
@@ -802,6 +828,9 @@ class LeaguePredictor:
         for idx, r in matches.iterrows():
             if strength_only[idx]:
                 self._strength_update(r["HomeTeam"], r["AwayTeam"], r["Result"], str(r.get("league", "") or ""))
+                continue
+            if context[idx]:
+                self.context_update(r)
                 continue
             oh = float(r.get("B365H") or 0)
             od = float(r.get("B365D") or 0)

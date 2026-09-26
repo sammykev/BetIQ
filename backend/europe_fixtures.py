@@ -1,6 +1,6 @@
 """
-Upcoming Europa League fixtures from ESPN's public scoreboard: the
-competition isn't in football-data.org's free plan (it answers 403).
+Upcoming Europa League and Conference League fixtures from ESPN's public
+scoreboard: neither is in football-data.org's free plan (403).
 
 The model only knows a club through the matches it trains on: the league
 CSVs (England, Spain, Italy, Germany, France, the Netherlands, Portugal),
@@ -10,8 +10,10 @@ or no matches there, and the model would rate it an average top-league
 side. Such fixtures aren't published: known() keeps the ones where both
 clubs played at least MIN_MATCHES training matches in the last RECENT_DAYS.
 
-Scores come in through results_feed.py (ESPN "uefa.europa"), which grades
-the published predictions like any other.
+With the Europe model (europe_model.py) adopted, "known" is judged on its
+data, which includes those extra leagues. Scores come in through
+results_feed.py (ESPN), which grades the published predictions like any
+other.
 """
 
 from datetime import date, datetime, timedelta, timezone
@@ -22,6 +24,7 @@ import international_fixtures as intl
 # code: (ESPN slug, name, flag, The Odds API sport key)
 COMPETITIONS: Dict[str, Tuple[str, str, str, str]] = {
     "EL": ("uefa.europa", "Europa League", "🟠", "soccer_uefa_europa_league"),
+    "UECL": ("uefa.europa.conf", "Conference League", "🟢", "soccer_uefa_europa_conference_league"),
 }
 MIN_MATCHES = 15
 RECENT_DAYS = 400

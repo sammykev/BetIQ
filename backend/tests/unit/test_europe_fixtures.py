@@ -37,7 +37,7 @@ def test_fixtures_are_filed_as_europa_league_club_matches():
     page = _page([_event("1", "Aston Villa", "SK Brann", "2026-10-02T19:00Z"),
                   _event("2", "Celtic", "FC Porto", "2026-09-20T19:00Z", state="post")])
     report = asyncio.run(ef.fetch(14, today=date(2026, 9, 26), client=FakeClient(page)))
-    assert report["sources"] == {"EL": 1}
+    assert report["sources"] == {"EL": 1, "UECL": 1}   # the fake answers every competition alike
     f = report["fixtures"][0]
     assert (f["home"], f["away"], f["date"], f["time"]) == ("Aston Villa", "SK Brann", "2026-10-02", "19:00")
     assert f["league"] == "EL" and f["league_name"] == "Europa League"
@@ -57,3 +57,10 @@ def test_only_clubs_the_model_knows_are_published():
     assert [(f["home"], f["away"]) for f in keep] == [("Aston Villa", "FC Porto")]
     assert [(s["home"], s["away"], s["home_matches"], s["away_matches"]) for s in skipped] == [
         ("Aston Villa", "SK Brann", 20, 3), ("Celtic", "FC Porto", 0, 23)]
+
+
+def test_conference_league():
+    f = ef.to_fixture({"match_id": "espn:9", "home": "A", "away": "B", "date": "2026-10-02",
+                       "model_league": "INT"}, "UECL")
+    assert f["league"] == "UECL" and f["league_name"] == "Conference League"
+    assert f["odds_sport"] == "soccer_uefa_europa_conference_league"

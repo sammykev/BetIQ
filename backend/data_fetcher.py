@@ -15,8 +15,10 @@ import os
 
 API_BASE = "https://api.football-data.org/v4"
 
-# Competitions this process's API key got a 401/403 for (not in its plan)
-NOT_IN_PLAN: set = set()
+# Competitions this process's API key got a 401/403 for (not in its plan);
+# the Europa and Conference League come from ESPN instead, never asked for
+ESPN_ONLY = {"EL", "UECL"}
+NOT_IN_PLAN: set = set(ESPN_ONLY)
 
 
 def competition_of(url: str) -> Optional[str]:
@@ -40,6 +42,9 @@ LEAGUES: Dict[str, Dict] = {
     "DED": {"name": "Eredivisie",       "country": "Netherlands","flag": "🇳🇱"},
     "PPL": {"name": "Primeira Liga",    "country": "Portugal","flag": "🇵🇹"},
     "BSA": {"name": "Brasileirão",      "country": "Brazil",  "flag": "🇧🇷"},
+    "ELC": {"name": "Championship",     "country": "England", "flag": "🏴󠁧󠁢󠁥󠁮󠁧󠁿"},
+    # Fixtures from ESPN (europe_fixtures.py): not in football-data.org's free plan
+    "UECL": {"name": "Conference League", "country": "Europe", "flag": "🟢"},
 }
 
 

@@ -74,3 +74,42 @@ class TestTraining:
         m.train(pd.concat([league, cup], ignore_index=True))
         assert "Z" not in m.team_stats                    # no form for a ratings-only team
         assert "Z" in m.elo.ratings and m.elo.ratings["Z"] < 1500
+
+
+class TestContextRows:
+    """Context rows (main._load_extra_leagues): ratings and form for their
+    teams, no training rows, and nobody else's prediction changes."""
+
+    def _league(self, n=240):
+        import numpy as np
+        rng = np.random.default_rng(3)
+        teams = ["A", "B", "C", "D", "E", "F"]
+        rows, day = [], pd.Timestamp("2023-08-01")
+        for i in range(n):
+            h, a = rng.choice(teams, 2, replace=False)
+            hg, ag = int(rng.integers(0, 4)), int(rng.integers(0, 3))
+            rows.append({"Date": day + pd.Timedelta(days=i), "HomeTeam": h, "AwayTeam": a, "FTHG": hg, "FTAG": ag,
+                         "Result": "H" if hg > ag else "A" if hg < ag else "D", "league": "PL",
+                         "B365H": 2.1, "B365D": 3.3, "B365A": 3.6, "HST": 5, "AST": 3})
+        return pd.DataFrame(rows)
+
+    def _context(self):
+        rows, day = [], pd.Timestamp("2023-08-02")
+        for i in range(80):
+            h, a = ("Flamengo", "Santos") if i % 2 else ("Santos", "Flamengo")
+            rows.append({"Date": day + pd.Timedelta(days=i * 3), "HomeTeam": h, "AwayTeam": a, "FTHG": 4, "FTAG": 0,
+                         "Result": "H", "league": "BSA", "B365H": 1.2, "B365D": 6.0, "B365A": 12.0,
+                         "HST": 11, "AST": 1, "Context": True})
+        return pd.DataFrame(rows)
+
+    def test_other_predictions_are_identical_and_context_teams_get_ratings(self):
+        league = self._league()
+        plain, withctx = pr.LeaguePredictor(), pr.LeaguePredictor()
+        plain.train(league)
+        withctx.train(pd.concat([league, self._context()], ignore_index=True).sort_values("Date", kind="stable"))
+        for h, a in (("A", "B"), ("C", "F"), ("E", "D")):
+            assert plain.predict_match(h, a) == withctx.predict_match(h, a)
+            assert plain.predict_match(h, a, 1.9, 3.4, 4.2) == withctx.predict_match(h, a, 1.9, 3.4, 4.2)
+        assert "Flamengo" not in plain.team_stats
+        assert len(withctx.team_stats["Flamengo"]["gf"]) == 80
+        assert withctx.elo.get("Flamengo") != 1500 and withctx._league_home_goals == plain._league_home_goals

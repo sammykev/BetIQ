@@ -104,7 +104,10 @@ class TestPipelineThrottle:
         async def fake_sync(dest):
             calls.append(dest)
             return {"updated": [], "unchanged": ["E0_2627.csv"], "skipped": [], "failed": []}
+        async def fake_extra(dest):
+            return {"updated": [], "unchanged": [], "skipped": [], "failed": []}
         monkeypatch.setattr(fds, "sync", fake_sync)
+        monkeypatch.setattr(fds, "sync_extra", fake_extra)
         monkeypatch.setattr(main, "_football_sync", {"at": None, "report": None})
         monkeypatch.delenv("FOOTBALL_DATA_SYNC", raising=False)
         return calls
