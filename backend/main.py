@@ -1025,6 +1025,30 @@ async def _fetch_international_fixtures() -> list:
     return report["fixtures"]
 
 
+_europe_status: Dict[str, Any] = {"at": None, "fixtures": 0, "published": 0, "skipped": [], "errors": []}
+
+
+async def _fetch_europe_fixtures(predictor, training: pd.DataFrame) -> list:
+    """Upcoming Europa League fixtures from ESPN, only those where the model
+    has recent matches for both clubs (europe_fixtures.known)."""
+    import europe_fixtures
+    try:
+        report = await europe_fixtures.fetch(PREDICTION_DAYS)
+    except Exception as e:
+        print(f"[Europe] fetch failed: {e}")
+        _europe_status.update(at=datetime.now(timezone.utc).isoformat(), errors=[str(e)])
+        return []
+    counts = europe_fixtures.recent_counts(training)
+    keep, skipped = europe_fixtures.known(report["fixtures"], predictor.canon, counts)
+    _europe_status.update(at=datetime.now(timezone.utc).isoformat(), fixtures=len(report["fixtures"]),
+                          published=len(keep), skipped=skipped, errors=report["errors"])
+    _remember_competition_logos(keep)
+    print(f"[Europe] {len(report['fixtures'])} Europa League fixtures, {len(keep)} published; "
+          f"{len(skipped)} skipped (a club with under {europe_fixtures.MIN_MATCHES} recent matches in our data)"
+          f"{'; errors ' + str(report['errors']) if report['errors'] else ''}")
+    return keep
+
+
 # Whether the club model uses league strength (predictor.LEAGUE_STRENGTH):
 # the European/cup check's verdict, read with the matches (_club_cup_rows)
 _club_league_strength = False
@@ -1249,6 +1273,19 @@ async def _run_pipeline():
             _save_predictions_cache()
             print(f"[Pipeline] +INT: {len(fixtures)} international fixtures — "
                   f"{len(predictions)} predictions published.")
+
+        # ── Europa League (ESPN; not in football-data.org's free plan) ──
+        europe = await _fetch_europe_fixtures(predictor, combined)
+        if europe:
+            fixtures.extend(europe)
+            for fx in europe:
+                _cache_team_crest(fx["home"], fx.get("home_crest"))
+                _cache_team_crest(fx["away"], fx.get("away_crest"))
+            predictions = _build_predictions(predictor, fixtures, {})
+            _predictions_cache = predictions
+            _last_updated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+            _save_predictions_cache()
+            print(f"[Pipeline] +EL: {len(europe)} Europa League fixtures published.")
 
         if API_KEY:
             client = FootballDataClient(API_KEY)
@@ -2254,6 +2291,7 @@ async def data_status(_admin: str = Depends(require_admin)):
         "renamed": {k: v["model_name"] for k, v in sorted(teams.items()) if v["model_name"] != k},
         "thin_history": thin,
         "international": {**_intl_status, "at": _intl_status["at"].isoformat() if _intl_status["at"] else None},
+        "europa_league": _europe_status,
         "shared_model": _shared_model_status(),
         "sportybet_links": _sb_link_status,
         "international_set_pieces": {**_intl_sp_info, "active": _intl_set_pieces is not None,
