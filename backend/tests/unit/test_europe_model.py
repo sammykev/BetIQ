@@ -72,3 +72,12 @@ def test_new_league_files_and_name_clashes(tmp_path, monkeypatch):
     r = df.iloc[0]
     assert (r.HomeTeam, r.AwayTeam, r.league, r.B365H, bool(r.Context)) == ("Brann", "Arsenal (NOR)", "NOR", 1.8, True)
     assert main._load_extra_leagues({"Arsenal"}, leagues={"BSA"}).empty
+
+
+def test_the_europe_model_only_takes_the_competitions_it_predicts_better():
+    sc = lambda ll, n=200: {"matches": n, "log_loss": ll}
+    verdict = {"adopted": "x", "configs": {
+        "main": {"by_competition": {"CL": sc(0.96), "EL": sc(0.97), "UECL": sc(1.01, 150)}},
+        "x": {"by_competition": {"CL": sc(0.93), "EL": sc(0.91), "UECL": sc(1.04, 150)}}}}
+    assert em.competitions(verdict) == ["CL", "EL"]
+    assert em.competitions({"adopted": None, "configs": verdict["configs"]}) == []

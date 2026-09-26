@@ -10,6 +10,9 @@ club on one rating scale across leagues (predictor.LEAGUE_STRENGTH, learned
 from the European results ESPN gives club_cups.py). None of that touches the
 main model, whose league predictions stay exactly as they are.
 
+It predicts only the competitions where it did at least as well as the
+main model in the check (competitions()).
+
 check() replays the last season and a bit of European matches (ESPN's
 Champions League, Europa League and Conference League results) through each
 configuration in CONFIGS: trained once on everything before, then every
@@ -212,6 +215,7 @@ def check(league: pd.DataFrame, extras: pd.DataFrame, espn: pd.DataFrame, ucl: p
     ll = result["configs"][best]["all"].get("log_loss")
     if len(keys) >= MIN_SCORED and ll is not None and base is not None and ll <= base - MIN_GAIN:
         result["adopted"] = best
+        result["competitions"] = competitions(result)
     result["reason"] = (f"{best}: {ll} vs main {base} on {len(keys)} matches "
                         f"(needs {MIN_GAIN} better on {MIN_SCORED}+)")
     return result
@@ -244,6 +248,28 @@ def inputs(app, seasons: int = 2) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFr
     return league, extras, espn, ucl
 
 
+MIN_COMPETITION_MATCHES = 50
+
+
+def competitions(verdict: Dict[str, Any]) -> List[str]:
+    """The competitions the adopted configuration predicts at least as well
+    as the main model (on MIN_COMPETITION_MATCHES+ of their matches); the
+    rest keep the main model. The first check: better in the Champions and
+    Europa League, worse in the Conference League."""
+    adopted = verdict.get("adopted")
+    configs = verdict.get("configs") or {}
+    if not adopted or adopted not in configs or "main" not in configs:
+        return []
+    ours, main = configs[adopted].get("by_competition") or {}, configs["main"].get("by_competition") or {}
+    out = []
+    for code, sc in ours.items():
+        base = (main.get(code) or {}).get("log_loss")
+        if sc.get("matches", 0) >= MIN_COMPETITION_MATCHES and base is not None \
+                and sc.get("log_loss") is not None and sc["log_loss"] <= base:
+            out.append(code)
+    return sorted(out)
+
+
 def load_check(r) -> Dict[str, Any]:
     raw = r.get(CHECK_KEY) if r is not None else None
     if not raw:
@@ -271,6 +297,7 @@ def train_and_publish(app, config: str) -> Dict[str, Any]:
     m, counts = train(league, extras, espn, ucl, config)
     meta = model_store.publish(m.to_bytes(), MODEL_CACHE_VERSION, {
         "source": "github-actions", "config": config, "recent_counts": counts,
+        "competitions": competitions(load_check(model_store._client())),
         "extras": len(extras), "european_rows": len(espn) + len(ucl),
         "commit": os.getenv("GITHUB_SHA", "")[:7]}, name=MODEL_NAME)
     print(f"[Europe] Published the Europe model ({config}): {meta['size'] / 1e6:.1f} MB, "

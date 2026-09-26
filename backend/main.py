@@ -953,8 +953,8 @@ def _build_predictions(predictor, fixtures: list, live_odds: dict) -> list:
         try:
             key = f"{fx['home']}:{fx['away']}:{fx.get('date','')}"
             odds = live_odds.get(key, {})
-            model = _europe_predictor if (_europe_predictor is not None and predictor is _predictor
-                                         and fx.get("league") in ("CL", "EL", "UECL")) else predictor
+            model = _europe_predictor if (predictor is _predictor and _europe_covers(fx.get("league", ""))) \
+                else predictor
             tip = model.predict_match(
                 fx["home"], fx["away"],
                 odds_home=float(odds.get("1") or 0),
@@ -1140,15 +1140,20 @@ async def _fetch_europe_fixtures(predictor, training: pd.DataFrame) -> list:
         print(f"[Europe] fetch failed: {e}")
         _europe_status.update(at=datetime.now(timezone.utc).isoformat(), errors=[str(e)])
         return []
-    if _europe_predictor is not None and _europe_model_info.get("recent_counts"):
-        canon, counts = _europe_predictor.canon, _europe_model_info["recent_counts"]
-    else:
-        canon, counts = predictor.canon, europe_fixtures.recent_counts(training)
-    keep, skipped = europe_fixtures.known(report["fixtures"], canon, counts)
+    main_counts = europe_fixtures.recent_counts(training)
+    keep, skipped = [], []
+    for code in europe_fixtures.COMPETITIONS:
+        fixtures = [f for f in report["fixtures"] if f["league"] == code]
+        if _europe_covers(code) and _europe_model_info.get("recent_counts"):
+            k, sk = europe_fixtures.known(fixtures, _europe_predictor.canon, _europe_model_info["recent_counts"])
+        else:
+            k, sk = europe_fixtures.known(fixtures, predictor.canon, main_counts)
+        keep += k
+        skipped += sk
     _europe_status.update(at=datetime.now(timezone.utc).isoformat(), fixtures=len(report["fixtures"]),
                           published=len(keep), skipped=skipped, errors=report["errors"],
                           sources=report["sources"],
-                          model="europe" if _europe_predictor is not None else "main")
+                          model={c: "europe" if _europe_covers(c) else "main" for c in europe_fixtures.COMPETITIONS})
     _remember_competition_logos(keep)
     print(f"[Europe] {len(report['fixtures'])} Europa/Conference League fixtures ({report['sources']}), "
           f"{len(keep)} published; {len(skipped)} skipped (a club with under "
@@ -1176,18 +1181,21 @@ def _load_europe_model() -> None:
         blob, meta = shared
         m = LeaguePredictor.from_bytes(blob)
         if m is not None:
-            _europe_predictor, _europe_model_info = m, meta
-            print(f"[Europe] Europe model loaded ({meta.get('config')}).")
+            comps = europe_model.competitions(verdict)
+            _europe_predictor, _europe_model_info = m, {**meta, "competitions": comps}
+            print(f"[Europe] Europe model loaded ({meta.get('config')}) for {', '.join(comps) or 'nothing'}.")
     except Exception as e:
         print(f"[Europe] Europe model not loaded: {e}")
 
 
+def _europe_covers(league: str) -> bool:
+    """Whether the Europe model predicts this competition (europe_model.competitions)."""
+    return _europe_predictor is not None and league in (_europe_model_info.get("competitions") or [])
+
+
 def _model_for(fx: Dict[str, Any]):
     """The model that predicts this fixture."""
-    import europe_model
-    if _europe_predictor is not None and fx.get("league") in europe_model.EUROPE_CODES:
-        return _europe_predictor
-    return _predictor
+    return _europe_predictor if _europe_covers(fx.get("league", "")) else _predictor
 
 
 # Whether the club model uses league strength (predictor.LEAGUE_STRENGTH):
