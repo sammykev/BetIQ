@@ -11,6 +11,11 @@ on:
   schedule:
     - cron: "15 5 * * 1"   # Mondays, after the nightly collection and training
   workflow_dispatch:
+    inputs:
+      probe:
+        description: "Only list which ESPN leagues answer (for clubs we have no league data for)"
+        type: boolean
+        default: false
 
 concurrency:
   group: europe-model
@@ -38,6 +43,11 @@ jobs:
       - run: pip install -r requirements.txt
 
       - name: Check, then train and publish if adopted
+        if: github.event.inputs.probe != 'true'
         env:
           UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
         run: python europe_model.py
+
+      - name: Probe ESPN leagues
+        if: github.event.inputs.probe == 'true'
+        run: python europe_model.py --probe-leagues

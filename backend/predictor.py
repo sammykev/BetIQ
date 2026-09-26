@@ -310,6 +310,17 @@ def goal_markets(xg_h: float, xg_a: float, p_o25: float, p_h: float, p_a: float,
     }
 
 
+def calibrate(p, cal: Dict) -> tuple:
+    """1X2 probabilities adjusted for one competition (europe_model's fit):
+    sharpened or softened by the temperature `t`, then blended with the
+    competition's own result rates `base` by weight `w`. A model that
+    overrates what it knows about the clubs gets pulled toward the rates."""
+    t, w, base = float(cal.get("t", 1.0)), float(cal.get("w", 1.0)), cal.get("base") or (1 / 3, 1 / 3, 1 / 3)
+    q = [max(float(x), 1e-9) ** t for x in p]
+    total = sum(q)
+    return tuple(w * x / total + (1 - w) * float(b) for x, b in zip(q, base))
+
+
 def pick_tips(p_h: float, p_d: float, p_a: float, p_o15: float, p_o25: float) -> Dict:
     """
     The 1X2 / double-chance tip and the goals tip for a set of probabilities.
@@ -640,6 +651,7 @@ class LeaguePredictor:
             "SOT_Atk_vs_Def": round(h_sotf - a_sota, 4),
             "SOT_Def_vs_Atk": round(a_sotf - h_sota, 4),
             "_has_odds": has_odds,  # routes predict_proba; not a model feature
+            "_league": league,      # picks a calibration (predict_proba); not a feature
         }
 
     def _update(
@@ -971,18 +983,21 @@ class LeaguePredictor:
         X, X_goals = row[self.cols(odds)], row[self.cols(odds, target="goals")]
         wp = self.models["win" + suffix].predict_proba(X)[0]
         p_a, p_d, p_h = float(wp[0]), float(wp[1]), float(wp[2])
+        cal = (getattr(self, "calibration", None) or {}).get(feats.get("_league") or "")
+        if cal:
+            p_h, p_d, p_a = calibrate((p_h, p_d, p_a), cal)
         p_o15 = float(self.models["o15" + suffix].predict_proba(X_goals)[0][1])
         p_o25 = float(self.models["o25" + suffix].predict_proba(X_goals)[0][1])
         return p_h, p_d, p_a, p_o15, p_o25
 
     def predict_match_full(self, home: str, away: str,
                            odds_home: float = 0, odds_draw: float = 0,
-                           odds_away: float = 0) -> Optional[Dict]:
+                           odds_away: float = 0, league: str = "") -> Optional[Dict]:
         """Full multi-market analysis using XGBoost + Poisson distribution."""
         if not self._ready:
             return None
 
-        f = self._feats(home, away, odds_home, odds_draw, odds_away)
+        f = self._feats(home, away, odds_home, odds_draw, odds_away, league=league)
         p_h, p_d, p_a, p_o15, p_o25 = self.predict_proba(f)
 
         # Dixon-Coles expected goals (venue-adjusted attack vs defense)

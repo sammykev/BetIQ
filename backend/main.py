@@ -1171,6 +1171,11 @@ def _load_europe_model() -> None:
     from predictor import MODEL_CACHE_VERSION
     try:
         verdict = europe_model.load_check(_get_redis())
+        cals = europe_model.calibrations(verdict)
+        if _predictor is not None:   # competitions the main model keeps, with their calibration
+            _predictor.calibration = cals["main"]
+        if cals["main"]:
+            print(f"[Europe] Main model calibrated for {', '.join(sorted(cals['main']))}.")
         if not verdict.get("adopted"):
             _europe_predictor, _europe_model_info = None, {"check": verdict.get("reason")}
             return
@@ -1182,7 +1187,9 @@ def _load_europe_model() -> None:
         m = LeaguePredictor.from_bytes(blob)
         if m is not None:
             comps = europe_model.competitions(verdict)
-            _europe_predictor, _europe_model_info = m, {**meta, "competitions": comps}
+            m.calibration = cals["europe"]
+            _europe_predictor, _europe_model_info = m, {**meta, "competitions": comps,
+                                                        "calibrated": sorted(cals["europe"])}
             print(f"[Europe] Europe model loaded ({meta.get('config')}) for {', '.join(comps) or 'nothing'}.")
     except Exception as e:
         print(f"[Europe] Europe model not loaded: {e}")
@@ -2153,9 +2160,10 @@ async def _build_analysis(home: str, away: str, cached_fx: Dict[str, Any], news:
             odds_home=live_odds.get("1", 0),
             odds_draw=live_odds.get("X", 0),
             odds_away=live_odds.get("2", 0),
+            league=cached_fx.get("model_league") or cached_fx.get("league", ""),
         )
     else:
-        result = P.predict_match_full(home, away)
+        result = P.predict_match_full(home, away, league=cached_fx.get("model_league") or cached_fx.get("league", ""))
 
     # Restore original stats after prediction (don't permanently alter training data)
     if adjustments:
