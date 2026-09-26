@@ -21,6 +21,8 @@ import sportybet
 
 LINK_STATUS_KEY = "betiq:sportybet:link_status"   # main.SB_LINK_STATUS_KEY
 TOP = re.compile(r"premier league|laliga|la liga|serie a|bundesliga|ligue 1", re.I)
+# National-team competitions (where SportyBet may carry shots specials)
+INTL = re.compile(r"nations league|qualif|friendl|international|world cup|afcon|africa cup|copa|euro", re.I)
 
 
 def saved_check(pattern: str) -> None:
@@ -48,9 +50,19 @@ async def live(pattern: str, pages: int) -> None:
     events, report = await sportybet.fetch_catalog(session)
     print("SportyBet listing:", "; ".join(report))
     top = [e for e in events if TOP.search(e.get("_tournament") or "") and "women" not in (e.get("_tournament") or "").lower()]
-    print(f"{len(events)} events, {len(top)} in the top leagues")
+    intl = [e for e in events if INTL.search(e.get("_tournament") or "") and "women" not in (e.get("_tournament") or "").lower()
+            and not re.search(r"u-?\d\d|youth", e.get("_tournament") or "", re.I)]
+    print(f"{len(events)} events, {len(top)} in the top leagues, {len(intl)} national-team")
+    # Internationals first (spread over competitions), then club
+    seen_t, spread = set(), []
+    for e in intl:
+        t = e.get("_tournament")
+        if t not in seen_t:
+            seen_t.add(t)
+            spread.append(e)
+    top = spread[:pages] + [e for e in intl if e not in spread][:max(0, pages - len(spread))] + top
     found = {}
-    for ev in top[:pages]:
+    for ev in top[:pages * 2]:
         try:
             page = await sportybet.event_market_details(str(ev["eventId"]))
         except Exception as e:
@@ -75,7 +87,7 @@ async def live(pattern: str, pages: int) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--pattern", default="shot")
-    ap.add_argument("--pages", type=int, default=5)
+    ap.add_argument("--pages", type=int, default=6)
     args = ap.parse_args()
     saved_check(args.pattern)
     try:
