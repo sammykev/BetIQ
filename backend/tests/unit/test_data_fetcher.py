@@ -5,9 +5,8 @@ External HTTP calls are mocked via AsyncMock so no network access is needed.
 Two implementation notes about the source code under test:
 1. httpx >= 0.28 requires a Request on Response for raise_for_status() to work
    even for 2xx status codes.  All mock responses must include a request.
-2. _get() re-acquires self._semaphore recursively (while already holding it),
-   which would deadlock with asyncio.Semaphore(1).  Retry-path tests must
-   replace the semaphore with asyncio.Semaphore(100).
+2. _get() holds self._semaphore per request only, so retries work with the
+   real Semaphore(1) (TestNotInPlan checks it; it used to deadlock).
 """
 
 import asyncio
@@ -16,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pandas as pd
 
+import data_fetcher
 from data_fetcher import FootballDataClient, LEAGUES
 
 
@@ -386,3 +386,38 @@ class TestFetchRecentResults:
             df = await client.fetch_recent_results("PL", 30)
         dates = df["Date"].tolist()
         assert dates == sorted(dates)
+
+
+# ── competitions outside the key's plan, retries under the real lock ───────
+
+class TestNotInPlan:
+    @pytest.fixture(autouse=True)
+    def _clean(self):
+        data_fetcher.NOT_IN_PLAN.clear()
+        yield
+        data_fetcher.NOT_IN_PLAN.clear()
+
+    async def test_403_is_not_retried_and_the_competition_is_skipped_after(self):
+        client = _make_client()
+        mock_httpx = MagicMock()
+        mock_httpx.get = AsyncMock(return_value=_resp(403))
+        url = "https://api.football-data.org/v4/competitions/EL/matches?dateFrom=x"
+        with patch("asyncio.sleep", new_callable=AsyncMock) as sleep:
+            assert await client._get(mock_httpx, url) is None
+            assert await client._get(mock_httpx, "https://api.football-data.org/v4/competitions/EL") is None
+        assert mock_httpx.get.call_count == 1
+        sleep.assert_not_called()
+        assert data_fetcher.NOT_IN_PLAN == {"EL"}
+
+    async def test_retry_with_the_real_single_slot_lock_does_not_hang(self):
+        client = _make_client()          # asyncio.Semaphore(1), as in production
+        mock_httpx = MagicMock()
+        mock_httpx.get = AsyncMock(side_effect=[httpx.ConnectError("refused"), _resp(200, {"ok": 1})])
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            result = await asyncio.wait_for(client._get(mock_httpx, "https://example.com"), timeout=2)
+        assert result == {"ok": 1}
+
+    def test_competition_of(self):
+        assert data_fetcher.competition_of("https://x/v4/competitions/EL/matches?a=1") == "EL"
+        assert data_fetcher.competition_of("https://x/v4/competitions/PL") == "PL"
+        assert data_fetcher.competition_of("https://x/v4/matches/1/head2head") is None

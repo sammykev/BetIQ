@@ -27,7 +27,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 
 from predictor import LeaguePredictor
-from data_fetcher import FootballDataClient, LEAGUES, API_BASE
+from data_fetcher import FootballDataClient, LEAGUES, API_BASE, NOT_IN_PLAN
 import international_fixtures as intl
 import security
 import traffic
@@ -1265,6 +1265,8 @@ async def _run_pipeline():
             # if a later one stalls or the run never finishes.
             print("[Pipeline] Fetching upcoming fixtures (publishing after each league)...")
             for code in list(LEAGUES.keys()):
+                if code in NOT_IN_PLAN:
+                    continue
                 try:
                     league_fixtures = await client.fetch_upcoming(code, days_ahead=PREDICTION_DAYS)
                 except Exception as e:
@@ -1323,6 +1325,8 @@ async def _run_pipeline():
             print("[Pipeline] Fetching recent API results to calibrate Elo...")
             calibrated = False
             for code in list(LEAGUES.keys()):
+                if code in NOT_IN_PLAN:
+                    continue
                 try:
                     recent = await client.fetch_recent_results(code, days_back=60)
                     if recent.empty or "HomeTeam" not in recent.columns:
@@ -1395,6 +1399,8 @@ async def _fetch_and_save_results():
 
     client = FootballDataClient(API_KEY) if API_KEY else None
     for code in (LEAGUES if client else []):
+        if code in NOT_IN_PLAN:
+            continue
         try:
             df = await client.fetch_recent_results(code, days_back=30)
             if not df.empty:

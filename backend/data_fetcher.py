@@ -1,6 +1,9 @@
 """
 Fetches fixtures and results from football-data.org free API.
-Free tier: 10 req/min, covers EPL, La Liga, Bundesliga, Serie A, Ligue 1, UCL, EL, Eredivisie, Primeira Liga, Brasileirao (12 leagues total).
+Free tier: 10 req/min, covers the World Cup, Euros, Champions League, Premier
+League, Championship, La Liga, Bundesliga, Serie A, Ligue 1, Eredivisie,
+Primeira Liga and Brasileirão. Competitions outside the key's plan (the
+Europa League on the free tier) answer 403 and are skipped (NOT_IN_PLAN).
 """
 
 import asyncio
@@ -12,7 +15,18 @@ import os
 
 API_BASE = "https://api.football-data.org/v4"
 
-# Leagues available on football-data.org free tier
+# Competitions this process's API key got a 401/403 for (not in its plan)
+NOT_IN_PLAN: set = set()
+
+
+def competition_of(url: str) -> Optional[str]:
+    """The competition code in a /competitions/{code}... URL."""
+    part = url.split("/competitions/", 1)
+    if len(part) != 2:
+        return None
+    return part[1].split("/")[0].split("?")[0] or None
+
+# Competitions we fetch from football-data.org (EL needs a paid plan)
 LEAGUES: Dict[str, Dict] = {
     "WC":  {"name": "World Cup",        "country": "World",   "flag": "🌍"},
     "EC":  {"name": "Euro Championship","country": "Europe",  "flag": "🇪🇺"},
@@ -35,27 +49,63 @@ class FootballDataClient:
         self._semaphore = asyncio.Semaphore(1)  # 1 at a time to respect rate limit
 
     async def _get(self, client: httpx.AsyncClient, url: str, _attempt: int = 0) -> Optional[Dict]:
-        async with self._semaphore:
+        """GET a JSON endpoint; None when it can't be had. Retries network
+        errors and 5xx (twice, 10 s apart) and waits out 429s. A 401/403 on
+        a competition means the key's plan doesn't cover it: remembered in
+        NOT_IN_PLAN and not asked for again. Other 4xx aren't retried.
+
+        The lock is held for each request only: the retry used to call _get
+        again from inside it, and asyncio.Semaphore(1) isn't re-entrant, so
+        the first retry waited on itself forever (one 403 on the Europa
+        League stalled the whole pipeline's fixture loop there)."""
+        comp = competition_of(url)
+        if comp and comp in NOT_IN_PLAN:
+            return None
+        attempts = 3
+        for attempt in range(_attempt, attempts):
+            error: Optional[Exception] = None
+            async with self._semaphore:
+                try:
+                    r = await client.get(url, headers=self.headers, timeout=20)
+                except Exception as e:
+                    error = e
+            last = attempt == attempts - 1
+            if error is not None:
+                if last:
+                    print(f"[API] Failed after {attempts} attempts: {url} — {error}")
+                    return None
+                print(f"[API] Error (attempt {attempt+1}), retrying: {error}")
+                await asyncio.sleep(10)
+                continue
+            if r.status_code == 429:
+                if last:
+                    print(f"[API] Still rate-limited after {attempts} attempts: {url}")
+                    return None
+                wait = 65 if attempt == 0 else 120
+                print(f"[API] 429 rate-limited — waiting {wait}s (attempt {attempt+1})")
+                await asyncio.sleep(wait)
+                continue
+            if r.status_code in (500, 502, 503, 504):
+                if last:
+                    print(f"[API] {r.status_code} after {attempts} attempts: {url}")
+                    return None
+                print(f"[API] {r.status_code} server error — retrying in 10s")
+                await asyncio.sleep(10)
+                continue
+            if r.status_code in (401, 403) and comp:
+                NOT_IN_PLAN.add(comp)
+                print(f"[API] {comp}: not in this API key's football-data.org plan ({r.status_code}) — skipping it from now on")
+                return None
+            if r.status_code >= 400:
+                print(f"[API] {r.status_code} for {url} — not retrying")
+                return None
             try:
-                r = await client.get(url, headers=self.headers, timeout=20)
-                if r.status_code == 429:
-                    wait = 65 if _attempt == 0 else 120
-                    print(f"[API] 429 rate-limited — waiting {wait}s (attempt {_attempt+1})")
-                    await asyncio.sleep(wait)
-                    return await self._get(client, url, _attempt + 1)
-                if r.status_code in (500, 502, 503, 504) and _attempt < 2:
-                    print(f"[API] {r.status_code} server error — retrying in 10s")
-                    await asyncio.sleep(10)
-                    return await self._get(client, url, _attempt + 1)
                 r.raise_for_status()
                 return r.json()
             except Exception as e:
-                if _attempt < 2:
-                    print(f"[API] Error (attempt {_attempt+1}), retrying: {e}")
-                    await asyncio.sleep(10)
-                    return await self._get(client, url, _attempt + 1)
-                print(f"[API] Failed after 3 attempts: {url} — {e}")
+                print(f"[API] Bad response from {url}: {e}")
                 return None
+        return None
 
     async def fetch_upcoming(
         self, league_code: str, days_ahead: int = 7
