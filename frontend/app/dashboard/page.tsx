@@ -6,10 +6,8 @@ import { useRouter } from "next/navigation";
 import clsx from "clsx";
 import {
   Ticket, BarChart2, User, Link2, Trophy,
-  TrendingUp, TrendingDown, Minus, Plus, Check,
-  Copy, Crown, RefreshCw, Loader2, Share2,
+  Check, Copy, Crown, RefreshCw, Share2,
 } from "lucide-react";
-import { MatchCard } from "@/components/MatchCard";
 import { AppShell } from "@/components/shell/AppShell";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { PREMIUM_PRICE_LABEL } from "@/lib/pricing";
@@ -18,14 +16,7 @@ import { TicketsList } from "@/components/TicketsList";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
 
-type Tab = "overview" | "bets" | "codes" | "referral" | "account";
-
-interface Bet {
-  home: string; away: string; date: string;
-  tip: string; stake: number; odds: number;
-  result: "won" | "lost" | "void" | "pending";
-  payout: number; logged_at: string;
-}
+type Tab = "overview" | "codes" | "referral" | "account";
 
 interface Code {
   code: string; games: { game: string; tip: string; odds: string }[];
@@ -81,26 +72,21 @@ function EmptyState({ icon, title, body }: { icon: React.ReactNode; title: strin
   );
 }
 
-const naira = (n: number) => `₦${Math.abs(n).toLocaleString()}`;
-
 export default function DashboardPage() {
   const { user, isLoaded } = useUser();
   const router = useRouter();
   const [tab, setTab] = useState<Tab>("overview");
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get("tab");
-    if (t && ["overview", "bets", "codes", "referral", "account"].includes(t)) setTab(t as Tab);
+    if (t && ["overview", "codes", "referral", "account"].includes(t)) setTab(t as Tab);
   }, []);
 
   const [stats,  setStats]  = useState<Stats | null>(null);
-  const [bets,   setBets]   = useState<Bet[]>([]);
   const [codes,  setCodes]  = useState<Code[]>([]);
   const [refStats, setRefStats] = useState<{ code: string; count: number; link: string } | null>(null);
   // `name`/`you` from the current API; `uid` from the pre-auth API during a rollout
   const [leaderboard, setLeaderboard] = useState<{ name?: string; you?: boolean; uid?: string; wins: number }[]>([]);
 
-  const [betForm, setBetForm] = useState({ home: "", away: "", tip: "", stake: "", odds: "", result: "won" as "won"|"lost"|"void" });
-  const [betLoading, setBetLoading] = useState(false);
   const [copied, setCopied] = useState(false);
   const [loadingTab, setLoadingTab] = useState(false);
 
@@ -112,9 +98,8 @@ export default function DashboardPage() {
     setLoadingTab(true);
     try {
       const q = `uid=${encodeURIComponent(uid)}`;
-      const [s, b, c, ref, lb] = await Promise.all([
+      const [s, c, ref, lb] = await Promise.all([
         getJson(authFetch, `${API}/api/user/stats?${q}`),
-        getJson(authFetch, `${API}/api/user/bets?${q}`),
         getJson(authFetch, `${API}/api/user/codes?${q}`),
         getJson(authFetch, `${API}/api/referral/stats?${q}`),
         getJson(authFetch, `${API}/api/leaderboard?${q}`),
@@ -122,7 +107,6 @@ export default function DashboardPage() {
       // Offline / error replies arrive as objects like {"error": "offline"} —
       // only accept the shapes each view actually renders.
       setStats(s && typeof (s as Stats).accuracy === "number" ? (s as Stats) : null);
-      setBets(asList<Bet>(b));
       setCodes(asList<Code>(c));
       setRefStats(ref && typeof (ref as { link?: unknown }).link === "string" ? (ref as { code: string; count: number; link: string }) : null);
       setLeaderboard(asList(lb));
@@ -136,25 +120,6 @@ export default function DashboardPage() {
   }, [isLoaded, user, router]);
 
   useEffect(() => { if (uid) fetchAll(); }, [uid, fetchAll]);
-
-  const logBet = async () => {
-    if (!betForm.home || !betForm.stake || !uid) return;
-    setBetLoading(true);
-    const payout = betForm.result === "won"
-      ? parseFloat(betForm.stake) * parseFloat(betForm.odds || "1")
-      : betForm.result === "void" ? parseFloat(betForm.stake) : 0;
-    try {
-      await authFetch(`${API}/api/user/bets`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ uid, bet: { ...betForm, stake: parseFloat(betForm.stake), odds: parseFloat(betForm.odds || "1"), payout } }),
-      });
-      setBetForm({ home: "", away: "", tip: "", stake: "", odds: "", result: "won" });
-      await fetchAll();
-    } catch { /* silently fail */ }
-    finally { setBetLoading(false); }
-  };
-
 
   const copyRef = () => {
     if (!refStats) return;
@@ -174,7 +139,6 @@ export default function DashboardPage() {
 
   const TABS: { id: Tab; label: string; count?: number; icon: React.ReactNode }[] = [
     { id: "overview",  label: "Overview",  icon: <BarChart2 size={14} /> },
-    { id: "bets",      label: "My bets",   count: bets.length,  icon: <TrendingUp size={14} /> },
     { id: "codes",     label: "Tickets",   count: stats?.tickets?.tickets ?? codes.length, icon: <Ticket size={14} /> },
     { id: "referral",  label: "Referrals", icon: <Link2 size={14} /> },
     { id: "account",   label: "Account",   icon: <User size={14} /> },
@@ -187,7 +151,6 @@ export default function DashboardPage() {
     </button>
   );
 
-  const inputCls = "bg-surface-sunken border border-n-800 text-n-0 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-brand-400/70 focus:ring-2 focus:ring-brand-400/15 transition-all placeholder:text-n-500";
   const rec = stats?.tickets;
 
   return (
@@ -196,7 +159,7 @@ export default function DashboardPage() {
         <PageHeader
           eyebrow={`Welcome back${user?.firstName ? `, ${user.firstName}` : ""}`}
           title="Dashboard"
-          description="Your record from the codes you booked here, your bets and your tickets."
+          description="Your record from the SportyBet codes you booked here."
           right={isPremium && (
             <span className="inline-flex items-center gap-1.5 font-display font-bold text-sm uppercase tracking-wider text-warn bg-amber-400/10 border border-amber-400/30 px-3 py-1 rounded-lg">
               <Crown size={13} /> Premium
@@ -309,7 +272,7 @@ export default function DashboardPage() {
                 <h2 className="font-display font-bold text-lg uppercase tracking-[0.06em] text-n-0">Top predictors</h2>
               </div>
               {leaderboard.length === 0
-                ? <p className="text-n-400 text-sm py-2">No entries yet. Log your winning bets to appear here.</p>
+                ? <p className="text-n-400 text-sm py-2">No entries yet. Book codes here while signed in — every winning ticket counts.</p>
                 : <ol className="divide-y divide-n-800/70">
                     {leaderboard.slice(0, 10).map((e, i) => {
                       const you = e.you ?? e.uid === uid;
@@ -332,68 +295,6 @@ export default function DashboardPage() {
           </div>
         )}
 
-
-        {/* ── My Bets ── */}
-        {tab === "bets" && (
-          <div className="grid lg:grid-cols-[360px_1fr] gap-4 items-start">
-            {/* Log form */}
-            <div className="card p-4 space-y-3 lg:sticky lg:top-24">
-              <h3 className="font-display font-bold text-lg uppercase tracking-[0.06em] text-n-0 flex items-center gap-2">
-                <Plus size={15} className="text-accent" /> Log a bet
-              </h3>
-              <div className="grid grid-cols-2 gap-2">
-                {[
-                  { key: "home", placeholder: "Home team" },
-                  { key: "away", placeholder: "Away team" },
-                  { key: "tip",  placeholder: "Tip (e.g. Home Win)" },
-                  { key: "stake", placeholder: "Stake (₦)" },
-                  { key: "odds", placeholder: "Odds (e.g. 1.85)" },
-                ].map(({ key, placeholder }) => (
-                  <input key={key} placeholder={placeholder} aria-label={placeholder} value={(betForm as any)[key]}
-                    inputMode={key === "stake" || key === "odds" ? "decimal" : undefined}
-                    onChange={e => setBetForm(f => ({ ...f, [key]: e.target.value }))}
-                    className={inputCls} />
-                ))}
-                <select value={betForm.result} aria-label="Result" onChange={e => setBetForm(f => ({ ...f, result: e.target.value as any }))}
-                  className={inputCls}>
-                  <option value="won">Won</option>
-                  <option value="lost">Lost</option>
-                  <option value="void">Void</option>
-                </select>
-              </div>
-              <button onClick={logBet} disabled={betLoading || !betForm.home || !betForm.stake}
-                className="btn-primary w-full">
-                {betLoading ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-                {betLoading ? "Logging…" : "Log bet"}
-              </button>
-            </div>
-
-            {/* Bet history */}
-            <div className="space-y-2.5">
-              {bets.length === 0
-                ? <EmptyState icon={<TrendingUp size={20} />} title="No bets logged" body="Log a bet to start tracking your ROI and streaks." />
-                : bets.map((b, i) => {
-                  const p = b.result === "won" ? b.payout - b.stake : b.result === "void" ? 0 : -b.stake;
-                  return (
-                    <MatchCard key={i} home={b.home} away={b.away} date={b.date}
-                      className={b.result === "won" ? "!border-brand-400/40" : b.result === "lost" ? "!border-rose-500/40" : ""}>
-                      <div className="flex flex-col items-end gap-1 text-xs">
-                        <span className={clsx("font-display font-bold text-sm uppercase tracking-wide flex items-center gap-1",
-                          b.result === "won" ? "text-accent" : b.result === "lost" ? "text-danger" : "text-n-400")}>
-                          {b.result === "won" ? <TrendingUp size={12}/> : b.result === "lost" ? <TrendingDown size={12}/> : <Minus size={12}/>}
-                          {b.result}
-                        </span>
-                        <span className="font-mono text-n-400">{b.tip} @ {b.odds}</span>
-                        <span className={clsx("font-mono font-bold", p > 0 ? "text-accent" : p < 0 ? "text-danger" : "text-n-400")}>
-                          {p > 0 ? "+" : p < 0 ? "−" : ""}{naira(p)}
-                        </span>
-                      </div>
-                    </MatchCard>
-                  );
-                })}
-            </div>
-          </div>
-        )}
 
         {/* ── Tickets: booking codes, settled from the results ── */}
         {tab === "codes" && <TicketsList uid={uid} authFetch={authFetch} />}

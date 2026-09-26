@@ -1,10 +1,10 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { AccessError, fetchMatchAnalysis, fetchExplanation } from "@/lib/api";
+import { AccessError, fetchMatchAnalysis, fetchExplanation, fetchMatchFacts } from "@/lib/api";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
-import type { MatchAnalysis, Market, MatchExplanation, Prediction, TeamForm } from "@/lib/api";
+import type { MatchAnalysis, Market, MatchExplanation, MatchFacts, FactMatch, Prediction, TeamForm } from "@/lib/api";
 import { kickoff } from "@/lib/matchTime";
 import { TeamBadge } from "@/components/PredictionCard";
 import { CompetitionBadge } from "@/components/CompetitionBadge";
@@ -12,7 +12,7 @@ import { AppShell } from "@/components/shell/AppShell";
 import { useBetSlip } from "@/lib/useBetSlip";
 import { bookableOnSportybet, isSelected } from "@/lib/slip";
 import {
-  ArrowLeft, Sparkles, ExternalLink, Check, Ticket, Radio, Search, Flag,
+  ArrowLeft, Sparkles, ExternalLink, Check, Ticket, Radio, Search, Flag, History, Swords, Newspaper,
 } from "lucide-react";
 import clsx from "clsx";
 
@@ -246,8 +246,8 @@ function AIExplanation({ explanation }: { explanation: MatchExplanation | null }
 
   if (!explanation.explanation) return null;
 
-  // "compound-beta+" is the pre-Sep-2026 tag, still present on cached explanations.
-  const hasWebSearch = /^(web-search|compound-beta)\+/.test(explanation.model ?? "") && explanation.sources.length > 0;
+  const news = explanation.news ?? [];
+  const hasWebSearch = news.length > 0;
 
   return (
     <div className="card p-4 sm:p-5">
@@ -264,6 +264,26 @@ function AIExplanation({ explanation }: { explanation: MatchExplanation | null }
         <span className="inline-flex items-center gap-2"><Sparkles size={15} className="text-accent" /> AI analysis</span>
       </PanelTitle>
       <p className="text-[15px] text-n-300 leading-relaxed">{explanation.explanation}</p>
+      {news.length > 0 && (
+        <div className="mt-4 rounded-xl bg-n-800/40 px-3 py-3">
+          <p className="eyebrow flex items-center gap-1.5 mb-2"><Newspaper size={12} /> Latest team news</p>
+          <ul className="space-y-1.5">
+            {news.slice(0, 6).map((n, i) => (
+              <li key={i} className="flex gap-2.5 text-[13px] leading-snug">
+                <span className="font-mono text-[11px] text-n-500 shrink-0 pt-px tnum">{shortDate(n.date)}</span>
+                <span className="text-n-300">{n.text}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {explanation.updated_at && (
+        <p className="text-[11px] text-n-500 mt-3">
+          Written {clock(explanation.updated_at)}
+          {explanation.news_checked_at && <> · news checked {clock(explanation.news_checked_at)}</>}
+          {explanation.refreshing && <> · updating with the latest…</>}
+        </p>
+      )}
       {explanation.sources.length > 0 && (
         <div className="pt-3 mt-3 border-t border-n-800 flex flex-wrap gap-x-4 gap-y-1.5">
           {explanation.sources.slice(0, 3).map((src, i) => {
@@ -278,6 +298,125 @@ function AIExplanation({ explanation }: { explanation: MatchExplanation | null }
         </div>
       )}
     </div>
+  );
+}
+
+// ------------------------------------------------------------------ //
+// Recent form and head-to-head
+// ------------------------------------------------------------------ //
+function shortDate(iso: string): string {
+  const d = new Date(`${iso}T12:00:00Z`);
+  return isNaN(d.getTime()) ? iso : d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "2-digit" });
+}
+
+function clock(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const today = new Date().toDateString() === d.toDateString();
+  return today
+    ? d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })
+    : d.toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+const OUTCOME_CLS: Record<FactMatch["outcome"], string> = {
+  W: "bg-brand-400 text-ink", D: "bg-zinc-500 text-white", L: "bg-rose-500 text-white",
+};
+
+function FormList({ name, rows }: { name: string; rows: FactMatch[] }) {
+  return (
+    <div className="min-w-0">
+      <div className="flex items-center gap-2 pb-2 border-b border-n-800">
+        <TeamBadge name={name} size={20} />
+        <span className="text-xs font-bold text-n-0 truncate">{name}</span>
+        {rows.length > 0 && <span className="ml-auto"><FormChips form={rows.map(r => r.outcome).reverse().join("")} /></span>}
+      </div>
+      {rows.length === 0 ? (
+        <p className="text-xs text-n-500 py-3">No recent results on record.</p>
+      ) : (
+        <ul className="divide-y divide-n-800/70">
+          {rows.map((r, i) => (
+            <li key={i} className="flex items-center gap-2.5 py-2">
+              <span className={clsx("font-display font-bold text-[11px] w-[18px] h-[18px] rounded flex items-center justify-center shrink-0", OUTCOME_CLS[r.outcome])}>
+                {r.outcome}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-[13px] text-n-200 truncate">
+                  <span className="text-n-500 text-[11px] font-bold mr-1.5">{r.venue === "H" ? "vs" : "at"}</span>{r.opponent}
+                </p>
+                <p className="text-[11px] text-n-500 truncate">{shortDate(r.date)}{r.comp && <> · {r.comp}</>}</p>
+              </div>
+              <span className="font-mono font-bold text-sm text-n-0 tnum shrink-0">
+                {r.venue === "H" ? `${r.hg}-${r.ag}` : `${r.ag}-${r.hg}`}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function RecentForm({ facts, home, away }: { facts: MatchFacts; home: string; away: string }) {
+  if (facts.home.length === 0 && facts.away.length === 0) return null;
+  return (
+    <div className="card p-4">
+      <PanelTitle>
+        <span className="inline-flex items-center gap-2"><History size={15} className="text-accent" /> Last 5 matches</span>
+      </PanelTitle>
+      <div className="grid sm:grid-cols-2 gap-x-6 gap-y-4">
+        <FormList name={home} rows={facts.home} />
+        <FormList name={away} rows={facts.away} />
+      </div>
+      <p className="text-[11px] text-n-500 mt-3">Scores shown from each team&apos;s side, newest first.</p>
+    </div>
+  );
+}
+
+/** The last meetings; nothing at all when the teams have never met. */
+function HeadToHead({ facts, home, away }: { facts: MatchFacts; home: string; away: string }) {
+  const s = facts.summary.h2h;
+  if (!facts.h2h.length || !s) return null;
+  const bar = [
+    { n: s.won, cls: "bg-brand-400", label: `${home} wins` },
+    { n: s.drawn, cls: "bg-zinc-500", label: "Draws" },
+    { n: s.lost, cls: "bg-rose-500", label: `${away} wins` },
+  ];
+  return (
+    <div className="card p-4">
+      <PanelTitle right={<span className="text-[11px] text-n-500 tnum">last {facts.h2h.length}</span>}>
+        <span className="inline-flex items-center gap-2"><Swords size={15} className="text-accent" /> Head to head</span>
+      </PanelTitle>
+      <div className="flex h-2 rounded-full overflow-hidden gap-0.5 bg-n-800">
+        {bar.map((b, i) => b.n > 0 && <div key={i} className={b.cls} style={{ flexGrow: b.n }} />)}
+      </div>
+      <div className="flex justify-between text-xs mt-2 gap-2">
+        {bar.map((b, i) => (
+          <span key={i} className={clsx("text-n-400 min-w-0 truncate", i === 1 && "text-center", i === 2 && "text-right")}>
+            <span className="font-display font-bold text-lg text-n-0 tnum mr-1">{b.n}</span>{b.label}
+          </span>
+        ))}
+      </div>
+      <ul className="divide-y divide-n-800/70 mt-2">
+        {facts.h2h.map((m, i) => (
+          <li key={i} className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 py-2">
+            <span className={clsx("text-[13px] truncate text-right", m.hg > m.ag ? "text-n-0 font-semibold" : "text-n-400")}>{m.home}</span>
+            <span className="font-mono font-bold text-sm text-n-0 tnum px-2 py-0.5 rounded bg-n-800/70">{m.hg}-{m.ag}</span>
+            <span className={clsx("text-[13px] truncate", m.ag > m.hg ? "text-n-0 font-semibold" : "text-n-400")}>{m.away}</span>
+            <span className="col-span-3 text-center text-[11px] text-n-500 -mt-1">{shortDate(m.date)}{m.comp && <> · {m.comp}</>}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function MatchFactsPanels({ facts, home, away }: { facts: MatchFacts | null; home: string; away: string }) {
+  if (!facts) return null;
+  return (
+    <>
+      <RecentForm facts={facts} home={home} away={away} />
+      <HeadToHead facts={facts} home={home} away={away} />
+    </>
   );
 }
 
@@ -298,19 +437,24 @@ function MatchContent() {
   const authFetch = useAuthedFetch();
   const [explanation, setExplanation] = useState<MatchExplanation | null>(null);
   const [sbEvent, setSbEvent] = useState<SbEvent | null>(null);
+  const [facts, setFacts] = useState<MatchFacts | null>(null);
   const slip = useBetSlip();
+  const refetched = useRef(false);
+  const refetchTimer = useRef<ReturnType<typeof setTimeout>>();
 
   useEffect(() => {
     if (!home || !away) return;
 
-    fetchMatchAnalysis(home, away, authFetch)
+    fetchMatchAnalysis(home, away, authFetch, date)
       .then(setAnalysis)
       .catch(e => setError(e instanceof AccessError ? (e.message as "sign_in_required" | "premium_required") : "failed"))
       .finally(() => setLoadingAnalysis(false));
 
-    fetchExplanation(home, away, authFetch)
+    fetchExplanation(home, away, authFetch, date)
       .then(setExplanation)
       .catch(() => setExplanation({ explanation: null, sources: [], model: null, error: "failed" }));
+
+    fetchMatchFacts(home, away, date).then(setFacts).catch(() => {});
 
     // Find the prediction entry for header probabilities
     fetch(`${API}/api/predictions?limit=500`)
@@ -330,6 +474,18 @@ function MatchContent() {
       .then(d => { if (d?.found) setSbEvent(d); })
       .catch(() => {});
   }, [home, away, date, authFetch]);
+
+  // A stored analysis that's being rebuilt with newer information (news,
+  // odds, the model): pick up the new one once, when it's likely ready
+  useEffect(() => {
+    if (refetched.current || !(analysis?.refreshing || explanation?.refreshing)) return;
+    refetched.current = true;
+    refetchTimer.current = setTimeout(() => {
+      fetchMatchAnalysis(home, away, authFetch, date).then(setAnalysis).catch(() => {});
+      fetchExplanation(home, away, authFetch, date).then(e => { if (e.explanation) setExplanation(e); }).catch(() => {});
+    }, 30000);
+  }, [analysis?.refreshing, explanation?.refreshing, home, away, date, authFetch]);
+  useEffect(() => () => clearTimeout(refetchTimer.current), []);
 
   const matchDate = date || prediction?.date || "";
   const toggleOption = (market: Market) => (opt: Market["options"][number]) =>
@@ -447,6 +603,11 @@ function MatchContent() {
           </p>
         </div>
       )}
+      {!analysis && !loadingAnalysis && (
+        <div className="grid lg:grid-cols-2 gap-4 items-start">
+          <MatchFactsPanels facts={facts} home={home} away={away} />
+        </div>
+      )}
 
       {analysis && (
         <div className="grid lg:grid-cols-[1fr_360px] gap-4 items-start">
@@ -467,6 +628,7 @@ function MatchContent() {
 
           <div className="space-y-4 lg:order-1 min-w-0">
             <AIExplanation explanation={explanation} />
+            <MatchFactsPanels facts={facts} home={home} away={away} />
 
             {analysis.web_adjustment_reason && (
               <div className="rounded-2xl border border-amber-400/25 bg-amber-400/[0.05] px-4 py-3 flex items-start gap-3">

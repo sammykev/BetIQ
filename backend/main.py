@@ -191,6 +191,9 @@ _predictions_cache: List[Dict] = []
 _last_updated: Optional[str] = None
 _is_training = False
 _history_df: Optional[pd.DataFrame] = None
+# Every result the server holds, newest first, for the match page's recent
+# form and head-to-head (match_facts.py); rebuilt each pipeline run
+_results_idx: Optional[pd.DataFrame] = None
 # Corners / bookings totals, refitted from the league CSVs every pipeline run
 _set_pieces: Optional[set_pieces.SetPieceModel] = None
 # The same for internationals (data from collect_international_stats.py),
@@ -1199,6 +1202,10 @@ async def _run_pipeline():
         history, combined, data_mtime = assembled
         global _history_df
         _history_df = history  # keep for H2H lookups
+        try:
+            await asyncio.to_thread(_build_results_index, combined)
+        except Exception as e:
+            print(f"[Pipeline] Results index failed (non-fatal): {e}")
         global _set_pieces
         try:
             _set_pieces = await asyncio.to_thread(set_pieces.SetPieceModel.fit, _with_club_referees(history))
@@ -1735,28 +1742,165 @@ def _sanitize(obj):
     return obj
 
 
+# ------------------------------------------------------------------ #
+# Match page: each side's last five and their last five meetings
+# ------------------------------------------------------------------ #
+_recent_md: Tuple[float, Optional[pd.DataFrame]] = (0.0, None)
+RECENT_MD_DAYS = 10
+
+
+def _build_results_index(combined: pd.DataFrame) -> None:
+    """The training matches plus every European/cup match collected (not
+    only the sets the model trains on), as one table."""
+    import club_cups
+    import match_facts
+    global _results_idx
+    clubs = combined[combined.get("league", pd.Series("", index=combined.index)) != intl.LEAGUE_CODE]
+    names = set(clubs["HomeTeam"].dropna()) | set(clubs["AwayTeam"].dropna())
+    cups = _club_cup_rows(names, club_cups.EUROPE_CODES | club_cups.CUP_CODES)
+    # The Champions League CSVs carry no competition (named rows win duplicates)
+    ucl = _load_ucl_csv()
+    if not ucl.empty:
+        ucl = TeamResolver(names, aliases=UCL_ALIASES).resolve_frame(ucl).assign(league="CL")
+    _results_idx = match_facts.index([match_facts.frame(ucl), match_facts.frame(combined), match_facts.frame(cups)])
+    print(f"[Pipeline] Results index: {len(_results_idx)} matches.")
+
+
+def _recent_results_frame() -> pd.DataFrame:
+    """Finished matches from the last RECENT_MD_DAYS match days (the site's
+    live scores; newer than the CSVs), in the model's names. Cached 10 min."""
+    global _recent_md
+    import match_facts
+    import matchday
+    if _recent_md[1] is not None and time.time() - _recent_md[0] < 600:
+        return _recent_md[1]
+    rows = []
+    today = date.today()
+    for o in range(RECENT_MD_DAYS + 1):
+        d = (today - timedelta(days=o)).isoformat()
+        for e in _md_day_view(d).values():
+            res = e.get("result") or {}
+            if res.get("status") != matchday.FINISHED or res.get("hg") is None or res.get("ag") is None:
+                continue
+            if e.get("sport") not in (None, "football"):
+                continue
+            canon = _predictor.canon if _predictor is not None else (lambda n: n)
+            rows.append({"Date": e.get("date") or d, "HomeTeam": canon(e.get("home", "")),
+                         "AwayTeam": canon(e.get("away", "")), "FTHG": res["hg"], "FTAG": res["ag"],
+                         "comp": e.get("league_name") or match_facts.comp_name(e.get("league"))})
+    df = match_facts.index([pd.DataFrame(rows)]) if rows else pd.DataFrame(columns=match_facts.COLUMNS)
+    _recent_md = (time.time(), df)
+    return df
+
+
+def _team_results(teams: set) -> pd.DataFrame:
+    import match_facts
+    base = _results_idx
+    if base is None and _history_df is not None:
+        base = match_facts.frame(_history_df)
+    parts = []
+    try:
+        rec = _recent_results_frame()
+        parts.append(rec[rec["HomeTeam"].isin(teams) | rec["AwayTeam"].isin(teams)])
+    except Exception as e:
+        print(f"[Facts] Recent results unavailable: {e}")
+    if base is not None and not base.empty:
+        parts.append(base[base["HomeTeam"].isin(teams) | base["AwayTeam"].isin(teams)])
+    return match_facts.index(parts)
+
+
+async def _facts_for(home: str, away: str, day: str = "") -> Dict[str, Any]:
+    import match_facts
+    h, a = (_predictor.canon(home), _predictor.canon(away)) if _predictor is not None else (home, away)
+    idx = await asyncio.to_thread(_team_results, {h, a})
+    return match_facts.facts(idx, h, a, day or None)
+
+
+@app.get("/api/match/facts")
+async def get_match_facts(home: str, away: str, day: str = Query("", alias="date")):
+    """Each side's last five results and the last five meetings between them
+    (empty when they've never met), before the match date."""
+    day = day or _fixture_of(home, away).get("date", "")
+    return _sanitize(await _facts_for(home, away, day))
+
+
+# ------------------------------------------------------------------ #
+# Match page: the slow parts, built once per match (match_cache.py)
+# ------------------------------------------------------------------ #
+import match_cache
+_mcache = match_cache.MatchCache(lambda: _get_redis())
+
+
+def _fixture_of(home: str, away: str, day: str = "") -> Dict[str, Any]:
+    """The prediction for a fixture (date, time, league, odds, referee), or {}."""
+    h, a = home.lower(), away.lower()
+    found = [p for p in _predictions_cache
+             if p.get("home", "").lower() == h and p.get("away", "").lower() == a]
+    return next((p for p in found if not day or p.get("date") == day), found[0] if found else {})
+
+
+def _match_timing(home: str, away: str, day: str = "") -> Tuple[Dict[str, Any], str, Optional[datetime]]:
+    """(fixture, cache key, kick-off)."""
+    import matchday
+    fx = _fixture_of(home, away, day)
+    day = day or fx.get("date", "")
+    ko = matchday.kickoff({**fx, "date": day}) if day else None
+    return fx, match_cache.match_key(home, away, day), ko
+
+
+async def _match_news(home: str, away: str, day: str = "") -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """The fixture's current team news (dated, last week only) and the
+    model adjustments read from it, shared by every visitor and refreshed
+    more often as kick-off nears."""
+    import llm_service
+    fx, key, ko = _match_timing(home, away, day)
+
+    async def build():
+        news = await llm_service.fetch_match_news(home, away, day or fx.get("date", ""),
+                                                  fx.get("league_name", ""))
+        news["adjustments"] = (await llm_service.extract_model_adjustments(home, away, news["text"])
+                               if news["text"] else {})
+        if not news["searched"] and llm_service.GROQ_API_KEY:
+            news["_fresh_for"] = 600   # the search failed: try again soon
+        return news
+
+    return await _mcache.get("news", key, build, fp="v1",
+                             fresh_for=match_cache.news_fresh_for(ko), ttl=match_cache.ttl_seconds(ko))
+
+
+async def _analysis_cached(home: str, away: str, day: str = "") -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """The full market breakdown, rebuilt when the model, the odds or the
+    team news change (the visitor meanwhile gets the previous one)."""
+    fx, key, ko = _match_timing(home, away, day)
+    news, n_info = await _match_news(home, away, day)
+    fp = match_cache.fingerprint(id(_predictor), n_info.get("at"), fx.get("odds_home"), fx.get("odds_draw"),
+                                 fx.get("odds_away"), (fx.get("referee") or {}).get("name"))
+    return await _mcache.get("analysis", key, lambda: _build_analysis(home, away, fx, news),
+                             fp=fp, fresh_for=3600, ttl=match_cache.ttl_seconds(ko))
+
+
 @app.get("/api/analysis")
-async def get_match_analysis(home: str, away: str, _premium=Depends(require_premium)):
+async def get_match_analysis(home: str, away: str, day: str = Query("", alias="date"),
+                             _premium=Depends(require_premium)):
     if _predictor is None:
         raise HTTPException(status_code=503, detail="Model not ready yet")
+    result, info = await _analysis_cached(home, away, day)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Could not generate analysis")
+    return {**result, "updated_at": info["at"], "refreshing": info["refreshing"]}
 
-    # Find this fixture in our predictions cache to get date + any cached odds
-    cached_fx = next(
-        (p for p in _predictions_cache
-         if p.get("home","").lower() == home.lower()
-         and p.get("away","").lower() == away.lower()),
-        {}
-    )
+
+async def _build_analysis(home: str, away: str, cached_fx: Dict[str, Any], news: Dict[str, Any]) -> Optional[Dict]:
+    if _predictor is None:
+        return None
     fx_date = cached_fx.get("date", "")
 
-    # Fetch LIVE odds right now from The Odds API (not from cache)
+    # Fetch LIVE odds right now from The Odds API
     live_odds = await _fetch_live_odds(home, away, fx_date)
 
-    # Fetch live web news and extract structured model adjustments in parallel
-    from llm_service import extract_model_adjustments
-    from llm_service import _fetch_news as _web_news
-    news_text, news_sources = await _web_news(home, away)
-    adjustments = await extract_model_adjustments(home, away, news_text) if news_text else {}
+    # Model adjustments read from the current team news (_match_news)
+    news_sources = news.get("sources") or []
+    adjustments = news.get("adjustments") or {}
 
     # Apply web-search adjustments to xG before running the model
     # This makes injury news actually move the prediction numbers
@@ -1815,7 +1959,7 @@ async def get_match_analysis(home: str, away: str, _premium=Depends(require_prem
         result["web_news_sources"] = news_sources
 
     if result is None:
-        raise HTTPException(status_code=404, detail="Could not generate analysis")
+        return None
 
     # Tag live odds onto 1X2 market options
     if live_odds:
@@ -2512,6 +2656,8 @@ def _settle_tickets(r) -> Dict[str, int]:
                     if t["status"] in ("won", "lost", "void"):
                         report["settled"] += 1
                         r.hincrby(TICKETS_STATS_KEY, t["status"], 1)
+                        if t["status"] == "won":   # the dashboard's Top predictors
+                            r.zincrby("betiq:leaderboard", 1, uid)
         if changed:
             r.set(key, json.dumps(items, separators=(",", ":")), ex=365 * 86400)
         # Nothing left to settle (or only legs we can't settle, all played)
@@ -3230,56 +3376,56 @@ async def debug_predict(home: str, away: str, date_str: Optional[str] = None, _a
 
 
 @app.get("/api/explain")
-async def explain_match(home: str, away: str, _premium=Depends(require_premium)):
+async def explain_match(home: str, away: str, day: str = Query("", alias="date"),
+                        _premium=Depends(require_premium)):
     """
-    Generate a plain-language AI explanation for a match prediction.
-    Combines XGBoost/Elo stats with live web search for injuries & lineups.
-    Results are cached in Redis for 1 hour to avoid redundant API calls.
+    A plain-language AI preview of a match: the model's numbers (the same
+    analysis the page shows), the teams' recent results and meetings from our
+    own data, and team news published in the last week. Built once per match
+    and kept until it has been played; rebuilt in the background when the
+    news, the model or the results change.
     """
     from llm_service import explain_match as _explain
-
-    cache_key = f"betiq:explain:{home.lower()}:{away.lower()}"
-
-    # Return cached explanation if available
-    r = _get_redis()
-    if r:
-        try:
-            cached = r.get(cache_key)
-            if cached:
-                return json.loads(cached)
-        except Exception:
-            pass
+    import match_facts
 
     if _predictor is None:
         raise HTTPException(status_code=503, detail="Model not ready")
-
-    analysis   = _predictor.predict_match_full(home, away)
-    prediction = _predictor.predict_match(home, away)
-
-    if not analysis or not prediction:
+    fx, key, ko = _match_timing(home, away, day)
+    analysis, a_info = await _analysis_cached(home, away, day)
+    if not analysis:
         raise HTTPException(status_code=404, detail="Could not generate prediction")
+    news, n_info = await _match_news(home, away, day)
+    facts = await _facts_for(home, away, day or fx.get("date", ""))
 
-    result = await _explain(home, away, analysis, prediction)
+    probs = {o["code"]: o["prob"] for m in analysis.get("markets", []) if m.get("id") == "1x2"
+             for o in m.get("options", [])}
+    prediction = {"p_home": probs.get("1", 0), "p_draw": probs.get("X", 0), "p_away": probs.get("2", 0)}
+    facts_text = match_facts.text(facts, home, away)
+    fp = match_cache.fingerprint(n_info.get("at"), {k: round(v, 2) for k, v in probs.items()}, facts_text)
 
-    # Cache for 1 hour
-    if r and result.get("explanation"):
-        try:
-            r.set(cache_key, json.dumps(result), ex=3600)
-        except Exception:
-            pass
+    async def build():
+        result = await _explain(home, away, analysis, prediction, news=news, facts=facts_text,
+                                kickoff=day or fx.get("date", ""), competition=fx.get("league_name", ""))
+        if not result.get("explanation"):
+            return None
+        r = _get_redis()
+        if r:
+            try:
+                today = date.today().isoformat()
+                r.incr(f"betiq:stats:explain:{today}")
+                r.expire(f"betiq:stats:explain:{today}", 86400 * 7)
+                r.incr("betiq:stats:explain:total")
+            except Exception:
+                pass
+        return result
 
-    # Track usage count in Redis
-    r = _get_redis()
-    if r:
-        try:
-            today = date.today().isoformat()
-            r.incr(f"betiq:stats:explain:{today}")
-            r.expire(f"betiq:stats:explain:{today}", 86400 * 7)
-            r.incr("betiq:stats:explain:total")
-        except Exception:
-            pass
-
-    return result
+    result, info = await _mcache.get("explain", key, build, fp=fp, fresh_for=24 * 3600,
+                                     ttl=match_cache.ttl_seconds(ko))
+    if result is None:
+        result = {"explanation": None, "sources": [], "model": None, "error": "all_models_failed"}
+    return {**result, "news": news.get("items") or [], "news_checked_at": n_info.get("at"),
+            "updated_at": info.get("at"),
+            "refreshing": bool(info.get("refreshing") or n_info.get("refreshing"))}
 
 
 @app.get("/api/admin/whoami")
@@ -4531,6 +4677,9 @@ async def get_sportybet_event(home: str, away: str, date: str):
         events = await fetch_events_for_date(date)
         event = find_event(home, away, events)
         if not event:
+            if r:   # SportyBet may list it later: look again in 10 minutes
+                try: r.setex(CACHE_KEY, 600, json.dumps({"found": False, "markets": []}))
+                except Exception: pass
             return {"found": False, "markets": []}
 
         # Build a clean market list from the raw event

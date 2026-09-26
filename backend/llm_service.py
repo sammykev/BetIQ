@@ -6,8 +6,11 @@ LLM routing for match analysis:
 """
 
 import os
+import re
+from datetime import date, datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional
+
 import httpx
-from typing import Dict, Any, List
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
@@ -108,32 +111,84 @@ async def _call_deepseek(messages: list, max_tokens: int = 400) -> Dict:
     return r.json()
 
 
-async def _fetch_news(home: str, away: str) -> tuple[str, List[str]]:
-    """
-    Step 1 — web-search live team news (Groq browser_search).
-    Tries each model in _GROQ_MODELS; a 413 moves on to the next one.
-    Returns (news_text, source_urls). Silent on failure.
-    """
-    # Kept minimal: the search pulls page content into the model's own
-    # context, so a bigger prompt makes a 413 more likely, not less.
-    prompt = f"{home} vs {away} team news? Answer in under 100 words."
+# Team news older than this is left out of the analysis: last month's injury
+# is usually this week's fit player.
+NEWS_MAX_AGE_DAYS = 7
+_NO_NEWS = "NO RECENT NEWS"
+_ITEM = re.compile(r"^\s*(?:[-*•]|\d+[.)])?\s*\[?(\d{4}-\d{2}-\d{2})\]?\s*[:\-–—]?\s*(.+?)\s*$")
 
+
+def recent_items(text: str, today: date, max_age_days: int = NEWS_MAX_AGE_DAYS) -> List[Dict[str, str]]:
+    """The dated lines of a news reply ("- [2026-09-24] Saka out (BBC)"),
+    newest first, keeping only those from the last `max_age_days` days.
+    Undated lines are dropped: nothing says they're current."""
+    items = []
+    for line in (text or "").splitlines():
+        m = _ITEM.match(line)
+        if not m:
+            continue
+        try:
+            d = date.fromisoformat(m.group(1))
+        except ValueError:
+            continue
+        if today - timedelta(days=max_age_days) <= d <= today + timedelta(days=1):
+            items.append({"date": d.isoformat(), "text": m.group(2).strip()})
+    items.sort(key=lambda i: i["date"], reverse=True)
+    return items
+
+
+def news_text(items: List[Dict[str, str]]) -> str:
+    return "\n".join(f"- [{i['date']}] {i['text']}" for i in items)
+
+
+async def fetch_match_news(home: str, away: str, kickoff: str = "", competition: str = "",
+                           today: Optional[date] = None) -> Dict[str, Any]:
+    """
+    Current team news for a fixture from a live web search (Groq
+    browser_search): injuries, suspensions, expected line-ups, manager
+    comments. The search is told today's date and the match date, asked to
+    date every item, and only items from the last NEWS_MAX_AGE_DAYS days are
+    kept — the old prompt ("X vs Y team news?") often came back with a
+    previous meeting's news.
+
+    Returns {"items": [{"date", "text"}], "text", "sources", "searched"}.
+    """
+    today = today or datetime.now(timezone.utc).date()
+    oldest = today - timedelta(days=NEWS_MAX_AGE_DAYS)
+    when = f" on {kickoff}" if kickoff else ""
+    comp = f" ({competition})" if competition else ""
+    # Kept short: the search pulls page content into the model's own
+    # context, so a bigger prompt makes a 413 more likely.
+    prompt = (f"Today is {today.isoformat()}. {home} vs {away}{comp} is played{when}. "
+              f"Search the latest team news for this match published since {oldest.isoformat()}: "
+              f"injuries, suspensions, returns, expected line-ups, manager quotes. "
+              f"One line per fact: - [YYYY-MM-DD publication date] fact (source). "
+              f"Nothing older than {oldest.isoformat()}. At most 8 lines. "
+              f"If there is none, reply {_NO_NEWS}.")
+    out: Dict[str, Any] = {"items": [], "text": "", "sources": [], "searched": False}
+    if not GROQ_API_KEY:
+        return out
     for model in _GROQ_MODELS:
         try:
-            data = await _call(model, [
-                {"role": "user", "content": prompt}
-            ], web_search=True)
-            text = _content(data)
-            if text:
-                return text, _search_sources(data)
+            data = await _call(model, [{"role": "user", "content": prompt}], web_search=True)
         except Exception as e:
             err = str(e)
             if "413" in err or "request_too_large" in err:
                 continue   # try next model silently
             print(f"[LLM] {model} news fetch failed: {e}")
             break
+        out["searched"] = True
+        items = recent_items(_content(data), today)
+        out.update(items=items, text=news_text(items), sources=_search_sources(data) if items else [])
+        break
+    print(f"[LLM] News for {home} vs {away}: {len(out['items'])} recent items")
+    return out
 
-    return "", []
+
+async def _fetch_news(home: str, away: str) -> tuple[str, List[str]]:
+    """(news_text, source_urls) — fetch_match_news without the fixture details."""
+    news = await fetch_match_news(home, away)
+    return news["text"], news["sources"]
 
 
 async def extract_model_adjustments(
@@ -409,18 +464,29 @@ async def explain_match(
     away: str,
     analysis: Dict[str, Any],
     prediction: Dict[str, Any],
+    news: Optional[Dict[str, Any]] = None,
+    facts: str = "",
+    kickoff: str = "",
+    competition: str = "",
 ) -> Dict[str, Any]:
     """
-    Generate a plain-language match explanation with live qualitative context.
+    Generate a plain-language match preview from the model's numbers, the
+    teams' verified recent results and head-to-head (`facts`, from
+    match_facts.text) and the dated team news (fetch_match_news; fetched
+    here when not given). The model is told today's date and to state
+    nothing about the teams beyond those — what it remembers from training
+    is out of date (old managers, sold players, last season's form).
     Returns {explanation, sources, model, error}
     """
     if not GROQ_API_KEY and not DEEPSEEK_API_KEY:
         return {"explanation": None, "sources": [], "model": None, "error": "no_key"}
 
-    # Step 1 — fetch live news (small web-search call)
-    news_text, sources = await _fetch_news(home, away)
+    if news is None:
+        news = await fetch_match_news(home, away, kickoff, competition)
+    items = news.get("items") or []
+    sources = (news.get("sources") or []) if items else []
+    today = datetime.now(timezone.utc).date().isoformat()
 
-    # Step 2 — generate the full explanation with llama
     elo  = analysis.get("elo", {})
     rec  = analysis.get("recommended", {})
     xg_h = analysis.get("xg_home", 0)
@@ -429,46 +495,42 @@ async def explain_match(
     stats_block = (
         f"Elo: {home} {elo.get('home','?')} vs {away} {elo.get('away','?')} "
         f"(gap {elo.get('gap',0):+.0f} — {elo.get('label','?')}). "
-        f"xG: {home} {xg_h:.2f} vs {away} {xg_a:.2f}. "
+        f"Expected goals: {home} {xg_h:.2f} vs {away} {xg_a:.2f}. "
         f"Win probs: {home} {round(prediction.get('p_home',0)*100)}% / "
         f"Draw {round(prediction.get('p_draw',0)*100)}% / "
         f"{away} {round(prediction.get('p_away',0)*100)}%. "
         f"Best pick: {rec.get('label','?')} @ {round(rec.get('prob',0)*100)}%."
     )
-
-    if news_text:
-        news_block = f"Live team news (from web search today): {news_text}"
-        news_instruction = (
-            "Reference the live news above when relevant — flag injuries or absences "
-            "that contradict the model's pick."
-        )
+    if items:
+        news_block = ("Team news from a web search today (publication dates in brackets):\n"
+                      + news_text(items))
+        news_rule = ("Use the team news where it matters and say how recent it is; flag absences "
+                     "that cut against the model's pick.")
     else:
-        news_block = ""
-        news_instruction = (
-            "IMPORTANT: You do NOT have access to current team news for this match. "
-            "Do NOT mention injuries, suspensions, or lineup changes — your training data "
-            "is outdated and any such claims would be wrong. "
-            "Focus only on the statistical data provided."
-        )
+        news_block = "Team news: nothing published in the last week was found."
+        news_rule = "Do not mention injuries, suspensions, line-ups or managers at all."
 
     prompt = (
-        f"You are a sharp football analyst. Write a 4-sentence match preview for "
-        f"{home} vs {away}.\n\n"
-        f"Stats: {stats_block}\n"
+        f"Today is {today}. You are a sharp football analyst. Write a 4-5 sentence preview of "
+        f"{home} vs {away}{f' ({competition})' if competition else ''}"
+        f"{f', played on {kickoff}' if kickoff else ''}.\n\n"
+        f"Model: {stats_block}\n"
+        f"{facts or 'Recent results: not available.'}\n"
         f"{news_block}\n\n"
-        f"{news_instruction} "
-        f"Explain why the model favours one side using only the numbers given, "
-        f"end with a confidence verdict. No bullet points — flowing prose only."
+        f"Rules: use ONLY the facts above. Your own memory of these teams (players, managers, "
+        f"form, league positions) is out of date — never rely on it. Quote recent results with "
+        f"their dates when you use them. {news_rule} Explain why the model leans the way it "
+        f"does and end with a confidence verdict. Flowing prose, no bullet points."
     )
 
-    used_web = bool(sources)
+    used_web = bool(items)
     # The match page shows its "live web search" badge off this prefix.
     label_prefix = "web-search+" if used_web else ""
 
     # Primary: Groq — fast reasoning for match previews
     if GROQ_API_KEY:
         try:
-            data = await _call_groq_text([{"role": "user", "content": prompt}], max_tokens=350)
+            data = await _call_groq_text([{"role": "user", "content": prompt}], max_tokens=450)
             text = _content(data)
             if not text:
                 raise RuntimeError("empty reply")
@@ -481,7 +543,7 @@ async def explain_match(
     # Fallback: DeepSeek API reasoner
     if DEEPSEEK_API_KEY:
         try:
-            data = await _call_deepseek([{"role": "user", "content": prompt}], max_tokens=350)
+            data = await _call_deepseek([{"role": "user", "content": prompt}], max_tokens=1200)
             text = data["choices"][0]["message"]["content"].strip()
             model_tag = f"{label_prefix}deepseek-reasoner"
             print(f"[LLM] Explained {home} vs {away} ({model_tag}, {len(sources)} sources)")

@@ -120,6 +120,9 @@ export interface MatchAnalysis {
   web_confidence_modifier?: number;
   web_adjustment_flags?: string[];
   web_adjustment_reason?: string;
+  /** When this (shared, per-match) analysis was built; `refreshing`: a newer one is on its way. */
+  updated_at?: string | null;
+  refreshing?: boolean;
 }
 
 export interface H2HMeeting {
@@ -217,19 +220,37 @@ export async function fetchHistory(date: string): Promise<HistoryPrediction[]> {
   return res.json();
 }
 
+export interface NewsItem { date: string; text: string; }
+
 export interface MatchExplanation {
   explanation: string | null;
   sources: string[];
   model: string | null;
   error: string | null;
+  /** Team news published in the last week, newest first. */
+  news?: NewsItem[];
+  news_checked_at?: string | null;
+  updated_at?: string | null;
+  refreshing?: boolean;
+}
+
+/** One result in a team's recent form or the head-to-head (outcome is the team's / the home side's). */
+export interface FactMatch {
+  date: string; home: string; away: string; hg: number; ag: number; comp: string | null;
+  venue: "H" | "A"; opponent: string; outcome: "W" | "D" | "L";
+}
+export interface FactSummary { played: number; won: number; drawn: number; lost: number; scored: number; conceded: number; }
+export interface MatchFacts {
+  home: FactMatch[]; away: FactMatch[]; h2h: FactMatch[];
+  summary: { home: FactSummary | null; away: FactSummary | null; h2h: FactSummary | null };
 }
 
 type Fetcher = (url: string, init?: RequestInit) => Promise<Response>;
 
 /** Premium content: pass the signed-in fetch (useAuthedFetch) so the
  * backend can check the subscription. */
-export async function fetchExplanation(home: string, away: string, fetcher: Fetcher = fetch): Promise<MatchExplanation> {
-  const params = new URLSearchParams({ home, away });
+export async function fetchExplanation(home: string, away: string, fetcher: Fetcher = fetch, date = ""): Promise<MatchExplanation> {
+  const params = new URLSearchParams({ home, away, date });
   const res = await fetcher(`${API_URL}/api/explain?${params}`, { cache: "no-store" });
   if (!res.ok) return { explanation: null, sources: [], model: null, error: res.status === 402 ? "premium_required" : "fetch_failed" };
   return res.json();
@@ -240,11 +261,18 @@ export class AccessError extends Error {
   constructor(public status: number) { super(status === 401 ? "sign_in_required" : "premium_required"); }
 }
 
-export async function fetchMatchAnalysis(home: string, away: string, fetcher: Fetcher = fetch): Promise<MatchAnalysis> {
-  const params = new URLSearchParams({ home, away });
+export async function fetchMatchAnalysis(home: string, away: string, fetcher: Fetcher = fetch, date = ""): Promise<MatchAnalysis> {
+  const params = new URLSearchParams({ home, away, date });
   const res = await fetcher(`${API_URL}/api/analysis?${params}`, { cache: "no-store" });
   if (res.status === 401 || res.status === 402) throw new AccessError(res.status);
   if (!res.ok) throw new Error("Analysis failed");
+  return res.json();
+}
+
+export async function fetchMatchFacts(home: string, away: string, date = ""): Promise<MatchFacts> {
+  const params = new URLSearchParams({ home, away, date });
+  const res = await fetch(`${API_URL}/api/match/facts?${params}`, { cache: "no-store" });
+  if (!res.ok) throw new Error("Match facts failed");
   return res.json();
 }
 
