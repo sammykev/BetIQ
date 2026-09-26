@@ -128,6 +128,12 @@ class TestEndpoint:
             assert p["bookable"] == (p["home"] == linked["home"] and p["away"] == linked["away"])
         assert r["bookable_picks"] == sum(p["bookable"] for p in r["picks"])
 
+    def test_only_the_chosen_goal_lines(self):
+        r = self.post(min_odds=1.2, max_odds=3, days=3, markets=["goals_ou"], codes={"goals_ou": ["O15"]}).json()
+        assert r["picks"] and {p["code"] for p in r["picks"]} == {"O15"}
+        bad = self.post(min_odds=1.2, max_odds=3, codes=["U35"])
+        assert bad.status_code == 400
+
     def test_unreachable_target_explains(self):
         r = self.post(min_odds=100000, max_odds=200000, max_games=2).json()
         assert "gets near" in r["error"]

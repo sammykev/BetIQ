@@ -5189,8 +5189,10 @@ async def optimize_slip(body: Dict[str, Any]):
     """
     Build the slip with the best win chance whose total odds land in a target
     range (optimizer.py). Body: {min_odds, max_odds, max_games?, min_prob?,
-    days?, leagues?: [codes], markets?: [ids], bookable_only?}.
+    days?, leagues?: [codes], markets?: [ids], codes?: {market: [option
+    codes]} (e.g. only some goal lines), bookable_only?}.
     """
+    import booking_slip
     import optimizer
     try:
         lo, hi = float(body.get("min_odds", 2)), float(body.get("max_odds", 5))
@@ -5205,6 +5207,10 @@ async def optimize_slip(body: Dict[str, Any]):
     leagues = set(body.get("leagues") or [])
     markets = set(body.get("markets") or []) or None
     bookable_only = bool(body.get("bookable_only"))
+    codes = body.get("codes") or {}
+    if not isinstance(codes, dict):
+        raise HTTPException(status_code=400, detail="codes must be {market: [codes]}")
+    only = {str(m): {str(c) for c in (cs or [])} for m, cs in codes.items() if isinstance(cs, list) and cs}
 
     now = datetime.now(timezone.utc)
     today, last = now.date().isoformat(), (now.date() + timedelta(days=days - 1)).isoformat()
@@ -5226,14 +5232,23 @@ async def optimize_slip(body: Dict[str, Any]):
                 "matches_considered": 0, "target": [lo, hi], "target_odds": target}
     # Bookable-only slips skip markets SportyBet hasn't confirmed yet (a code
     # couldn't take those picks)
-    allowed = _bookable_markets() if bookable_only else None
+    bookable = _bookable_markets() if bookable_only else None
+
+    def allowed(market: str, code: str) -> bool:
+        if market in only and code not in only[market]:
+            return False  # a line the user left out
+        return bookable is None or bookable(market, code)
     # Matches without corner/card stats (internationals) get SportyBet-implied lines
     pairs = [(_with_priced_set_pieces(p, linked[id(p)]), linked[id(p)]) for p in preds]
     preds = [p for p, _ in pairs]
     groups = [optimizer.candidates(p, ev, min_prob, markets, allowed) for p, ev in pairs]
+    if bookable_only:
+        # Shots are on some matches and lines only: bookable when SportyBet priced that very line
+        groups = [[o for o in g if o.market not in booking_slip.LISTED_ONLY or o.odds_source == "sportybet"]
+                  for g in groups]
     considered = sum(1 for g in groups if g)
     if considered == 0:
-        reasons = optimizer.why_empty(preds, markets, min_prob, allowed)
+        reasons = optimizer.why_empty(preds, markets, min_prob, bookable, only)
         return {"error": _explain_empty(reasons, len(preds), days, min_prob), "reasons": reasons,
                 "matches_considered": 0, "target": [lo, hi], "target_odds": target}
     result = await asyncio.to_thread(optimizer.optimize, groups, lo, hi, max_games)
@@ -5252,10 +5267,11 @@ async def optimize_slip(body: Dict[str, Any]):
                 "matches_considered": considered, "target": [lo, hi], "target_odds": target}
     # Which picks a SportyBet code can take: the match is linked to a SportyBet
     # event and SportyBet confirmed the market (shots, for one, it doesn't offer)
-    ok = allowed or _bookable_markets()
+    ok = bookable or _bookable_markets()
     events = {(p["home"], p["away"], p.get("date")): ev for p, ev in pairs}
     for pick in result.get("picks") or []:
-        pick["bookable"] = bool(events.get((pick["home"], pick["away"], pick["date"]))) and ok(pick["market"], pick["code"])
+        pick["bookable"] = (bool(events.get((pick["home"], pick["away"], pick["date"]))) and ok(pick["market"], pick["code"])
+                            and (pick["market"] not in booking_slip.LISTED_ONLY or pick["odds_source"] == "sportybet"))
     result["bookable_picks"] = sum(1 for pick in result.get("picks") or [] if pick["bookable"])
     return {**result, "target": [lo, hi], "target_odds": round(target, 2), "matches_considered": considered}
 

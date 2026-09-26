@@ -316,14 +316,17 @@ MARKET_NAMES = {m: n for m, n, *_ in _PICKS}
 
 
 def why_empty(preds: List[Dict], markets: Optional[set], min_prob: float,
-              allowed: Optional[Callable[[str, str], bool]] = None) -> List[Dict[str, Any]]:
+              allowed: Optional[Callable[[str, str], bool]] = None,
+              only: Optional[Dict[str, set]] = None) -> List[Dict[str, Any]]:
     """Per market, why no match gave a pick: no data for these matches (e.g.
     corners for internationals), the best probability under the minimum, or
-    every pick vetoed by `allowed` (not bookable yet)."""
+    every pick vetoed by `allowed` (not bookable yet). `only` limits a
+    market to some of its options (e.g. goal lines)."""
     usable = [p for p in preds if all(isinstance(p.get(k), (int, float)) for k in ("p_home", "p_over25"))]
     out = []
     for market in sorted(markets or MARKET_NAMES, key=list(MARKET_NAMES).index):
-        picks = [(code, fn) for m, _, code, _, fn in _PICKS if m == market]
+        picks = [(code, fn) for m, _, code, _, fn in _PICKS
+                 if m == market and (not only or m not in only or code in only[m])]
         per_match = [[v for _, fn in picks if isinstance(v := fn(p), (int, float))] for p in usable]
         with_data = sum(1 for vals in per_match if vals)
         best = max((v for vals in per_match for v in vals), default=None)

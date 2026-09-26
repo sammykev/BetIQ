@@ -138,7 +138,10 @@ def _near(day: Optional[str], date_str: str) -> bool:
 # shows which of them SportyBet offers. 166/139 (total corners / bookings)
 # are asked for separately so a listing that refuses them still loads.
 BASE_MARKETS = "1,18,10,29,11,26,60"
-MARKETS = BASE_MARKETS + ",166,139"
+# Shots / shots on target over/under (total, home, away): SportyBet's own ids,
+# offered on some matches only (bigger ones) — booking_slip.LISTED_ONLY
+SHOT_MARKETS = "900394,900393,900552,900553,900546,900547"
+MARKETS = BASE_MARKETS + ",166,139," + SHOT_MARKETS
 # Asked for too, only so each market's SportyBet name can confirm it
 # (booking_slip.VERIFIED): team totals, handicap, double chance & total,
 # clean sheets, win to nil, corner markets. Not stored with the links.
@@ -265,7 +268,9 @@ async def fetch_events_for_date(date_str: str, session: Optional[AsyncSession] =
 
 
 # The markets booking_slip books; the catalog keeps only these per event
-BOOKED_MARKETS = {"1", "10", "11", "18", "26", "29", "60", "166", "139"}
+BOOKED_MARKETS = {"1", "10", "11", "18", "26", "29", "60", "166", "139", *SHOT_MARKETS.split(",")}
+# Kept with their SportyBet name, which booking_slip.label_ok checks
+LABELLED_MARKETS = {"166", "139", *SHOT_MARKETS.split(",")}
 
 
 def _label(market: Dict) -> str:
@@ -322,7 +327,7 @@ def slim_event(ev: Dict) -> Dict:
         "estimateStartTime": ev.get("estimateStartTime"),
         "markets": [
             {"id": m.get("id"), "specifier": m.get("specifier") or "",
-             **({"desc": _label(m)} if str(m.get("id")) in ("166", "139") else {}),
+             **({"desc": _label(m)} if str(m.get("id")) in LABELLED_MARKETS else {}),
              "outcomes": [{"id": o.get("id"), "odds": o.get("odds"), "isActive": o.get("isActive", 1)}
                           for o in m.get("outcomes") or []]}
             for m in ev.get("markets") or [] if str(m.get("id")) in BOOKED_MARKETS

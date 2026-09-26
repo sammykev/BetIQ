@@ -68,7 +68,7 @@ class TestMarkets:
         assert picks[("away_sot_ou", "O35")](pred) is None
 
     def test_booking_ids_come_from_sportybet_labels(self):
-        assert booking_slip.sportybet_ids("sot_ou", "O85") == {"marketId": "?sot", "specifier": "total=8.5",
+        assert booking_slip.sportybet_ids("sot_ou", "O85") == {"marketId": "900393", "specifier": "total=8.5",
                                                                 "outcomeId": "12"}
         details = {"home": "Arsenal", "away": "Chelsea", "markets": {
             "901": {"label": "Total shots on target", "outcomes": {"12": "Over", "13": "Under"}},
@@ -88,3 +88,35 @@ class TestMarkets:
         assert tickets.grade_leg("away_sot_ou", "O25", res) == "lost"
         assert tickets.grade_leg("corners_ou", "U105", res) == "lost"      # 11 corners
         assert tickets.grade_leg("sot_ou", "O85", {**res, "sot": None}) == "pending"
+
+
+class TestSportyBetShots:
+    """SportyBet's own shots markets (found on Slovenia v Scotland, Nations League)."""
+    LABELS = {"900394": "Shots Over/Under", "900393": "Shots on Target Over/Under",
+              "900552": "Home Team Shots Over/Under", "900553": "Away Team Shots Over/Under",
+              "900546": "Home Team Shots on Target Over/Under", "900547": "Away Team Shots on Target Over/Under",
+              "800054": "Match Shots Outside Box", "900318": "Shots on Target 1X2", "830230": "Most Shots",
+              "19": "Slovenia Over/Under", "23": "Home Team Goals"}
+
+    def test_every_shots_market_confirms_by_its_name(self):
+        details = {"home": "Slovenia", "away": "Scotland",
+                   "markets": {k: {"label": v, "outcomes": {"12": "Over 4.5", "13": "Under 4.5"}} for k, v in self.LABELS.items()}}
+        got = booking_slip.resolve_markets(details)
+        assert {k: got[k]["id"] for k in booking_slip.LISTED_ONLY} == {
+            "shots_ou": "900394", "sot_ou": "900393", "home_shots_ou": "900552", "away_shots_ou": "900553",
+            "home_sot_ou": "900546", "away_sot_ou": "900547"}
+        assert all(got[k]["ok"] for k in booking_slip.LISTED_ONLY)
+        assert got["home_goals_ou"]["id"] == "19"      # not the team shots markets
+
+    def test_priced_only_when_the_listing_has_that_line(self):
+        pred = {"home": "Slovenia", "away": "Scotland", "date": "2026-09-26", "p_home": 0.3, "p_draw": 0.3,
+                "p_away": 0.4, "p_over15": 0.7, "p_over25": 0.45,
+                "set_pieces": {"sot_home": {"over": {"3.5": 0.3}}, "sot": {"over": {"8.5": 0.5}}}}
+        event = {"markets": [{"id": "900546", "specifier": "total=3.5", "desc": "Home Team Shots on Target Over/Under",
+                              "outcomes": [{"id": "12", "odds": "2.60"}, {"id": "13", "odds": "1.45"}]}]}
+        opts = {(o.market, o.code): o for o in optimizer.candidates(pred, event, 0.0)}
+        assert (opts[("home_sot_ou", "U35")].odds, opts[("home_sot_ou", "U35")].odds_source) == (1.45, "sportybet")
+        assert opts[("sot_ou", "U85")].odds_source == "estimated"     # SportyBet has no 8.5 line here
+        import sportybet
+        slim = sportybet.slim_event({"eventId": "sr:match:9", **event})
+        assert slim["markets"][0]["desc"] == "Home Team Shots on Target Over/Under"

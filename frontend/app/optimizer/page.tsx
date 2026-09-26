@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import clsx from "clsx";
 import { useUser } from "@clerk/nextjs";
-import { Check, Copy, Loader2, Sparkles, Ticket, AlertTriangle, ExternalLink, Link2 } from "lucide-react";
+import { Check, ChevronDown, Copy, Loader2, Sparkles, Ticket, AlertTriangle, ExternalLink, Link2 } from "lucide-react";
 import { AppShell } from "@/components/shell/AppShell";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { CodeCheck } from "@/components/CodeCheck";
@@ -78,6 +78,59 @@ const MARKETS: { id: string; label: string; ids: string[]; needs?: string[] }[] 
 ];
 // Cards are SportyBet's "Total bookings": yellow 1, red 2
 
+// Goal lines the Goals chip can be narrowed to (optimizer.py goals_ou codes)
+const GOAL_LINES = ["1.5", "2.5", "3.5"].flatMap(l => [
+  { code: `O${l.replace(".", "")}`, label: `Over ${l}` }, { code: `U${l.replace(".", "")}`, label: `Under ${l}` },
+]);
+
+/** The Goals chip with a menu of lines: tick any mix of over/under 1.5–3.5. */
+function GoalLines({ active, onToggle, lines, setLines }: {
+  active: boolean; onToggle: () => void; lines: string[]; setLines: (l: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [open]);
+  const all = lines.length === GOAL_LINES.length;
+  const summary = all ? "" : lines.length === 1 ? ` · ${GOAL_LINES.find(g => g.code === lines[0])?.label}` : ` · ${lines.length} lines`;
+  return (
+    <div ref={ref} className="relative">
+      <div className={clsx("chip !p-0 flex items-stretch overflow-hidden", active ? "chip-active" : "chip-idle")}>
+        <button type="button" onClick={onToggle} className="px-3 py-1.5">Goals{active && summary}</button>
+        <button type="button" onClick={() => setOpen(o => !o)} aria-label="Choose goal lines" aria-expanded={open}
+          className="px-2 border-l border-n-700/60 flex items-center">
+          <ChevronDown size={14} className={clsx("transition-transform", open && "rotate-180")} />
+        </button>
+      </div>
+      {open && (
+        <div className="absolute z-20 mt-1.5 w-52 rounded-xl border border-n-700 bg-surface p-2 shadow-xl">
+          <div className="flex justify-between px-1.5 pb-1.5 text-[11px]">
+            <button type="button" className="text-accent font-semibold" onClick={() => setLines(GOAL_LINES.map(g => g.code))}>All lines</button>
+            <button type="button" className="text-n-400" onClick={() => setLines([])}>Clear</button>
+          </div>
+          <div className="grid grid-cols-2 gap-1">
+            {GOAL_LINES.map(g => {
+              const on = lines.includes(g.code);
+              return (
+                <label key={g.code} className={clsx("flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs cursor-pointer",
+                  on ? "bg-accent/10 text-n-0" : "text-n-300 hover:bg-surface-sunken")}>
+                  <input type="checkbox" checked={on} className="accent-[rgb(var(--accent))]"
+                    onChange={() => setLines(on ? lines.filter(x => x !== g.code) : [...lines, g.code])} />
+                  {g.label}
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // /api/sportybet/status — the last automatic linking run
 interface LinkStatus {
   at: string | null; trigger: string | null; linked: number; predictions: number;
@@ -126,6 +179,9 @@ export default function OptimizerPage() {
   const [days, setDays] = useState(3);
   const [maxGames, setMaxGames] = useState(30);
   const [markets, setMarkets] = useState<string[]>(MARKETS.map(m => m.id));
+  const [goalLines, setGoalLines] = useState<string[]>(GOAL_LINES.map(g => g.code));
+  // Goals with no line ticked counts as Goals off
+  const chosen = MARKETS.filter(m => markets.includes(m.id) && (m.id !== "goals_ou" || goalLines.length > 0));
   // On when SportyBet confirmed at least one of the chip's markets (the
   // server only books the confirmed ones)
   const confirmed = (m: (typeof MARKETS)[number], s: LinkStatus | null) =>
@@ -171,7 +227,8 @@ export default function OptimizerPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ target_odds: targetOdds, min_odds: lo, max_odds: hi, min_prob: minProb, days, max_games: maxGames,
-                               markets: MARKETS.filter(m => markets.includes(m.id)).flatMap(m => m.ids),
+                               markets: chosen.flatMap(m => m.ids),
+                               ...(goalLines.length < GOAL_LINES.length ? { codes: { goals_ou: goalLines } } : {}),
                                bookable_only: bookable }),
       });
       const data = await res.json();
@@ -273,9 +330,20 @@ export default function OptimizerPage() {
               {DAYS.map(d => <Chip key={d.n} active={days === d.n} onClick={() => setDays(d.n)}>{d.label}</Chip>)}
             </Setting>
             <Setting label="Markets">
-              {MARKETS.map(m => (
+              <div className="basis-full flex items-center gap-3 text-xs -mt-0.5 mb-0.5">
+                <button type="button" className="font-semibold text-accent" onClick={() => setMarkets(MARKETS.map(m => m.id))}>
+                  Select all
+                </button>
+                <button type="button" className="text-n-400 hover:text-n-200" onClick={() => setMarkets([])}>Clear all</button>
+                <span className="text-n-500">{chosen.length} of {MARKETS.length} on</span>
+              </div>
+              {MARKETS.map(m => m.id === "goals_ou" ? (
+                <GoalLines key={m.id} active={markets.includes(m.id)} lines={goalLines}
+                  onToggle={() => setMarkets(ms => ms.includes(m.id) ? ms.filter(x => x !== m.id) : [...ms, m.id])}
+                  setLines={l => { setGoalLines(l); if (l.length) setMarkets(ms => ms.includes(m.id) ? ms : [...ms, m.id]); }} />
+              ) : (
                 <Chip key={m.id} active={markets.includes(m.id)}
-                  onClick={() => setMarkets(ms => ms.includes(m.id) ? (ms.length > 1 ? ms.filter(x => x !== m.id) : ms) : [...ms, m.id])}>
+                  onClick={() => setMarkets(ms => ms.includes(m.id) ? ms.filter(x => x !== m.id) : [...ms, m.id])}>
                   {m.label}
                 </Chip>
               ))}
@@ -308,7 +376,8 @@ export default function OptimizerPage() {
             </p>
           )}
 
-          <button onClick={() => run()} disabled={busy || !validTarget}
+          {chosen.length === 0 && <p className="text-xs text-warn">Pick at least one market.</p>}
+          <button onClick={() => run()} disabled={busy || !validTarget || chosen.length === 0}
             className="w-full sm:w-auto flex items-center justify-center gap-2 rounded-xl bg-brand-400 hover:bg-brand-300 text-ink font-bold px-6 py-3 disabled:opacity-50">
             {busy ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
             {busy ? "Optimizing…" : `Build a ${odds(targetOdds)}x slip`}
