@@ -90,6 +90,13 @@ const CHIP_LINES: Record<string, Line[]> = {
   team_goals: [...ou("home_goals_ou", ["0.5", "1.5", "2.5"], "Home "), ...ou("away_goals_ou", ["0.5", "1.5", "2.5"], "Away ")],
   corners: ou("corners_ou", ["7.5", "8.5", "9.5", "10.5", "11.5"]),
   cards: ou("cards_ou", ["2.5", "3.5", "4.5", "5.5", "6.5"]),
+  // The lines the backend prices (optimizer.py): the match's, then each team's
+  shots: [...ou("shots_ou", ["20.5", "22.5", "24.5", "26.5", "28.5"], "Match "),
+          ...ou("home_shots_ou", ["10.5", "11.5", "12.5", "13.5", "14.5", "15.5"], "Home "),
+          ...ou("away_shots_ou", ["8.5", "9.5", "10.5", "11.5", "12.5", "13.5"], "Away ")],
+  sot: [...ou("sot_ou", ["6.5", "7.5", "8.5", "9.5", "10.5"], "Match "),
+        ...ou("home_sot_ou", ["2.5", "3.5", "4.5", "5.5", "6.5"], "Home "),
+        ...ou("away_sot_ou", ["1.5", "2.5", "3.5", "4.5", "5.5"], "Away ")],
 };
 const lineKey = (l: Line) => `${l.market}:${l.code}`;
 
@@ -127,7 +134,7 @@ function LineMenu({ label, active, onToggle, lines, picked, setPicked }: {
       </div>
       {open && (
         <div ref={menu} style={{ transform: `translateX(${shift}px)` }}
-          className="absolute z-20 mt-1.5 w-[17rem] max-w-[calc(100vw-1.5rem)] rounded-xl border border-n-700 bg-surface p-2 shadow-xl">
+          className="absolute z-20 mt-1.5 w-[19rem] max-w-[calc(100vw-1.5rem)] rounded-xl border border-n-700 bg-surface p-2 shadow-xl">
           <div className="flex justify-between px-1.5 pb-1.5 text-[11px]">
             <button type="button" className="text-accent font-semibold"
               onClick={() => setPicked([...picked.filter(k => !lines.some(l => lineKey(l) === k)), ...lines.map(lineKey)])}>
