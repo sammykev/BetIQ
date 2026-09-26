@@ -22,6 +22,7 @@ PREFIX = "betiq:model"
 CHUNK = 4 * 1024 * 1024            # Upstash allows 10 MB per request
 TTL = 14 * 86400                   # a shared model nobody refreshes expires
 MAX_AGE_HOURS = float(os.getenv("SHARED_MODEL_MAX_AGE_HOURS", "36"))
+OLD_CHUNKS_TTL = 15 * 60           # a replaced model stays readable this long
 
 
 def _client(url: Optional[str] = None):
@@ -61,7 +62,12 @@ def publish(blob: bytes, version: int, info: Optional[Dict] = None, client=None,
             "sha256": hashlib.sha256(blob).hexdigest(), **(info or {})}
     r.set(_meta_key(version, name), json.dumps(meta), ex=TTL)
     if old and old.get("gen") != gen:
-        r.delete(*[_chunk_key(version, old["gen"], i, name) for i in range(int(old.get("chunks", 0)))] or ["_"])
+        # Expire the old chunks instead of deleting them: a server reading the
+        # old generation right now (it read the meta a moment ago) still gets
+        # a whole model. Deleting them sent a restarting server into training
+        # its own, which ran it out of memory.
+        for i in range(int(old.get("chunks", 0))):
+            r.expire(_chunk_key(version, old["gen"], i, name), OLD_CHUNKS_TTL)
     return meta
 
 
@@ -92,6 +98,11 @@ def fetch(version: int, max_age_hours: float = MAX_AGE_HOURS,
         print(f"[ModelStore] Shared model is {age_h:.0f}h old (limit {max_age_hours:.0f}h) — not using it.")
         return None
     parts = [r.get(_chunk_key(version, meta["gen"], i, name)) for i in range(int(meta["chunks"]))]
+    if any(p is None for p in parts):
+        newer = describe(version, client=r, name=name)   # replaced while reading?
+        if newer and newer.get("gen") != meta.get("gen"):
+            meta = newer
+            parts = [r.get(_chunk_key(version, meta["gen"], i, name)) for i in range(int(meta["chunks"]))]
     if any(p is None for p in parts):
         print("[ModelStore] Shared model is incomplete — not using it.")
         return None

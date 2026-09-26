@@ -332,7 +332,9 @@ def inputs(app, seasons: int = 2) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFr
     else:
         ucl = pd.DataFrame()
     if "league" in league.columns:
-        league = league[~league["league"].isin(EUROPE_CODES)]
+        # National teams have nothing to do with European club matches: left
+        # out, the model is smaller and quicker to train and load
+        league = league[~league["league"].isin(EUROPE_CODES | {"INT"})]
     league = league.drop(columns=["StrengthOnly", "Source"], errors="ignore")
     ucl = ucl.drop(columns=["StrengthOnly", "Source", "Context"], errors="ignore")
     names = set(league["HomeTeam"]) | set(league["AwayTeam"])
@@ -431,9 +433,15 @@ async def probe_leagues(days: int = 45) -> Dict[str, Any]:
     async with AsyncSession(impersonate=intl.IMPERSONATE, timeout=30) as session:
         for slug in PROBE_SLUGS:
             try:
-                r = await session.get(f"{intl.ESPN_BASE}/{slug}/scoreboard", headers=intl._ESPN_HEADERS,
-                                      params={"dates": f"{start:%Y%m%d}-{end:%Y%m%d}", "limit": 500})
+                # The default view (the current round) first: a date range can
+                # answer 400 where the league is fine
+                r = await session.get(f"{intl.ESPN_BASE}/{slug}/scoreboard", headers=intl._ESPN_HEADERS)
                 data = r.json() if r.status_code == 200 else {}
+                if r.status_code == 200 and not data.get("events"):
+                    r2 = await session.get(f"{intl.ESPN_BASE}/{slug}/scoreboard", headers=intl._ESPN_HEADERS,
+                                           params={"dates": f"{start:%Y%m%d}-{end:%Y%m%d}"})
+                    if r2.status_code == 200:
+                        data = r2.json()
             except Exception as e:
                 out[slug] = {"error": f"{type(e).__name__}: {str(e)[:80]}"}
                 continue

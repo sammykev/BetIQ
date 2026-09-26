@@ -1179,6 +1179,12 @@ def _load_europe_model() -> None:
         if not verdict.get("adopted"):
             _europe_predictor, _europe_model_info = None, {"check": verdict.get("reason")}
             return
+        meta_now = model_store.describe(MODEL_CACHE_VERSION, name=europe_model.MODEL_NAME) or {}
+        if _europe_predictor is not None and meta_now.get("gen") == _europe_model_info.get("gen"):
+            _europe_predictor.calibration = cals["europe"]   # same model: only the plan may have changed
+            _europe_model_info.update(competitions=europe_model.competitions(verdict), calibrated=sorted(cals["europe"]))
+            return
+        _europe_predictor = None   # never two Europe models in memory at once
         shared = model_store.fetch(MODEL_CACHE_VERSION, name=europe_model.MODEL_NAME)
         if shared is None:
             print("[Europe] Adopted, but no fresh Europe model is published — using the main model.")
@@ -1190,7 +1196,8 @@ def _load_europe_model() -> None:
             m.calibration = cals["europe"]
             _europe_predictor, _europe_model_info = m, {**meta, "competitions": comps,
                                                         "calibrated": sorted(cals["europe"])}
-            print(f"[Europe] Europe model loaded ({meta.get('config')}) for {', '.join(comps) or 'nothing'}.")
+            print(f"[Europe] Europe model loaded ({meta.get('config')}) for {', '.join(comps) or 'nothing'}; "
+                  f"{_rss_mb()} MB in use.")
     except Exception as e:
         print(f"[Europe] Europe model not loaded: {e}")
 
@@ -1335,13 +1342,28 @@ def _train_new(combined: pd.DataFrame) -> LeaguePredictor:
     return predictor
 
 
+def _rss_mb() -> Optional[int]:
+    """This process's memory in use (MB), where /proc has it (Linux: Render)."""
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) // 1024
+    except OSError:
+        pass
+    return None
+
+
 def _load_or_train(combined: pd.DataFrame, data_mtime: float) -> LeaguePredictor:
     """
     The model, as cheaply as possible:
       1. this server's cached model, if newer than its data;
       2. the shared model (trained nightly on GitHub Actions, see
          train_model.py), if fresh — seconds instead of minutes of training;
-      3. training here, then sharing the result so a restart can load it.
+      3. the shared model again, a few times (it may be being replaced), then
+         the one this server already runs, then a shared model of any age;
+      4. only with none of those, training here (it needs ~400 MB, most of
+         a 512 MB instance), then sharing the result.
     """
     import model_store
     from predictor import MODEL_CACHE_VERSION
@@ -1350,7 +1372,18 @@ def _load_or_train(combined: pd.DataFrame, data_mtime: float) -> LeaguePredictor
     if predictor is not None:
         return predictor
     try:
-        shared = model_store.fetch(MODEL_CACHE_VERSION)
+        shared_on = model_store._client() is not None
+    except Exception as e:
+        print(f"[ModelStore] Redis unavailable: {e}")
+        shared_on = False
+    for attempt in range(3 if shared_on else 1):
+        if attempt:
+            time.sleep(20)
+        try:
+            shared = model_store.fetch(MODEL_CACHE_VERSION)
+        except Exception as e:
+            print(f"[ModelStore] Could not load the shared model: {e}")
+            shared = None
         if shared is not None:
             blob, meta = shared
             predictor = LeaguePredictor.from_bytes(blob)
@@ -1360,9 +1393,19 @@ def _load_or_train(combined: pd.DataFrame, data_mtime: float) -> LeaguePredictor
                       f"{age_h:.1f}h old, {meta.get('rows', '?')} matches) — skipping training.")
                 predictor.save_cache(data_mtime)
                 return predictor
-    except Exception as e:
-        print(f"[ModelStore] Could not load the shared model: {e}")
+    if _predictor is not None:
+        print("[ModelStore] No fresh shared model — keeping the model already running (not training here).")
+        return _predictor
+    if shared_on:
+        try:
+            stale = model_store.fetch(MODEL_CACHE_VERSION, max_age_hours=24 * 14)
+            if stale is not None and (p := LeaguePredictor.from_bytes(stale[0])) is not None:
+                print("[ModelStore] Using an older shared model rather than training here.")
+                return p
+        except Exception as e:
+            print(f"[ModelStore] Older shared model not loaded: {e}")
 
+    print(f"[Memory] Training here ({_rss_mb()} MB in use before).")
     predictor = _train_new(combined)
     predictor.save_cache(data_mtime)
     try:
@@ -1411,7 +1454,9 @@ async def _run_pipeline():
 
         # Training takes minutes of CPU. On a worker thread the API keeps
         # answering (from the previous model) instead of timing out.
+        print(f"[Memory] {_rss_mb()} MB before loading the model")
         predictor = await asyncio.to_thread(_load_or_train, combined, data_mtime)
+        print(f"[Memory] {_rss_mb()} MB with the model")
 
         # Make predictor available immediately so card analysis works during API calibration
         global _predictor

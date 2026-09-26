@@ -29,6 +29,15 @@ class FakeRedis:
         for k in keys:
             self.data.pop(k, None)
 
+    def expire(self, key, seconds):
+        self.expiring = getattr(self, "expiring", set()) | {key}
+
+    def pass_time(self):
+        """Every key given an expiry is gone."""
+        for k in getattr(self, "expiring", set()):
+            self.data.pop(k, None)
+        self.expiring = set()
+
 
 @pytest.fixture
 def redis(monkeypatch):
@@ -57,7 +66,33 @@ class TestStore:
         model_store.publish(b"first", 7)
         model_store.publish(b"second", 7)
         assert model_store.fetch(7)[0] == b"second"
+        redis.pass_time()   # the old chunks are left to expire, not deleted at once
         assert sum(k.startswith("betiq:model:v7:") and not k.endswith("meta") for k in redis.data) == 1
+
+    def test_a_reader_mid_replacement_still_gets_a_whole_model(self, redis, monkeypatch):
+        clock = iter(range(1_000_000, 1_000_100))
+        monkeypatch.setattr(model_store.time, "time", lambda: float(next(clock)))
+        model_store.publish(b"first", 7)
+        old_meta = model_store.describe(7)
+        model_store.publish(b"second", 7)
+        # A server that read the old meta just before the switch reads its chunks
+        parts = [redis.get(model_store._chunk_key(7, old_meta["gen"], i)) for i in range(old_meta["chunks"])]
+        assert b"".join(parts) == b"first"
+        redis.pass_time()
+        assert model_store.fetch(7)[0] == b"second"
+
+    def test_chunks_gone_mid_read_fall_back_to_the_newer_model(self, redis, monkeypatch):
+        clock = iter(range(1_000_000, 1_000_100))
+        monkeypatch.setattr(model_store.time, "time", lambda: float(next(clock)))
+        monkeypatch.setattr(model_store, "MAX_AGE_HOURS", 1e9)
+        model_store.publish(b"first", 7)
+        stale = model_store.describe(7)
+        model_store.publish(b"second", 7)
+        redis.pass_time()
+        calls = iter([stale])
+        real = model_store.describe
+        monkeypatch.setattr(model_store, "describe", lambda *a, **k: next(calls, None) or real(*a, **k))
+        assert model_store.fetch(7)[0] == b"second"
 
     def test_too_old_is_ignored(self, redis):
         model_store.publish(b"x", 7)
@@ -104,15 +139,35 @@ class TestServerModel:
         assert p.predict_match("Arsenal", "Chelsea") == trained.predict_match("Arsenal", "Chelsea")
 
     def test_trains_and_shares_when_nothing_is_published(self, redis, trained, monkeypatch):
+        monkeypatch.setattr(main.time, "sleep", lambda s: None)
+        monkeypatch.setattr(main, "_predictor", None)
         monkeypatch.setattr(main, "_train_new", lambda c: trained)
         assert main._load_or_train(season(), 0.0) is trained
         _, meta = model_store.fetch(MODEL_CACHE_VERSION)
         assert meta["source"] == "api-server"
 
+    def test_keeps_the_running_model_rather_than_train(self, redis, trained, monkeypatch):
+        monkeypatch.setattr(main.time, "sleep", lambda s: None)
+        monkeypatch.setattr(main, "_predictor", trained)
+        monkeypatch.setattr(main, "_train_new", lambda c: pytest.fail("should not train"))
+        assert main._load_or_train(season(), 0.0) is trained
+
+    def test_an_older_shared_model_beats_training(self, redis, trained, monkeypatch):
+        monkeypatch.setattr(main.time, "sleep", lambda s: None)
+        monkeypatch.setattr(main, "_predictor", None)
+        model_store.publish(trained.to_bytes(), MODEL_CACHE_VERSION, {"source": "github-actions"})
+        meta = json.loads(redis.get(model_store._meta_key(MODEL_CACHE_VERSION)))
+        meta["trained_at"] = time.time() - 3 * 86400
+        redis.set(model_store._meta_key(MODEL_CACHE_VERSION), json.dumps(meta))
+        monkeypatch.setattr(main, "_train_new", lambda c: pytest.fail("should not train"))
+        p = main._load_or_train(season(), 0.0)
+        assert p.predict_match("Arsenal", "Chelsea") == trained.predict_match("Arsenal", "Chelsea")
+
     def test_trains_when_redis_is_down(self, monkeypatch, trained):
         def boom(url=None):
             raise ConnectionError("down")
         monkeypatch.setattr(model_store, "_client", boom)
+        monkeypatch.setattr(main, "_predictor", None)
         monkeypatch.setattr(main, "_train_new", lambda c: trained)
         assert main._load_or_train(season(), 0.0) is trained
 
