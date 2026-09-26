@@ -70,6 +70,14 @@ def snapshot(pred: Dict) -> Dict[str, Any]:
     # SportyBet's prices for the outcomes we model (price_book.py), kept till kick-off
     if pred.get("_sb_prices"):
         out["prices"] = pred["_sb_prices"]
+    # Every outcome the model rates ≥ 50%, for the per-market accuracy report
+    try:
+        import market_accuracy
+        picks = market_accuracy.picks_of(pred)
+    except Exception:
+        picks = None
+    if picks:
+        out["picks"] = picks
     return out
 
 
@@ -236,7 +244,7 @@ def public(entry: Dict) -> Dict[str, Any]:
             "score": [res["hg"], res["ag"]] if res.get("hg") is not None and res.get("ag") is not None else None,
             "corners": res.get("corners"), "bookings": res.get("bookings"),
             "shots": res.get("shots"), "sot": res.get("sot"),
-            "pred": {k: v for k, v in (entry.get("pred") or {}).items() if k != "prices"},
+            "pred": {k: v for k, v in (entry.get("pred") or {}).items() if k not in ("prices", "picks")},
             "grades": entry.get("grades"), "locked": bool(entry.get("locked"))}
 
 

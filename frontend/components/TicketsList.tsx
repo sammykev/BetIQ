@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import clsx from "clsx";
-import { Check, Clock, Copy, ExternalLink, HelpCircle, Loader2, Ticket as TicketIcon } from "lucide-react";
+import { Check, ChevronDown, Clock, Copy, ExternalLink, HelpCircle, Loader2, Ticket as TicketIcon } from "lucide-react";
 import { VerdictIcon } from "@/components/MatchdayList";
 import { API, type Ticket, type TicketLeg, type TicketSummary } from "@/lib/matchday";
 
@@ -62,6 +62,42 @@ export function TicketsList({ uid, authFetch }: { uid: string; authFetch: (url: 
   const older = data?.older ?? [];
   const s = data?.summary;
 
+  const card = (t: Ticket) => {
+    const done = t.legs.filter(l => l.status !== "pending" && l.status !== "unknown").length;
+    return (
+      <article key={t.code} className={clsx("card overflow-hidden", t.status === "won" && "border-accent/40", t.status === "lost" && "border-danger/30")}>
+        <header className="flex items-start justify-between gap-3 p-4">
+          <div className="min-w-0">
+            <p className="font-mono text-2xl font-bold text-n-0 tracking-[0.18em]">{t.code}</p>
+            <p className="text-[11px] text-n-500 mt-0.5">
+              {SOURCE[t.source] ?? "BetIQ"} · {new Date(t.created_at).toLocaleDateString(undefined, { day: "numeric", month: "short" })}
+              {" · "}{done}/{t.legs.length} settled
+            </p>
+          </div>
+          <div className="text-right shrink-0 space-y-1">
+            <span className={clsx("inline-block rounded-full border px-2 py-0.5 text-[11px] font-bold", STATUS[t.status].cls)}>{STATUS[t.status].label}</span>
+            {t.total_odds && <p className="font-display font-extrabold text-2xl text-n-0 leading-none tnum">{t.total_odds.toFixed(2)}x</p>}
+          </div>
+        </header>
+        <ul className="px-4 border-t border-dashed border-n-700 divide-y divide-n-800/70">
+          {t.legs.map((l, i) => <LegRow key={i} leg={l} />)}
+        </ul>
+        <footer className="flex items-center justify-between gap-2 px-4 py-3 border-t border-n-800">
+          {t.share_url ? (
+            <a href={t.share_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-xs text-n-300 hover:text-n-0">
+              <ExternalLink size={12} /> Open on SportyBet</a>
+          ) : <span />}
+          <button onClick={() => copy(t.code)} className="btn-primary !px-3 !py-1.5 !text-xs !rounded-lg">
+            {copied === t.code ? <Check size={12} /> : <Copy size={12} />}{copied === t.code ? "Copied" : "Copy code"}
+          </button>
+        </footer>
+      </article>
+    );
+  };
+  // Open tickets up top; settled ones (won / lost / void) in the archive below
+  const active = tickets.filter(t => t.status === "pending" || t.status === "open");
+  const settled = tickets.filter(t => t.status !== "pending" && t.status !== "open");
+
   if (!tickets.length && !older.length) {
     return (
       <div className="card border-dashed text-center px-6 py-14 space-y-2">
@@ -81,40 +117,21 @@ export function TicketsList({ uid, authFetch }: { uid: string; authFetch: (url: 
           <span><span className="text-n-500">Still open </span><span className="font-bold text-n-0 tnum">{s.pending}</span></span>
         </div>
       )}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {tickets.map(t => {
-          const done = t.legs.filter(l => l.status !== "pending" && l.status !== "unknown").length;
-          return (
-            <article key={t.code} className={clsx("card overflow-hidden", t.status === "won" && "border-accent/40", t.status === "lost" && "border-danger/30")}>
-              <header className="flex items-start justify-between gap-3 p-4">
-                <div className="min-w-0">
-                  <p className="font-mono text-2xl font-bold text-n-0 tracking-[0.18em]">{t.code}</p>
-                  <p className="text-[11px] text-n-500 mt-0.5">
-                    {SOURCE[t.source] ?? "BetIQ"} · {new Date(t.created_at).toLocaleDateString(undefined, { day: "numeric", month: "short" })}
-                    {" · "}{done}/{t.legs.length} settled
-                  </p>
-                </div>
-                <div className="text-right shrink-0 space-y-1">
-                  <span className={clsx("inline-block rounded-full border px-2 py-0.5 text-[11px] font-bold", STATUS[t.status].cls)}>{STATUS[t.status].label}</span>
-                  {t.total_odds && <p className="font-display font-extrabold text-2xl text-n-0 leading-none tnum">{t.total_odds.toFixed(2)}x</p>}
-                </div>
-              </header>
-              <ul className="px-4 border-t border-dashed border-n-700 divide-y divide-n-800/70">
-                {t.legs.map((l, i) => <LegRow key={i} leg={l} />)}
-              </ul>
-              <footer className="flex items-center justify-between gap-2 px-4 py-3 border-t border-n-800">
-                {t.share_url ? (
-                  <a href={t.share_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-xs text-n-300 hover:text-n-0">
-                    <ExternalLink size={12} /> Open on SportyBet</a>
-                ) : <span />}
-                <button onClick={() => copy(t.code)} className="btn-primary !px-3 !py-1.5 !text-xs !rounded-lg">
-                  {copied === t.code ? <Check size={12} /> : <Copy size={12} />}{copied === t.code ? "Copied" : "Copy code"}
-                </button>
-              </footer>
-            </article>
-          );
-        })}
-      </div>
+      {active.length > 0 ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">{active.map(card)}</div>
+      ) : (
+        <p className="card px-4 py-6 text-center text-sm text-n-400">No open tickets. Settled ones are below.</p>
+      )}
+      {settled.length > 0 && (
+        <details className="group">
+          <summary className="card px-4 py-3 cursor-pointer list-none flex items-center justify-between text-sm font-semibold text-n-200">
+            <span>Settled tickets ({settled.length}) · {settled.filter(t => t.status === "won").length} won</span>
+            <ChevronDown size={16} className="text-n-400 transition-transform group-open:rotate-180" />
+          </summary>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">{settled.map(card)}</div>
+        </details>
+      )}
+
       {tickets.some(t => t.status === "open") && (
         <p className="text-[11px] text-n-500">&quot;Awaiting SportyBet&quot;: every leg we can settle has won; the rest are markets from a pasted code that only SportyBet can settle.</p>
       )}

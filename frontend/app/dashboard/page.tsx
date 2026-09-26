@@ -1,25 +1,24 @@
 "use client";
 
 import { useUser } from "@clerk/nextjs";
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import clsx from "clsx";
 import {
-  Star, Ticket, BarChart2, User, Link2, Trophy,
+  Ticket, BarChart2, User, Link2, Trophy,
   TrendingUp, TrendingDown, Minus, Plus, Check,
-  Copy, Crown, RefreshCw, Loader2, Share2, Trash2, Undo2,
+  Copy, Crown, RefreshCw, Loader2, Share2,
 } from "lucide-react";
 import { MatchCard } from "@/components/MatchCard";
 import { AppShell } from "@/components/shell/AppShell";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { PREMIUM_PRICE_LABEL } from "@/lib/pricing";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
-import { headlinePick } from "@/lib/picks";
 import { TicketsList } from "@/components/TicketsList";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
 
-type Tab = "overview" | "saved" | "bets" | "codes" | "referral" | "account";
+type Tab = "overview" | "bets" | "codes" | "referral" | "account";
 
 interface Bet {
   home: string; away: string; date: string;
@@ -33,7 +32,17 @@ interface Code {
   total_odds: number; date: string; saved_at: string;
 }
 
+// The record from the account's booked codes (backend tickets.summary)
+interface TicketRecord {
+  tickets: number; won: number; lost: number; void: number; pending: number; hit_rate: number | null;
+  legs_won: number; legs_lost: number; leg_hit_rate: number | null;
+  units: number; roi: number | null; streak: number; streak_type: "won" | "lost" | null;
+  best_win: { code: string; odds: number } | null;
+  by_market: { market: string; won: number; lost: number; hit_rate: number }[];
+}
+
 interface Stats {
+  tickets?: TicketRecord;
   won: number; lost: number; void: number;
   total_stake: number; total_return: number; roi: number;
   accuracy: number; streak: number; streak_type: string | null;
@@ -80,18 +89,15 @@ export default function DashboardPage() {
   const [tab, setTab] = useState<Tab>("overview");
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get("tab");
-    if (t && ["overview", "saved", "bets", "codes", "referral", "account"].includes(t)) setTab(t as Tab);
+    if (t && ["overview", "bets", "codes", "referral", "account"].includes(t)) setTab(t as Tab);
   }, []);
 
   const [stats,  setStats]  = useState<Stats | null>(null);
-  const [saves,  setSaves]  = useState<any[]>([]);
   const [bets,   setBets]   = useState<Bet[]>([]);
   const [codes,  setCodes]  = useState<Code[]>([]);
   const [refStats, setRefStats] = useState<{ code: string; count: number; link: string } | null>(null);
   // `name`/`you` from the current API; `uid` from the pre-auth API during a rollout
   const [leaderboard, setLeaderboard] = useState<{ name?: string; you?: boolean; uid?: string; wins: number }[]>([]);
-  const [removed, setRemoved] = useState<{ pred: any; index: number } | null>(null);
-  const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [betForm, setBetForm] = useState({ home: "", away: "", tip: "", stake: "", odds: "", result: "won" as "won"|"lost"|"void" });
   const [betLoading, setBetLoading] = useState(false);
@@ -106,9 +112,8 @@ export default function DashboardPage() {
     setLoadingTab(true);
     try {
       const q = `uid=${encodeURIComponent(uid)}`;
-      const [s, sv, b, c, ref, lb] = await Promise.all([
+      const [s, b, c, ref, lb] = await Promise.all([
         getJson(authFetch, `${API}/api/user/stats?${q}`),
-        getJson(authFetch, `${API}/api/user/saves?${q}`),
         getJson(authFetch, `${API}/api/user/bets?${q}`),
         getJson(authFetch, `${API}/api/user/codes?${q}`),
         getJson(authFetch, `${API}/api/referral/stats?${q}`),
@@ -117,7 +122,6 @@ export default function DashboardPage() {
       // Offline / error replies arrive as objects like {"error": "offline"} —
       // only accept the shapes each view actually renders.
       setStats(s && typeof (s as Stats).accuracy === "number" ? (s as Stats) : null);
-      setSaves(asList(sv));
       setBets(asList<Bet>(b));
       setCodes(asList<Code>(c));
       setRefStats(ref && typeof (ref as { link?: unknown }).link === "string" ? (ref as { code: string; count: number; link: string }) : null);
@@ -151,38 +155,6 @@ export default function DashboardPage() {
     finally { setBetLoading(false); }
   };
 
-  const removeSave = async (pred: any, index: number) => {
-    setSaves(prev => prev.filter((_, i) => i !== index));
-    setRemoved({ pred, index });
-    if (undoTimer.current) clearTimeout(undoTimer.current);
-    undoTimer.current = setTimeout(() => setRemoved(null), 5000);
-    const q = new URLSearchParams({ home: pred.home, away: pred.away, date: pred.date ?? "", uid });
-    try {
-      const res = await authFetch(`${API}/api/user/saves?${q}`, { method: "DELETE" });
-      if (!res.ok) throw new Error(String(res.status));
-    } catch {
-      // Put it back where it was if the server didn't take the delete
-      setSaves(prev => [...prev.slice(0, index), pred, ...prev.slice(index)]);
-      setRemoved(null);
-    }
-  };
-
-  const undoRemove = async () => {
-    if (!removed) return;
-    const { pred, index } = removed;
-    if (undoTimer.current) clearTimeout(undoTimer.current);
-    setRemoved(null);
-    setSaves(prev => [...prev.slice(0, index), pred, ...prev.slice(index)]);
-    try {
-      await authFetch(`${API}/api/user/saves`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ uid, prediction: pred, saved: true }),
-      });
-    } catch { /* the next refresh shows the true state */ }
-  };
-
-  useEffect(() => () => { if (undoTimer.current) clearTimeout(undoTimer.current); }, []);
 
   const copyRef = () => {
     if (!refStats) return;
@@ -202,9 +174,8 @@ export default function DashboardPage() {
 
   const TABS: { id: Tab; label: string; count?: number; icon: React.ReactNode }[] = [
     { id: "overview",  label: "Overview",  icon: <BarChart2 size={14} /> },
-    { id: "saved",     label: "Saved",     count: saves.length, icon: <Star size={14} /> },
     { id: "bets",      label: "My bets",   count: bets.length,  icon: <TrendingUp size={14} /> },
-    { id: "codes",     label: "Tickets",   count: stats?.codes_count ?? codes.length, icon: <Ticket size={14} /> },
+    { id: "codes",     label: "Tickets",   count: stats?.tickets?.tickets ?? codes.length, icon: <Ticket size={14} /> },
     { id: "referral",  label: "Referrals", icon: <Link2 size={14} /> },
     { id: "account",   label: "Account",   icon: <User size={14} /> },
   ];
@@ -217,7 +188,7 @@ export default function DashboardPage() {
   );
 
   const inputCls = "bg-surface-sunken border border-n-800 text-n-0 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-brand-400/70 focus:ring-2 focus:ring-brand-400/15 transition-all placeholder:text-n-500";
-  const profit = stats ? stats.total_return - stats.total_stake : 0;
+  const rec = stats?.tickets;
 
   return (
     <AppShell actions={refreshAction} onUpgrade={() => router.push("/")}>
@@ -225,7 +196,7 @@ export default function DashboardPage() {
         <PageHeader
           eyebrow={`Welcome back${user?.firstName ? `, ${user.firstName}` : ""}`}
           title="Dashboard"
-          description="Your record, saved picks, bets and booking codes."
+          description="Your record from the codes you booked here, your bets and your tickets."
           right={isPremium && (
             <span className="inline-flex items-center gap-1.5 font-display font-bold text-sm uppercase tracking-wider text-warn bg-amber-400/10 border border-amber-400/30 px-3 py-1 rounded-lg">
               <Crown size={13} /> Premium
@@ -256,40 +227,68 @@ export default function DashboardPage() {
         {tab === "overview" && (
           <div className="grid lg:grid-cols-[1fr_340px] gap-4 items-start">
             <div className="space-y-3">
-              {stats ? (
+              {rec && rec.tickets > 0 ? (
                 <>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    <StatCard label="Accuracy" value={`${stats.accuracy}%`}
-                      color={stats.accuracy >= 60 ? "text-accent" : stats.accuracy >= 45 ? "text-warn" : "text-danger"} />
-                    <StatCard label="ROI" value={`${stats.roi > 0 ? "+" : ""}${stats.roi}%`}
-                      color={stats.roi > 0 ? "text-accent" : "text-danger"} />
-                    <StatCard label="Streak" value={stats.streak || "—"}
-                      color={stats.streak_type === "won" ? "text-accent" : stats.streak_type === "lost" ? "text-danger" : "text-n-400"}
-                      sub={stats.streak_type ? `${stats.streak_type} streak` : undefined} />
-                    <StatCard label="Profit / loss" value={`${profit < 0 ? "−" : "+"}${naira(profit)}`}
-                      color={profit >= 0 ? "text-accent" : "text-danger"} />
+                    <StatCard label="Tickets won" value={rec.hit_rate == null ? "—" : `${Math.round(rec.hit_rate * 100)}%`}
+                      color={rec.hit_rate == null ? "text-n-400" : rec.hit_rate >= 0.5 ? "text-accent" : rec.hit_rate >= 0.3 ? "text-warn" : "text-danger"}
+                      sub={`${rec.won} of ${rec.won + rec.lost} settled`} />
+                    <StatCard label="Picks won" value={rec.leg_hit_rate == null ? "—" : `${Math.round(rec.leg_hit_rate * 100)}%`}
+                      color={rec.leg_hit_rate == null ? "text-n-400" : rec.leg_hit_rate >= 0.6 ? "text-accent" : rec.leg_hit_rate >= 0.45 ? "text-warn" : "text-danger"}
+                      sub={`${rec.legs_won} of ${rec.legs_won + rec.legs_lost} legs`} />
+                    <StatCard label="Return" value={rec.roi == null ? "—" : `${rec.roi > 0 ? "+" : ""}${Math.round(rec.roi * 100)}%`}
+                      color={rec.roi == null ? "text-n-400" : rec.roi >= 0 ? "text-accent" : "text-danger"}
+                      sub={`${rec.units >= 0 ? "+" : "−"}${Math.abs(rec.units).toFixed(1)} units at 1 a ticket`} />
+                    <StatCard label="Streak" value={rec.streak || "—"}
+                      color={rec.streak_type === "won" ? "text-accent" : rec.streak_type === "lost" ? "text-danger" : "text-n-400"}
+                      sub={rec.streak_type ? `${rec.streak_type} in a row` : undefined} />
                   </div>
                   <div className="card px-4 py-4">
                     <div className="flex items-center justify-between">
-                      <p className="eyebrow">Settled bets</p>
-                      <p className="text-xs text-n-500 tnum">{stats.won + stats.lost + stats.void} total</p>
+                      <p className="eyebrow">Your tickets</p>
+                      <p className="text-xs text-n-500 tnum">{rec.tickets} booked · {rec.pending} still open</p>
                     </div>
-                    {/* Won / lost / void split */}
                     <div className="flex h-2 rounded-full overflow-hidden gap-0.5 mt-3 bg-n-800">
                       {[
-                        { n: stats.won, cls: "bg-accent" },
-                        { n: stats.lost, cls: "bg-rose-500/80" },
-                        { n: stats.void, cls: "bg-n-600" },
+                        { n: rec.won, cls: "bg-accent" },
+                        { n: rec.lost, cls: "bg-rose-500/80" },
+                        { n: rec.void, cls: "bg-n-600" },
+                        { n: rec.pending, cls: "bg-n-700" },
                       ].map(({ n, cls }, i) => n > 0 && (
                         <div key={i} className={cls} style={{ flexGrow: n }} />
                       ))}
                     </div>
-                    <div className="flex gap-5 mt-3 text-sm">
-                      <span className="text-n-400"><span className="font-display font-bold text-xl text-accent tnum mr-1">{stats.won}</span>won</span>
-                      <span className="text-n-400"><span className="font-display font-bold text-xl text-danger tnum mr-1">{stats.lost}</span>lost</span>
-                      <span className="text-n-400"><span className="font-display font-bold text-xl text-n-300 tnum mr-1">{stats.void}</span>void</span>
+                    <div className="flex flex-wrap gap-x-5 gap-y-1 mt-3 text-sm">
+                      <span className="text-n-400"><span className="font-display font-bold text-xl text-accent tnum mr-1">{rec.won}</span>won</span>
+                      <span className="text-n-400"><span className="font-display font-bold text-xl text-danger tnum mr-1">{rec.lost}</span>lost</span>
+                      {rec.void > 0 && <span className="text-n-400"><span className="font-display font-bold text-xl text-n-300 tnum mr-1">{rec.void}</span>void</span>}
+                      <span className="text-n-400"><span className="font-display font-bold text-xl text-n-300 tnum mr-1">{rec.pending}</span>open</span>
+                      {rec.best_win && (
+                        <span className="text-n-400 ml-auto">Best win <span className="font-display font-bold text-xl text-accent tnum">{rec.best_win.odds.toFixed(2)}x</span></span>
+                      )}
                     </div>
                   </div>
+                  {rec.by_market.length > 0 && (
+                    <div className="card px-4 py-4 space-y-2.5">
+                      <p className="eyebrow">Picks by market</p>
+                      {rec.by_market.slice(0, 8).map(m => (
+                        <div key={m.market} className="space-y-1">
+                          <div className="flex justify-between text-xs">
+                            <span className="text-n-200">{m.market}</span>
+                            <span className="text-n-400 tnum">{m.won}/{m.won + m.lost} · <span className="font-semibold text-n-0">{Math.round(m.hit_rate * 100)}%</span></span>
+                          </div>
+                          <div className="h-1.5 rounded-full bg-n-800 overflow-hidden">
+                            <div className={clsx("h-full rounded-full", m.hit_rate >= 0.6 ? "bg-accent" : m.hit_rate >= 0.45 ? "bg-warn" : "bg-rose-500/80")}
+                              style={{ width: `${Math.round(m.hit_rate * 100)}%` }} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <p className="text-[11px] text-n-500">
+                    From the SportyBet codes you booked on BetIQ while signed in, settled from the final scores. Return
+                    assumes the same stake on every ticket.
+                  </p>
                 </>
               ) : loadingTab ? (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -298,7 +297,8 @@ export default function DashboardPage() {
                   ))}
                 </div>
               ) : (
-                <EmptyState icon={<BarChart2 size={20} />} title="No stats yet" body="Log your bets on the My bets tab and your record appears here." />
+                <EmptyState icon={<Ticket size={20} />} title="No tickets yet"
+                  body="Book a SportyBet code from your bet slip or the optimizer while signed in, and your record builds itself here as the matches finish." />
               )}
             </div>
 
@@ -332,33 +332,6 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* ── Saved Picks ── */}
-        {tab === "saved" && (
-          <div className="space-y-2.5">
-            {saves.length === 0
-              ? <EmptyState icon={<Star size={20} />} title="No saved picks" body="Tap the star on any prediction card to save it here." />
-              : saves.map((p: any, i: number) => (
-                <MatchCard key={i} home={p.home} away={p.away}
-                  league={p.league_name} flag={p.flag} date={p.date}
-                  onClick={() => router.push(`/match?${new URLSearchParams({ home: p.home, away: p.away, date: p.date ?? "" })}`)}>
-                  <div className="flex flex-col items-end gap-1">
-                    <span className="font-display font-bold text-sm uppercase text-accent bg-brand-400/10 border border-brand-400/30 px-2 py-0.5 rounded-md">{p.tip_1x2}</span>
-                    {headlinePick(p).prob !== null && (
-                      <span className="font-mono text-[11px] text-n-500">{Math.round(headlinePick(p).prob! * 100)}% prob.</span>
-                    )}
-                  </div>
-                  <button
-                    onClick={e => { e.stopPropagation(); removeSave(p, i); }}
-                    aria-label={`Remove ${p.home} vs ${p.away} from saved`}
-                    title="Remove from saved"
-                    className="ml-1 w-9 h-9 inline-flex items-center justify-center rounded-lg text-n-500 hover:text-danger hover:bg-danger/10 transition-colors"
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </MatchCard>
-              ))}
-          </div>
-        )}
 
         {/* ── My Bets ── */}
         {tab === "bets" && (
@@ -506,17 +479,6 @@ export default function DashboardPage() {
         )}
       </div>
 
-      {/* Undo for a removed saved pick */}
-      {removed && (
-        <div role="status" className="fixed bottom-20 lg:bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-ink text-white rounded-xl shadow-pop pl-4 pr-2 py-2 animate-slide-up max-w-[calc(100vw-2rem)]">
-          <span className="text-sm truncate">
-            Removed <span className="font-semibold">{removed.pred.home} vs {removed.pred.away}</span>
-          </span>
-          <button onClick={undoRemove} className="inline-flex items-center gap-1.5 text-sm font-bold text-brand-400 hover:text-brand-300 px-2 py-1 rounded-lg shrink-0">
-            <Undo2 size={14} /> Undo
-          </button>
-        </div>
-      )}
     </AppShell>
   );
 }

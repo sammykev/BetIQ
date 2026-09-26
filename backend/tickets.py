@@ -151,13 +151,39 @@ def settle(ticket: Dict, result_for) -> bool:
 
 
 def summary(tickets: List[Dict]) -> Dict[str, Any]:
+    """An account's record from its booked codes: tickets and legs won,
+    flat-stake return (1 unit a ticket at the odds SportyBet booked), the
+    current streak, the best win, and pick accuracy by market."""
     won = sum(1 for t in tickets if t.get("status") == "won")
     lost = sum(1 for t in tickets if t.get("status") == "lost")
+    void = sum(1 for t in tickets if t.get("status") == "void")
     legs = [l for t in tickets for l in t.get("legs") or []]
     legs_won = sum(1 for l in legs if l.get("status") == "won")
     legs_lost = sum(1 for l in legs if l.get("status") == "lost")
-    return {"tickets": len(tickets), "won": won, "lost": lost,
+    settled = sorted((t for t in tickets if t.get("status") in ("won", "lost")),
+                     key=lambda t: t.get("settled_at") or t.get("created_at") or "", reverse=True)
+    priced = [t for t in settled if isinstance(t.get("total_odds"), (int, float)) and t["total_odds"] > 1]
+    units = sum(t["total_odds"] - 1 if t["status"] == "won" else -1.0 for t in priced)
+    streak, streak_type = 0, None
+    for t in settled:
+        if streak_type is None:
+            streak_type = t["status"]
+        if t["status"] != streak_type:
+            break
+        streak += 1
+    best = max((t for t in priced if t["status"] == "won"), key=lambda t: t["total_odds"], default=None)
+    by_market: Dict[str, List[int]] = {}
+    for l in legs:
+        if l.get("status") in ("won", "lost"):
+            row = by_market.setdefault(l.get("marketName") or l.get("market") or "Other", [0, 0])
+            row[0 if l["status"] == "won" else 1] += 1
+    return {"tickets": len(tickets), "won": won, "lost": lost, "void": void,
             "pending": sum(1 for t in tickets if t.get("status") in ("pending", "open")),
             "hit_rate": round(won / (won + lost), 3) if won + lost else None,
             "legs_won": legs_won, "legs_lost": legs_lost,
-            "leg_hit_rate": round(legs_won / (legs_won + legs_lost), 3) if legs_won + legs_lost else None}
+            "leg_hit_rate": round(legs_won / (legs_won + legs_lost), 3) if legs_won + legs_lost else None,
+            "units": round(units, 2), "roi": round(units / len(priced), 3) if priced else None,
+            "streak": streak, "streak_type": streak_type,
+            "best_win": {"code": best["code"], "odds": best["total_odds"]} if best else None,
+            "by_market": sorted(({"market": m, "won": w, "lost": lo, "hit_rate": round(w / (w + lo), 3)}
+                                 for m, (w, lo) in by_market.items()), key=lambda r: -(r["won"] + r["lost"]))}

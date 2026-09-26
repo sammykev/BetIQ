@@ -2409,6 +2409,23 @@ async def edge_report(days: int = 60, _admin: str = Depends(require_admin)):
     return {"days": days, **price_book.report(entries)}
 
 
+@app.get("/api/admin/market-accuracy")
+async def market_accuracy_report(days: int = 7, _admin: str = Depends(require_admin)):
+    """Every market's picks (outcomes the model rated ≥ 50%) over the last
+    `days` days, settled: hit rate vs what the model said, by market and
+    confidence band (market_accuracy.py)."""
+    import market_accuracy
+    days = max(1, min(int(days), 60))
+    r = _get_redis()
+    if not r:
+        raise HTTPException(status_code=503, detail="No Redis")
+    today = date.today()
+    dates = [(today - timedelta(days=i)).isoformat() for i in range(0, days + 1)]
+    stored = await asyncio.to_thread(_md_many, r, dates)
+    entries = [e for d in dates for e in (stored.get(d) or {}).values()]
+    return {"days": days, **await asyncio.to_thread(market_accuracy.report, entries)}
+
+
 @app.get("/api/calendar")
 async def get_calendar(month: str = ""):
     """Per-date summary for a month (YYYY-MM), in the old shape."""
@@ -3803,7 +3820,12 @@ async def get_user_stats(request: Request, uid: str = ""):
         if res == streak_type: streak += 1
         else: break
 
+    # The record that counts: codes booked here, settled from the results
+    import tickets
+    tickets_raw = r.get(_ukey(uid, "tickets"))
+    booked = tickets.summary(json.loads(tickets_raw) if tickets_raw else [])
     return {
+        "tickets": booked,
         "won": won, "lost": lost, "void": void,
         "total_stake": round(total_stake, 2),
         "total_return": round(total_return, 2),
@@ -4787,9 +4809,14 @@ async def sportybet_status():
     _restore_link_status()
     s = _sb_link_status
     confirmed = s.get("market_map") or {}
+    # How many linked matches SportyBet prices each market on (shots, corners
+    # and cards appear about a day before kick-off, on some matches only)
+    coverage = s.get("market_coverage") or {}
+    ids = {**booking_slip._LINE_MARKETS, **{k: (v or {}).get("id") for k, v in confirmed.items() if (v or {}).get("id")}}
     return {"at": s.get("at"), "trigger": s.get("trigger"), "linked": s.get("linked", 0),
-            "predictions": s.get("predictions", 0),
-            "markets": {kind: bool((confirmed.get(kind) or {}).get("ok")) for kind in booking_slip.VERIFIED}}
+            "predictions": s.get("predictions", 0), "every_minutes": SB_LINK_MINUTES,
+            "markets": {kind: bool((confirmed.get(kind) or {}).get("ok")) for kind in booking_slip.VERIFIED},
+            "coverage": {kind: coverage.get(str(mid), 0) for kind, mid in ids.items() if mid}}
 
 
 def _linked_event(selection: Dict[str, Any]) -> Optional[Dict]:

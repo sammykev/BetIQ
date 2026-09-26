@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
 import { Database, Download, Flag, Globe2, MousePointerClick, Star, Target } from "lucide-react";
 import { TrackRecord } from "@/components/TrackRecord";
@@ -85,6 +85,83 @@ function EdgeReport() {
       <p className="text-[11px] text-n-500">
         A market is only worth betting once its value bets stay profitable over hundreds of bets; a few dozen is mostly luck.
       </p>
+    </div>
+  );
+}
+
+const pctText = (x: number | null | undefined) => (x == null ? "—" : `${Math.round(x * 100)}%`);
+
+/** Every market's picks (outcomes rated ≥ 50%) over the last days, settled:
+ * how often they came in vs what the model said (market_accuracy.py). */
+function MarketAccuracy() {
+  const { get } = useAdmin();
+  const [rep, setRep] = useState<any>(null);
+  const [days, setDays] = useState(7);
+  const [open, setOpen] = useState<string | null>(null);
+  useEffect(() => { setRep(null); get(`/api/admin/market-accuracy?days=${days}`).then(setRep).catch(() => setRep({ error: true })); }, [days]);
+  const gapTone = (g: number | null) => (g == null ? "text-n-400" : g >= -0.03 ? "text-accent" : g >= -0.08 ? "text-warn" : "text-danger");
+  return (
+    <div className="space-y-3">
+      <div className="flex gap-1.5">
+        {[3, 7, 14, 30].map(d => (
+          <button key={d} onClick={() => setDays(d)}
+            className={clsx("rounded-full px-2.5 py-1 text-xs", d === days ? "bg-accent/15 text-accent" : "bg-surface-sunken text-n-300")}>
+            {d} days
+          </button>
+        ))}
+      </div>
+      {!rep ? <Skeleton rows={3} /> : rep.error ? <p className="text-xs text-n-400">Couldn&apos;t load the report.</p> : (
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <Stat label="Matches settled" value={num(rep.matches ?? 0)} />
+            <Stat label="Picks" value={num(rep.all?.picks ?? 0)} />
+            <Stat label="Came in" value={pctText(rep.all?.hit_rate)} tone={rep.all?.gap >= -0.03 ? "accent" : "warn"} />
+            <Stat label="Model said" value={pctText(rep.all?.model_said)} />
+          </div>
+          {rep.by_market?.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs tnum">
+                <thead>
+                  <tr className="text-left text-n-500">
+                    <th className="py-1.5 pr-2 font-medium">Market</th><th className="py-1.5 px-2 font-medium text-right">Picks</th>
+                    <th className="py-1.5 px-2 font-medium text-right">Came in</th><th className="py-1.5 px-2 font-medium text-right">Model said</th>
+                    <th className="py-1.5 pl-2 font-medium text-right">Gap</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rep.by_market.map((m: any) => (
+                    <Fragment key={m.market}>
+                      <tr onClick={() => setOpen(o => (o === m.market ? null : m.market))}
+                        className="border-t border-n-800 cursor-pointer hover:bg-surface-sunken">
+                        <td className="py-1.5 pr-2 text-n-200">{m.name}</td>
+                        <td className="py-1.5 px-2 text-right text-n-300">{num(m.picks)}</td>
+                        <td className="py-1.5 px-2 text-right text-n-0 font-semibold">{pctText(m.hit_rate)}</td>
+                        <td className="py-1.5 px-2 text-right text-n-300">{pctText(m.model_said)}</td>
+                        <td className={clsx("py-1.5 pl-2 text-right font-semibold", gapTone(m.gap))}>
+                          {m.gap == null ? "—" : `${m.gap >= 0 ? "+" : "−"}${Math.abs(Math.round(m.gap * 100))}`}
+                        </td>
+                      </tr>
+                      {open === m.market && (
+                        <tr className="bg-surface-sunken">
+                          <td colSpan={5} className="px-2 py-1.5 text-[11px] text-n-400">
+                            {m.bands.filter((b: any) => b.picks).map((b: any) =>
+                              `${b.band}: ${pctText(b.hit_rate)} of ${b.picks}`).join(" · ") || "No picks"}
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : <p className="text-xs text-n-400">No finished matches with picks in this period yet.</p>}
+          <p className="text-[11px] text-n-500">
+            Every outcome the model rated 50% or more before kick-off, settled at full time. &quot;Gap&quot; is came in
+            minus model said: near 0 means the percentages can be trusted; well below 0 means the model is too confident
+            in that market. Tap a market for its confidence bands.
+          </p>
+        </>
+      )}
     </div>
   );
 }
@@ -387,6 +464,11 @@ export function PredictionsSection() {
       <Card title="International corners & cards" icon={<Globe2 size={15} />}
         subtitle="Collected nightly from ESPN, topped up by API-Football; lower score is better">
         {!data ? <Skeleton rows={2} /> : <InternationalSetPieces info={data.international_set_pieces} />}
+      </Card>
+
+      <Card title="Accuracy by market" icon={<Target size={15} />}
+        subtitle="How often each market's picks came in over the last few days, against what the model said">
+        <MarketAccuracy />
       </Card>
 
       <Card title="Profit at SportyBet prices" icon={<Target size={15} />}

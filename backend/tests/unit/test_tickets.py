@@ -103,3 +103,22 @@ class TestRecording:
         self.book(monkeypatch, {"uid": "u1", "source": "code_check"})
         got = TestClient(main.app).get("/api/admin/tickets", headers={"X-Admin-Secret": "s3cret"}).json()
         assert got["created"] == 1 and got["sources"] == {"code_check": 1} and got["daily"][-1]["codes"] == 1
+
+
+class TestSummaryRecord:
+    def test_record_from_booked_codes(self):
+        def t(code, status, odds, settled, legs):
+            return {"code": code, "status": status, "total_odds": odds, "settled_at": settled, "created_at": settled,
+                    "legs": [{"marketName": m, "status": s} for m, s in legs]}
+        items = [t("A", "won", 3.0, "2026-09-20T18:00", [("Match Result", "won"), ("Total Goals", "won")]),
+                 t("B", "lost", 5.0, "2026-09-21T18:00", [("Match Result", "lost"), ("Total Goals", "won")]),
+                 t("C", "won", 8.0, "2026-09-22T18:00", [("Total Goals", "won")]),
+                 t("D", "won", 2.0, "2026-09-23T18:00", [("Total Goals", "won")]),
+                 t("E", "pending", 4.0, None, [("Total Goals", "pending")])]
+        s = tickets.summary(items)
+        assert (s["won"], s["lost"], s["pending"], s["hit_rate"]) == (3, 1, 1, 0.75)
+        assert s["units"] == round(2 - 1 + 7 + 1, 2) and s["roi"] == round(9 / 4, 3)
+        assert (s["streak"], s["streak_type"]) == (2, "won")            # D then C, newest first
+        assert s["best_win"] == {"code": "C", "odds": 8.0}
+        goals = next(m for m in s["by_market"] if m["market"] == "Total Goals")
+        assert (goals["won"], goals["lost"]) == (4, 0) and s["by_market"][0]["market"] == "Total Goals"

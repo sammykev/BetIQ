@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import clsx from "clsx";
 import { useUser } from "@clerk/nextjs";
 import { Check, ChevronDown, Copy, Loader2, Sparkles, Ticket, AlertTriangle, ExternalLink, Link2 } from "lucide-react";
@@ -78,49 +78,74 @@ const MARKETS: { id: string; label: string; ids: string[]; needs?: string[] }[] 
 ];
 // Cards are SportyBet's "Total bookings": yellow 1, red 2
 
-// Goal lines the Goals chip can be narrowed to (optimizer.py goals_ou codes)
-const GOAL_LINES = ["1.5", "2.5", "3.5"].flatMap(l => [
-  { code: `O${l.replace(".", "")}`, label: `Over ${l}` }, { code: `U${l.replace(".", "")}`, label: `Under ${l}` },
+// Lines a chip can be narrowed to: one entry per backend market + option code
+// (optimizer.py _PICKS). Chips without lines take every option.
+type Line = { market: string; code: string; label: string };
+const ou = (market: string, lines: string[], prefix = ""): Line[] => lines.flatMap(l => [
+  { market, code: `O${l.replace(".", "")}`, label: `${prefix}Over ${l}` },
+  { market, code: `U${l.replace(".", "")}`, label: `${prefix}Under ${l}` },
 ]);
+const CHIP_LINES: Record<string, Line[]> = {
+  goals_ou: ou("goals_ou", ["1.5", "2.5", "3.5"]),
+  team_goals: [...ou("home_goals_ou", ["0.5", "1.5", "2.5"], "Home "), ...ou("away_goals_ou", ["0.5", "1.5", "2.5"], "Away ")],
+  corners: ou("corners_ou", ["7.5", "8.5", "9.5", "10.5", "11.5"]),
+  cards: ou("cards_ou", ["2.5", "3.5", "4.5", "5.5", "6.5"]),
+};
+const lineKey = (l: Line) => `${l.market}:${l.code}`;
 
-/** The Goals chip with a menu of lines: tick any mix of over/under 1.5–3.5. */
-function GoalLines({ active, onToggle, lines, setLines }: {
-  active: boolean; onToggle: () => void; lines: string[]; setLines: (l: string[]) => void;
+/** A market chip with a menu of its lines: tick any mix. */
+function LineMenu({ label, active, onToggle, lines, picked, setPicked }: {
+  label: string; active: boolean; onToggle: () => void; lines: Line[];
+  picked: string[]; setPicked: (keys: string[]) => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  const [shift, setShift] = useState(0);
+  // Keep the menu on screen: move it left by however much it overflows
+  useLayoutEffect(() => {
+    if (!open || !menu.current) { setShift(0); return; }
+    const r = menu.current.getBoundingClientRect();
+    setShift(Math.min(0, window.innerWidth - 12 - (r.right - shift)));
+  }, [open]);
   useEffect(() => {
     if (!open) return;
     const close = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, [open]);
-  const all = lines.length === GOAL_LINES.length;
-  const summary = all ? "" : lines.length === 1 ? ` · ${GOAL_LINES.find(g => g.code === lines[0])?.label}` : ` · ${lines.length} lines`;
+  const mine = lines.filter(l => picked.includes(lineKey(l)));
+  const summary = mine.length === lines.length ? "" : mine.length === 1 ? ` · ${mine[0].label}` : ` · ${mine.length} lines`;
   return (
     <div ref={ref} className="relative">
       <div className={clsx("chip !p-0 flex items-stretch overflow-hidden", active ? "chip-active" : "chip-idle")}>
-        <button type="button" onClick={onToggle} className="px-3 py-1.5">Goals{active && summary}</button>
-        <button type="button" onClick={() => setOpen(o => !o)} aria-label="Choose goal lines" aria-expanded={open}
+        <button type="button" onClick={onToggle} className="px-3 py-1.5">{label}{active && summary}</button>
+        <button type="button" onClick={() => setOpen(o => !o)} aria-label={`Choose ${label.toLowerCase()} lines`} aria-expanded={open}
           className="px-2 border-l border-n-700/60 flex items-center">
           <ChevronDown size={14} className={clsx("transition-transform", open && "rotate-180")} />
         </button>
       </div>
       {open && (
-        <div className="absolute z-20 mt-1.5 w-52 rounded-xl border border-n-700 bg-surface p-2 shadow-xl">
+        <div ref={menu} style={{ transform: `translateX(${shift}px)` }}
+          className="absolute z-20 mt-1.5 w-[17rem] max-w-[calc(100vw-1.5rem)] rounded-xl border border-n-700 bg-surface p-2 shadow-xl">
           <div className="flex justify-between px-1.5 pb-1.5 text-[11px]">
-            <button type="button" className="text-accent font-semibold" onClick={() => setLines(GOAL_LINES.map(g => g.code))}>All lines</button>
-            <button type="button" className="text-n-400" onClick={() => setLines([])}>Clear</button>
+            <button type="button" className="text-accent font-semibold"
+              onClick={() => setPicked([...picked.filter(k => !lines.some(l => lineKey(l) === k)), ...lines.map(lineKey)])}>
+              All lines
+            </button>
+            <button type="button" className="text-n-400" onClick={() => setPicked(picked.filter(k => !lines.some(l => lineKey(l) === k)))}>
+              Clear
+            </button>
           </div>
-          <div className="grid grid-cols-2 gap-1">
-            {GOAL_LINES.map(g => {
-              const on = lines.includes(g.code);
+          <div className="grid grid-cols-2 gap-1 max-h-72 overflow-y-auto">
+            {lines.map(l => {
+              const k = lineKey(l), on = picked.includes(k);
               return (
-                <label key={g.code} className={clsx("flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs cursor-pointer",
+                <label key={k} className={clsx("flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs cursor-pointer whitespace-nowrap",
                   on ? "bg-accent/10 text-n-0" : "text-n-300 hover:bg-surface-sunken")}>
                   <input type="checkbox" checked={on} className="accent-[rgb(var(--accent))]"
-                    onChange={() => setLines(on ? lines.filter(x => x !== g.code) : [...lines, g.code])} />
-                  {g.label}
+                    onChange={() => setPicked(on ? picked.filter(x => x !== k) : [...picked, k])} />
+                  {l.label}
                 </label>
               );
             })}
@@ -135,6 +160,8 @@ function GoalLines({ active, onToggle, lines, setLines }: {
 interface LinkStatus {
   at: string | null; trigger: string | null; linked: number; predictions: number;
   markets: Record<string, boolean>;
+  coverage?: Record<string, number>;   // market → SportyBet matches pricing it now
+  every_minutes?: number;
 }
 const TRIGGERS: Record<string, string> = {
   startup: "after the latest deploy", pipeline: "after new predictions", schedule: "on the 30-minute check",
@@ -179,9 +206,26 @@ export default function OptimizerPage() {
   const [days, setDays] = useState(3);
   const [maxGames, setMaxGames] = useState(30);
   const [markets, setMarkets] = useState<string[]>(MARKETS.map(m => m.id));
-  const [goalLines, setGoalLines] = useState<string[]>(GOAL_LINES.map(g => g.code));
-  // Goals with no line ticked counts as Goals off
-  const chosen = MARKETS.filter(m => markets.includes(m.id) && (m.id !== "goals_ou" || goalLines.length > 0));
+  // Every line of every chip that has lines, ticked to start with
+  const [lines, setLines] = useState<string[]>(Object.values(CHIP_LINES).flat().map(lineKey));
+  // A chip with lines counts as off when none of its lines is ticked
+  const chosen = MARKETS.filter(m => markets.includes(m.id)
+    && (!CHIP_LINES[m.id] || CHIP_LINES[m.id].some(l => lines.includes(lineKey(l)))));
+  // Backend markets and, for chips narrowed to some lines, their option codes
+  const request = () => {
+    const ids: string[] = [], codes: Record<string, string[]> = {};
+    for (const m of chosen) {
+      const ls = CHIP_LINES[m.id];
+      if (!ls) { ids.push(...m.ids); continue; }
+      for (const id of m.ids) {
+        const mine = ls.filter(l => l.market === id && lines.includes(lineKey(l)));
+        if (!mine.length) continue;
+        ids.push(id);
+        if (mine.length < ls.filter(l => l.market === id).length) codes[id] = mine.map(l => l.code);
+      }
+    }
+    return { markets: ids, ...(Object.keys(codes).length ? { codes } : {}) };
+  };
   // On when SportyBet confirmed at least one of the chip's markets (the
   // server only books the confirmed ones)
   const confirmed = (m: (typeof MARKETS)[number], s: LinkStatus | null) =>
@@ -227,8 +271,7 @@ export default function OptimizerPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ target_odds: targetOdds, min_odds: lo, max_odds: hi, min_prob: minProb, days, max_games: maxGames,
-                               markets: chosen.flatMap(m => m.ids),
-                               ...(goalLines.length < GOAL_LINES.length ? { codes: { goals_ou: goalLines } } : {}),
+                               ...request(),
                                bookable_only: bookable }),
       });
       const data = await res.json();
@@ -337,16 +380,30 @@ export default function OptimizerPage() {
                 <button type="button" className="text-n-400 hover:text-n-200" onClick={() => setMarkets([])}>Clear all</button>
                 <span className="text-n-500">{chosen.length} of {MARKETS.length} on</span>
               </div>
-              {MARKETS.map(m => m.id === "goals_ou" ? (
-                <GoalLines key={m.id} active={markets.includes(m.id)} lines={goalLines}
+              {MARKETS.map(m => CHIP_LINES[m.id] ? (
+                <LineMenu key={m.id} label={m.label} active={markets.includes(m.id)} lines={CHIP_LINES[m.id]} picked={lines}
                   onToggle={() => setMarkets(ms => ms.includes(m.id) ? ms.filter(x => x !== m.id) : [...ms, m.id])}
-                  setLines={l => { setGoalLines(l); if (l.length) setMarkets(ms => ms.includes(m.id) ? ms : [...ms, m.id]); }} />
+                  setPicked={keys => {
+                    setLines(keys);
+                    if (CHIP_LINES[m.id].some(l => keys.includes(lineKey(l)))) setMarkets(ms => ms.includes(m.id) ? ms : [...ms, m.id]);
+                  }} />
               ) : (
                 <Chip key={m.id} active={markets.includes(m.id)}
                   onClick={() => setMarkets(ms => ms.includes(m.id) ? ms.filter(x => x !== m.id) : [...ms, m.id])}>
                   {m.label}
                 </Chip>
               ))}
+              {link?.coverage && (() => {
+                // Markets SportyBet only puts up about a day before kick-off: how many matches have them now
+                const show = MARKETS.filter(m => ["corners", "cards", "shots", "sot"].includes(m.id))
+                  .map(m => [m.label, Math.max(0, ...m.ids.map(id => link.coverage?.[id] ?? 0))] as const);
+                return (
+                  <p className="basis-full text-[11px] text-n-500 tnum">
+                    On SportyBet right now: {show.map(([l, n]) => `${l} ${n}`).join(" · ")} matches.
+                    These appear about a day before kick-off; we re-check every {link.every_minutes ?? 30} minutes.
+                  </p>
+                );
+              })()}
               {unconfirmed.length > 0 && (
                 <p className="basis-full text-[11px] text-n-500">
                   {unconfirmed.map(m => m.label).join(" & ")}: SportyBet hasn&apos;t confirmed these markets yet, so
