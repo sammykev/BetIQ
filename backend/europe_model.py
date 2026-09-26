@@ -42,6 +42,8 @@ CHECK_KEY = "betiq:europe_model:check"
 MODEL_NAME = "europe"
 EUROPE_CODES = {"CL", "EL", "UECL"}
 EXTRA_LEAGUES = {"JPL", "SPL", "GSL", "TSL", "AUT", "SUI", "DEN", "NOR", "SWE", "POL", "ROU"}
+# ...plus club_cups.LEAGUES from ESPN (Cyprus, Ireland, Israel, Malta, Wales,
+# Northern Ireland, Czechia, Finland), added in inputs()
 MIN_GAIN = 0.01        # log loss per match
 MIN_SCORED = 150
 KNOWN_MATCHES = 15     # a club with fewer (in the last KNOWN_DAYS) is "unknown"
@@ -339,8 +341,31 @@ def inputs(app, seasons: int = 2) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFr
     ucl = ucl.drop(columns=["StrengthOnly", "Source", "Context"], errors="ignore")
     names = set(league["HomeTeam"]) | set(league["AwayTeam"])
     extras = app._load_extra_leagues(names, leagues=EXTRA_LEAGUES)
-    espn = club_cups.rows_frame(club_cups.load(model_store._client()), EUROPE_CODES)
+    r = model_store._client()
+    small = espn_leagues(club_cups.load(r, club_cups.LEAGUES_KEY), names | set(extras.get("HomeTeam", [])) |
+                         set(extras.get("AwayTeam", [])))
+    if not small.empty:
+        extras = pd.concat([extras, small], ignore_index=True) if not extras.empty else small
+    espn = club_cups.rows_frame(club_cups.load(r), EUROPE_CODES)
     return league, extras, espn, ucl
+
+
+def espn_leagues(data: Dict[str, Any], known: set) -> pd.DataFrame:
+    """The small domestic leagues ESPN gives club_cups (Cyprus, Ireland,
+    Israel...) as context rows; a club whose name clashes with a known club
+    elsewhere gets its league added, as main._load_extra_leagues does."""
+    import club_cups
+    from team_names import normalise
+    df = club_cups.rows_frame(data, club_cups.LEAGUE_CODES)
+    if df.empty:
+        return df
+    clash = {normalise(n) for n in known}
+    for col in ("HomeTeam", "AwayTeam"):
+        df[col] = [f"{n} ({lg})" if normalise(n) in clash else n for n, lg in zip(df[col], df["league"])]
+    df["Context"] = True
+    print(f"[Europe] ESPN leagues: {len(df)} matches for ratings only "
+          f"({', '.join(f'{k} {v}' for k, v in df['league'].value_counts().items())})")
+    return df
 
 
 MIN_COMPETITION_MATCHES = 50

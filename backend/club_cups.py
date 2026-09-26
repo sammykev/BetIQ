@@ -48,6 +48,25 @@ COMPETITIONS: Dict[str, Tuple[str, str, str]] = {
 EUROPE_CODES = {c for c, _, k in COMPETITIONS.values() if k == "europe"}
 CUP_CODES = {c for c, _, k in COMPETITIONS.values() if k == "cup"}
 
+# Domestic leagues ESPN carries that football-data.co.uk doesn't: the home
+# leagues of many Conference League clubs (europe_model.py uses them as
+# ratings-only rows; the main model never sees them). Kept in their own
+# store (LEAGUES_KEY). Found by europe_model.py --probe-leagues; Czechia and
+# Finland answered without recent matches, so they may collect little.
+LEAGUES: Dict[str, Tuple[str, str, str]] = {
+    "cyp.1": ("CYP", "Cypriot First Division", "league"),
+    "irl.1": ("IRL", "League of Ireland Premier Division", "league"),
+    "isr.1": ("ISR", "Israeli Premier League", "league"),
+    "mlt.1": ("MLT", "Maltese Premier League", "league"),
+    "wal.1": ("WAL", "Cymru Premier", "league"),
+    "nir.1": ("NIR", "NIFL Premiership", "league"),
+    "cze.1": ("CZE", "Czech First League", "league"),
+    "fin.1": ("FIN", "Veikkausliiga", "league"),
+}
+LEAGUE_CODES = {c for c, _, _ in LEAGUES.values()}
+LEAGUES_KEY = "betiq:club_leagues:v1"
+LEAGUE_SEASONS_BACK = 3
+
 
 def season_start(today: date) -> int:
     return today.year if today.month >= 7 else today.year - 1
@@ -57,17 +76,17 @@ def empty() -> Dict[str, Any]:
     return {"rows": {}, "days": [], "calendars": {}, "runs": [], "check": None}
 
 
-def load(r) -> Dict[str, Any]:
-    raw = r.get(KEY) if r is not None else None
+def load(r, key: str = KEY) -> Dict[str, Any]:
+    raw = r.get(key) if r is not None else None
     data = empty()
     if raw:
         data.update(json.loads(gzip.decompress(raw)))
     return data
 
 
-def save(r, data: Dict[str, Any]) -> int:
+def save(r, data: Dict[str, Any], key: str = KEY) -> int:
     blob = gzip.compress(json.dumps(data, separators=(",", ":")).encode())
-    r.set(KEY, blob)
+    r.set(key, blob)
     return len(blob)
 
 
@@ -176,9 +195,11 @@ async def _get(session, url: str, params: Dict, errors: List[str]) -> Tuple[Opti
 
 
 async def collect(session, data: Dict[str, Any], deadline: float, today: date,
-                  pause: float = PAUSE) -> Dict[str, Any]:
+                  pause: float = PAUSE, competitions: Optional[Dict[str, Tuple[str, str, str]]] = None,
+                  seasons_back: int = SEASONS_BACK) -> Dict[str, Any]:
     """Read competition-days newest first until the deadline: first each
-    season's calendar (one request), then its match days."""
+    season's calendar (one request; two for leagues), then its match days."""
+    competitions = COMPETITIONS if competitions is None else competitions
     import results_feed
     report: Dict[str, Any] = {"requests": 0, "matches": 0, "with_shots": 0, "stopped": None,
                               "statuses": {}, "errors": [], "fallback_calendars": 0}
@@ -199,22 +220,36 @@ async def collect(session, data: Dict[str, Any], deadline: float, today: date,
         await asyncio.sleep(pause)
         return page, status
 
-    for season in range(current, current - SEASONS_BACK - 1, -1):
-        for slug, (code, _, kind) in COMPETITIONS.items():
+    for season in range(current, current - seasons_back - 1, -1):
+        for slug, (code, _, kind) in competitions.items():
             ck = f"{slug}|{season}"
             if ck not in calendars or season == current:
                 if time.monotonic() > deadline:
                     report["stopped"] = "time"
                     break
-                probe = f"{season}-10-15" if kind == "europe" else f"{season + 1}-01-15"
-                page, status = await fetch(slug, probe)
-                if status in (403, 429):
-                    report["stopped"] = f"HTTP {status}"
-                    break
-                days = calendar_days(page, season, kind)
-                if not days:
-                    days = fallback_days(season, kind)
-                    report["fallback_calendars"] += 1
+                if kind == "league":
+                    # Calendar-year leagues (Ireland, Finland) have two seasons in
+                    # our July-June window: read the calendar in autumn and spring
+                    days = []
+                    for probe in (f"{season}-10-15", f"{season + 1}-04-15"):
+                        page, status = await fetch(slug, probe)
+                        if status in (403, 429):
+                            report["stopped"] = f"HTTP {status}"
+                            break
+                        days = sorted(set(days) | set(calendar_days(page, season, kind)))
+                    if report["stopped"]:
+                        break
+                    # No calendar: skip rather than read every day of the year
+                else:
+                    probe = f"{season}-10-15" if kind == "europe" else f"{season + 1}-01-15"
+                    page, status = await fetch(slug, probe)
+                    if status in (403, 429):
+                        report["stopped"] = f"HTTP {status}"
+                        break
+                    days = calendar_days(page, season, kind)
+                    if not days:
+                        days = fallback_days(season, kind)
+                        report["fallback_calendars"] += 1
                 calendars[ck] = days
             todo = [d for d in reversed(calendars[ck])
                     if d < today.isoformat() and (d in recent or f"{d}|{slug}" not in done)]

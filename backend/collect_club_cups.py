@@ -20,12 +20,48 @@ import club_cups
 import model_store
 
 
+def collect_leagues(minutes: float) -> int:
+    """The small domestic leagues into their own store (no check here: the
+    Europe model's check, europe_model.py, judges them)."""
+    r = model_store._client()
+    if r is None:
+        print("UPSTASH_REDIS_URL isn't set — nothing to store to. Skipping.")
+        return 0
+    data = club_cups.load(r, club_cups.LEAGUES_KEY)
+    today = datetime.now(timezone.utc).date()
+
+    async def go():
+        from curl_cffi.requests import AsyncSession
+        import international_fixtures as intl
+        async with AsyncSession(impersonate=intl.IMPERSONATE, timeout=30) as session:
+            return await club_cups.collect(session, data, time.monotonic() + minutes * 60, today,
+                                           competitions=club_cups.LEAGUES,
+                                           seasons_back=club_cups.LEAGUE_SEASONS_BACK)
+
+    started = time.monotonic()
+    report = asyncio.run(go())
+    report["at"] = datetime.now(timezone.utc).isoformat()
+    report["seconds"] = round(time.monotonic() - started)
+    data["runs"] = (data.get("runs") or [])[-19:] + [report]
+    size = club_cups.save(r, data, club_cups.LEAGUES_KEY)
+    print("Leagues collection:", json.dumps(report, indent=1))
+    by = {}
+    for row in data["rows"].values():
+        by[row["league"]] = by.get(row["league"], 0) + 1
+    print(f"Leagues dataset: {len(data['rows'])} matches {json.dumps(by)}, {size / 1e6:.1f} MB stored")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--minutes", type=float, default=float(os.getenv("CLUB_CUPS_MINUTES", "100")))
     ap.add_argument("--no-check", action="store_true")
     ap.add_argument("--probe", action="store_true", help="only show what ESPN returns per competition")
+    ap.add_argument("--leagues", action="store_true",
+                    help="collect the small domestic leagues (club_cups.LEAGUES) for the Europe model instead")
     args = ap.parse_args()
+    if args.leagues:
+        return collect_leagues(args.minutes)
     if args.probe:
         async def look():
             from curl_cffi.requests import AsyncSession

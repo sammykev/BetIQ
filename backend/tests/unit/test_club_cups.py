@@ -224,3 +224,58 @@ class TestRoundCalendars:
         asyncio.run(cc.collect(Session(routes), data, float("inf"), date(2025, 3, 1), pause=0))
         assert data["calendar_version"] == cc.CALENDAR_VERSION
         assert "2024-09-17" in data["calendars"]["uefa.champions|2024"]
+
+
+def test_league_calendars_read_both_halves_of_a_calendar_year_season():
+    import asyncio
+    from datetime import date
+    import club_cups
+
+    class Session:
+        def __init__(self):
+            self.urls = []
+
+        async def get(self, url, headers=None, params=None, timeout=None):
+            self.urls.append(params["dates"])
+            day = params["dates"]
+            cal = {"20251015": ["2025-08-10T00:00Z", "2025-10-20T00:00Z"],
+                   "20260415": ["2026-03-01T00:00Z", "2026-05-02T00:00Z", "2026-08-01T00:00Z"]}.get(day)
+
+            class R:
+                status_code = 200
+                text = ""
+                def json(s):
+                    return {"leagues": [{"calendar": cal or []}], "events": []}
+            return R()
+
+    data = club_cups.empty()
+    s = Session()
+    asyncio.run(club_cups.collect(s, data, 1e18, date(2026, 6, 1), pause=0,
+                                  competitions={"irl.1": ("IRL", "Ireland", "league")}, seasons_back=0))
+    # Days from both the 2025 and the 2026 calendars, inside July 2025 - June 2026
+    assert data["calendars"]["irl.1|2025"] == ["2025-08-10", "2025-10-20", "2026-03-01", "2026-05-02"]
+    assert {"20251015", "20260415"} <= set(s.urls)
+
+
+def test_a_league_without_a_calendar_is_skipped_not_read_daily():
+    import asyncio
+    from datetime import date
+    import club_cups
+
+    class Session:
+        calls = 0
+
+        async def get(self, url, headers=None, params=None, timeout=None):
+            Session.calls += 1
+
+            class R:
+                status_code = 200
+                text = ""
+                def json(s):
+                    return {"leagues": [{"calendar": []}], "events": []}
+            return R()
+
+    data = club_cups.empty()
+    asyncio.run(club_cups.collect(Session(), data, 1e18, date(2026, 6, 1), pause=0,
+                                  competitions={"cze.1": ("CZE", "Czechia", "league")}, seasons_back=0))
+    assert data["calendars"]["cze.1|2025"] == [] and Session.calls == 2
