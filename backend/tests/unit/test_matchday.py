@@ -363,3 +363,46 @@ def test_live_stats_and_events_from_an_espn_scoreboard():
     # A later live update with only new stats changes the entry but not the score
     res2 = {**res, "stats": {**res["stats"], "shots": [12, 7]}}
     assert matchday.apply_result(e, res2) and e["result"]["hg"] == 2
+
+
+class TestNeverStuck:
+    """A run that hangs (a dropped connection, a slow source) is given up,
+    so the 3-minute live runs keep coming instead of queueing behind it."""
+
+    def test_a_hung_run_is_given_up_and_says_where(self, monkeypatch):
+        async def hang(days_back, trigger):
+            main._md_status["stage"] = "asking ESPN (2 scoreboards)"
+            await asyncio.sleep(3600)
+        monkeypatch.setattr(main, "_refresh_matchdays", hang)
+        monkeypatch.setitem(main.MD_RUN_LIMIT, "live", 0.05)
+        asyncio.run(main._matchday_live())
+        assert main._md_status["error"] == "timed out at asking ESPN (2 scoreboards)"
+        assert main._md_status["failed_at"]
+
+    def test_slow_ticket_settling_doesnt_hold_up_scores(self, redis, monkeypatch):
+        import threading
+        release = threading.Event()
+        monkeypatch.setattr(main, "_settle_tickets", lambda r: release.wait(0.5) or {"settled": 0})
+        real_wait_for = asyncio.wait_for
+
+        async def quick(aw, timeout):
+            return await real_wait_for(aw, 0.05 if timeout == 90 else timeout)
+        monkeypatch.setattr(asyncio, "wait_for", quick)
+        monkeypatch.setattr(main, "_md_last_settle", [0.0])
+        rep = asyncio.run(main._refresh_matchdays(1, "live"))
+        release.set()
+        assert "over 90s" in rep["tickets"]["error"]
+        assert main._md_status["stage"] == "done" and main._md_status["at"]
+
+    def test_redis_calls_have_time_limits(self, monkeypatch):
+        import redis as redis_lib
+        seen = {}
+        monkeypatch.setattr(main, "_redis", None)
+        monkeypatch.setattr(main, "REDIS_URL", "redis://example:6379")
+
+        class Fake:
+            def ping(self): return True
+        monkeypatch.setattr(redis_lib, "from_url", lambda url, **kw: seen.update(kw) or Fake())
+        main._get_redis()
+        monkeypatch.setattr(main, "_redis", None)
+        assert seen["socket_timeout"] and seen["socket_keepalive"] and seen["health_check_interval"]

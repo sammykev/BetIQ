@@ -71,7 +71,12 @@ def _get_redis():
         return None
     try:
         import redis as redis_lib
-        _redis = redis_lib.from_url(REDIS_URL, decode_responses=True)
+        # Timeouts and keep-alive: a connection the network silently dropped
+        # must fail (and reconnect), not leave a call waiting forever (that
+        # froze the live-score job: every later run was skipped behind it)
+        _redis = redis_lib.from_url(REDIS_URL, decode_responses=True, socket_timeout=15,
+                                    socket_connect_timeout=10, socket_keepalive=True,
+                                    health_check_interval=30, retry_on_timeout=True)
         _redis.ping()
         print("[Redis] Connected to Upstash Redis.")
         return _redis
@@ -2697,7 +2702,8 @@ MD_DAYS_BACK, MD_DAYS_AHEAD = 7, 14      # what the site's date strip shows
 MD_LIVE_MINUTES = 3                       # live scores: how often while matches are on
 MD_SETTLE_MINUTES = 15                    # live runs settle tickets at least this often (or on a new score)
 _md_last_settle: List[float] = [0.0]
-_md_status: Dict[str, Any] = {"at": None, "trigger": None, "report": None}
+_md_status: Dict[str, Any] = {"at": None, "trigger": None, "report": None,
+                              "started": None, "stage": None, "error": None, "failed_at": None}
 _md_read_cache: Dict[str, Tuple[float, Dict]] = {}
 
 
@@ -2788,6 +2794,7 @@ async def _refresh_matchdays(days_back: int = 1, trigger: str = "schedule") -> D
     if not r:
         return {"skipped": "no Redis"}
     now = datetime.now(timezone.utc)
+    _md_status.update(started=now.isoformat(timespec="seconds"), stage="loading match days")
     today = now.date()
     dates = [(today - timedelta(days=i)).isoformat() for i in range(days_back + 1)]
     days = _md_many(r, dates)
@@ -2805,6 +2812,7 @@ async def _refresh_matchdays(days_back: int = 1, trigger: str = "schedule") -> D
                     if (e.get("time") or "12:00") < "06:00":  # ESPN files it under the US date
                         pairs.add((day0 - timedelta(days=1), slug))
         espn: List[Dict] = []
+        _md_status["stage"] = f"asking ESPN ({len(pairs)} scoreboards)"
         if pairs:
             from curl_cffi.requests import AsyncSession
             try:
@@ -2825,6 +2833,7 @@ async def _refresh_matchdays(days_back: int = 1, trigger: str = "schedule") -> D
                 csv = await asyncio.to_thread(results_feed.csv_results, near)
             except Exception as e:
                 report["errors"].append(f"CSV: {type(e).__name__}")
+        _md_status["stage"] = "saving scores"
         for d, entries in need.items():
             day, changed = days[d], False
             matched = set()
@@ -2849,22 +2858,44 @@ async def _refresh_matchdays(days_back: int = 1, trigger: str = "schedule") -> D
         report["tickets"] = {"skipped": "no new scores"}
     else:
         _md_last_settle[0] = time.time()
+        _md_status["stage"] = "settling tickets"
         try:
-            report["tickets"] = await asyncio.to_thread(_settle_tickets, r)
+            report["tickets"] = await asyncio.wait_for(asyncio.to_thread(_settle_tickets, r), 90)
+        except asyncio.TimeoutError:
+            report["tickets"] = {"error": "settling took over 90s; next run retries"}
         except Exception as e:
             report["tickets"] = {"error": str(e)}
-    _md_status.update(at=now.isoformat(timespec="seconds"), trigger=trigger, report=report)
+    _md_status.update(at=now.isoformat(timespec="seconds"), trigger=trigger, report=report,
+                      stage="done", error=None)
     if report["updated"]:
         print(f"[MatchDay] {trigger}: {report['updated']} results updated over {report['dates']}")
     return report
 
 
+MD_RUN_LIMIT = {"live": 170, "sweep": 900}   # seconds before a run is given up (live: under its 3 minutes)
+
+
+async def _guarded_refresh(days_back: int, trigger: str) -> None:
+    """A results run that can't hang: given up after MD_RUN_LIMIT, so the
+    next scheduled run isn't skipped behind it forever."""
+    try:
+        await asyncio.wait_for(_refresh_matchdays(days_back, trigger), MD_RUN_LIMIT.get(trigger, 600))
+    except asyncio.TimeoutError:
+        print(f"[MatchDay] {trigger} run gave up after {MD_RUN_LIMIT.get(trigger)}s at: {_md_status.get('stage')}")
+        _md_status.update(failed_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                          error=f"timed out at {_md_status.get('stage')}")
+    except Exception as e:
+        print(f"[MatchDay] {trigger} run failed at {_md_status.get('stage')}: {type(e).__name__}: {e}")
+        _md_status.update(failed_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                          error=f"{type(e).__name__} at {_md_status.get('stage')}")
+
+
 async def _matchday_live() -> None:
-    await _refresh_matchdays(1, "live")
+    await _guarded_refresh(1, "live")
 
 
 async def _matchday_sweep() -> None:
-    await _refresh_matchdays(MD_DAYS_BACK, "sweep")
+    await _guarded_refresh(MD_DAYS_BACK, "sweep")
 
 
 def _legacy_view(e: Dict) -> Dict[str, Any]:
@@ -2907,7 +2938,8 @@ async def get_matchday(date_: str = Query("", alias="date")):
                      key=lambda m: (m.get("league_name") or "", m.get("time") or "", m.get("home") or ""))
     return {"date": d.isoformat(), "today": today.isoformat(), "matches": matches,
             "summary": matchday.day_summary(day.values()),
-            "updated": _md_status.get("at")}
+            "updated": _md_status.get("at"),
+            "check": {k: _md_status.get(k) for k in ("started", "stage", "error", "failed_at")}}
 
 
 _strip_cache: Dict[str, Tuple[float, Any]] = {}
@@ -6228,6 +6260,14 @@ async def _load_fbref_data():
 
 @app.on_event("startup")
 async def startup():
+    # `docker compose kill -s SIGUSR1 api` prints every thread's stack to the
+    # logs: to see where something is stuck without restarting
+    try:
+        import faulthandler
+        import signal
+        faulthandler.register(signal.SIGUSR1, all_threads=True)
+    except Exception:
+        pass
     _load_h2h_cache()
     _load_predictions_cache()   # serve cached predictions instantly while pipeline rebuilds
     asyncio.create_task(_link_on_startup())  # every deploy re-links to SportyBet straight away
@@ -6243,8 +6283,10 @@ async def startup():
     # Past referees: daily, first 10 minutes after start (after the pipeline's own football-data requests)
     scheduler.add_job(_collect_fd_referees, "interval", hours=24, id="fd_referees",
                       next_run_time=datetime.now() + timedelta(minutes=10))
-    scheduler.add_job(_matchday_live, "interval", minutes=MD_LIVE_MINUTES, id="matchday_live")
-    scheduler.add_job(_matchday_sweep, "interval", hours=3, id="matchday_sweep")
+    scheduler.add_job(_matchday_live, "interval", minutes=MD_LIVE_MINUTES, id="matchday_live",
+                      max_instances=1, coalesce=True, misfire_grace_time=60)
+    scheduler.add_job(_matchday_sweep, "interval", hours=3, id="matchday_sweep",
+                      max_instances=1, coalesce=True)
     scheduler.add_job(_daily_job, "cron", hour=6, minute=5, id="daily_slips")   # 07:05 in Lagos
     scheduler.start()
 
