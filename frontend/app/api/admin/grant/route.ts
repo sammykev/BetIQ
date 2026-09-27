@@ -28,8 +28,8 @@ async function handleGrant(req: NextRequest, grant: boolean) {
 
     await client.users.updateUserMetadata(user.id, {
       publicMetadata: grant
-        ? { subscription: tier, subscription_expires: expires.toISOString() }
-        : { subscription: null, subscription_expires: null },
+        ? { subscription: tier, subscription_expires: expires.toISOString(), trial: false }
+        : { subscription: null, subscription_expires: null, trial: false },
     });
 
     return NextResponse.json({ ok: true, email, action: grant ? "granted" : "revoked", tier: grant ? tier : null });

@@ -1,9 +1,66 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Crown, Search, UserPlus, Users as UsersIcon } from "lucide-react";
-import { Btn, Card, Pill, Skeleton, inputClass, num, useAdmin } from "../ui";
+import { Crown, Gift, Search, UserPlus, Users as UsersIcon } from "lucide-react";
+import { API, Btn, Card, Pill, Skeleton, Stat, Toggle, inputClass, num, useAdmin } from "../ui";
 import { ColumnChart } from "../charts";
+
+/** The free trial new accounts get (backend /api/trial, started by the site's /api/trial). */
+function FreeTrial({ stats }: { stats?: { active: number; started: number; converted: number } }) {
+  const { get, adminFetch, flash } = useAdmin();
+  const [cfg, setCfg] = useState<any>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  useEffect(() => { get("/api/trial").then(d => setCfg(d ?? { error: true })); }, [get]);
+
+  const save = async (patch: object, key: string) => {
+    setBusy(key);
+    try {
+      const r = await adminFetch(`${API}/api/admin/trial`, {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.detail || "Couldn't save");
+      setCfg(d);
+      flash("ok", d.enabled ? `New accounts get ${d.days} days of ${d.tier === "lite" ? "Lite" : "Premium"} free` : "Free trial off");
+    } catch (e: any) {
+      flash("err", e instanceof TypeError ? "Couldn't reach the server, so nothing was saved" : e?.message || "Couldn't save");
+    }
+    setBusy(null);
+  };
+
+  if (!cfg) return <Skeleton rows={3} />;
+  if (cfg.error) return <p className="text-xs text-n-400">Couldn&apos;t load the trial settings.</p>;
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-2 grid-cols-1 sm:grid-cols-2">
+        <Toggle on={cfg.enabled} busy={busy === "enabled"} onChange={() => save({ enabled: !cfg.enabled }, "enabled")}
+          label={cfg.enabled ? "Free trial on" : "Free trial off"}
+          hint={cfg.enabled && cfg.since ? `For accounts made since ${new Date(cfg.since).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}` : "New accounts start on Free"} />
+        <div className="flex flex-wrap items-center gap-2 rounded-xl bg-surface-sunken px-3 py-2.5">
+          {(["lite", "premium"] as const).map(t => (
+            <button key={t} disabled={busy !== null} onClick={() => save({ tier: t }, "tier")}
+              className={cfg.tier === t ? "chip chip-active" : "chip chip-idle"}>{t === "lite" ? "Lite" : "Premium"}</button>
+          ))}
+          <select value={cfg.days} disabled={busy !== null} onChange={e => save({ days: Number(e.target.value) }, "days")}
+            className="rounded-md bg-surface border border-n-800 px-2 py-1 text-xs text-n-200" aria-label="Trial length">
+            {[3, 5, 7, 10, 14, 30].map(d => <option key={d} value={d}>{d} days</option>)}
+          </select>
+        </div>
+      </div>
+      {stats && (
+        <div className="grid grid-cols-3 gap-3">
+          <Stat label="On a trial now" value={num(stats.active)} />
+          <Stat label="Trials started" value={num(stats.started)} sub="newest 500 accounts" />
+          <Stat label="Went on to pay" value={num(stats.converted)}
+            sub={stats.started ? `${Math.round((stats.converted / stats.started) * 100)}% of trials` : undefined} />
+        </div>
+      )}
+      <p className="text-[11px] text-n-500">
+        A new account gets the plan from sign-up for the days set, once, with no card; it starts on their first visit. Accounts made before
+        the trial was switched on don&apos;t get one. Paying for the same plan during a trial adds 30 days on top of what&apos;s left.
+      </p>
+    </div>
+  );
+}
 
 export function UsersSection() {
   const { adminFetch, flash } = useAdmin();
@@ -70,6 +127,10 @@ export function UsersSection() {
         </Card>
       </div>
 
+      <Card title="Free trial" icon={<Gift size={15} />} subtitle="What new accounts get when they sign up">
+        <FreeTrial stats={data?.trials} />
+      </Card>
+
       <Card title="Accounts" icon={<UsersIcon size={15} />} subtitle="Newest 100">
         <div className="flex flex-wrap gap-2">
           <div className="relative flex-1 min-w-[200px]">
@@ -102,8 +163,8 @@ export function UsersSection() {
                     </td>
                     <td className="py-2 px-2 text-n-400 tnum whitespace-nowrap">{new Date(u.created).toISOString().slice(0, 10)}</td>
                     <td className="py-2 px-2">
-                      {u.tier === "premium" || (!u.tier && u.premium) ? <Pill tone="info">Premium · {u.days_left}d</Pill>
-                        : u.tier === "lite" ? <Pill tone="ok">Lite · {u.days_left}d</Pill> : <Pill>Free</Pill>}
+                      {u.tier === "premium" || (!u.tier && u.premium) ? <Pill tone="info">Premium{u.trial ? " trial" : ""} · {u.days_left}d</Pill>
+                        : u.tier === "lite" ? <Pill tone="ok">Lite{u.trial ? " trial" : ""} · {u.days_left}d</Pill> : <Pill>Free</Pill>}
                     </td>
                     <td className="py-2 px-2 text-right">
                       <span className="inline-flex gap-1.5 justify-end">

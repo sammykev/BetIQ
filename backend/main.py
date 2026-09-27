@@ -6656,6 +6656,60 @@ async def set_paywall_state(body: Dict[str, Any], _admin: str = Depends(require_
     return {"enabled": enabled}
 
 
+# ── Free trial for new accounts ──
+# The site starts it (frontend /api/trial) on a new account's first visit:
+# the trial tier until sign-up + `days`, once per account, for accounts made
+# since the trial was switched on (`since`), so older accounts don't get one.
+TRIAL_KEY = "betiq:config:trial"
+TRIAL_DEFAULT = {"enabled": False, "days": 7, "tier": "premium", "since": None}
+
+
+def _trial_config() -> Dict[str, Any]:
+    r = _get_redis()
+    if r:
+        try:
+            return {**TRIAL_DEFAULT, **json.loads(r.get(TRIAL_KEY) or "{}")}
+        except Exception:
+            pass
+    return dict(TRIAL_DEFAULT)
+
+
+@app.get("/api/trial")
+async def get_trial():
+    """Public: whether new accounts get a free trial, how long, of which plan."""
+    return _trial_config()
+
+
+@app.put("/api/admin/trial")
+async def put_trial(body: Dict[str, Any], _admin: str = Depends(require_admin)):
+    """Body: {enabled?, days? (1–30), tier? (lite|premium)}. Switching it on
+    starts it for accounts made from now on."""
+    cfg = _trial_config()
+    if "days" in body:
+        try:
+            days = int(body["days"])
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="days must be a number")
+        if not 1 <= days <= 30:
+            raise HTTPException(status_code=400, detail="days must be 1–30")
+        cfg["days"] = days
+    if "tier" in body:
+        if body["tier"] not in ("lite", "premium"):
+            raise HTTPException(status_code=400, detail="tier must be lite or premium")
+        cfg["tier"] = body["tier"]
+    if "enabled" in body:
+        enabled = bool(body["enabled"])
+        if enabled and not cfg["enabled"]:
+            cfg["since"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        cfg["enabled"] = enabled
+    r = _get_redis()
+    if not r:
+        raise HTTPException(status_code=503, detail="Couldn't save: the database isn't connected")
+    r.set(TRIAL_KEY, json.dumps(cfg))
+    _audit(_admin, "trial", **{k: cfg[k] for k in ("enabled", "days", "tier")})
+    return cfg
+
+
 REFRESH_COOLDOWN = 30 * 60
 _last_public_refresh = 0.0
 

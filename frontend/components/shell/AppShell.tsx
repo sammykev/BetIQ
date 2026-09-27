@@ -8,6 +8,7 @@ import { UserMenu } from "@/components/UserMenu";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { SlipButton, SlipDrawer } from "@/components/BetSlip";
 import { PaywallModal } from "@/components/PaywallModal";
+import { Trial } from "@/components/Trial";
 import { useAccess, type FeatureId } from "@/lib/access";
 import clsx from "clsx";
 import type { ReactNode } from "react";
@@ -119,7 +120,10 @@ export function AppShell({ children, actions, banner, onUpgrade }: Props) {
 
       {/* ── Main content ── */}
       <main className="lg:pl-60 pb-24 lg:pb-10">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 lg:py-8">{children}</div>
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 lg:py-8">
+          <Trial onPlans={onUpgrade ?? (() => setPlans(true))} />
+          {children}
+        </div>
       </main>
 
       {shown("bet_slip") && <SlipDrawer />}

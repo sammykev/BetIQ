@@ -22,12 +22,13 @@ import { awaitingScore, fetchMatchday, fetchStrip, matchKey, type MatchdayMatch,
 import { SportCard, type SportPrediction } from "@/components/SportCard";
 import { SportModal } from "@/components/SportModal";
 import { PaywallModal } from "@/components/PaywallModal";
-import { useAccess, type FeatureId } from "@/lib/access";
+import { useAccess, TIER_NAMES, type FeatureId } from "@/lib/access";
 import type { Plan } from "@/lib/pricing";
 import { AnnouncementBanner } from "@/components/AnnouncementBanner";
 import { AppShell, Wordmark } from "@/components/shell/AppShell";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useUser, SignInButton, SignUpButton } from "@clerk/nextjs";
+import { useTrialConfig } from "@/components/Trial";
 import clsx from "clsx";
 
 // Football is always on; the rest follow their switches (admin → Access)
@@ -141,6 +142,8 @@ function SkeletonCard() {
 }
 
 function AuthGate() {
+  const trial = useTrialConfig();
+  const trialLine = trial?.enabled ? `${trial.days} days of ${TIER_NAMES[trial.tier]} free` : null;
   return (
     <div className="min-h-screen flex flex-col overflow-x-clip">
       {/* Nav */}
@@ -176,14 +179,14 @@ function AuthGate() {
             <div className="flex flex-col sm:flex-row gap-3 mt-8">
               <SignUpButton mode="modal">
                 <button className="btn-primary !px-7 !py-3.5 !text-base">
-                  Create free account <ArrowRight size={16} />
+                  {trialLine ? `Start your ${trial!.days}-day free trial` : "Create free account"} <ArrowRight size={16} />
                 </button>
               </SignUpButton>
               <SignInButton mode="modal">
                 <button className="btn-secondary !px-7 !py-3.5 !text-base">Sign in</button>
               </SignInButton>
             </div>
-            <p className="text-n-500 text-xs mt-4">Free to sign up · No card required · 18+ only</p>
+            <p className="text-n-500 text-xs mt-4">{trialLine ? `${trialLine} when you sign up` : "Free to sign up"} · No card required · 18+ only</p>
           </div>
 
           {/* Product preview: the real prediction card */}

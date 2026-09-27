@@ -121,6 +121,7 @@ async def require_user(request: Request, claimed_uid: str = "") -> str:
 
 CLERK_SECRET_KEY = os.getenv("CLERK_SECRET_KEY", "").strip()
 PREMIUM_CACHE_SECONDS = 60
+FREE_CACHE_SECONDS = 10
 TIERS = ("free", "lite", "premium")   # lowest to highest
 _tier_cache: dict = {}  # uid -> (checked at, tier)
 
@@ -163,7 +164,8 @@ async def user_tier(uid: str) -> str:
     """A Clerk user's current tier (cached briefly)."""
     import time
     hit = _tier_cache.get(uid)
-    if hit and time.time() - hit[0] < PREMIUM_CACHE_SECONDS:
+    # "free" is kept briefly: a new account's trial (or a payment) should show within seconds
+    if hit and time.time() - hit[0] < (PREMIUM_CACHE_SECONDS if hit[1] != "free" else FREE_CACHE_SECONDS):
         return hit[1]
     status, meta = await clerk_user(uid)
     if status == 404:

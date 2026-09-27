@@ -75,6 +75,7 @@ export async function POST(req: NextRequest) {
         subscription: plan,
         subscription_expires: expiresAt.toISOString(),
         paystack_reference: reference,
+        trial: false,   // paid now (days left of a trial on the same plan carry over)
       },
       privateMetadata: {
         paystack_references: [...used, reference].slice(-MAX_STORED_REFERENCES),

@@ -78,3 +78,34 @@ export function tierAtLeast(tier: string, needed: string): boolean {
   const rank = (t: string) => Math.max(0, TIER_ORDER.indexOf(t));
   return rank(tier) >= rank(needed);
 }
+
+// ── Free trial for new accounts (settings: backend /api/trial, admin → Users) ──
+export interface TrialConfig { enabled: boolean; days: number; tier: "lite" | "premium"; since: string | null }
+type TrialMeta = Meta & { trial?: unknown; trial_used?: unknown };
+
+/** Whether this account gets the free trial now, and until when: the trial
+ *  tier until sign-up + `days`, once per account, only for accounts made
+ *  since the trial was switched on, and never over a plan they already have. */
+export function trialFor(
+  user: { createdAt: number | Date | null | undefined; publicMetadata: TrialMeta },
+  cfg: TrialConfig | null,
+  now = new Date(),
+): { expires: Date } | { reason: string } {
+  if (!cfg?.enabled) return { reason: "trial_off" };
+  const meta = user.publicMetadata;
+  if (meta?.trial_used) return { reason: "already_used" };
+  if (tierOf(meta, now) !== "free") return { reason: "has_plan" };
+  const created = new Date(user.createdAt ?? 0).getTime();
+  const since = new Date(cfg.since ?? 0).getTime();
+  if (!created || isNaN(created) || !cfg.since || isNaN(since) || created < since) return { reason: "account_too_old" };
+  const expires = new Date(created + cfg.days * 86_400_000);
+  if (expires.getTime() <= now.getTime()) return { reason: "window_passed" };
+  return { expires };
+}
+
+/** Days left of an active trial (rounded up), or null when not on one. */
+export function trialDaysLeft(meta: TrialMeta, now = new Date()): number | null {
+  if (meta?.trial !== true || tierOf(meta, now) === "free") return null;
+  const ms = new Date(String(meta.subscription_expires)).getTime() - now.getTime();
+  return Math.max(1, Math.ceil(ms / 86_400_000));
+}

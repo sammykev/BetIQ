@@ -2,9 +2,10 @@
 
 import { useState, type ReactNode } from "react";
 import Link from "next/link";
-import { SignInButton } from "@clerk/nextjs";
+import { SignInButton, SignUpButton } from "@clerk/nextjs";
 import { Check, Loader2, Lock, EyeOff } from "lucide-react";
 import { PaywallModal } from "@/components/PaywallModal";
+import { useTrialConfig } from "@/components/Trial";
 import { useAccess, tierAtLeast, TIER_NAMES, type FeatureId } from "@/lib/access";
 import type { Plan } from "@/lib/pricing";
 
@@ -24,6 +25,7 @@ export function Unavailable({ title = "Not available" }: { title?: string }) {
 export function Locked({ feature, title, perks }: { feature: FeatureId; title: string; perks: string[] }) {
   const { signedIn, needs, tier: mine } = useAccess();
   const [paywall, setPaywall] = useState(false);
+  const trial = useTrialConfig();
   const tier = needs(feature);
   const plan = (tier === "free" ? "lite" : tier) as Plan;
   // Their plan covers it, but the server refused: don't sell them what they have
@@ -53,7 +55,16 @@ export function Locked({ feature, title, perks }: { feature: FeatureId; title: s
       {signedIn ? (
         <button onClick={() => setPaywall(true)} className="btn-primary">See plans</button>
       ) : (
-        <SignInButton mode="modal"><button className="btn-primary">Sign in to subscribe</button></SignInButton>
+        trial?.enabled && tierAtLeast(trial.tier, tier) ? (
+          // New accounts get the trial, which covers this feature
+          <div className="space-y-2">
+            <SignUpButton mode="modal"><button className="btn-primary">Try it free for {trial.days} days</button></SignUpButton>
+            <p className="text-xs text-n-400">No card needed. Have an account?{" "}
+              <SignInButton mode="modal"><button className="font-semibold text-accent">Sign in</button></SignInButton></p>
+          </div>
+        ) : (
+          <SignInButton mode="modal"><button className="btn-primary">Sign in to subscribe</button></SignInButton>
+        )
       )}
       {paywall && <PaywallModal need={plan} onClose={() => setPaywall(false)} onSuccess={() => setPaywall(false)} />}
     </section>
