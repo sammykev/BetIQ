@@ -4,7 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { Activity, Globe2, Megaphone, MapPin, MousePointerClick, Smartphone, Clock, Radio } from "lucide-react";
 import { API, BarList, Btn, Card, Skeleton, Stat, ago, countryName, flag, num, useAdmin } from "../ui";
 import { ColumnChart, LineChart } from "../charts";
-import { WorldMap, type CityPoint } from "../WorldMap";
+import { type CityPoint } from "../WorldMap";
+import { TrafficMap } from "../TrafficMap";
 
 type Top = { key: string; count: number }[];
 interface TrafficData {
@@ -125,7 +126,7 @@ export function TrafficSection() {
 
           <Card title="Where visitors are" icon={<Globe2 size={15} />}
             subtitle="City-level location from Vercel. No IP addresses are stored.">
-            <WorldMap cities={data.cities} live={live?.pins ?? []} />
+            <TrafficMap cities={data.cities} live={live?.pins ?? []} />
           </Card>
 
           <div className="grid gap-4 lg:grid-cols-2">
