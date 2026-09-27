@@ -454,7 +454,7 @@ INTERNATIONAL_GRID = [
     for prior in (6.0, 12.0, 20.0) for gamma in (0.4, 0.6, 0.8) for decay in (0.85, 0.92)
 ]
 MIN_HOLDOUT = 200
-ELO_WEIGHTS = (0.25, 0.5, 0.8, 1.2, 1.6)   # 0.8 won the first real check: room above it
+ELO_WEIGHTS = (0.25, 0.5, 0.8, 1.2, 1.6)   # 0.8 is the peak so far: 1.2 and 1.6 score worse
 
 
 def tune_international(matches: pd.DataFrame, today: Optional[pd.Timestamp] = None, model_cls=None) -> Dict:
