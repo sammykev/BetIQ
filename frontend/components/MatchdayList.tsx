@@ -7,6 +7,7 @@ import { TeamBadge } from "@/components/PredictionCard";
 import { CompetitionBadge } from "@/components/CompetitionBadge";
 import { localTime } from "@/lib/matchTime";
 import { MARKET_LABELS, lost, won, type Grade, type MatchdayMatch } from "@/lib/matchday";
+import { LiveStats } from "@/components/LiveStats";
 
 const pct = (x?: number | null) => (typeof x === "number" ? `${Math.round(x * 100)}%` : "—");
 
@@ -110,7 +111,12 @@ function Detail({ m, onOpen }: { m: MatchdayMatch; onOpen?: (m: MatchdayMatch) =
               ))}
             </ul>
           )}
-          {(m.corners || m.bookings || m.sot) && (
+          {(m.stats || m.events) ? (
+            <div className="rounded-xl border border-n-800 bg-surface px-3 py-3">
+              <p className="eyebrow mb-2">Match stats</p>
+              <LiveStats m={m} compact />
+            </div>
+          ) : (m.corners || m.bookings || m.sot) && (
             <p className="text-[11px] text-n-500 tnum">
               {[m.sot && m.shots ? `Shots ${m.shots[0]}–${m.shots[1]} (on target ${m.sot[0]}–${m.sot[1]})`
                   : m.sot && `Shots on target ${m.sot[0]}–${m.sot[1]}`,
@@ -120,7 +126,19 @@ function Detail({ m, onOpen }: { m: MatchdayMatch; onOpen?: (m: MatchdayMatch) =
           )}
         </div>
       )}
-      {m.status === "live" && <p className="text-xs text-n-400">In play. Picks are graded at full time.</p>}
+      {m.status === "live" && (
+        <div className="space-y-2">
+          {(m.stats || m.events) && (
+            <div className="rounded-xl border border-n-800 bg-surface px-3 py-3">
+              <p className="eyebrow mb-2 flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-danger animate-pulse" /> Live stats · {m.minute || "in play"}
+              </p>
+              <LiveStats m={m} compact />
+            </div>
+          )}
+          <p className="text-xs text-n-400">In play: updated every few minutes. Picks are graded at full time.</p>
+        </div>
+      )}
       {m.status === "postponed" && <p className="text-xs text-n-400">Postponed: nothing to grade.</p>}
       {m.status === "scheduled" && onOpen && (
         <button onClick={() => onOpen(m)} className="text-xs font-semibold text-accent hover:underline">Full match analysis →</button>

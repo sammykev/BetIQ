@@ -13,7 +13,9 @@ bookings where the source has them.
 Every result: {"date" (UTC kick-off date), "home", "away", "status",
 "minute", "hg", "ag", "aet", "corners": [h, a] | None, "bookings": [h, a] |
 None (yellow 1, red 2 — SportyBet's booking points), "shots" / "sot" (shots,
-shots on target): [h, a] | None (finished matches, ESPN only), "source"}.
+shots on target): [h, a] | None (finished matches, ESPN only), "source"};
+ESPN's also carry "stats" ({possession, shots, sot, corners, fouls, ...:
+[h, a]}) and "events" (goals and cards) while live and at full time.
 """
 
 import glob
@@ -54,6 +56,60 @@ def _stat(team: Dict, *names: str) -> Optional[int]:
     return None
 
 
+# Team statistics shown live on the site: our name → ESPN's names
+LIVE_STATS = {"possession": ("possessionPct",), "shots": ("totalShots",), "sot": ("shotsOnTarget",),
+              "corners": ("wonCorners", "cornerKicks"), "fouls": ("foulsCommitted",), "offsides": ("offsides",),
+              "saves": ("saves",), "yellow": ("yellowCards",), "red": ("redCards",)}
+MAX_EVENTS = 30
+
+
+def _num(team: Dict, *names: str) -> Optional[float]:
+    for s in team.get("statistics") or []:
+        if s.get("name") in names:
+            try:
+                return round(float(str(s.get("displayValue", s.get("value"))).rstrip("%")), 1)
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def live_stats(home: Dict, away: Dict) -> Optional[Dict[str, List[float]]]:
+    """{stat: [home, away]} for the stats ESPN gives both teams, or None."""
+    out = {}
+    for key, names in LIVE_STATS.items():
+        pair = [_num(home, *names), _num(away, *names)]
+        if None not in pair:
+            out[key] = pair
+    return out or None
+
+
+def key_events(comp: Dict, home: Dict, away: Dict) -> List[Dict]:
+    """Goals and cards in match order: {"minute", "side", "kind", "player"}."""
+    ids = {str((home.get("team") or {}).get("id")): "home", str((away.get("team") or {}).get("id")): "away"}
+    out = []
+    details = comp.get("details")
+    for d in details if isinstance(details, list) else []:
+        side = ids.get(str((d.get("team") or {}).get("id")))
+        if side is None:
+            continue
+        text = str((d.get("type") or {}).get("text") or "").lower()
+        if d.get("ownGoal") or "own goal" in text:
+            kind = "own_goal"
+        elif d.get("scoringPlay") or "goal" in text:
+            kind = "penalty_goal" if d.get("penaltyKick") or "penalty" in text else "goal"
+        elif d.get("redCard") or "red card" in text:
+            kind = "red"
+        elif d.get("yellowCard") or "yellow card" in text:
+            kind = "yellow"
+        else:
+            continue
+        who = [str(a.get("displayName") or a.get("shortName") or "")
+               for a in d.get("athletesInvolved") or [] if isinstance(a, dict)]
+        out.append({"minute": str((d.get("clock") or {}).get("displayValue") or "").strip(),
+                    "side": side, "kind": kind, "player": next((w for w in who if w), None)})
+    return out[:MAX_EVENTS]
+
+
 def parse_espn(data: Dict) -> List[Dict]:
     """Every match on one ESPN scoreboard, with its status."""
     out = []
@@ -87,6 +143,9 @@ def parse_espn(data: Dict) -> List[Dict]:
                "corners": None, "bookings": None, "source": "espn"}
         if status in ("live", "finished"):
             res["hg"], res["ag"] = _int(home.get("score")), _int(away.get("score"))
+            # For the site's live panel (possession, shots... and a goals/cards timeline)
+            res["stats"] = live_stats(home, away)
+            res["events"] = key_events(comp, home, away) or None
         if status == "finished":
             corners = [_stat(home, "wonCorners", "cornerKicks"), _stat(away, "wonCorners", "cornerKicks")]
             if None not in corners:

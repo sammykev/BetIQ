@@ -301,3 +301,43 @@ class TestRefresh:
         asyncio.run(main._refresh_matchdays(1, "live"))
         assert len(settles) == 2                                      # the next goal settles again
         assert main.MD_LIVE_MINUTES == 3
+
+
+def test_live_stats_and_events_from_an_espn_scoreboard():
+    import results_feed as rf
+    page = {"events": [{"id": "740001", "date": "2026-10-15T19:00Z", "competitions": [{
+        "status": {"type": {"state": "in", "name": "STATUS_SECOND_HALF", "shortDetail": "63'"}},
+        "competitors": [
+            {"homeAway": "home", "score": "2", "team": {"id": "359", "displayName": "Arsenal"},
+             "statistics": [{"name": "possessionPct", "displayValue": "58.4"}, {"name": "totalShots", "displayValue": "11"},
+                            {"name": "shotsOnTarget", "displayValue": "5"}, {"name": "wonCorners", "displayValue": "6"},
+                            {"name": "yellowCards", "displayValue": "1"}]},
+            {"homeAway": "away", "score": "1", "team": {"id": "363", "displayName": "Chelsea"},
+             "statistics": [{"name": "possessionPct", "displayValue": "41.6"}, {"name": "totalShots", "displayValue": "7"},
+                            {"name": "shotsOnTarget", "displayValue": "2"}, {"name": "wonCorners", "displayValue": "3"},
+                            {"name": "yellowCards", "displayValue": "2"}]}],
+        "details": [
+            {"type": {"text": "Goal"}, "clock": {"displayValue": "12'"}, "team": {"id": "359"}, "scoringPlay": True,
+             "athletesInvolved": [{"displayName": "Bukayo Saka"}]},
+            {"type": {"text": "Yellow Card"}, "clock": {"displayValue": "30'"}, "team": {"id": "363"}, "yellowCard": True,
+             "athletesInvolved": [{"displayName": "Moises Caicedo"}]},
+            {"type": {"text": "Penalty - Scored"}, "clock": {"displayValue": "45'+2'"}, "team": {"id": "363"},
+             "scoringPlay": True, "penaltyKick": True, "athletesInvolved": [{"displayName": "Cole Palmer"}]},
+            {"type": {"text": "Own Goal"}, "clock": {"displayValue": "58'"}, "team": {"id": "363"}, "ownGoal": True,
+             "scoringPlay": True, "athletesInvolved": [{"displayName": "Levi Colwill"}]},
+            {"type": {"text": "Substitution"}, "clock": {"displayValue": "60'"}, "team": {"id": "359"}}]}]}]}
+    [res] = rf.parse_espn(page)
+    assert res["status"] == "live" and (res["hg"], res["ag"]) == (2, 1)
+    assert res["stats"] == {"possession": [58.4, 41.6], "shots": [11, 7], "sot": [5, 2], "corners": [6, 3],
+                            "yellow": [1, 2]}
+    assert [(e["minute"], e["side"], e["kind"], e["player"]) for e in res["events"]] == [
+        ("12'", "home", "goal", "Bukayo Saka"), ("30'", "away", "yellow", "Moises Caicedo"),
+        ("45'+2'", "away", "penalty_goal", "Cole Palmer"), ("58'", "away", "own_goal", "Levi Colwill")]
+    # Kept with the match, and shown by the site
+    e = {"home": "Arsenal", "away": "Chelsea", "date": "2026-10-15", "time": "19:00", "pred": {}, "result": None}
+    assert matchday.apply_result(e, res)
+    pub = matchday.public(e)
+    assert pub["stats"]["possession"] == [58.4, 41.6] and len(pub["events"]) == 4
+    # A later live update with only new stats changes the entry but not the score
+    res2 = {**res, "stats": {**res["stats"], "shots": [12, 7]}}
+    assert matchday.apply_result(e, res2) and e["result"]["hg"] == 2

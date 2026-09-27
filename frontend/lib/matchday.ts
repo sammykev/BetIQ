@@ -25,7 +25,16 @@ export interface MatchdayMatch {
   status: MatchStatus; minute: string | null; aet: boolean;
   score: [number, number] | null; corners: [number, number] | null; bookings: [number, number] | null;
   shots?: [number, number] | null; sot?: [number, number] | null;
+  /** Live and full-time team stats (possession, shots, sot, corners, fouls, ...: [home, away]). */
+  stats?: Record<string, [number, number]> | null;
+  /** Goals and cards in match order. */
+  events?: MatchEvent[] | null;
   pred: MatchdayPred; grades: Record<string, Grade> | null; locked: boolean;
+}
+
+export interface MatchEvent {
+  minute: string; side: "home" | "away"; player: string | null;
+  kind: "goal" | "penalty_goal" | "own_goal" | "yellow" | "red";
 }
 
 export interface DaySummary {

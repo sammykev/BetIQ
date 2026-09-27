@@ -2684,9 +2684,12 @@ async def _refresh_matchdays(days_back: int = 1, trigger: str = "schedule") -> D
             for source in (espn, csv):
                 for k, res in matchday.match_results(entries, source):
                     matched.add(k)
+                    before = {f: (day[k].get("result") or {}).get(f) for f in ("status", "hg", "ag")}
                     if matchday.apply_result(day[k], res):
                         changed = True
                         report["updated"] += 1
+                        if before != {f: day[k]["result"].get(f) for f in ("status", "hg", "ag")}:
+                            report["scores"] = report.get("scores", 0) + 1
             report["unmatched"] += sum(1 for k in entries if k not in matched
                                        and (matchday.kickoff(entries[k]) or now) < now - timedelta(hours=3))
             if changed:
@@ -2694,7 +2697,8 @@ async def _refresh_matchdays(days_back: int = 1, trigger: str = "schedule") -> D
     report["errors"] = report["errors"][:20]
     # Settling reads every account with open tickets (a Redis command each):
     # live runs do it when a score changed, or every MD_SETTLE_MINUTES
-    if trigger == "live" and not report["updated"] and time.time() - _md_last_settle[0] < MD_SETTLE_MINUTES * 60:
+    # (live stats change every run; only a new score or status can settle a ticket)
+    if trigger == "live" and not report.get("scores") and time.time() - _md_last_settle[0] < MD_SETTLE_MINUTES * 60:
         report["tickets"] = {"skipped": "no new scores"}
     else:
         _md_last_settle[0] = time.time()
