@@ -210,6 +210,25 @@ class TestPremium:
             asyncio.run(main.require_premium(self._req()))
         assert e.value.status_code == 401
 
+    @pytest.mark.parametrize("path, body", [("/api/optimizer", {"min_odds": 2, "max_odds": 5}),
+                                            ("/api/optimizer/code", {"code": "ABC123"})])
+    def test_optimizer_is_premium(self, monkeypatch, path, body):
+        monkeypatch.setattr(main, "_paywall_enabled", lambda: True)
+        monkeypatch.setattr(auth, "premium_enforced", lambda: True)
+
+        async def identity(request):
+            return None, None
+        monkeypatch.setattr(main, "_admin_identity", identity)
+        assert TestClient(main.app).post(path, json=body).status_code == 401
+
+        async def signed_in(request):
+            return None, "user_1"
+        async def free(uid): return False
+        monkeypatch.setattr(main, "_admin_identity", signed_in)
+        monkeypatch.setattr(auth, "user_is_premium", free)
+        r = TestClient(main.app).post(path, json=body)
+        assert (r.status_code, r.json()["detail"]) == (402, "premium_required")
+
 
 class TestCors:
     def test_other_sites_are_not_allowed(self, client):

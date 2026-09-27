@@ -188,7 +188,8 @@ function Tickets({ tickets, original }: { tickets: NonNullable<Report["tickets"]
   );
 }
 
-export function CodeCheck() {
+export function CodeCheck({ onLocked }: { onLocked?: () => void }) {
+  const authFetch = useAuthedFetch();
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [report, setReport] = useState<Report | null>(null);
@@ -199,8 +200,9 @@ export function CodeCheck() {
     if (!code) return;
     setBusy(true); setError(null); setReport(null);
     try {
-      const r = await fetch(`${API}/api/optimizer/code`, { method: "POST", headers: { "Content-Type": "application/json" },
+      const r = await authFetch(`${API}/api/optimizer/code`, { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code }) });
+      if ((r.status === 401 || r.status === 402) && onLocked) { setBusy(false); onLocked(); return; }
       const d = await r.json();
       if (!r.ok) throw new Error(d?.detail || "Couldn't check that code.");
       setReport(d);

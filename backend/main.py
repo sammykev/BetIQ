@@ -5683,7 +5683,7 @@ def _explain_empty(reasons: List[Dict], matches: int, days: int, min_prob: float
 
 
 @app.post("/api/optimizer")
-async def optimize_slip(body: Dict[str, Any]):
+async def optimize_slip(body: Dict[str, Any], _premium=Depends(require_premium)):
     """
     Build the slip with the best win chance whose total odds land in a target
     range (optimizer.py). Body: {min_odds, max_odds, max_games?, min_prob?,
@@ -5810,7 +5810,7 @@ def _cached_sport_predictions(sport: str) -> List[Dict]:
 
 
 @app.post("/api/optimizer/code")
-async def optimize_code(body: Dict[str, Any]):
+async def optimize_code(body: Dict[str, Any], _premium=Depends(require_premium)):
     """
     Check a SportyBet booking code with the model: each leg's chance, a
     better pick where there is one, and two improved slips (code_check.py).
