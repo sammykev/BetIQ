@@ -1,4 +1,4 @@
-import { isFreshPayment, nextExpiry, paidByUser, paymentTime, renewal, tierAtLeast, tierOf, trialDaysLeft, trialFor } from "@/lib/subscription";
+import { isFreshPayment, nextExpiry, paidByUser, paymentTime, renewal, tierAtLeast, tierOf, trialDaysLeft } from "@/lib/subscription";
 import { planKobo, planLabel } from "@/lib/pricing";
 
 describe("pricing", () => {
@@ -116,24 +116,6 @@ describe("plans stack", () => {
 
 describe("free trial", () => {
   const now = new Date("2026-09-27T12:00:00Z");
-  const cfg = { enabled: true, days: 7, tier: "premium" as const, since: "2026-09-20T00:00:00Z" };
-  const user = (created: string, meta: Record<string, unknown> = {}) => ({ createdAt: new Date(created).getTime(), publicMetadata: meta });
-
-  it("gives a new account the trial until sign-up + days", () => {
-    const v = trialFor(user("2026-09-25T12:00:00Z"), cfg, now);
-    expect("expires" in v && v.expires.toISOString()).toBe("2026-10-02T12:00:00.000Z");
-  });
-
-  it("only once, only while switched on, not over a plan, not for older accounts", () => {
-    expect(trialFor(user("2026-09-25T12:00:00Z", { trial_used: true }), cfg, now)).toEqual({ reason: "already_used" });
-    expect(trialFor(user("2026-09-25T12:00:00Z"), { ...cfg, enabled: false }, now)).toEqual({ reason: "trial_off" });
-    expect(trialFor(user("2026-09-25T12:00:00Z", { subscription: "lite", subscription_expires: "2026-10-20T00:00:00Z" }), cfg, now))
-      .toEqual({ reason: "has_plan" });
-    expect(trialFor(user("2026-09-10T12:00:00Z"), cfg, now)).toEqual({ reason: "account_too_old" });
-    expect(trialFor(user("2026-09-20T01:00:00Z"), { ...cfg, days: 3 }, now)).toEqual({ reason: "window_passed" });
-    expect(trialFor(user("2026-09-25T12:00:00Z"), null, now)).toEqual({ reason: "trial_off" });
-  });
-
   it("counts the days left while on a trial", () => {
     const meta = { subscription: "premium", subscription_expires: "2026-09-30T06:00:00Z", trial: true };
     expect(trialDaysLeft(meta, now)).toBe(3);

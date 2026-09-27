@@ -39,6 +39,7 @@ RATE_LIMITS: List[Tuple[str, int, int]] = [
     ("/api/push/", 10, 60),
     ("/api/log/query", 30, 60),
     ("/api/referral/", 10, 60),
+    ("/api/trial/start", 10, 60),
     ("/api/refresh", 5, 60),
     ("/api/", 300, 60),
 ]

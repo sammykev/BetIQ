@@ -6656,22 +6656,25 @@ async def set_paywall_state(body: Dict[str, Any], _admin: str = Depends(require_
     return {"enabled": enabled}
 
 
-# ── Free trial for new accounts ──
-# The site starts it (frontend /api/trial) on a new account's first visit:
-# the trial tier until sign-up + `days`, once per account, for accounts made
-# since the trial was switched on (`since`), so older accounts don't get one.
+# ── Free trial for new accounts (trial.py) ──
+# The site asks for it (POST /api/trial/start) on a new account's visits; the
+# trial is written to the account's Clerk metadata, so every plan check
+# covers it, and recorded against its email, device and phone.
 TRIAL_KEY = "betiq:config:trial"
-TRIAL_DEFAULT = {"enabled": False, "days": 7, "tier": "premium", "since": None}
+TRIAL_ID_KEY = "betiq:trial:{}:{}"          # kind, digest → the account that had the trial
+TRIAL_IP_KEY = "betiq:trial:ip:{}"          # hashed IP → trials started this week
+TRIAL_STATS_KEY = "betiq:trial:stats"
 
 
 def _trial_config() -> Dict[str, Any]:
+    import trial
     r = _get_redis()
     if r:
         try:
-            return {**TRIAL_DEFAULT, **json.loads(r.get(TRIAL_KEY) or "{}")}
+            return trial.public({**trial.DEFAULTS, **json.loads(r.get(TRIAL_KEY) or "{}")})
         except Exception:
             pass
-    return dict(TRIAL_DEFAULT)
+    return dict(trial.DEFAULTS)
 
 
 @app.get("/api/trial")
@@ -6682,32 +6685,73 @@ async def get_trial():
 
 @app.put("/api/admin/trial")
 async def put_trial(body: Dict[str, Any], _admin: str = Depends(require_admin)):
-    """Body: {enabled?, days? (1–30), tier? (lite|premium)}. Switching it on
-    starts it for accounts made from now on."""
-    cfg = _trial_config()
-    if "days" in body:
-        try:
-            days = int(body["days"])
-        except (TypeError, ValueError):
-            raise HTTPException(status_code=400, detail="days must be a number")
-        if not 1 <= days <= 30:
-            raise HTTPException(status_code=400, detail="days must be 1–30")
-        cfg["days"] = days
-    if "tier" in body:
-        if body["tier"] not in ("lite", "premium"):
-            raise HTTPException(status_code=400, detail="tier must be lite or premium")
-        cfg["tier"] = body["tier"]
-    if "enabled" in body:
-        enabled = bool(body["enabled"])
-        if enabled and not cfg["enabled"]:
-            cfg["since"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        cfg["enabled"] = enabled
+    """Body: {enabled?, days? (1–30), tier? (lite|premium), require_phone?,
+    per_ip_week? (1–100)}. Switching it on starts it for accounts made from
+    now on."""
+    import trial
+    try:
+        cfg = trial.settings(body or {}, _trial_config())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     r = _get_redis()
     if not r:
         raise HTTPException(status_code=503, detail="Couldn't save: the database isn't connected")
     r.set(TRIAL_KEY, json.dumps(cfg))
-    _audit(_admin, "trial", **{k: cfg[k] for k in ("enabled", "days", "tier")})
+    _audit(_admin, "trial", **{k: cfg[k] for k in ("enabled", "days", "tier", "require_phone", "per_ip_week")})
     return cfg
+
+
+@app.get("/api/admin/trial/stats")
+async def trial_stats(_admin: str = Depends(require_admin)):
+    """Trials started, and refused by reason (repeat email, device, phone…)."""
+    r = _get_redis()
+    raw = (r.hgetall(TRIAL_STATS_KEY) if r else None) or {}
+    return {(k.decode() if isinstance(k, bytes) else str(k)): int(v) for k, v in raw.items()}
+
+
+@app.post("/api/trial/start")
+async def start_trial(request: Request, body: Dict[str, Any]):
+    """Start the signed-in account's free trial if it qualifies (trial.check).
+    Body: {device} — the id the site keeps in this browser. Returns
+    {started, tier, days, expires} or {started: false, reason, message}."""
+    import auth
+    import trial
+    if not auth.premium_enforced():
+        return {"started": False, "reason": "not_configured", "message": None}
+    uid = await auth.require_user(request)
+    cfg = _trial_config()
+    if not cfg["enabled"]:
+        return {"started": False, "reason": "trial_off", "message": None}
+    status, user = await auth.clerk_record(uid)
+    if status != 200:
+        raise HTTPException(status_code=503, detail="Couldn't reach the sign-in service. Try again.")
+    r = _get_redis()
+    if not r:
+        return {"started": False, "reason": "unavailable", "message": None}
+    device = str((body or {}).get("device") or "")[:100]
+    ip_key = TRIAL_IP_KEY.format(trial.digest("ip", security.client_ip(request)))
+    recorded = lambda kind, d: r.get(TRIAL_ID_KEY.format(kind, d))
+    verdict = trial.check(user, cfg, device, recorded, int(r.get(ip_key) or 0))
+    reason = verdict.get("reason")
+    if reason:
+        if reason in trial.MESSAGES:
+            r.hincrby(TRIAL_STATS_KEY, f"refused:{reason}", 1)
+        if reason in trial.FINAL:
+            # Won't change: stop the site asking on every visit
+            await auth.set_public_metadata(uid, {"trial_used": True, "trial_denied": reason})
+        return {"started": False, "reason": reason, "message": trial.MESSAGES.get(reason)}
+    expires = verdict["expires"].isoformat().replace("+00:00", "Z")
+    code = await auth.set_public_metadata(uid, {"subscription": cfg["tier"], "subscription_expires": expires,
+                                                "trial": True, "trial_used": True})
+    if code != 200:
+        raise HTTPException(status_code=503, detail="Couldn't start your trial just now. Try again.")
+    for kind, d in verdict["ids"].items():
+        r.set(TRIAL_ID_KEY.format(kind, d), uid, ex=trial.KEEP_DAYS * 86400)
+    r.incr(ip_key)
+    r.expire(ip_key, 7 * 86400)
+    r.hincrby(TRIAL_STATS_KEY, "started", 1)
+    print(f"[Trial] {uid}: {cfg['tier']} until {expires}")
+    return {"started": True, "tier": cfg["tier"], "days": cfg["days"], "expires": expires}
 
 
 REFRESH_COOLDOWN = 30 * 60

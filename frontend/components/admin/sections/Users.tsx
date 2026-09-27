@@ -5,12 +5,22 @@ import { Crown, Gift, Search, UserPlus, Users as UsersIcon } from "lucide-react"
 import { API, Btn, Card, Pill, Skeleton, Stat, Toggle, inputClass, num, useAdmin } from "../ui";
 import { ColumnChart } from "../charts";
 
+const REFUSED: Record<string, string> = {
+  email_used: "email already used", device_used: "device already used", phone_used: "phone already used",
+  ip_limit: "network limit", disposable_email: "throwaway email", email_unverified: "email not verified",
+  needs_phone: "asked to verify phone",
+};
+
 /** The free trial new accounts get (backend /api/trial, started by the site's /api/trial). */
 function FreeTrial({ stats }: { stats?: { active: number; started: number; converted: number } }) {
   const { get, adminFetch, flash } = useAdmin();
   const [cfg, setCfg] = useState<any>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  useEffect(() => { get("/api/trial").then(d => setCfg(d ?? { error: true })); }, [get]);
+  const [blocked, setBlocked] = useState<Record<string, number>>({});
+  useEffect(() => {
+    get("/api/trial").then(d => setCfg(d ?? { error: true }));
+    get("/api/admin/trial/stats").then(d => setBlocked(d ?? {}));
+  }, [get]);
 
   const save = async (patch: object, key: string) => {
     setBusy(key);
@@ -46,6 +56,26 @@ function FreeTrial({ stats }: { stats?: { active: number; started: number; conve
           </select>
         </div>
       </div>
+      <div className="grid gap-2 grid-cols-1 sm:grid-cols-2">
+        <Toggle on={!!cfg.require_phone} busy={busy === "phone"} onChange={() => save({ require_phone: !cfg.require_phone }, "phone")}
+          label="Require a verified phone" hint="One trial per phone number (a text code)" />
+        <label className="flex items-center justify-between gap-3 rounded-xl bg-surface-sunken px-3 py-2.5 text-sm">
+          <span className="min-w-0">
+            <span className="block font-semibold text-n-0">Per network, per week</span>
+            <span className="block text-[11px] text-n-400">Trials from one IP address in 7 days</span>
+          </span>
+          <select value={cfg.per_ip_week ?? 3} disabled={busy !== null} onChange={e => save({ per_ip_week: Number(e.target.value) }, "ip")}
+            className="rounded-md bg-surface border border-n-800 px-2 py-1 text-xs text-n-200">
+            {[1, 2, 3, 5, 10, 25].map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </label>
+      </div>
+      {cfg.require_phone && (
+        <p className="rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-[11px] text-n-300">
+          Needs phone numbers switched on in Clerk (Configure → User &amp; authentication → Phone), with text messages to
+          Nigeria allowed on your Clerk plan. Otherwise new users can&apos;t verify and won&apos;t get a trial.
+        </p>
+      )}
       {stats && (
         <div className="grid grid-cols-3 gap-3">
           <Stat label="On a trial now" value={num(stats.active)} />
@@ -54,8 +84,16 @@ function FreeTrial({ stats }: { stats?: { active: number; started: number; conve
             sub={stats.started ? `${Math.round((stats.converted / stats.started) * 100)}% of trials` : undefined} />
         </div>
       )}
+      {Object.keys(blocked).some(k => k.startsWith("refused:")) && (
+        <p className="text-[11px] text-n-400">
+          <span className="font-semibold text-n-200">Refused:</span>{" "}
+          {Object.entries(blocked).filter(([k]) => k.startsWith("refused:")).map(([k, n]) =>
+            `${REFUSED[k.slice(8)] ?? k.slice(8)} ${num(n)}`).join(" · ")}
+        </p>
+      )}
       <p className="text-[11px] text-n-500">
-        A new account gets the plan from sign-up for the days set, once, with no card; it starts on their first visit. Accounts made before
+        One trial per email (Gmail dots and +tags count as the same address), per device and, if required, per phone; throwaway
+        email addresses get none. A new account gets the plan from sign-up for the days set, once, with no card; it starts on their first visit. Accounts made before
         the trial was switched on don&apos;t get one. Paying for the same plan during a trial adds 30 days on top of what&apos;s left.
       </p>
     </div>

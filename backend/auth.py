@@ -160,6 +160,25 @@ async def clerk_user(uid: str):
     return status, (body or {}).get("public_metadata") or {}
 
 
+async def clerk_record(uid: str):
+    """(HTTP status, the whole Clerk user record) from Clerk's API."""
+    status, body = await _get_json(f"https://api.clerk.com/v1/users/{uid}",
+                                   {"Authorization": f"Bearer {CLERK_SECRET_KEY}"})
+    return status, body or {}
+
+
+async def set_public_metadata(uid: str, values: dict) -> int:
+    """Merge `values` into a Clerk user's public metadata; the HTTP status."""
+    import httpx
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.patch(f"https://api.clerk.com/v1/users/{uid}/metadata",
+                               headers={"Authorization": f"Bearer {CLERK_SECRET_KEY}"},
+                               json={"public_metadata": values})
+    if r.status_code == 200:
+        _tier_cache.pop(uid, None)
+    return r.status_code
+
+
 async def user_tier(uid: str) -> str:
     """A Clerk user's current tier (cached briefly)."""
     import time
