@@ -26,13 +26,14 @@ function EventIcon({ kind }: { kind: MatchEvent["kind"] }) {
 
 const NOTE: Partial<Record<MatchEvent["kind"], string>> = { penalty_goal: "pen", own_goal: "og" };
 
-export function LiveStats({ m, compact = false }: { m: MatchdayMatch; compact?: boolean }) {
+/** `split` puts the timeline beside the stat bars on wide screens. */
+export function LiveStats({ m, compact = false, split = false }: { m: MatchdayMatch; compact?: boolean; split?: boolean }) {
   const stats = m.stats ?? {};
   const rows = STAT_ROWS.filter(r => stats[r.key]);
   const events = m.events ?? [];
   if (!rows.length && !events.length) return null;
   return (
-    <div className="space-y-3">
+    <div className={clsx("space-y-3", split && rows.length > 0 && events.length > 0 && "lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-8 lg:items-start")}>
       {events.length > 0 && (
         <ul className="space-y-1">
           {events.map((e, i) => {

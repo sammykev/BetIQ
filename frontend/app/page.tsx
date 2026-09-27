@@ -18,7 +18,7 @@ import {
 import { ChatBot } from "@/components/ChatBot";
 import { DateStrip } from "@/components/DateStrip";
 import { MatchdayList } from "@/components/MatchdayList";
-import { fetchMatchday, fetchStrip, type MatchdayMatch, type MatchdayResponse, type StripResponse } from "@/lib/matchday";
+import { fetchMatchday, fetchStrip, matchKey, type MatchdayMatch, type MatchdayResponse, type StripResponse } from "@/lib/matchday";
 import { SportCard, type SportPrediction } from "@/components/SportCard";
 import { SportModal } from "@/components/SportModal";
 import { PaywallModal } from "@/components/PaywallModal";
@@ -472,9 +472,8 @@ export default function HomePage() {
   );
 
   // Today: matches that have kicked off show as results rows instead of cards
-  const mdKey = (home: string, away: string) => `${home.trim().toLowerCase()}|${away.trim().toLowerCase()}`;
   const started = new Set((isToday ? md?.matches ?? [] : []).filter(m => m.status !== "scheduled").map(m => m.key));
-  const dayPredictions = validPredictions.filter(p => p.date === day && !started.has(mdKey(p.home, p.away)));
+  const dayPredictions = validPredictions.filter(p => p.date === day && !started.has(matchKey(p.home, p.away)));
   const playedToday: MatchdayMatch[] = isToday ? (md?.matches ?? []).filter(m => m.status !== "scheduled") : [];
 
   // Counts per league for tab badges (the chosen day)
@@ -511,12 +510,9 @@ export default function HomePage() {
   const groups: { label: string; items: Prediction[] }[] = [{ label: "", items: sorted }];
 
   const nextDay = strip?.days.find(d => d.date > day && d.total > 0)?.date;
-  const openMatchday = (m: MatchdayMatch) => {
-    const p = allPredictions.find(x => mdKey(x.home, x.away) === m.key && x.date === m.date);
-    if (p) openMatch(p);
-  };
+  const openMatchday = (m: MatchdayMatch) => openMatch(m);
 
-  const openMatch = (p: Prediction) => {
+  const openMatch = (p: Pick<Prediction, "home" | "away" | "date">) => {
     const API_B = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
     fetch(`${API_B}/api/track/match`, {
       method: "POST",

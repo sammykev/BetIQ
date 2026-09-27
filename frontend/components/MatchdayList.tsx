@@ -41,7 +41,7 @@ export function VerdictIcon({ verdict, size = 14 }: { verdict?: Grade["verdict"]
   return null;
 }
 
-function StatusCell({ m }: { m: MatchdayMatch }) {
+export function StatusCell({ m }: { m: MatchdayMatch }) {
   if (m.status === "live") {
     return <span className="text-[11px] font-bold text-danger tnum inline-flex items-center gap-1">
       <span className="w-1.5 h-1.5 rounded-full bg-danger animate-pulse" />{m.minute || "Live"}</span>;
@@ -140,8 +140,10 @@ function Detail({ m, onOpen }: { m: MatchdayMatch; onOpen?: (m: MatchdayMatch) =
         </div>
       )}
       {m.status === "postponed" && <p className="text-xs text-n-400">Postponed: nothing to grade.</p>}
-      {m.status === "scheduled" && onOpen && (
-        <button onClick={() => onOpen(m)} className="text-xs font-semibold text-accent hover:underline">Full match analysis →</button>
+      {m.status !== "postponed" && onOpen && (
+        <button onClick={() => onOpen(m)} className="text-xs font-semibold text-accent hover:underline">
+          {m.status === "live" ? "Follow it on the match page →" : m.status === "finished" ? "Match page →" : "Full match analysis →"}
+        </button>
       )}
     </div>
   );

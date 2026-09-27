@@ -51,6 +51,9 @@ export const MARKET_LABELS: Record<string, string> = {
   ou25: "Over/under 2.5", btts: "Both teams score", corners: "Corners 9.5", bookings: "Bookings 4.5",
 };
 
+/** The match-day store's key for a fixture (backend matchday.key). */
+export const matchKey = (home: string, away: string) => `${home.trim().toLowerCase()}|${away.trim().toLowerCase()}`;
+
 export const won = (v?: Verdict) => v === "won" || v === "half_won";
 export const lost = (v?: Verdict) => v === "lost" || v === "half_lost";
 

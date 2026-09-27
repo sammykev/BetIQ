@@ -11,8 +11,11 @@ import { CompetitionBadge } from "@/components/CompetitionBadge";
 import { AppShell } from "@/components/shell/AppShell";
 import { useBetSlip } from "@/lib/useBetSlip";
 import { bookableOnSportybet, isSelected } from "@/lib/slip";
+import { fetchMatchday, matchKey, type MatchdayMatch } from "@/lib/matchday";
+import { StatusCell } from "@/components/MatchdayList";
+import { LiveStats } from "@/components/LiveStats";
 import {
-  ArrowLeft, Sparkles, ExternalLink, Check, Ticket, Radio, Search, Flag, History, Swords, Newspaper,
+  ArrowLeft, Sparkles, ExternalLink, Check, Ticket, Radio, Search, Flag, History, Swords, Newspaper, BarChart3,
 } from "lucide-react";
 import clsx from "clsx";
 
@@ -421,6 +424,67 @@ function MatchFactsPanels({ facts, home, away }: { facts: MatchFacts | null; hom
 }
 
 // ------------------------------------------------------------------ //
+// Live: the score and stats from the match-day store
+// ------------------------------------------------------------------ //
+const LIVE_POLL_MS = 60_000;          // the server refreshes live scores every 3 minutes
+const IDLE_POLL_MAX_MS = 30 * 60_000;
+
+/** When to look again: soon while it's on, at kick-off before, never after. */
+function nextPoll(m: MatchdayMatch | null | undefined): number | null {
+  if (m === undefined) return LIVE_POLL_MS;           // not loaded yet
+  if (!m || m.status === "finished" || m.status === "postponed") return null;
+  if (m.status === "live") return LIVE_POLL_MS;
+  const ko = Date.parse(`${m.date}T${m.time || "12:00"}:00Z`);
+  if (!Number.isFinite(ko)) return null;
+  const now = Date.now();
+  if (now > ko + 4 * 3600_000) return null;           // should be over; the store says otherwise
+  if (now > ko - 5 * 60_000) return LIVE_POLL_MS;
+  return Math.min(ko - 5 * 60_000 - now, IDLE_POLL_MAX_MS);
+}
+
+function useLiveMatch(home: string, away: string, date: string): MatchdayMatch | null {
+  const [md, setMd] = useState<MatchdayMatch | null>(null);
+  useEffect(() => {
+    if (!home || !away || !date) return;
+    const k = matchKey(home, away);
+    const ctl = new AbortController();
+    let last: MatchdayMatch | null | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = async () => {
+      if (document.visibilityState !== "hidden") {
+        const m = await fetchMatchday(date, ctl.signal)
+          .then(d => d.matches.find(x => x.key === k) ?? null)
+          .catch(() => undefined);
+        if (ctl.signal.aborted) return;
+        if (m !== undefined) { last = m; setMd(m); }
+      }
+      const wait = nextPoll(last);
+      if (wait !== null) timer = setTimeout(tick, wait);
+    };
+    tick();
+    return () => { ctl.abort(); clearTimeout(timer); };
+  }, [home, away, date]);
+  return md;
+}
+
+function LivePanel({ m }: { m: MatchdayMatch }) {
+  if (!(m.status === "live" || m.status === "finished") || !(m.stats || m.events?.length)) return null;
+  const live = m.status === "live";
+  return (
+    <section className="card p-4">
+      <PanelTitle right={<span className="text-[11px] text-n-500">{live ? "Updates every few minutes" : m.aet ? "After extra time" : "Full time"}</span>}>
+        <span className="inline-flex items-center gap-2">
+          {live
+            ? <><span className="w-2 h-2 rounded-full bg-danger animate-pulse" aria-hidden="true" /> Live stats · {m.minute || "in play"}</>
+            : <><BarChart3 size={15} className="text-accent" /> Match stats</>}
+        </span>
+      </PanelTitle>
+      <LiveStats m={m} split />
+    </section>
+  );
+}
+
+// ------------------------------------------------------------------ //
 // Page
 // ------------------------------------------------------------------ //
 function MatchContent() {
@@ -488,6 +552,8 @@ function MatchContent() {
   useEffect(() => () => clearTimeout(refetchTimer.current), []);
 
   const matchDate = date || prediction?.date || "";
+  const md = useLiveMatch(home, away, matchDate);
+  const score = md && (md.status === "live" || md.status === "finished") ? md.score : null;
   const toggleOption = (market: Market) => (opt: Market["options"][number]) =>
     slip.toggle({
       home, away, date: matchDate, time: prediction?.time, league: prediction?.league_name,
@@ -547,6 +613,13 @@ function MatchContent() {
                   <p className="eyebrow mt-1.5">{t.side}</p>
                 </div>
               </div>
+            ) : score && md ? (
+              <div key="vs" className="flex flex-col items-center gap-2">
+                <span className="font-display font-extrabold text-4xl sm:text-6xl leading-none tnum text-n-0 whitespace-nowrap">
+                  {score[0]}<span className="text-n-500 mx-1.5 sm:mx-2">–</span>{score[1]}
+                </span>
+                <StatusCell m={md} />
+              </div>
             ) : (
               <span key="vs" className="font-display font-extrabold text-2xl sm:text-3xl text-n-500">VS</span>
             )
@@ -581,6 +654,8 @@ function MatchContent() {
           </div>
         )}
       </section>
+
+      {md && <LivePanel m={md} />}
 
       {loadingAnalysis && (
         <div className="grid lg:grid-cols-[1fr_360px] gap-4">
