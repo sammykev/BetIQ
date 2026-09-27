@@ -92,6 +92,14 @@ export type LegStatus = "won" | "lost" | "void" | "pending" | "unknown";
 export interface TicketLeg {
   home: string; away: string; date: string; time?: string; market: string; marketName?: string;
   code: string; label?: string; prob?: number | null; odds?: number | null; status: LegStatus;
+  /** On open tickets, once the match has started: how it stands. */
+  live?: LegLive;
+}
+export interface LegLive {
+  status: "live" | "finished"; minute: string | null; score: [number, number] | null; aet: boolean;
+  stats: MatchdayMatch["stats"]; events: MatchdayMatch["events"];
+  /** Whether the pick would win if the match ended now (in play only). */
+  as_it_stands?: "won" | "lost" | null;
 }
 export interface Ticket {
   code: string; created_at: string; source: string; share_url: string | null;

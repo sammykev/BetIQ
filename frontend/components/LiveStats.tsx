@@ -27,7 +27,9 @@ function EventIcon({ kind }: { kind: MatchEvent["kind"] }) {
 const NOTE: Partial<Record<MatchEvent["kind"], string>> = { penalty_goal: "pen", own_goal: "og" };
 
 /** `split` puts the timeline beside the stat bars on wide screens. */
-export function LiveStats({ m, compact = false, split = false }: { m: MatchdayMatch; compact?: boolean; split?: boolean }) {
+export function LiveStats({ m, compact = false, split = false }: {
+  m: Pick<MatchdayMatch, "stats" | "events">; compact?: boolean; split?: boolean;
+}) {
   const stats = m.stats ?? {};
   const rows = STAT_ROWS.filter(r => stats[r.key]);
   const events = m.events ?? [];

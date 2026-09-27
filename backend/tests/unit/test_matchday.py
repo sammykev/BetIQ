@@ -229,6 +229,28 @@ class TestEndpoints:
         main._save_predictions_cache()
         assert "arsenal|chelsea" in json.loads(redis.kv[f"betiq:md:{d}"])
 
+    def test_open_tickets_show_their_matches_as_they_stand(self, redis):
+        import tickets
+        d = date.today().isoformat()
+        day = {}
+        matchday.merge_predictions(day, [pred(d=d, t="00:00")], datetime.now(timezone.utc) - timedelta(days=1))
+        matchday.apply_result(day["arsenal|chelsea"], {"status": "live", "minute": "63'", "hg": 2, "ag": 1, "source": "espn",
+                                                       "stats": {"shots": [11, 7]},
+                                                       "events": [{"minute": "12'", "side": "home", "kind": "goal", "player": "Saka"}]})
+        main._md_save(redis, d, day)
+        legs = [{"home": "Arsenal", "away": "Chelsea", "date": d, "market": m, "code": c, "label": c}
+                for m, c in (("goals_ou", "O25"), ("1x2", "2"), ("sportybet", "x"))]
+        t = tickets.new_ticket("LIVE1", legs, [{"status": "booked", "odds": 1.5}] * 3, "slip", None, 3.4, "x")
+        main._record_ticket("u1", t)
+        [got] = TestClient(main.app).get("/api/user/tickets?uid=u1").json()["tickets"]
+        over, away, other = got["legs"]
+        assert over["live"]["score"] == [2, 1] and over["live"]["minute"] == "63'"
+        assert over["live"]["stats"] == {"shots": [11, 7]} and over["live"]["events"][0]["player"] == "Saka"
+        assert (over["live"]["as_it_stands"], away["live"]["as_it_stands"]) == ("won", "lost")
+        assert "as_it_stands" not in other["live"]           # a SportyBet-only market we can't judge
+        assert over["status"] == "pending"                    # nothing settles before full time
+        assert "live" not in json.loads(redis.kv["betiq:user:u1:tickets"])[0]["legs"][0]  # never saved
+
 
 class TestRefresh:
     def test_scores_come_in_and_tickets_settle(self, redis, monkeypatch):

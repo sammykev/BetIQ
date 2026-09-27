@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import clsx from "clsx";
 import { Check, ChevronDown, Clock, Copy, ExternalLink, HelpCircle, Loader2, Ticket as TicketIcon } from "lucide-react";
 import { VerdictIcon } from "@/components/MatchdayList";
+import { LiveStats } from "@/components/LiveStats";
 import { API, type Ticket, type TicketLeg, type TicketSummary } from "@/lib/matchday";
 
 // The account's booking codes, settled leg by leg from the results
@@ -22,21 +23,82 @@ const SOURCE: Record<string, string> = {
 
 interface OldCode { code: string; games?: { game: string; tip: string; odds: string | number | null }[]; total_odds?: number; date?: string }
 
+const LIVE_REFRESH_MS = 60_000;
+const IDLE_REFRESH_MAX_MS = 30 * 60_000;
+const kickoffMs = (l: TicketLeg) => Date.parse(`${l.date}T${l.time || "12:00"}:00Z`);
+
+/** When to reload the tickets: every minute while a leg is being played,
+ *  at the next kick-off otherwise, never once nothing is left to play. */
+function nextRefresh(tickets: Ticket[]): number | null {
+  const now = Date.now();
+  let wait: number | null = null;
+  for (const t of tickets) {
+    if (t.status !== "pending" && t.status !== "open") continue;
+    for (const l of t.legs) {
+      if (l.live?.status === "live") return LIVE_REFRESH_MS;
+      if (l.status !== "pending" || l.live) continue;
+      const ko = kickoffMs(l);
+      if (!Number.isFinite(ko)) continue;
+      if (now >= ko - 5 * 60_000 && now < ko + 3 * 3600_000) return LIVE_REFRESH_MS;
+      if (ko > now) wait = Math.min(wait ?? Infinity, ko - 5 * 60_000 - now, IDLE_REFRESH_MAX_MS);
+    }
+  }
+  return wait;
+}
+
+function LegIcon({ leg }: { leg: TicketLeg }) {
+  if (leg.status === "won" || leg.status === "lost" || leg.status === "void") return <VerdictIcon verdict={leg.status} size={11} />;
+  if (leg.status === "unknown") return <HelpCircle size={14} className="text-n-500" aria-label="We can't settle this market" />;
+  if (leg.live?.status === "live") return <span className="w-2 h-2 rounded-full bg-danger animate-pulse" aria-label="In play" />;
+  return <Clock size={14} className="text-n-500" aria-label={leg.live ? "Waiting to be settled" : "Not played yet"} />;
+}
+
 function LegRow({ leg }: { leg: TicketLeg }) {
-  return (
-    <li className="flex items-center gap-2.5 py-2 text-sm">
-      <span className="w-5 flex justify-center shrink-0">
-        {leg.status === "won" || leg.status === "lost" || leg.status === "void"
-          ? <VerdictIcon verdict={leg.status} size={11} />
-          : leg.status === "unknown"
-            ? <HelpCircle size={14} className="text-n-500" aria-label="We can't settle this market" />
-            : <Clock size={14} className="text-n-500" aria-label="Not played yet" />}
-      </span>
+  const [open, setOpen] = useState(false);
+  const lv = leg.live;
+  const inPlay = lv?.status === "live";
+  const hasStats = !!lv && (!!lv.stats || !!lv.events?.length);
+  const now = inPlay ? lv?.as_it_stands : null;
+  const body = (
+    <>
+      <span className="w-5 flex justify-center shrink-0"><LegIcon leg={leg} /></span>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-n-200">{leg.home} vs {leg.away}</span>
-        <span className="block truncate text-[11px] text-n-500">{leg.marketName ? `${leg.marketName}: ` : ""}<span className="text-n-0 font-semibold">{leg.label || leg.code}</span></span>
+        <span className="block truncate text-[11px] text-n-500">
+          {leg.marketName ? `${leg.marketName}: ` : ""}<span className="text-n-0 font-semibold">{leg.label || leg.code}</span>
+          {now && <span className={clsx("font-semibold", now === "won" ? "text-accent" : "text-danger")}> · {now === "won" ? "winning now" : "losing now"}</span>}
+        </span>
       </span>
-      <span className="font-mono text-xs text-n-400 tnum shrink-0">{leg.odds ? leg.odds.toFixed(2) : "—"}</span>
+      {lv?.score && (
+        <span className="text-right shrink-0 leading-tight">
+          <span className={clsx("block font-display font-extrabold text-base tnum", inPlay ? "text-danger" : "text-n-0")}>{lv.score[0]}–{lv.score[1]}</span>
+          <span className={clsx("block text-[10px] font-bold tnum", inPlay ? "text-danger" : "text-n-500")}>
+            {inPlay ? lv.minute || "Live" : lv.aet ? "AET" : "FT"}</span>
+        </span>
+      )}
+      <span className="font-mono text-xs text-n-400 tnum shrink-0 w-9 text-right">{leg.odds ? leg.odds.toFixed(2) : "—"}</span>
+      {hasStats
+        ? <ChevronDown size={14} className={clsx("text-n-500 shrink-0 transition-transform", open && "rotate-180")} />
+        : <span className="w-3.5 shrink-0" aria-hidden="true" />}
+    </>
+  );
+  return (
+    <li className="text-sm">
+      {hasStats ? (
+        <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open}
+          className="w-full flex items-center gap-2.5 py-2 text-left">{body}</button>
+      ) : <div className="flex items-center gap-2.5 py-2">{body}</div>}
+      {open && hasStats && lv && (
+        <div className="pb-3">
+          <div className="rounded-xl border border-n-800 bg-surface-sunken px-3 py-3">
+            <p className="eyebrow mb-2 flex items-center gap-1.5">
+              {inPlay && <span className="w-1.5 h-1.5 rounded-full bg-danger animate-pulse" />}
+              {inPlay ? `Live stats · ${lv.minute || "in play"}` : "Match stats"}
+            </p>
+            <LiveStats m={lv} compact />
+          </div>
+        </div>
+      )}
     </li>
   );
 }
@@ -46,12 +108,26 @@ export function TicketsList({ uid, authFetch }: { uid: string; authFetch: (url: 
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState<string | null>(null);
 
+  const load = useCallback(() =>
+    authFetch(`${API}/api/user/tickets?uid=${encodeURIComponent(uid)}`)
+      .then(r => (r.ok ? r.json() : null)), [uid, authFetch]);
+
   useEffect(() => {
     if (!uid) return;
     setLoading(true);
-    authFetch(`${API}/api/user/tickets?uid=${encodeURIComponent(uid)}`)
-      .then(r => (r.ok ? r.json() : null)).then(setData).catch(() => setData(null)).finally(() => setLoading(false));
-  }, [uid, authFetch]);
+    load().then(setData).catch(() => setData(null)).finally(() => setLoading(false));
+  }, [uid, load]);
+
+  // Keep scores fresh while legs are being played (skipped in a hidden tab)
+  useEffect(() => {
+    const wait = data ? nextRefresh(data.tickets) : null;
+    if (wait === null) return;
+    const timer = setTimeout(() => {
+      if (document.visibilityState === "hidden") { setData(d => (d ? { ...d } : d)); return; }
+      load().then(d => { if (d) setData(d); else setData(x => (x ? { ...x } : x)); }).catch(() => setData(x => (x ? { ...x } : x)));
+    }, wait);
+    return () => clearTimeout(timer);
+  }, [data, load]);
 
   const copy = async (code: string) => {
     try { await navigator.clipboard.writeText(code); setCopied(code); setTimeout(() => setCopied(null), 1500); } catch { /* ignore */ }
@@ -64,6 +140,7 @@ export function TicketsList({ uid, authFetch }: { uid: string; authFetch: (url: 
 
   const card = (t: Ticket) => {
     const done = t.legs.filter(l => l.status !== "pending" && l.status !== "unknown").length;
+    const playing = t.legs.filter(l => l.live?.status === "live").length;
     return (
       <article key={t.code} className={clsx("card overflow-hidden", t.status === "won" && "border-accent/40", t.status === "lost" && "border-danger/30")}>
         <header className="flex items-start justify-between gap-3 p-4">
@@ -72,6 +149,7 @@ export function TicketsList({ uid, authFetch }: { uid: string; authFetch: (url: 
             <p className="text-[11px] text-n-500 mt-0.5">
               {SOURCE[t.source] ?? "BetIQ"} · {new Date(t.created_at).toLocaleDateString(undefined, { day: "numeric", month: "short" })}
               {" · "}{done}/{t.legs.length} settled
+              {playing > 0 && <span className="text-danger font-semibold"> · {playing} in play</span>}
             </p>
           </div>
           <div className="text-right shrink-0 space-y-1">

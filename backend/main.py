@@ -2906,29 +2906,36 @@ def _record_ticket(uid: str, ticket: Dict[str, Any]) -> None:
     r.expire(f"betiq:tickets:day:{date.today().isoformat()}", 90 * 86400)
 
 
+def _md_entry_for(r, leg: Dict, days: Dict[str, Dict]) -> Optional[Dict]:
+    """A ticket leg's match in the match-day store (its date, or a day either
+    side for kick-offs near midnight); `days` caches the loaded days."""
+    import matchday
+    k = matchday.key(leg.get("home", ""), leg.get("away", ""))
+    try:
+        d0 = date.fromisoformat(leg.get("date") or "")
+    except ValueError:
+        return None
+    today = date.today()
+    for d in (d0, d0 - timedelta(days=1), d0 + timedelta(days=1)):
+        ds = d.isoformat()
+        if ds not in days:
+            days[ds] = _md_load(r, ds) if d <= today else {}
+        e = days[ds].get(k)
+        if e:
+            return e
+    return None
+
+
 def _settle_tickets(r) -> Dict[str, int]:
     """Grade the legs of every open ticket whose matches have finished."""
-    import matchday
     import tickets
     uids = [u.decode() if isinstance(u, bytes) else u for u in (r.smembers(TICKETS_OPEN_KEY) or [])]
     days: Dict[str, Dict] = {}
     report = {"accounts": len(uids), "settled": 0, "legs": 0}
-    today = date.today()
 
     def result_for(leg: Dict) -> Optional[Dict]:
-        k = matchday.key(leg.get("home", ""), leg.get("away", ""))
-        try:
-            d0 = date.fromisoformat(leg.get("date") or "")
-        except ValueError:
-            return None
-        for d in (d0, d0 - timedelta(days=1), d0 + timedelta(days=1)):
-            ds = d.isoformat()
-            if ds not in days:
-                days[ds] = _md_load(r, ds) if d <= today else {}
-            e = days[ds].get(k)
-            if e:
-                return e.get("result")
-        return None
+        e = _md_entry_for(r, leg, days)
+        return e.get("result") if e else None
 
     for uid in uids:
         key = _ukey(uid, "tickets")
@@ -2978,6 +2985,32 @@ async def admin_tickets(_admin: str = Depends(require_admin)):
             "open_accounts": r.scard(TICKETS_OPEN_KEY)}
 
 
+def _attach_live(r, items: List[Dict]) -> None:
+    """On open tickets, each leg's match as it stands (score, minute, live
+    stats) and whether the pick would win if it ended now. For the response
+    only: nothing is saved."""
+    import matchday
+    import tickets
+    days: Dict[str, Dict] = {}
+    for t in items:
+        if t.get("status") not in ("pending", "open"):
+            continue
+        for leg in t.get("legs") or []:
+            try:
+                e = _md_entry_for(r, leg, days)
+            except Exception:
+                e = None
+            m = matchday.public(e) if e else None
+            if not m or m.get("status") not in ("live", "finished"):
+                continue
+            live = {k: m.get(k) for k in ("status", "minute", "score", "aet", "stats", "events")}
+            res = (e or {}).get("result") or {}
+            if m["status"] == "live" and leg.get("market") != "sportybet" and res.get("hg") is not None:
+                now = tickets.grade_leg(leg.get("market", ""), leg.get("code", ""), {**res, "status": "finished", "aet": False})
+                live["as_it_stands"] = now if now in ("won", "lost", "push", "half_won", "half_lost", "void") else None
+            leg["live"] = live
+
+
 @app.get("/api/user/tickets")
 async def get_tickets(request: Request, uid: str = ""):
     """The account's booking codes, each leg settled from the result, plus
@@ -2989,6 +3022,7 @@ async def get_tickets(request: Request, uid: str = ""):
         return {"tickets": [], "summary": tickets.summary([]), "older": []}
     raw = r.get(_ukey(uid, "tickets"))
     items: List[Dict] = json.loads(raw) if raw else []
+    _attach_live(r, items)
     tracked = {t.get("code") for t in items}
     old_raw = r.get(_ukey(uid, "codes"))
     older = [c for c in (json.loads(old_raw) if old_raw else []) if c.get("code") not in tracked]
@@ -3931,19 +3965,19 @@ async def admin_security(_admin: str = Depends(require_admin)):
     recent = [e for e in events if e.get("at", 0) >= day_ago]
     checks = [
         {"id": "clerk_issuer", "ok": auth.auth_enforced(), "label": "Signed-in users verified (CLERK_ISSUER)",
-         "fix": "Set CLERK_ISSUER on Render: without it, user data endpoints trust the uid the browser sends."},
+         "fix": "Set CLERK_ISSUER in the server's .env: without it, user data endpoints trust the uid the browser sends."},
         {"id": "premium", "ok": auth.premium_enforced(), "label": "Paywall enforced on the server (CLERK_SECRET_KEY)",
-         "fix": "Set CLERK_SECRET_KEY on Render so premium analysis can't be fetched directly."},
+         "fix": "Set CLERK_SECRET_KEY (Clerk dashboard → API keys → Secret key) in the server's .env so premium analysis can't be fetched directly."},
         {"id": "admin_ids", "ok": bool(ADMIN_USER_IDS), "label": "Admins sign in with Clerk (ADMIN_USER_IDS)",
-         "fix": "Add your Clerk user id to ADMIN_USER_IDS on Render and Vercel, then you rarely need the secret."},
+         "fix": "Add your Clerk user id to ADMIN_USER_IDS in the server's .env and on Vercel, then you rarely need the secret."},
         {"id": "admin_secret", "ok": len(ADMIN_SECRET) >= 24, "label": "Admin secret is long (24+ characters)",
-         "fix": "Use a long random ADMIN_SECRET (e.g. `openssl rand -hex 24`) on Render and Vercel."},
+         "fix": "Use a long random ADMIN_SECRET (e.g. `openssl rand -hex 24`), the same value in the server's .env and on Vercel."},
         {"id": "traffic_key", "ok": bool(os.getenv("TRAFFIC_KEY")), "label": "Separate traffic key (TRAFFIC_KEY)",
-         "fix": "Optional: set TRAFFIC_KEY on Render and Vercel so page-view reporting doesn't reuse the admin secret."},
+         "fix": "Optional: set TRAFFIC_KEY, the same value in the server's .env and on Vercel, so page-view reporting doesn't reuse the admin secret."},
         {"id": "redis", "ok": _get_redis() is not None, "label": "Redis connected",
-         "fix": "Set UPSTASH_REDIS_URL on Render."},
+         "fix": "Set UPSTASH_REDIS_URL in the server's .env."},
         {"id": "rate_limits", "ok": os.getenv("RATE_LIMITS", "1") != "0", "label": "Rate limits on",
-         "fix": "Remove RATE_LIMITS=0 from Render."},
+         "fix": "Remove RATE_LIMITS=0 from the server's .env."},
         {"id": "cors", "ok": "*" not in ALLOWED_ORIGINS, "label": "Only our site may call the API from a browser",
          "fix": "Remove * from ALLOWED_ORIGINS."},
     ]
