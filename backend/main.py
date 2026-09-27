@@ -1155,7 +1155,8 @@ async def _fetch_europe_fixtures(predictor, training: pd.DataFrame) -> list:
                           sources=report["sources"],
                           model={c: "europe" if _europe_covers(c) else "main" for c in europe_fixtures.COMPETITIONS})
     _remember_competition_logos(keep)
-    print(f"[Europe] {len(report['fixtures'])} Europa/Conference League fixtures ({report['sources']}), "
+    print(f"[Europe] {len(report['fixtures'])} Europa/Conference League fixtures ({report['sources']}, "
+          f"read by {report.get('how')}), "
           f"{len(keep)} published; {len(skipped)} skipped (a club with under "
           f"{europe_fixtures.MIN_MATCHES} recent matches in our data)"
           f"{'; errors ' + str(report['errors']) if report['errors'] else ''}")

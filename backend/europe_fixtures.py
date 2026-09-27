@@ -45,24 +45,53 @@ async def fetch(days_ahead: int, today: Optional[date] = None, client=None) -> D
     report: Dict = {"fixtures": [], "sources": {}, "errors": []}
     own = client is None
     client = client or AsyncSession(impersonate=intl.IMPERSONATE, timeout=20)
+    report["how"] = {}
     try:
         for code, (slug, *_rest) in COMPETITIONS.items():
             pages, err = await intl._espn_pages(client, slug, today, end)
-            if err:
+            found = _upcoming(pages, slug, code, today, end)
+            how = "range"
+            if not found:
+                # ESPN can answer a date range with the current (finished)
+                # matchday instead of the dates asked for — no error, no
+                # fixtures. Ask for each day on its own.
+                pages, day_err = await _daily_pages(client, slug, today, end)
+                found = _upcoming(pages, slug, code, today, end)
+                how = "daily"
+                err = err if not pages else None
+                if day_err and not pages:
+                    err = err or day_err
+            if err and not found:
                 report["errors"].append(f"espn {slug}: {err}")
-                continue
-            found: List[Dict] = []
-            for page in pages:
-                fixtures, _ = intl.parse_espn(page, slug)
-                found += [to_fixture(f, code) for f in fixtures
-                          if today.isoformat() <= f["date"] <= end.isoformat()]
-            found = list({f["match_id"]: f for f in found}.values())
             report["fixtures"] += found
             report["sources"][code] = len(found)
+            report["how"][code] = how
     finally:
         if own:
             await client.close()
     return report
+
+
+def _upcoming(pages: List[Dict], slug: str, code: str, today: date, end: date) -> List[Dict]:
+    found: List[Dict] = []
+    for page in pages or []:
+        fixtures, _ = intl.parse_espn(page, slug)
+        found += [to_fixture(f, code) for f in fixtures if today.isoformat() <= f["date"] <= end.isoformat()]
+    return list({f["match_id"]: f for f in found}.values())
+
+
+async def _daily_pages(client, slug: str, today: date, end: date) -> Tuple[List[Dict], Optional[str]]:
+    """One scoreboard per day (the pages that have matches), and the last error."""
+    pages, err, day = [], None, today
+    while day <= end:
+        page, e = await intl._get_json(client, f"{intl.ESPN_BASE}/{slug}/scoreboard",
+                                       {"dates": f"{day:%Y%m%d}"}, intl._ESPN_HEADERS)
+        if e:
+            err = e
+        elif (page or {}).get("events"):
+            pages.append(page)
+        day += timedelta(days=1)
+    return pages, err
 
 
 def recent_counts(results, today: Optional[date] = None, days: int = RECENT_DAYS) -> Dict[str, int]:

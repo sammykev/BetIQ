@@ -487,6 +487,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.probe_leagues:
         for slug, v in asyncio.run(probe_leagues()).items():
             print(f"{slug:7} {json.dumps(v, ensure_ascii=False)}")
+        import europe_fixtures
+        rep = asyncio.run(europe_fixtures.fetch(14))
+        print("Europa/Conference League fixtures, next 14 days:", json.dumps(
+            {"sources": rep["sources"], "how": rep.get("how"), "errors": rep["errors"],
+             "first": [f"{f['date']} {f['home']} v {f['away']} ({f['league']})" for f in rep["fixtures"][:8]]},
+            ensure_ascii=False))
         return 0
     import main as app
     import model_store

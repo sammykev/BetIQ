@@ -64,3 +64,33 @@ def test_conference_league():
                        "model_league": "INT"}, "UECL")
     assert f["league"] == "UECL" and f["league_name"] == "Conference League"
     assert f["odds_sport"] == "soccer_uefa_europa_conference_league"
+
+
+def test_a_range_answered_with_the_finished_matchday_falls_back_to_single_days():
+    finished = _page([_event("1", "Aston Villa", "Celtic", "2026-09-25T19:00Z", state="post")])
+    upcoming = _page([_event("2", "Roma", "Porto", "2026-10-01T19:00Z")])
+
+    class Client:
+        def __init__(self):
+            self.dates = []
+
+        async def get(self, url, params=None, headers=None):
+            d = (params or {}).get("dates")
+            self.dates.append(d)
+            page = upcoming if d == "20261001" else finished if (d is None or "-" in str(d)) else {"events": []}
+
+            class R:
+                status_code = 200
+                text = "{}"
+                def json(s):
+                    return page
+            return R()
+
+        async def close(self):
+            pass
+
+    c = Client()
+    report = asyncio.run(ef.fetch(14, today=date(2026, 9, 27), client=c))
+    assert [f["home"] for f in report["fixtures"] if f["league"] == "EL"] == ["Roma"]
+    assert report["how"]["EL"] == "daily" and report["errors"] == []
+    assert "20261001" in c.dates
