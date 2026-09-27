@@ -2,15 +2,15 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import clsx from "clsx";
-import { useUser, SignInButton } from "@clerk/nextjs";
-import { Check, ChevronDown, Copy, Loader2, Sparkles, Ticket, AlertTriangle, ExternalLink, Link2, Lock } from "lucide-react";
+import { useUser } from "@clerk/nextjs";
+import { Check, ChevronDown, Copy, Loader2, Sparkles, Ticket, AlertTriangle, ExternalLink, Link2 } from "lucide-react";
 import { AppShell } from "@/components/shell/AppShell";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { CodeCheck } from "@/components/CodeCheck";
 import { useBetSlip } from "@/lib/useBetSlip";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
-import { usePremium } from "@/lib/usePremium";
-import { PaywallModal } from "@/components/PaywallModal";
+import { useAccess } from "@/lib/access";
+import { FeatureGate, Unavailable } from "@/components/FeatureGate";
 import type { SlipSelection } from "@/lib/slip";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
@@ -202,44 +202,29 @@ function Setting({ label, children }: { label: string; children: React.ReactNode
   );
 }
 
-/** What the optimizer does, for visitors without Premium. */
-function PremiumGate({ signedIn, onUpgrade }: { signedIn: boolean; onUpgrade: () => void }) {
-  const perks = [
-    "Build a slip for the exact odds you want, with the best chance of landing",
-    "Paste any SportyBet code: we rate every game and swap out the risky ones",
-    "Book the result on SportyBet in one tap, tracked in your dashboard",
-  ];
-  return (
-    <section className="card p-6 sm:p-8 text-center space-y-5 max-w-xl mx-auto">
-      <span className="mx-auto w-12 h-12 rounded-full bg-brand-400/15 text-accent flex items-center justify-center"><Lock size={20} /></span>
-      <div>
-        <p className="font-display font-extrabold text-2xl uppercase tracking-wide text-n-0">A Premium feature</p>
-        <p className="text-sm text-n-400 mt-1">The optimizer is part of BetIQ Premium.</p>
-      </div>
-      <ul className="space-y-2 text-left text-sm text-n-200 max-w-sm mx-auto">
-        {perks.map(p => (
-          <li key={p} className="flex gap-2"><Check size={16} className="text-accent shrink-0 mt-0.5" />{p}</li>
-        ))}
-      </ul>
-      {signedIn ? (
-        <button onClick={onUpgrade} className="btn-primary">Upgrade to Premium</button>
-      ) : (
-        <SignInButton mode="modal"><button className="btn-primary">Sign in to upgrade</button></SignInButton>
-      )}
-    </section>
-  );
-}
+const BUILD_PERKS = [
+  "Build a slip for the exact odds you want, with the best chance of landing",
+  "Choose markets, lines, leagues and how sure each pick must be",
+  "Book the result on SportyBet in one tap, tracked in your dashboard",
+];
+const CODE_PERKS = [
+  "Paste any SportyBet code: we rate every game with our model",
+  "See the risky picks and a safer version of your slip",
+];
 
 export default function OptimizerPage() {
   const { user } = useUser();
   const authFetch = useAuthedFetch();
-  const { ready, signedIn, premium } = usePremium();
-  const [showPaywall, setShowPaywall] = useState(false);
-  // The server said no (its own premium check): offer the upgrade
-  const [locked, setLocked] = useState(false);
+  const access = useAccess();
+  // The server said no (its own tier check): offer the upgrade for that mode
+  const [locked, setLocked] = useState<null | "build" | "code">(null);
   const slip = useBetSlip();
 
   const [mode, setMode] = useState<"build" | "code">("build");
+  // The modes switched on for this visitor (admin → Access)
+  const modes = ([["build", "Build a slip", "optimizer"], ["code", "Check my SportyBet code", "code_check"]] as const)
+    .filter(([, , f]) => access.shown(f));
+  const active = modes.some(([id]) => id === mode) ? mode : (modes[0]?.[0] ?? "build");
   const [targetOdds, setTargetOdds] = useState(10);
   const [typed, setTyped] = useState("10");
   const [tolerance, setTolerance] = useState(0.05);
@@ -315,7 +300,7 @@ export default function OptimizerPage() {
                                ...request(),
                                bookable_only: bookable }),
       });
-      if (res.status === 401 || res.status === 402) { setLocked(true); return; }
+      if (res.status === 401 || res.status === 402) { setLocked("build"); return; }
       const data = await res.json();
       setResult(res.ok ? data : { error: data?.detail || "The optimizer couldn't run. Try again." });
     } catch {
@@ -362,19 +347,21 @@ export default function OptimizerPage() {
           description="Build a slip for the odds you want, or paste a SportyBet code and we'll rate it and make it more likely to win."
         />
 
-        {!ready ? (
-          <div className="card flex items-center justify-center gap-2 py-16 text-sm text-n-400"><Loader2 size={15} className="animate-spin" /> Loading…</div>
-        ) : !premium || locked ? (
-          <PremiumGate signedIn={signedIn} onUpgrade={() => setShowPaywall(true)} />
-        ) : <>
-        <div className="flex gap-1.5" role="tablist" aria-label="Optimizer mode">
-          {([["build", "Build a slip"], ["code", "Check my SportyBet code"]] as const).map(([id, label]) => (
-            <button key={id} role="tab" aria-selected={mode === id} onClick={() => setMode(id)}
-              className={clsx("chip", mode === id ? "chip-active" : "chip-idle")}>{label}</button>
-          ))}
-        </div>
+        {access.ready && modes.length === 0 ? <Unavailable title="Optimizer" /> : <>
+        {modes.length > 1 && (
+          <div className="flex gap-1.5" role="tablist" aria-label="Optimizer mode">
+            {modes.map(([id, label]) => (
+              <button key={id} role="tab" aria-selected={active === id} onClick={() => setMode(id)}
+                className={clsx("chip", active === id ? "chip-active" : "chip-idle")}>{label}</button>
+            ))}
+          </div>
+        )}
 
-        {mode === "code" ? <CodeCheck onLocked={() => setLocked(true)} /> : <>
+        {active === "code" ? (
+          <FeatureGate feature="code_check" title="Check a SportyBet code" perks={CODE_PERKS} locked={locked === "code"}>
+            <CodeCheck onLocked={() => setLocked("code")} />
+          </FeatureGate>
+        ) : <FeatureGate feature="optimizer" title="Optimizer" perks={BUILD_PERKS} locked={locked === "build"}>
         {/* Settings */}
         <section className="card p-5 space-y-5">
           <div className="space-y-3">
@@ -609,13 +596,9 @@ export default function OptimizerPage() {
             </div>
           </section>
         )}
-        </>}
+        </FeatureGate>}
         </>}
       </div>
-      {showPaywall && (
-        <PaywallModal onClose={() => setShowPaywall(false)}
-          onSuccess={() => { setShowPaywall(false); window.location.reload(); }} />
-      )}
     </AppShell>
   );
 }

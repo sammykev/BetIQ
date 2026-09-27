@@ -2,19 +2,24 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Home, TrendingUp, Target, LayoutDashboard, Sparkles } from "lucide-react";
+import { useState } from "react";
+import { Home, Flame, Target, LayoutDashboard, Sparkles } from "lucide-react";
 import { UserMenu } from "@/components/UserMenu";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { SlipButton, SlipDrawer } from "@/components/BetSlip";
+import { PaywallModal } from "@/components/PaywallModal";
+import { useAccess, type FeatureId } from "@/lib/access";
 import clsx from "clsx";
 import type { ReactNode } from "react";
 
-const NAV = [
+// Each link shows while any of its features is switched on for this visitor
+// (admin → Access); a locked one still shows, and its page offers the upgrade
+const NAV: { href: string; label: string; icon: typeof Home; features?: FeatureId[] }[] = [
   { href: "/", label: "Predictions", icon: Home },
-  { href: "/optimizer", label: "Optimizer", icon: Sparkles },
-  { href: "/value-bets", label: "Value Bets", icon: TrendingUp },
-  { href: "/history", label: "Record", icon: Target },
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/daily", label: "Daily odds", icon: Flame, features: ["daily_slips"] },
+  { href: "/optimizer", label: "Optimizer", icon: Sparkles, features: ["optimizer", "code_check"] },
+  { href: "/history", label: "Record", icon: Target, features: ["record"] },
+  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, features: ["dashboard"] },
 ];
 
 interface Props {
@@ -46,6 +51,10 @@ function Logo() {
 
 export function AppShell({ children, actions, banner, onUpgrade }: Props) {
   const pathname = usePathname();
+  const { shown } = useAccess();
+  const nav = NAV.filter(n => !n.features || n.features.some(shown));
+  // Pages that don't handle the upgrade themselves get the plans here
+  const [plans, setPlans] = useState(false);
 
   const isActive = (href: string) =>
     href === "/" ? pathname === "/" : pathname.startsWith(href);
@@ -62,7 +71,7 @@ export function AppShell({ children, actions, banner, onUpgrade }: Props) {
 
         <nav className="flex-1 px-3 py-4 space-y-1">
           <p className="eyebrow px-3 pb-2">Menu</p>
-          {NAV.map(({ href, label, icon: Icon }) => {
+          {nav.map(({ href, label, icon: Icon }) => {
             const active = isActive(href);
             return (
               <Link
@@ -101,9 +110,9 @@ export function AppShell({ children, actions, banner, onUpgrade }: Props) {
           <div className="hidden lg:block" />
           <div className="flex items-center gap-2">
             {actions}
-            <SlipButton />
+            {shown("bet_slip") && <SlipButton />}
             <ThemeToggle />
-            <UserMenu onUpgrade={onUpgrade ?? (() => {})} />
+            <UserMenu onUpgrade={onUpgrade ?? (() => setPlans(true))} />
           </div>
         </div>
       </header>
@@ -113,13 +122,14 @@ export function AppShell({ children, actions, banner, onUpgrade }: Props) {
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 lg:py-8">{children}</div>
       </main>
 
-      <SlipDrawer />
+      {shown("bet_slip") && <SlipDrawer />}
+      {plans && <PaywallModal onClose={() => setPlans(false)} onSuccess={() => setPlans(false)} />}
 
       {/* ── Mobile bottom nav ── */}
       <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 border-t border-n-900 bg-canvas/95 backdrop-blur-md pb-[env(safe-area-inset-bottom)]">
         {/* One column per link, so all of them sit on one row */}
-        <div className="grid" style={{ gridTemplateColumns: `repeat(${NAV.length}, minmax(0, 1fr))` }}>
-          {NAV.map(({ href, label, icon: Icon }) => {
+        <div className="grid" style={{ gridTemplateColumns: `repeat(${nav.length}, minmax(0, 1fr))` }}>
+          {nav.map(({ href, label, icon: Icon }) => {
             const active = isActive(href);
             return (
               <Link

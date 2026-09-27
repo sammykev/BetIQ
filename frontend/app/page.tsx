@@ -22,18 +22,21 @@ import { fetchMatchday, fetchStrip, matchKey, type MatchdayMatch, type MatchdayR
 import { SportCard, type SportPrediction } from "@/components/SportCard";
 import { SportModal } from "@/components/SportModal";
 import { PaywallModal } from "@/components/PaywallModal";
+import { useAccess, type FeatureId } from "@/lib/access";
+import type { Plan } from "@/lib/pricing";
 import { AnnouncementBanner } from "@/components/AnnouncementBanner";
 import { AppShell, Wordmark } from "@/components/shell/AppShell";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useUser, SignInButton, SignUpButton } from "@clerk/nextjs";
 import clsx from "clsx";
 
-const SPORTS = [
+// Football is always on; the rest follow their switches (admin → Access)
+const SPORTS: readonly { key: "football" | "basketball" | "tennis" | "table-tennis"; label: string; feature?: FeatureId }[] = [
   { key: "football", label: "Football" },
-  { key: "basketball", label: "Basketball" },
-  { key: "tennis", label: "Tennis" },
-  { key: "table-tennis", label: "Table Tennis" },
-] as const;
+  { key: "basketball", label: "Basketball", feature: "sport.basketball" },
+  { key: "tennis", label: "Tennis", feature: "sport.tennis" },
+  { key: "table-tennis", label: "Table Tennis", feature: "sport.table_tennis" },
+];
 type Sport = (typeof SPORTS)[number]["key"];
 
 type Quick = "all" | "bankers" | "value" | "high";
@@ -247,7 +250,7 @@ export default function HomePage() {
   const [sportPreds, setSportPreds] = useState<SportPrediction[]>([]);
   const [sportLoading, setSportLoading] = useState(false);
   const [selectedSportMatch, setSelectedSportMatch] = useState<SportPrediction | null>(null);
-  const [showPaywall, setShowPaywall] = useState(false);
+  const [showPaywall, setShowPaywall] = useState<null | { need?: Plan }>(null);
   const [savedKeys, setSavedKeys] = useState<Set<string>>(new Set());
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushSupported, setPushSupported] = useState(false);
@@ -262,19 +265,11 @@ export default function HomePage() {
 
   const { user, isLoaded } = useUser();
   const authFetch = useAuthedFetch();
-  const [paywallActive, setPaywallActive] = useState(true);
   const [maintenanceMode, setMaintenanceMode] = useState(false);
   const [siteBanner, setSiteBanner] = useState("");
-
-  const hasSubscription =
-    (user?.publicMetadata as { subscription?: string; subscription_expires?: string })
-      ?.subscription === "premium" &&
-    new Date(
-      (user?.publicMetadata as { subscription_expires?: string })?.subscription_expires ?? 0
-    ) > new Date();
-
-  // If admin has disabled the paywall, everyone gets full access
-  const isPremium = !paywallActive || hasSubscription;
+  // What this visitor may see and use (switches + tier; paywall off = everything)
+  const access = useAccess();
+  const sports = SPORTS.filter(s => !s.feature || access.shown(s.feature));
 
   const load = useCallback(async () => {
     const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
@@ -285,10 +280,9 @@ export default function HomePage() {
 
     try {
       setError(null);
-      const [data, lgs, pw, maint, ban] = await Promise.all([
+      const [data, lgs, maint, ban] = await Promise.all([
         fetch(`${API}/api/predictions?limit=500`, { signal: ctrl.signal }).then(r => r.json()),
         fetch(`${API}/api/leagues`,               { signal: ctrl.signal }).then(r => r.json()).catch(() => []),
-        fetch(`${API}/api/config/paywall`).then(r => r.json()).catch(() => ({ enabled: true })),
         fetch(`${API}/api/config/maintenance`).then(r => r.json()).catch(() => ({ enabled: false })),
         fetch(`${API}/api/admin/banner`).then(r => r.json()).catch(() => ({ banner: null })),
       ]);
@@ -296,7 +290,6 @@ export default function HomePage() {
       setAllPredictions(Array.isArray(data?.predictions) ? data.predictions : []);
       setLastUpdated(data?.last_updated ?? null);
       setLeagues(Array.isArray(lgs) ? lgs : []);
-      setPaywallActive(pw?.enabled !== false);
       setMaintenanceMode(maint?.enabled === true);
       setSiteBanner(ban?.banner || "");
     } catch (e: any) {
@@ -343,12 +336,17 @@ export default function HomePage() {
     setSportLoading(true);
     setSportPreds([]);
     const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
-    fetch(`${API}/api/sports/${activeSport}`)
+    authFetch(`${API}/api/sports/${activeSport}`)
       .then(r => r.ok ? r.json() : [])
       .then(d => setSportPreds(Array.isArray(d) ? d : []))
       .catch(() => setSportPreds([]))
       .finally(() => setSportLoading(false));
-  }, [activeSport]);
+  }, [activeSport, authFetch]);
+
+  // A sport switched off (or testers only) while it was open: back to football
+  useEffect(() => {
+    if (access.ready && !sports.some(s => s.key === activeSport)) setActiveSport("football");
+  }, [access.ready, sports, activeSport]);
 
   // The strip; refreshed every minute while matches are live
   useEffect(() => {
@@ -519,7 +517,8 @@ export default function HomePage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ home: p.home, away: p.away }),
     }).catch(() => {});
-    if (!isPremium) { setShowPaywall(true); return; }
+    if (!access.shown("match_analysis")) return;
+    if (!access.can("match_analysis")) { setShowPaywall({ need: access.needs("match_analysis") === "premium" ? "premium" : "lite" }); return; }
     const q = new URLSearchParams({ home: p.home, away: p.away, date: p.date });
     router.push(`/match?${q}`);
   };
@@ -585,7 +584,7 @@ export default function HomePage() {
     <AppShell
       banner={<AnnouncementBanner text={siteBanner} />}
       actions={headerActions}
-      onUpgrade={() => setShowPaywall(true)}
+      onUpgrade={() => setShowPaywall({})}
     >
       <div className="space-y-5">
         {/* Page heading */}
@@ -598,8 +597,9 @@ export default function HomePage() {
         </div>
 
         {/* Sport tabs */}
+        {sports.length > 1 && (
         <div role="tablist" aria-label="Sport" className="flex gap-6 border-b border-n-800 overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
-          {SPORTS.map(({ key, label }) => {
+          {sports.map(({ key, label }) => {
             const active = activeSport === key;
             return (
               <button
@@ -618,6 +618,7 @@ export default function HomePage() {
             );
           })}
         </div>
+        )}
 
         {/* Other sports */}
         {activeSport !== "football" && (
@@ -838,13 +839,14 @@ export default function HomePage() {
       )}
 
       {/* AI Betting Assistant — premium only */}
-      {isPremium && <ChatBot predictions={allPredictions} />}
+      {access.can("ai_chat") && <ChatBot predictions={allPredictions} />}
 
       {/* Paywall */}
       {showPaywall && (
         <PaywallModal
-          onClose={() => setShowPaywall(false)}
-          onSuccess={() => { setShowPaywall(false); window.location.reload(); }}
+          need={showPaywall.need}
+          onClose={() => setShowPaywall(null)}
+          onSuccess={() => { setShowPaywall(null); window.location.reload(); }}
         />
       )}
     </AppShell>

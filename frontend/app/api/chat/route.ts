@@ -3,6 +3,7 @@ import { auth, clerkClient } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
 import { pickProbability } from "@/lib/picks";
 import type { Prediction } from "@/lib/api";
+import { tierAtLeast, tierOf } from "@/lib/subscription";
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
@@ -45,27 +46,29 @@ function rateLimited(userId: string): boolean {
   return false;
 }
 
-async function paywallOn(): Promise<boolean> {
+/** The assistant's switch from the backend (admin → Access), as it applies to
+ *  this user; if the backend can't be reached, Premium as before. */
+async function chatSwitch(token: string | null) {
   try {
-    const r = await fetch(`${API_BACKEND}/api/config/paywall`, { next: { revalidate: 60 } });
-    return (await r.json())?.enabled !== false;
-  } catch {
-    return true;
-  }
-}
-
-function hasPremium(meta: Record<string, unknown> | undefined): boolean {
-  return meta?.subscription === "premium" && new Date(String(meta?.subscription_expires ?? 0)) > new Date();
+    const r = await fetch(`${API_BACKEND}/api/features`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {}, cache: "no-store" });
+    const d = await r.json();
+    const f = d?.features?.ai_chat;
+    if (f) return { visible: !!f.visible, tier: String(f.tier), granted: !!f.granted, paywall: d.paywall !== false };
+  } catch { /* fall through */ }
+  return { visible: true, tier: "premium", granted: false, paywall: true };
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const { userId } = await auth();
+    const { userId, getToken } = await auth();
     if (!userId) return NextResponse.json({ error: "not_authenticated" }, { status: 401 });
-    if (await paywallOn()) {
+    const sw = await chatSwitch(await getToken().catch(() => null));
+    if (!sw.visible) return NextResponse.json({ error: "feature_off" }, { status: 404 });
+    if (sw.paywall && !sw.granted) {
       const user = await (await clerkClient()).users.getUser(userId);
-      if (!hasPremium(user.publicMetadata as Record<string, unknown>))
-        return NextResponse.json({ error: "premium_required" }, { status: 402 });
+      if (!tierAtLeast(tierOf(user.publicMetadata as Record<string, unknown>), sw.tier))
+        return NextResponse.json({ error: `${sw.tier}_required` }, { status: 402 });
     }
     if (rateLimited(userId)) return NextResponse.json({ error: "slow_down" }, { status: 429 });
 

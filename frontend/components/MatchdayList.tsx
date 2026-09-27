@@ -8,6 +8,7 @@ import { CompetitionBadge } from "@/components/CompetitionBadge";
 import { localTime } from "@/lib/matchTime";
 import { MARKET_LABELS, lost, won, type Grade, type MatchdayMatch } from "@/lib/matchday";
 import { LiveStats } from "@/components/LiveStats";
+import { useAccess } from "@/lib/access";
 
 const pct = (x?: number | null) => (typeof x === "number" ? `${Math.round(x * 100)}%` : "—");
 
@@ -53,6 +54,7 @@ export function StatusCell({ m }: { m: MatchdayMatch }) {
 
 function Detail({ m, onOpen }: { m: MatchdayMatch; onOpen?: (m: MatchdayMatch) => void }) {
   const p = m.pred;
+  const liveStats = useAccess().shown("live_stats") && !!(m.stats || m.events);
   const h = Math.round((p.p_home ?? 0) * 100), d = Math.round((p.p_draw ?? 0) * 100);
   const a = Math.max(0, 100 - h - d);
   const actual = m.score ? (m.score[0] > m.score[1] ? "1" : m.score[0] < m.score[1] ? "2" : "X") : null;
@@ -111,7 +113,7 @@ function Detail({ m, onOpen }: { m: MatchdayMatch; onOpen?: (m: MatchdayMatch) =
               ))}
             </ul>
           )}
-          {(m.stats || m.events) ? (
+          {liveStats ? (
             <div className="rounded-xl border border-n-800 bg-surface px-3 py-3">
               <p className="eyebrow mb-2">Match stats</p>
               <LiveStats m={m} compact />
@@ -128,7 +130,7 @@ function Detail({ m, onOpen }: { m: MatchdayMatch; onOpen?: (m: MatchdayMatch) =
       )}
       {m.status === "live" && (
         <div className="space-y-2">
-          {(m.stats || m.events) && (
+          {liveStats && (
             <div className="rounded-xl border border-n-800 bg-surface px-3 py-3">
               <p className="eyebrow mb-2 flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-danger animate-pulse" /> Live stats · {m.minute || "in play"}

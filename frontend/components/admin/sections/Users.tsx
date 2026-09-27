@@ -9,25 +9,29 @@ export function UsersSection() {
   const { adminFetch, flash } = useAdmin();
   const [data, setData] = useState<any>(null);
   const [q, setQ] = useState("");
-  const [plan, setPlan] = useState<"all" | "premium" | "free">("all");
+  const [plan, setPlan] = useState<"all" | "premium" | "lite" | "free">("all");
   const [email, setEmail] = useState("");
+  const [giveTier, setGiveTier] = useState<"lite" | "premium">("premium");
+  const [days, setDays] = useState("30");
   const [busy, setBusy] = useState<string | null>(null);
 
   const load = () => adminFetch("/api/admin/users").then(r => r.json()).then(setData).catch(() => setData({ error: true }));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, []);
 
-  const setPremium = async (target: string, grant: boolean) => {
-    if (!grant && !confirm(`Remove Premium from ${target}?`)) return;
+  const TIER_NAME = { lite: "Lite", premium: "Premium" } as const;
+  /** Give a plan (tier, for `n` days) or, with tier null, remove it. */
+  const setPlanFor = async (target: string, tier: "lite" | "premium" | null, n = 30) => {
+    if (!tier && !confirm(`Remove the plan from ${target}?`)) return;
     setBusy(target);
     try {
       const r = await adminFetch("/api/admin/grant", {
-        method: grant ? "POST" : "DELETE", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: target }),
+        method: tier ? "POST" : "DELETE", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(tier ? { email: target, tier, days: n } : { email: target }),
       });
       const d = await r.json();
       if (!d.ok) throw new Error(d.error);
-      flash("ok", `${grant ? "Gave 30 days of Premium to" : "Removed Premium from"} ${target}`);
+      flash("ok", tier ? `Gave ${n} days of ${TIER_NAME[tier]} to ${target}` : `Removed the plan from ${target}`);
       setEmail("");
       load();
     } catch (e: any) { flash("err", e?.message === "user_not_found" ? "No account with that email" : "Couldn't update that user"); }
@@ -36,7 +40,7 @@ export function UsersSection() {
 
   const users: any[] = data?.users ?? [];
   const shown = useMemo(() => users.filter(u =>
-    (plan === "all" || (plan === "premium") === !!u.premium) &&
+    (plan === "all" || (u.tier ?? (u.premium ? "premium" : "free")) === plan) &&
     (!q || `${u.email} ${u.name}`.toLowerCase().includes(q.toLowerCase()))), [users, q, plan]);
 
   const growth = useMemo(() => {
@@ -50,10 +54,18 @@ export function UsersSection() {
         <Card title="Sign-ups" icon={<UsersIcon size={15} />} subtitle={data?.total ? `${num(data.total)} accounts` : undefined}>
           {!data ? <Skeleton rows={3} /> : <ColumnChart name="Sign-ups by day" labels={growth.labels} values={growth.values} tick={5} />}
         </Card>
-        <Card title="Give Premium" icon={<Crown size={15} />} subtitle="30 days, by account email">
-          <form className="flex gap-2" onSubmit={e => { e.preventDefault(); if (email) setPremium(email.trim(), true); }}>
+        <Card title="Give a plan" icon={<Crown size={15} />} subtitle="By account email, free of charge">
+          <form className="space-y-2" onSubmit={e => { e.preventDefault(); if (email) setPlanFor(email.trim(), giveTier, Number(days) || 30); }}>
             <input value={email} onChange={e => setEmail(e.target.value)} placeholder="user@email.com" className={inputClass} />
-            <Btn type="submit" variant="primary" busy={busy === email.trim()} disabled={!email.trim()}><UserPlus size={12} /> Give</Btn>
+            <div className="flex gap-2">
+              {(["lite", "premium"] as const).map(t => (
+                <button type="button" key={t} onClick={() => setGiveTier(t)} className={giveTier === t ? "chip chip-active" : "chip chip-idle"}>{TIER_NAME[t]}</button>
+              ))}
+              <input inputMode="numeric" value={days} onChange={e => setDays(e.target.value.replace(/\D/g, "").slice(0, 3))}
+                aria-label="Days" className={`${inputClass} !w-20`} />
+              <span className="text-xs text-n-400 self-center">days</span>
+              <Btn type="submit" variant="primary" busy={busy === email.trim()} disabled={!email.trim()}><UserPlus size={12} /> Give</Btn>
+            </div>
           </form>
         </Card>
       </div>
@@ -64,9 +76,9 @@ export function UsersSection() {
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-n-500" />
             <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search email or name" className={`${inputClass} pl-9`} />
           </div>
-          {(["all", "premium", "free"] as const).map(p => (
+          {(["all", "premium", "lite", "free"] as const).map(p => (
             <button key={p} onClick={() => setPlan(p)} className={plan === p ? "chip chip-active" : "chip chip-idle"}>
-              {p === "all" ? "Everyone" : p === "premium" ? "Premium" : "Free"}
+              {p === "all" ? "Everyone" : p === "premium" ? "Premium" : p === "lite" ? "Lite" : "Free"}
             </button>
           ))}
         </div>
@@ -90,12 +102,15 @@ export function UsersSection() {
                     </td>
                     <td className="py-2 px-2 text-n-400 tnum whitespace-nowrap">{new Date(u.created).toISOString().slice(0, 10)}</td>
                     <td className="py-2 px-2">
-                      {u.premium ? <Pill tone="info">Premium · {u.days_left}d</Pill> : <Pill>Free</Pill>}
+                      {u.tier === "premium" || (!u.tier && u.premium) ? <Pill tone="info">Premium · {u.days_left}d</Pill>
+                        : u.tier === "lite" ? <Pill tone="ok">Lite · {u.days_left}d</Pill> : <Pill>Free</Pill>}
                     </td>
                     <td className="py-2 px-2 text-right">
-                      {u.premium
-                        ? <Btn variant="danger" busy={busy === u.email} onClick={() => setPremium(u.email, false)}>Remove</Btn>
-                        : <Btn busy={busy === u.email} onClick={() => setPremium(u.email, true)}>Give Premium</Btn>}
+                      <span className="inline-flex gap-1.5 justify-end">
+                        {u.tier !== "lite" && <Btn busy={busy === u.email} onClick={() => setPlanFor(u.email, "lite")}>Lite</Btn>}
+                        {u.tier !== "premium" && <Btn busy={busy === u.email} onClick={() => setPlanFor(u.email, "premium")}>Premium</Btn>}
+                        {u.tier && u.tier !== "free" && <Btn variant="danger" busy={busy === u.email} onClick={() => setPlanFor(u.email, null)}>Remove</Btn>}
+                      </span>
                     </td>
                   </tr>
                 ))}

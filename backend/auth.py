@@ -113,51 +113,67 @@ async def require_user(request: Request, claimed_uid: str = "") -> str:
     return uid
 
 
-# ── Premium ────────────────────────────────────────────────────────────────
-# Premium lives in the Clerk user's public metadata ({subscription:
+# ── Subscriptions ──────────────────────────────────────────────────────────
+# The tier lives in the Clerk user's public metadata ({subscription: "lite" |
 # "premium", subscription_expires}), set by the site's /api/subscribe after
 # Paystack confirms a payment. Reading it needs CLERK_SECRET_KEY (Clerk
-# Dashboard → API keys); without it premium isn't enforced here.
+# Dashboard → API keys); without it tiers aren't enforced here.
 
 CLERK_SECRET_KEY = os.getenv("CLERK_SECRET_KEY", "").strip()
 PREMIUM_CACHE_SECONDS = 300
-_premium_cache: dict = {}  # uid -> (checked at, premium)
+TIERS = ("free", "lite", "premium")   # lowest to highest
+_tier_cache: dict = {}  # uid -> (checked at, tier)
 
 
 def premium_enforced() -> bool:
     return auth_enforced() and bool(CLERK_SECRET_KEY)
 
 
-def is_premium_metadata(meta: Optional[dict], now: Optional[float] = None) -> bool:
+def tier_from_metadata(meta: Optional[dict], now: Optional[float] = None) -> str:
+    """"lite" or "premium" while the subscription hasn't expired, else "free"."""
     import time
     from datetime import datetime
     meta = meta or {}
-    if meta.get("subscription") != "premium":
-        return False
+    tier = meta.get("subscription")
+    if tier not in ("lite", "premium"):
+        return "free"
     try:
         expires = datetime.fromisoformat(str(meta.get("subscription_expires")).replace("Z", "+00:00"))
     except ValueError:
-        return False
-    return expires.timestamp() > (time.time() if now is None else now)
+        return "free"
+    return tier if expires.timestamp() > (time.time() if now is None else now) else "free"
 
 
-async def user_is_premium(uid: str) -> bool:
-    """Whether a Clerk user has an unexpired premium subscription (cached briefly)."""
+def is_premium_metadata(meta: Optional[dict], now: Optional[float] = None) -> bool:
+    return tier_from_metadata(meta, now) == "premium"
+
+
+def tier_at_least(tier: str, needed: str) -> bool:
+    return TIERS.index(tier if tier in TIERS else "free") >= TIERS.index(needed if needed in TIERS else "free")
+
+
+async def user_tier(uid: str) -> str:
+    """A Clerk user's current tier (cached briefly)."""
     import time
     import httpx
-    hit = _premium_cache.get(uid)
+    hit = _tier_cache.get(uid)
     if hit and time.time() - hit[0] < PREMIUM_CACHE_SECONDS:
         return hit[1]
     async with httpx.AsyncClient(timeout=10) as client:
         r = await client.get(f"https://api.clerk.com/v1/users/{uid}",
                              headers={"Authorization": f"Bearer {CLERK_SECRET_KEY}"})
     if r.status_code == 404:
-        premium = False
+        tier = "free"
     elif r.status_code != 200:
         raise HTTPException(status_code=503, detail="Couldn't check your subscription. Try again.")
     else:
-        premium = is_premium_metadata(r.json().get("public_metadata"))
-    _premium_cache[uid] = (time.time(), premium)
-    if len(_premium_cache) > 5000:
-        _premium_cache.clear()
-    return premium
+        tier = tier_from_metadata(r.json().get("public_metadata"))
+    _tier_cache[uid] = (time.time(), tier)
+    if len(_tier_cache) > 5000:
+        _tier_cache.clear()
+    return tier
+
+
+async def user_is_premium(uid: str) -> bool:
+    """Whether a Clerk user has an unexpired premium subscription."""
+    return await user_tier(uid) == "premium"

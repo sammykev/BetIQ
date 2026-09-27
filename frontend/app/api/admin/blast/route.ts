@@ -2,6 +2,7 @@ import { clerkClient } from "@clerk/nextjs/server";
 import { Resend } from "resend";
 import { NextRequest, NextResponse } from "next/server";
 import { isAdminRequest } from "@/lib/serverAdmin";
+import { tierOf } from "@/lib/subscription";
 
 const resend = new Resend(process.env.RESEND_API_KEY || "");
 
@@ -22,15 +23,13 @@ export async function POST(req: NextRequest) {
     const { data: users } = await client.users.getUserList({ limit: 500 });
     const now = new Date();
     const premiumEmails = users
-      .filter(u => {
-        const meta = u.publicMetadata as { subscription?: string; subscription_expires?: string };
-        return meta?.subscription === "premium" && new Date(meta?.subscription_expires ?? 0) > now;
-      })
+      // Every paying subscriber, Lite and Premium
+      .filter(u => tierOf(u.publicMetadata as Record<string, unknown>, now) !== "free")
       .flatMap(u => u.emailAddresses.map(e => e.emailAddress))
       .filter(Boolean);
 
     if (!premiumEmails.length)
-      return NextResponse.json({ sent: 0, message: "No active premium users found." });
+      return NextResponse.json({ sent: 0, message: "No active subscribers found." });
 
     const html = `
       <div style="font-family:sans-serif;max-width:600px;margin:auto;padding:24px;">

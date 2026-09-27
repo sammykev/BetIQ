@@ -252,19 +252,23 @@ type Fetcher = (url: string, init?: RequestInit) => Promise<Response>;
 export async function fetchExplanation(home: string, away: string, fetcher: Fetcher = fetch, date = ""): Promise<MatchExplanation> {
   const params = new URLSearchParams({ home, away, date });
   const res = await fetcher(`${API_URL}/api/explain?${params}`, { cache: "no-store" });
-  if (!res.ok) return { explanation: null, sources: [], model: null, error: res.status === 402 ? "premium_required" : "fetch_failed" };
+  if (!res.ok) return { explanation: null, sources: [], model: null,
+    error: res.status === 402 ? "premium_required" : res.status === 404 ? "feature_off" : "fetch_failed" };
   return res.json();
 }
 
-/** Thrown when the backend wants a (premium) sign-in: status 401 or 402. */
+/** Thrown when the backend refuses: 401 sign in, 402 a higher tier, 404 switched off. */
 export class AccessError extends Error {
-  constructor(public status: number) { super(status === 401 ? "sign_in_required" : "premium_required"); }
+  constructor(public status: number) {
+    super(status === 401 ? "sign_in_required" : status === 404 ? "feature_off" : "premium_required");
+  }
 }
 
 export async function fetchMatchAnalysis(home: string, away: string, fetcher: Fetcher = fetch, date = ""): Promise<MatchAnalysis> {
   const params = new URLSearchParams({ home, away, date });
   const res = await fetcher(`${API_URL}/api/analysis?${params}`, { cache: "no-store" });
   if (res.status === 401 || res.status === 402) throw new AccessError(res.status);
+  if (res.status === 404 && (await res.clone().json().catch(() => null))?.detail === "feature_off") throw new AccessError(404);
   if (!res.ok) throw new Error("Analysis failed");
   return res.json();
 }

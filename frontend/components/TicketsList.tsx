@@ -5,6 +5,7 @@ import clsx from "clsx";
 import { Check, ChevronDown, Clock, Copy, ExternalLink, HelpCircle, Loader2, Ticket as TicketIcon } from "lucide-react";
 import { VerdictIcon } from "@/components/MatchdayList";
 import { LiveStats } from "@/components/LiveStats";
+import { useAccess } from "@/lib/access";
 import { API, type Ticket, type TicketLeg, type TicketSummary } from "@/lib/matchday";
 
 // The account's booking codes, settled leg by leg from the results
@@ -18,7 +19,7 @@ const STATUS: Record<Ticket["status"], { label: string; cls: string }> = {
   open: { label: "Awaiting SportyBet", cls: "bg-info/10 text-info border-info/30" },
 };
 const SOURCE: Record<string, string> = {
-  slip: "Bet slip", optimizer: "Optimizer", code_check: "Code check", chat: "AI assistant", match: "Match page", other: "BetIQ",
+  slip: "Bet slip", optimizer: "Optimizer", code_check: "Code check", chat: "AI assistant", match: "Match page", daily: "Daily odds", other: "BetIQ",
 };
 
 interface OldCode { code: string; games?: { game: string; tip: string; odds: string | number | null }[]; total_odds?: number; date?: string }
@@ -29,7 +30,7 @@ const kickoffMs = (l: TicketLeg) => Date.parse(`${l.date}T${l.time || "12:00"}:0
 
 /** When to reload the tickets: every minute while a leg is being played,
  *  at the next kick-off otherwise, never once nothing is left to play. */
-function nextRefresh(tickets: Ticket[]): number | null {
+export function nextRefresh(tickets: Pick<Ticket, "status" | "legs">[]): number | null {
   const now = Date.now();
   let wait: number | null = null;
   for (const t of tickets) {
@@ -53,11 +54,12 @@ function LegIcon({ leg }: { leg: TicketLeg }) {
   return <Clock size={14} className="text-n-500" aria-label={leg.live ? "Waiting to be settled" : "Not played yet"} />;
 }
 
-function LegRow({ leg }: { leg: TicketLeg }) {
+/** One leg: match, pick, score as it stands (tap for live stats) and odds. */
+export function LegRow({ leg, showProb = false }: { leg: TicketLeg; showProb?: boolean }) {
   const [open, setOpen] = useState(false);
   const lv = leg.live;
   const inPlay = lv?.status === "live";
-  const hasStats = !!lv && (!!lv.stats || !!lv.events?.length);
+  const hasStats = useAccess().shown("live_stats") && !!lv && (!!lv.stats || !!lv.events?.length);
   const now = inPlay ? lv?.as_it_stands : null;
   const body = (
     <>
@@ -66,6 +68,7 @@ function LegRow({ leg }: { leg: TicketLeg }) {
         <span className="block truncate text-n-200">{leg.home} vs {leg.away}</span>
         <span className="block truncate text-[11px] text-n-500">
           {leg.marketName ? `${leg.marketName}: ` : ""}<span className="text-n-0 font-semibold">{leg.label || leg.code}</span>
+          {showProb && typeof leg.prob === "number" && <span className="text-n-400 tnum"> · {Math.round(leg.prob * 100)}%</span>}
           {now && <span className={clsx("font-semibold", now === "won" ? "text-accent" : "text-danger")}> · {now === "won" ? "winning now" : "losing now"}</span>}
         </span>
       </span>

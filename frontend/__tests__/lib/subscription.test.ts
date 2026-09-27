@@ -1,10 +1,12 @@
-import { isFreshPayment, nextExpiry, paidByUser, paymentTime } from "@/lib/subscription";
-import { PREMIUM_PRICE_KOBO, PREMIUM_PRICE_LABEL } from "@/lib/pricing";
+import { isFreshPayment, nextExpiry, paidByUser, paymentTime, renewal, tierOf } from "@/lib/subscription";
+import { planKobo, planLabel } from "@/lib/pricing";
 
 describe("pricing", () => {
-  it("charges ₦3,500 a month in kobo", () => {
-    expect(PREMIUM_PRICE_KOBO).toBe(350000);
-    expect(PREMIUM_PRICE_LABEL).toBe("₦3,500 / month");
+  it("charges Lite ₦5,000 and Premium ₦8,500 a month, in kobo", () => {
+    expect(planKobo("lite")).toBe(500000);
+    expect(planKobo("premium")).toBe(850000);
+    expect(planLabel("lite")).toBe("₦5,000 / month");
+    expect(planLabel("premium")).toBe("₦8,500 / month");
   });
 });
 
@@ -82,5 +84,23 @@ describe("isFreshPayment", () => {
 
   it("rejects timestamps far in the future", () => {
     expect(isFreshPayment({ paid_at: new Date(now.getTime() + 3_600_000).toISOString() }, now)).toBe(false);
+  });
+});
+
+describe("tiers", () => {
+  const now = new Date("2026-09-27T12:00:00Z");
+  const later = "2026-10-10T00:00:00Z";
+  it("reads lite and premium until they expire", () => {
+    expect(tierOf({ subscription: "lite", subscription_expires: later }, now)).toBe("lite");
+    expect(tierOf({ subscription: "premium", subscription_expires: later }, now)).toBe("premium");
+    expect(tierOf({ subscription: "premium", subscription_expires: "2026-09-01T00:00:00Z" }, now)).toBe("free");
+    expect(tierOf({ subscription: "gold", subscription_expires: later }, now)).toBe("free");
+    expect(tierOf(undefined, now)).toBe("free");
+  });
+  it("extends the same plan and restarts a different one", () => {
+    const days = (d: Date) => Math.round((d.getTime() - now.getTime()) / 86_400_000);
+    expect(days(renewal({ subscription: "lite", subscription_expires: later }, "lite", now))).toBe(43);
+    expect(days(renewal({ subscription: "lite", subscription_expires: later }, "premium", now))).toBe(30);
+    expect(days(renewal(undefined, "premium", now))).toBe(30);
   });
 });

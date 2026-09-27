@@ -1,8 +1,9 @@
 import { clerkClient } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
 import { isAdminRequest } from "@/lib/serverAdmin";
+import { isPlan } from "@/lib/pricing";
 
-// POST — grant premium  |  DELETE — revoke premium
+// POST — grant a plan ({email, tier?: "lite" | "premium", days?})  |  DELETE — revoke it
 async function handleGrant(req: NextRequest, grant: boolean) {
   try {
     if (!(await isAdminRequest(req)))
@@ -16,17 +17,22 @@ async function handleGrant(req: NextRequest, grant: boolean) {
     const { data: users } = await client.users.getUserList({ emailAddress: [email] });
     if (!users.length) return NextResponse.json({ error: "user_not_found" }, { status: 404 });
 
+    const tier = body.tier ?? "premium";
+    if (grant && !isPlan(tier)) return NextResponse.json({ error: "unknown_tier" }, { status: 400 });
+    const days = Math.round(Number(body.days ?? 30));
+    if (grant && !(days >= 1 && days <= 366)) return NextResponse.json({ error: "days_out_of_range" }, { status: 400 });
+
     const user = users[0];
     const expires = new Date();
-    if (grant) expires.setDate(expires.getDate() + 30);
+    if (grant) expires.setDate(expires.getDate() + days);
 
     await client.users.updateUserMetadata(user.id, {
       publicMetadata: grant
-        ? { subscription: "premium", subscription_expires: expires.toISOString() }
+        ? { subscription: tier, subscription_expires: expires.toISOString() }
         : { subscription: null, subscription_expires: null },
     });
 
-    return NextResponse.json({ ok: true, email, action: grant ? "granted" : "revoked" });
+    return NextResponse.json({ ok: true, email, action: grant ? "granted" : "revoked", tier: grant ? tier : null });
   } catch (err) {
     console.error("[admin/grant]", err);
     return NextResponse.json({ error: "server_error" }, { status: 500 });

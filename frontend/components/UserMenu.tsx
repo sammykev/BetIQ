@@ -4,6 +4,7 @@ import { useUser, useClerk, SignInButton } from "@clerk/nextjs";
 import { Crown, LogOut, User, LayoutDashboard } from "lucide-react";
 import Link from "next/link";
 import { useState, useRef, useEffect } from "react";
+import { tierOf } from "@/lib/subscription";
 
 interface Props {
   onUpgrade: () => void;
@@ -15,14 +16,10 @@ export function UserMenu({ onUpgrade }: Props) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
-  const isPremium =
-    (user?.publicMetadata as { subscription?: string })?.subscription === "premium";
-
-  // Check expiry
-  const expires = (user?.publicMetadata as { subscription_expires?: string })
-    ?.subscription_expires;
-  const isExpired = expires ? new Date(expires) < new Date() : false;
-  const active = isPremium && !isExpired;
+  const tier = tierOf(user?.publicMetadata as Record<string, unknown> | undefined);
+  const expires = (user?.publicMetadata as { subscription_expires?: string })?.subscription_expires;
+  const active = tier !== "free";
+  const tierName = tier === "premium" ? "Premium" : "Lite";
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -73,7 +70,7 @@ export function UserMenu({ onUpgrade }: Props) {
             <div className="mt-2">
               {active ? (
                 <span className="inline-flex items-center gap-1 text-[10px] bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-500/30 px-2 py-0.5 rounded-full font-bold">
-                  <Crown size={9} /> Premium
+                  <Crown size={9} /> {tierName}
                   {expires && (
                     <span className="text-amber-500/70 font-normal ml-1">
                       · expires {new Date(expires).toLocaleDateString()}
@@ -93,12 +90,12 @@ export function UserMenu({ onUpgrade }: Props) {
             <LayoutDashboard size={15} /> My Dashboard
           </Link>
 
-          {!active && (
+          {tier !== "premium" && (
             <button
               onClick={() => { setOpen(false); onUpgrade(); }}
               className="w-full flex items-center gap-2.5 px-4 py-3 text-sm text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-500/10 transition-colors border-b border-zinc-100 dark:border-zinc-800 font-semibold"
             >
-              <Crown size={15} /> Upgrade to Premium
+              <Crown size={15} /> {tier === "lite" ? "Upgrade to Premium" : "See plans"}
             </button>
           )}
 

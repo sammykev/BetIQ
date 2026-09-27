@@ -1,6 +1,7 @@
 import { clerkClient } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
 import { isAdminRequest } from "@/lib/serverAdmin";
+import { tierOf } from "@/lib/subscription";
 
 export async function GET(req: NextRequest) {
   if (!(await isAdminRequest(req)))
@@ -14,14 +15,15 @@ export async function GET(req: NextRequest) {
     const mapped = users.map(u => {
       const meta = u.publicMetadata as { subscription?: string; subscription_expires?: string };
       const expires = meta?.subscription_expires ? new Date(meta.subscription_expires) : null;
-      const isPremium = meta?.subscription === "premium" && expires && expires > now;
-      const daysLeft = expires && isPremium ? Math.ceil((expires.getTime() - now.getTime()) / 86400000) : null;
+      const tier = tierOf(meta, now);
+      const daysLeft = expires && tier !== "free" ? Math.ceil((expires.getTime() - now.getTime()) / 86400000) : null;
       return {
         id: u.id,
         email: u.emailAddresses[0]?.emailAddress ?? "",
         name: `${u.firstName ?? ""} ${u.lastName ?? ""}`.trim() || "—",
         created: u.createdAt,
-        premium: isPremium,
+        premium: tier === "premium",
+        tier,
         expires: expires?.toISOString() ?? null,
         days_left: daysLeft,
       };

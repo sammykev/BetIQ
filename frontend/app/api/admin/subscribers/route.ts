@@ -1,6 +1,7 @@
 import { clerkClient } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
 import { isAdminRequest } from "@/lib/serverAdmin";
+import { tierOf } from "@/lib/subscription";
 
 export async function GET(req: NextRequest) {
   if (!(await isAdminRequest(req)))
@@ -8,12 +9,10 @@ export async function GET(req: NextRequest) {
   try {
     const client = await clerkClient();
     const { data: users, totalCount } = await client.users.getUserList({ limit: 500 });
-    const premium = users.filter(
-      (u) => (u.publicMetadata as { subscription?: string })?.subscription === "premium" &&
-        new Date((u.publicMetadata as { subscription_expires?: string })?.subscription_expires ?? 0) > new Date()
-    );
-    return NextResponse.json({ total: totalCount, premium: premium.length });
+    const tiers = users.map(u => tierOf(u.publicMetadata as Record<string, unknown>));
+    const premium = tiers.filter(t => t === "premium").length, lite = tiers.filter(t => t === "lite").length;
+    return NextResponse.json({ total: totalCount, premium, lite, paid: premium + lite });
   } catch {
-    return NextResponse.json({ total: 0, premium: 0 });
+    return NextResponse.json({ total: 0, premium: 0, lite: 0, paid: 0 });
   }
 }

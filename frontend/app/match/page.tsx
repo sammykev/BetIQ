@@ -14,6 +14,14 @@ import { bookableOnSportybet, isSelected } from "@/lib/slip";
 import { fetchMatchday, matchKey, type MatchdayMatch } from "@/lib/matchday";
 import { StatusCell } from "@/components/MatchdayList";
 import { LiveStats } from "@/components/LiveStats";
+import { Locked, Unavailable } from "@/components/FeatureGate";
+import { useAccess } from "@/lib/access";
+
+const ANALYSIS_PERKS = [
+  "Every market's probability: result, goals, both score, corners, cards, shots",
+  "Tale of the tape: Elo, expected goals and form side by side",
+  "An AI preview written from this week's team news",
+];
 import {
   ArrowLeft, Sparkles, ExternalLink, Check, Ticket, Radio, Search, Flag, History, Swords, Newspaper, BarChart3,
 } from "lucide-react";
@@ -489,6 +497,7 @@ function LivePanel({ m }: { m: MatchdayMatch }) {
 // ------------------------------------------------------------------ //
 function MatchContent() {
   const router = useRouter();
+  const access = useAccess();
   const params = useSearchParams();
   const home = params.get("home") ?? "";
   const away = params.get("away") ?? "";
@@ -497,7 +506,7 @@ function MatchContent() {
   const [prediction, setPrediction] = useState<Prediction | null>(null);
   const [analysis, setAnalysis] = useState<MatchAnalysis | null>(null);
   const [loadingAnalysis, setLoadingAnalysis] = useState(true);
-  const [error, setError] = useState<false | "failed" | "sign_in_required" | "premium_required">(false);
+  const [error, setError] = useState<false | "failed" | "sign_in_required" | "premium_required" | "feature_off">(false);
   const authFetch = useAuthedFetch();
   const [explanation, setExplanation] = useState<MatchExplanation | null>(null);
   const [sbEvent, setSbEvent] = useState<SbEvent | null>(null);
@@ -511,7 +520,7 @@ function MatchContent() {
 
     fetchMatchAnalysis(home, away, authFetch, date)
       .then(setAnalysis)
-      .catch(e => setError(e instanceof AccessError ? (e.message as "sign_in_required" | "premium_required") : "failed"))
+      .catch(e => setError(e instanceof AccessError ? (e.message as "sign_in_required" | "premium_required" | "feature_off") : "failed"))
       .finally(() => setLoadingAnalysis(false));
 
     fetchExplanation(home, away, authFetch, date)
@@ -655,7 +664,7 @@ function MatchContent() {
         )}
       </section>
 
-      {md && <LivePanel m={md} />}
+      {md && access.shown("live_stats") && <LivePanel m={md} />}
 
       {loadingAnalysis && (
         <div className="grid lg:grid-cols-[1fr_360px] gap-4">
@@ -666,16 +675,14 @@ function MatchContent() {
           <div className="card h-72 p-4"><div className="skeleton h-full w-full !rounded-xl" /></div>
         </div>
       )}
-      {error && (
+      {error === "feature_off" && <Unavailable title="Match analysis" />}
+      {(error === "sign_in_required" || error === "premium_required") && (
+        <Locked feature="match_analysis" title="Full match analysis" perks={ANALYSIS_PERKS} />
+      )}
+      {error === "failed" && (
         <div className="card border-dashed text-center py-12 px-6">
-          <p className="font-display font-bold text-xl uppercase text-n-0">
-            {error === "failed" ? "Analysis unavailable" : "Premium analysis"}
-          </p>
-          <p className="text-sm text-n-400 mt-1">
-            {error === "sign_in_required" ? "Sign in with your Premium account to see the full analysis."
-              : error === "premium_required" ? "The full match analysis is part of Premium. Upgrade from the home page to unlock it."
-              : "The model couldn't load this match right now. Try again in a moment."}
-          </p>
+          <p className="font-display font-bold text-xl uppercase text-n-0">Analysis unavailable</p>
+          <p className="text-sm text-n-400 mt-1">The model couldn&apos;t load this match right now. Try again in a moment.</p>
         </div>
       )}
       {!analysis && !loadingAnalysis && (
@@ -755,7 +762,7 @@ function MatchContent() {
                       market={m}
                       recommendedCode={rec?.market_id === m.id ? rec.code : undefined}
                       sbMarket={sbM}
-                      onToggle={matchDate ? toggleOption(m) : undefined}
+                      onToggle={matchDate && access.shown("bet_slip") ? toggleOption(m) : undefined}
                       isInSlip={inSlip(m)}
                     />
                   );

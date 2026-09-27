@@ -55,3 +55,26 @@ export function nextExpiry(currentExpiry: unknown, now = new Date()): Date {
   base.setDate(base.getDate() + PERIOD_DAYS);
   return base;
 }
+
+type Meta = { subscription?: unknown; subscription_expires?: unknown } | null | undefined;
+
+/** A user's tier from their Clerk public metadata: "lite" / "premium" until it expires. */
+export function tierOf(meta: Meta, now = new Date()): "free" | "lite" | "premium" {
+  const tier = meta?.subscription;
+  if (tier !== "lite" && tier !== "premium") return "free";
+  const expires = new Date(typeof meta?.subscription_expires === "string" ? meta.subscription_expires : 0);
+  return expires.getTime() > now.getTime() ? tier : "free";
+}
+
+/** After paying for `plan`: renewing the same plan adds 30 days to what's
+ *  left; changing plan starts 30 days of the new one from now. */
+export function renewal(meta: Meta, plan: "lite" | "premium", now = new Date()): Date {
+  return nextExpiry(tierOf(meta, now) === plan ? meta?.subscription_expires : undefined, now);
+}
+
+const TIER_ORDER = ["free", "lite", "premium"];
+/** Whether `tier` includes everything `needed` does (unknown values count as free). */
+export function tierAtLeast(tier: string, needed: string): boolean {
+  const rank = (t: string) => Math.max(0, TIER_ORDER.indexOf(t));
+  return rank(tier) >= rank(needed);
+}

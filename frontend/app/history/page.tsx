@@ -10,6 +10,8 @@ import { PageHeader } from "@/components/shell/PageHeader";
 import { CompetitionBadge } from "@/components/CompetitionBadge";
 import { ColumnChart } from "@/components/admin/charts";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
+import { useAccess } from "@/lib/access";
+import { Unavailable } from "@/components/FeatureGate";
 import { API, MARKET_LABELS, fetchAccuracy, type Accuracy, type TicketSummary } from "@/lib/matchday";
 
 // The model's track record: every pick we published, graded against the
@@ -76,6 +78,7 @@ function MyTickets() {
 }
 
 export default function TrackRecordPage() {
+  const access = useAccess();
   const [days, setDays] = useState(30);
   const [data, setData] = useState<Accuracy | null>(null);
   const [loading, setLoading] = useState(true);
@@ -92,6 +95,8 @@ export default function TrackRecordPage() {
   const m = data?.markets ?? {};
   const vs = data?.brier.vs_bookmaker;
   const markets = MARKET_ORDER.filter(k => m[k]?.n);
+
+  if (access.ready && !access.shown("record")) return <AppShell><Unavailable title="Track record" /></AppShell>;
 
   return (
     <AppShell>

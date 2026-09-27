@@ -10,7 +10,11 @@ import {
 } from "lucide-react";
 import { AppShell } from "@/components/shell/AppShell";
 import { PageHeader } from "@/components/shell/PageHeader";
-import { PREMIUM_PRICE_LABEL } from "@/lib/pricing";
+import { planLabel } from "@/lib/pricing";
+import { tierOf } from "@/lib/subscription";
+import { useAccess } from "@/lib/access";
+import { Unavailable } from "@/components/FeatureGate";
+import { PaywallModal } from "@/components/PaywallModal";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
 import { TicketsList } from "@/components/TicketsList";
 
@@ -76,6 +80,8 @@ export default function DashboardPage() {
   const { user, isLoaded } = useUser();
   const router = useRouter();
   const [tab, setTab] = useState<Tab>("overview");
+  const [plans, setPlans] = useState(false);
+  const access = useAccess();
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get("tab");
     if (t && ["overview", "codes", "referral", "account"].includes(t)) setTab(t as Tab);
@@ -128,8 +134,11 @@ export default function DashboardPage() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const isPremium = (user?.publicMetadata as any)?.subscription === "premium" &&
-    new Date((user?.publicMetadata as any)?.subscription_expires ?? 0) > new Date();
+  const tier = tierOf(user?.publicMetadata as Record<string, unknown> | undefined);
+  const isPremium = tier !== "free";
+  const tierName = tier === "premium" ? "Premium" : "Lite";
+
+  if (access.ready && !access.shown("dashboard")) return <AppShell><Unavailable title="Dashboard" /></AppShell>;
 
   if (!isLoaded) return (
     <div className="min-h-screen flex items-center justify-center">
@@ -154,7 +163,7 @@ export default function DashboardPage() {
   const rec = stats?.tickets;
 
   return (
-    <AppShell actions={refreshAction} onUpgrade={() => router.push("/")}>
+    <AppShell actions={refreshAction} onUpgrade={() => setPlans(true)}>
       <div className="space-y-6 animate-fade-in">
         <PageHeader
           eyebrow={`Welcome back${user?.firstName ? `, ${user.firstName}` : ""}`}
@@ -162,7 +171,7 @@ export default function DashboardPage() {
           description="Your record from the SportyBet codes you booked here."
           right={isPremium && (
             <span className="inline-flex items-center gap-1.5 font-display font-bold text-sm uppercase tracking-wider text-warn bg-amber-400/10 border border-amber-400/30 px-3 py-1 rounded-lg">
-              <Crown size={13} /> Premium
+              <Crown size={13} /> {tierName}
             </span>
           )}
         />
@@ -360,18 +369,21 @@ export default function DashboardPage() {
               <p className="eyebrow flex items-center gap-1.5"><Crown size={12} className="text-warn" /> Subscription</p>
               {isPremium ? (
                 <div className="space-y-2">
-                  <p className="font-display font-extrabold text-3xl uppercase text-warn leading-none">Premium</p>
+                  <p className="font-display font-extrabold text-3xl uppercase text-warn leading-none">{tierName}</p>
                   <p className="text-n-400 text-sm">
                     Active until {new Date((user?.publicMetadata as any)?.subscription_expires).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}
                   </p>
                   <p className="text-n-500 text-xs">Renewing extends from your current expiry date.</p>
+                  {tier === "lite" && (
+                    <button onClick={() => setPlans(true)} className="btn-secondary w-full !text-sm"><Crown size={14} /> Upgrade to Premium</button>
+                  )}
                 </div>
               ) : (
                 <div className="space-y-3">
                   <p className="font-display font-extrabold text-3xl uppercase text-n-0 leading-none">Free plan</p>
-                  <button onClick={() => router.push("/")}
+                  <button onClick={() => setPlans(true)}
                     className="w-full bg-amber-400 hover:bg-amber-300 text-ink font-bold py-2.5 rounded-xl text-sm transition-all flex items-center justify-center gap-2 active:scale-[0.98]">
-                    <Crown size={14} /> Upgrade to Premium · {PREMIUM_PRICE_LABEL}
+                    <Crown size={14} /> See plans · from {planLabel("lite")}
                   </button>
                 </div>
               )}
@@ -379,7 +391,7 @@ export default function DashboardPage() {
           </div>
         )}
       </div>
-
+      {plans && <PaywallModal onClose={() => setPlans(false)} onSuccess={() => setPlans(false)} />}
     </AppShell>
   );
 }

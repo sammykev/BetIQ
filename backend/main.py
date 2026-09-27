@@ -159,6 +159,109 @@ async def require_premium(request: Request) -> Optional[str]:
 _warned_premium = False
 
 
+# ── Feature switches (access.py) ─────────────────────────────────────────────
+FEATURES_KEY = "betiq:config:features"
+FEATURES_CACHE_SECONDS = 15
+_features_cache: List[Any] = [0.0, None]
+
+
+def _features() -> Dict[str, Dict[str, Any]]:
+    """Every feature's state, tier and allowed accounts (cached briefly)."""
+    import access
+    if _features_cache[1] is not None and time.time() - _features_cache[0] < FEATURES_CACHE_SECONDS:
+        return _features_cache[1]
+    saved = None
+    r = _get_redis()
+    if r:
+        try:
+            raw = r.get(FEATURES_KEY)
+            saved = json.loads(raw) if raw else None
+        except Exception:
+            saved = None
+    feats = access.merged(saved)
+    _features_cache[:] = [time.time(), feats]
+    return feats
+
+
+async def check_feature(request: Request, fid: str) -> Optional[str]:
+    """Let this request use a feature, or refuse it: 404 feature_off when it's
+    switched off (or for testers only), 401 signed out, 402 lite_required /
+    premium_required without the tier. Returns the user id, if signed in."""
+    import access
+    import auth
+    f = _features()[fid]
+    via, uid = await _admin_identity(request)
+    admin = bool(via)
+    if not access.visible(f, uid, admin):
+        raise HTTPException(status_code=404, detail="feature_off")
+    if f["tier"] == "free" or access.granted(f, uid, admin) or not _paywall_enabled():
+        return uid
+    if not auth.premium_enforced():
+        global _warned_premium
+        if not _warned_premium:
+            print("[Auth] WARNING: paid features aren't protected — set CLERK_ISSUER and "
+                  "CLERK_SECRET_KEY on the backend.")
+            _warned_premium = True
+        return uid
+    if not uid:
+        raise HTTPException(status_code=401, detail="Sign in to see this.")
+    if not auth.tier_at_least(await auth.user_tier(uid), f["tier"]):
+        raise HTTPException(status_code=402, detail=f"{f['tier']}_required")
+    return uid
+
+
+def require_feature(fid: str):
+    """FastAPI dependency: check_feature for one feature."""
+    async def dependency(request: Request) -> Optional[str]:
+        return await check_feature(request, fid)
+    return dependency
+
+
+@app.get("/api/admin/features")
+async def admin_get_features(_admin: str = Depends(require_admin)):
+    """Every switchable feature, grouped, with its state, tier and accounts."""
+    import access
+    feats = _features()
+    return {"paywall": _paywall_enabled(),
+            "features": [{**{k: d[k] for k in ("id", "label", "group", "about")},
+                          "default_state": d["state"], "default_tier": d["tier"], **feats[d["id"]]}
+                         for d in access.REGISTRY]}
+
+
+@app.put("/api/admin/features/{fid}")
+async def admin_set_feature(fid: str, body: Dict[str, Any], _admin: str = Depends(require_admin)):
+    """Change one feature: {state?, tier?, allow?: [{id, label}]}."""
+    import access
+    if fid not in access.DEFAULTS:
+        raise HTTPException(status_code=404, detail="Unknown feature")
+    try:
+        change = access.validate(body)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    r = _get_redis()
+    if not r:
+        raise HTTPException(status_code=503, detail="Settings need Redis")
+    raw = r.get(FEATURES_KEY)
+    saved = json.loads(raw) if raw else {}
+    feats = access.merged(saved)
+    feats[fid] = {**feats[fid], **change}
+    r.set(FEATURES_KEY, json.dumps(feats))
+    _features_cache[:] = [0.0, None]
+    _audit(_admin, "feature", feature=fid, **{k: (len(v) if k == "allow" else v) for k, v in change.items()})
+    return {"id": fid, **feats[fid]}
+
+
+@app.get("/api/features")
+async def get_features(request: Request):
+    """What this visitor may see: per feature whether it's shown, the tier it
+    needs and whether this account was given it. The site works out the rest
+    from the visitor's own tier."""
+    import access
+    via, uid = await _admin_identity(request)
+    return {"paywall": _paywall_enabled(), "admin": bool(via), "signed_in": bool(uid),
+            "features": access.for_visitor(_features(), uid, bool(via))}
+
+
 def _paywall_enabled() -> bool:
     r = _get_redis()
     if r:
@@ -2149,7 +2252,7 @@ async def _analysis_cached(home: str, away: str, day: str = "") -> Tuple[Dict[st
 
 @app.get("/api/analysis")
 async def get_match_analysis(home: str, away: str, day: str = Query("", alias="date"),
-                             _premium=Depends(require_premium)):
+                             _access=Depends(require_feature("match_analysis"))):
     if _predictor is None:
         raise HTTPException(status_code=503, detail="Model not ready yet")
     result, info = await _analysis_cached(home, away, day)
@@ -2886,7 +2989,7 @@ async def get_calendar(month: str = ""):
 # ── Tickets: booking codes per account, settled from the match days ──────
 TICKETS_OPEN_KEY = "betiq:tickets:open"       # accounts with unsettled tickets
 TICKETS_STATS_KEY = "betiq:tickets:stats"
-TICKET_SOURCES = {"slip", "optimizer", "code_check", "chat", "match", "other"}
+TICKET_SOURCES = {"slip", "optimizer", "code_check", "chat", "match", "daily", "other"}
 
 
 def _record_ticket(uid: str, ticket: Dict[str, Any]) -> None:
@@ -3699,7 +3802,7 @@ async def debug_predict(home: str, away: str, date_str: Optional[str] = None, _a
 
 @app.get("/api/explain")
 async def explain_match(home: str, away: str, day: str = Query("", alias="date"),
-                        _premium=Depends(require_premium)):
+                        _access=Depends(require_feature("ai_preview"))):
     """
     A plain-language AI preview of a match: the model's numbers (the same
     analysis the page shows), the teams' recent results and meetings from our
@@ -3999,6 +4102,7 @@ ADMIN_JOBS = {
     "fd_referees": ("Collect past referees (football-data.org)", lambda: _collect_fd_referees("manual")),
     "football_sync": ("Download league results (football-data.co.uk)", lambda: _manual_football_sync()),
     "matchday_sweep": ("Scores and grades for the last 7 days", lambda: _refresh_matchdays(MD_DAYS_BACK, "manual")),
+    "daily_slips": ("Rebuild today's daily odds slips", lambda: _build_daily(date.today().isoformat(), force=True)),
     "set_pieces_reload": ("Reload corners, cards & shots models (after the nightly checks)",
                           lambda: _reload_set_pieces()),
 }
@@ -4352,10 +4456,18 @@ def _check_sport(sport: str) -> None:
         raise HTTPException(status_code=404, detail="Unknown sport")
 
 
+async def _check_sport_access(request: Request, sport: str) -> None:
+    """Sports other than football can be switched off or kept for testers."""
+    import access
+    if sport in access.SPORT_FEATURES:
+        await check_feature(request, access.SPORT_FEATURES[sport])
+
+
 @app.get("/api/sports/{sport}/leagues")
-async def get_sport_leagues(sport: str):
+async def get_sport_leagues(sport: str, request: Request):
     """Return distinct leagues/tournaments being predicted for a sport."""
     _check_sport(sport)
+    await _check_sport_access(request, sport)
     import json as _json
     cache_key = f"betiq:sports:{sport}"
     r = _get_redis()
@@ -4375,13 +4487,14 @@ _sports_memory_cache: Dict[str, tuple] = {}  # sport -> (data, fetched_at_monoto
 
 
 @app.get("/api/sports/{sport}")
-async def get_sport_predictions(sport: str):
+async def get_sport_predictions(sport: str, request: Request):
     """
     Multi-sport predictions endpoint.
     sport: basketball | tennis | table-tennis
     Requires ODDS_API_KEY env var.
     """
     _check_sport(sport)
+    await _check_sport_access(request, sport)
     import time as _time
     from sports_fetcher import (
         fetch_basketball_predictions,
@@ -4743,12 +4856,13 @@ async def debug_competition_logo(name: str, sport: str = "Soccer", _admin: str =
 
 
 @app.get("/api/sports/{sport}/event")
-async def get_sport_event_detail(sport: str, home: str, away: str, date: str):
+async def get_sport_event_detail(sport: str, home: str, away: str, date: str, request: Request):
     """
     Full market detail for a specific basketball/tennis/table-tennis match.
     Used by the sport analysis modal.
     """
     _check_sport(sport)
+    await _check_sport_access(request, sport)
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date) or len(home) > 80 or len(away) > 80:
         raise HTTPException(status_code=400, detail="Invalid match")
     from sports_fetcher import fetch_event_detail
@@ -5683,13 +5797,18 @@ def _explain_empty(reasons: List[Dict], matches: int, days: int, min_prob: float
 
 
 @app.post("/api/optimizer")
-async def optimize_slip(body: Dict[str, Any], _premium=Depends(require_premium)):
+async def optimize_slip(body: Dict[str, Any], _access=Depends(require_feature("optimizer"))):
     """
     Build the slip with the best win chance whose total odds land in a target
     range (optimizer.py). Body: {min_odds, max_odds, max_games?, min_prob?,
     days?, leagues?: [codes], markets?: [ids], codes?: {market: [option
     codes]} (e.g. only some goal lines), bookable_only?}.
     """
+    return await _optimize_request(body)
+
+
+async def _optimize_request(body: Dict[str, Any]) -> Dict[str, Any]:
+    """The optimizer endpoint's work, for the daily slips too."""
     import booking_slip
     import optimizer
     try:
@@ -5809,8 +5928,101 @@ def _cached_sport_predictions(sport: str) -> List[Dict]:
     return (_sports_memory_cache.get(sport) or ([],))[0]
 
 
+# ── Daily odds (daily_slips.py) ─────────────────────────────────────────────
+DAILY_KEY = "betiq:daily:{}"
+DAILY_RECORD_KEY = "betiq:daily:record"
+_daily_lock = asyncio.Lock()
+
+
+async def _build_daily(day: str, force: bool = False) -> Optional[Dict[str, Any]]:
+    """Today's three slips, built once (the first ask of the day, or the
+    morning job) and kept, so everyone sees the same slips all day."""
+    import daily_slips
+    r = _get_redis()
+    async with _daily_lock:
+        if r and not force:
+            raw = r.get(DAILY_KEY.format(day))
+            if raw:
+                return json.loads(raw)
+        if not _predictions_cache:
+            return None
+        slips = []
+        for target in daily_slips.TARGETS:
+            built: Dict[str, Any] = {}
+            for attempt in daily_slips.ATTEMPTS:
+                try:
+                    res = await _optimize_request(daily_slips.request(target, attempt))
+                except HTTPException as e:
+                    res = {"error": str(e.detail)}
+                built = daily_slips.slip(target, res, attempt)
+                if built["status"] != "none":
+                    break
+            slips.append(built)
+        doc = {"date": day, "built_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "slips": slips}
+        if r:
+            r.set(DAILY_KEY.format(day), json.dumps(doc), ex=daily_slips.KEEP_DAYS * 86400)
+        return doc
+
+
+def _grade_daily(r, doc: Dict[str, Any]) -> None:
+    """Settle a day's slips from the results; a slip that settles counts
+    towards the record once."""
+    import daily_slips
+    days: Dict[str, Dict] = {}
+
+    def result_for(p: Dict) -> Optional[Dict]:
+        e = _md_entry_for(r, p, days)
+        return e.get("result") if e else None
+    changed = False
+    for s in doc.get("slips") or []:
+        before = s.get("status")
+        if daily_slips.grade(s, result_for):
+            changed = True
+            if before == "pending" and s["status"] in ("won", "lost"):
+                r.hincrby(DAILY_RECORD_KEY, f"{int(s['target'])}:{s['status']}", 1)
+    if changed:
+        r.set(DAILY_KEY.format(doc["date"]), json.dumps(doc), ex=daily_slips.KEEP_DAYS * 86400)
+
+
+@app.get("/api/daily-slips")
+async def get_daily_slips(day: str = Query("", alias="date"), _access=Depends(require_feature("daily_slips"))):
+    """A day's 10x / 15x / 20x slips (today's are built on first ask), each
+    pick graded and, while it's being played, its live score; and the record
+    of every slip so far."""
+    import daily_slips
+    today = date.today().isoformat()
+    d = _date_param(day or today).isoformat()
+    r = _get_redis()
+    if d == today:
+        doc = await _build_daily(d)
+    else:
+        raw = r.get(DAILY_KEY.format(d)) if r else None
+        doc = json.loads(raw) if raw else None
+    if doc and r:
+        async with _daily_lock:
+            _grade_daily(r, doc)
+        for s in doc.get("slips") or []:
+            _attach_live(r, [{"status": "pending", "legs": s.get("picks") or []}])
+    record: Dict[str, Dict[str, int]] = {}
+    for k, v in ((r.hgetall(DAILY_RECORD_KEY) if r else None) or {}).items():
+        k = k.decode() if isinstance(k, bytes) else str(k)
+        target, _, outcome = k.partition(":")
+        record.setdefault(target, {"won": 0, "lost": 0})[outcome] = int(v)
+    return {"date": d, "today": today, "built_at": (doc or {}).get("built_at"),
+            "slips": (doc or {}).get("slips") or [], "record": record,
+            "min_prob": daily_slips.MIN_PROB, "targets": list(daily_slips.TARGETS)}
+
+
+async def _daily_job() -> None:
+    """Build today's slips in the morning, before anyone asks."""
+    try:
+        await _build_daily(date.today().isoformat())
+    except Exception as e:
+        print(f"[Daily] build failed: {e}")
+
+
 @app.post("/api/optimizer/code")
-async def optimize_code(body: Dict[str, Any], _premium=Depends(require_premium)):
+async def optimize_code(body: Dict[str, Any], _access=Depends(require_feature("code_check"))):
     """
     Check a SportyBet booking code with the model: each leg's chance, a
     better pick where there is one, and two improved slips (code_check.py).
@@ -5988,6 +6200,7 @@ async def startup():
                       next_run_time=datetime.now() + timedelta(minutes=10))
     scheduler.add_job(_matchday_live, "interval", minutes=MD_LIVE_MINUTES, id="matchday_live")
     scheduler.add_job(_matchday_sweep, "interval", hours=3, id="matchday_sweep")
+    scheduler.add_job(_daily_job, "cron", hour=6, minute=5, id="daily_slips")   # 07:05 in Lagos
     scheduler.start()
 
 

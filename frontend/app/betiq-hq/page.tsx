@@ -6,7 +6,7 @@ import clsx from "clsx";
 import { useAuth } from "@clerk/nextjs";
 import {
   AlertTriangle, Banknote, CheckCircle2, Cpu, Gauge, Globe2, LineChart as LineIcon,
-  Loader2, Megaphone, RefreshCw, Shield, Ticket, Users,
+  Loader2, Megaphone, RefreshCw, Shield, Ticket, ToggleRight, Users,
 } from "lucide-react";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -14,6 +14,7 @@ import { API, AdminContext, type AdminApi, inputClass } from "@/components/admin
 import { OverviewSection } from "@/components/admin/sections/Overview";
 import { RevenueSection } from "@/components/admin/sections/Revenue";
 import { UsersSection } from "@/components/admin/sections/Users";
+import { AccessSection } from "@/components/admin/sections/Access";
 import { PredictionsSection } from "@/components/admin/sections/Predictions";
 import { SportyBetSection } from "@/components/admin/sections/SportyBet";
 import { MessagingSection } from "@/components/admin/sections/Messaging";
@@ -30,6 +31,7 @@ const TABS = [
   { id: "traffic", label: "Traffic", icon: Globe2 },
   { id: "revenue", label: "Revenue", icon: Banknote },
   { id: "users", label: "Users", icon: Users },
+  { id: "access", label: "Access", icon: ToggleRight },
   { id: "predictions", label: "Predictions", icon: LineIcon },
   { id: "sportybet", label: "SportyBet", icon: Ticket },
   { id: "messaging", label: "Messaging", icon: Megaphone },
@@ -148,6 +150,7 @@ export default function AdminPage() {
       case "traffic": return <TrafficSection />;
       case "revenue": return <RevenueSection />;
       case "users": return <UsersSection />;
+      case "access": return <AccessSection />;
       case "predictions": return <PredictionsSection />;
       case "sportybet": return <SportyBetSection />;
       case "messaging": return <MessagingSection />;
