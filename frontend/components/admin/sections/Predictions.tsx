@@ -2,8 +2,10 @@
 
 import { Fragment, useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
-import { Database, Download, Flag, Globe2, MousePointerClick, Star, Target } from "lucide-react";
+import { Database, Download, Flag, Globe2, MousePointerClick, Radio, Star, Target } from "lucide-react";
 import { TrackRecord } from "@/components/TrackRecord";
+import { MatchdayList } from "@/components/MatchdayList";
+import { fetchMatchday, type MatchdayMatch, type MatchdayResponse } from "@/lib/matchday";
 import { API, BarList, Btn, Card, Skeleton, Stat, ago, inputClass, num, useAdmin } from "../ui";
 
 const toneOf = (acc: number) => (acc >= 60 ? "text-accent" : acc >= 45 ? "text-warn" : "text-danger");
@@ -293,6 +295,67 @@ function Referees({ info, onRun, running, onRunPast }: { info: any; onRun: () =>
   );
 }
 
+const LIVE_REFRESH_MS = 60_000;
+const IDLE_REFRESH_MS = 5 * 60_000;
+
+/** Today's matches from the match-day store: what's in play now, with the
+ *  live stats ESPN sends, and whether every match is getting them. */
+function LiveMatches() {
+  const [day, setDay] = useState<MatchdayResponse | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [showDone, setShowDone] = useState(false);
+
+  useEffect(() => {
+    const ctl = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let live = false;
+    const load = async () => {
+      if (document.visibilityState !== "hidden") {
+        try {
+          const d = await fetchMatchday("", ctl.signal);
+          setDay(d); setFailed(false);
+          live = d.matches.some(m => m.status === "live");
+        } catch { if (ctl.signal.aborted) return; setFailed(true); }
+      }
+      timer = setTimeout(load, live ? LIVE_REFRESH_MS : IDLE_REFRESH_MS);
+    };
+    load();
+    return () => { ctl.abort(); clearTimeout(timer); };
+  }, []);
+
+  if (!day) return failed ? <p className="text-xs text-danger">Couldn&apos;t load today&apos;s matches.</p> : <Skeleton rows={3} />;
+  const by = (s: MatchdayMatch["status"]) => day.matches.filter(m => m.status === s);
+  const live = by("live"), done = by("finished"), upcoming = by("scheduled");
+  const played = [...live, ...done];
+  const withStats = played.filter(m => m.stats || m.events?.length).length;
+  const next = upcoming.map(m => m.time).filter(Boolean).sort()[0];
+  const open = (m: MatchdayMatch) =>
+    window.open(`/match?${new URLSearchParams({ home: m.home, away: m.away, date: m.date })}`, "_blank", "noopener");
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <Stat label="In play" value={num(live.length)} tone={live.length ? "danger" : undefined}
+          sub={day.updated ? `scores ${ago(day.updated)}` : "no check yet"} />
+        <Stat label="Finished today" value={num(done.length)} />
+        <Stat label="Still to play" value={num(upcoming.length)} sub={next ? `next ${next} UTC` : undefined} />
+        <Stat label="With live stats" value={played.length ? `${withStats}/${played.length}` : "—"}
+          tone={played.length && withStats < played.length ? "warn" : undefined}
+          sub={played.length ? (withStats < played.length ? `${played.length - withStats} without` : "every started match") : "none started"} />
+      </div>
+      {live.length > 0
+        ? <MatchdayList matches={live} onOpen={open} />
+        : <p className="text-xs text-n-400">Nothing in play right now{next ? `; next kick-off ${next} UTC` : ""}.</p>}
+      {done.length > 0 && (
+        <div className="space-y-2">
+          <Btn onClick={() => setShowDone(v => !v)}>{showDone ? "Hide" : "Show"} finished today ({done.length})</Btn>
+          {showDone && <MatchdayList matches={done} onOpen={open} />}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Booking codes made by signed-in accounts, and the match-day results job. */
 function TicketsAndResults({ info, tickets }: { info: any; tickets: any }) {
   const rep = info?.report ?? {};
@@ -431,6 +494,11 @@ export function PredictionsSection() {
 
   return (
     <div className="space-y-4">
+      <Card title="Live matches" icon={<Radio size={15} />}
+        subtitle="Today's matches from the results store: scores and stats from ESPN every 3 minutes; tap a match for its stats">
+        <LiveMatches />
+      </Card>
+
       <Card title="Accuracy, last 30 days" icon={<Target size={15} />}>
         {!stats ? <Skeleton rows={4} /> : stats.error ? <p className="text-xs text-n-400">{stats.error}</p> : (
           <>
