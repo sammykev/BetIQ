@@ -188,6 +188,51 @@ class TestToSportybet:
         assert len(shared) == 1
 
 
+class TestNoMarketThere:
+    """SportyBet refuses a whole code over one selection whose market isn't
+    open on its match (bizCode 19000): that one is left out, the rest booked."""
+
+    def events(self, n):
+        return [{**EVENT, "eventId": f"sr:match:{i}", "homeTeamName": f"Home{i}", "awayTeamName": f"Away{i}"}
+                for i in range(n)]
+
+    def book(self, n, bad):
+        shared = []
+
+        async def fetch(day):
+            return self.events(n)
+
+        async def post(ids):
+            shared.append([i["eventId"] for i in ids])
+            if any(i["eventId"] in bad for i in ids):
+                raise sportybet.SportyBetError("POST /orders/share: bizCode 19000 invalid event data, no market there")
+            return {"code": f"C{len(shared)}", "url": "u", "odds": {}, "unavailable": set()}
+        sels = [sel(home=f"Home{i}", away=f"Away{i}") for i in range(n)]
+        return asyncio.run(to_sportybet(sels, fetch, sportybet.find_event, post)), shared
+
+    def test_the_bad_pick_is_found_and_the_rest_booked(self):
+        out, shared = self.book(9, {"sr:match:6"})
+        assert [p["status"] for p in out["picks"]] == ["booked"] * 6 + ["unavailable"] + ["booked"] * 2
+        assert "doesn't offer this market" in out["picks"][6]["reason"]
+        assert out["code"] and out["error"] is None
+        assert "sr:match:6" not in shared[-1] and len(shared[-1]) == 8
+        assert len(shared) <= 10
+
+    def test_several_bad_picks(self):
+        out, _ = self.book(12, {"sr:match:0", "sr:match:5", "sr:match:11"})
+        assert [i for i, p in enumerate(out["picks"]) if p["status"] == "unavailable"] == [0, 5, 11]
+        assert out["code"]
+
+    def test_all_bad_means_no_code_and_says_why(self):
+        out, _ = self.book(3, {"sr:match:0", "sr:match:1", "sr:match:2"})
+        assert out["code"] is None and "doesn't offer any" in out["error"]
+        out, shared = self.book(1, {"sr:match:0"})
+        assert out["code"] is None and len(shared) == 1
+
+    def test_other_errors_still_fail_as_before(self):
+        result, _, posted = run([sel()], share_error=sportybet.SportyBetError("POST /orders/share: bizCode 4302 Event closed"))
+        assert result["code"] is None and len(posted) == 1
+
 # ── SportyBet client ─────────────────────────────────────────────────────────
 
 class FakeResponse:

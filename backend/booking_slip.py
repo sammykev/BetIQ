@@ -277,6 +277,60 @@ def _start_seconds(event: Optional[Dict]) -> Optional[float]:
     return ms / 1000 if ms > 0 else None
 
 
+# SportyBet refuses a whole code when one selection's market isn't open on
+# its match ("19000 invalid event data, no market there")
+MAX_SHARE_TRIES = 24
+
+
+def _no_market(e: Exception) -> bool:
+    text = str(e).lower()
+    return "bizcode 19000" in text or "no market there" in text
+
+
+async def _share_leaving_out(post_share: Callable[[List[Dict]], Awaitable[Dict[str, Any]]],
+                             to_book: List[Tuple[int, Dict[str, str], Dict]]):
+    """Share the selections; if SportyBet refuses them over a market it hasn't
+    got, find the selections at fault by halving and share the rest. Returns
+    (share or None when every selection was at fault, the ones left out).
+    Other errors, or more than MAX_SHARE_TRIES requests, raise."""
+    try:
+        return await post_share([ids for _, ids, _ in to_book]), []
+    except Exception as e:
+        if not _no_market(e) or len(to_book) == 1:
+            if _no_market(e):
+                return None, list(to_book)
+            raise
+        first = e
+    tries = [1]
+    refused: List[Tuple[int, Dict[str, str], Dict]] = []
+
+    async def probe(group: List[Tuple[int, Dict[str, str], Dict]]) -> None:
+        if not group:
+            return
+        tries[0] += 1
+        if tries[0] > MAX_SHARE_TRIES:
+            raise first
+        try:
+            await post_share([ids for _, ids, _ in group])
+        except Exception as e:
+            if not _no_market(e):
+                raise
+            if len(group) == 1:
+                refused.append(group[0])
+                return
+            await probe(group[:len(group) // 2])
+            await probe(group[len(group) // 2:])
+
+    half = len(to_book) // 2
+    await probe(to_book[:half])
+    await probe(to_book[half:])
+    rest = [t for t in to_book if t not in refused]
+    if not rest:
+        return None, refused
+    print(f"[Booking] SportyBet has no market for {len(refused)} of {len(to_book)} selections: left out")
+    return await post_share([ids for _, ids, _ in rest]), refused
+
+
 async def to_sportybet(
     selections: List[Dict[str, Any]],
     fetch_events: Callable[[str], Awaitable[List[Dict]]],
@@ -362,13 +416,19 @@ async def to_sportybet(
         return result
 
     try:
-        share = await post_share([ids for _, ids, _ in to_book])
+        share, refused = await _share_leaving_out(post_share, to_book)
     except Exception as e:
         print(f"[Booking] SportyBet share failed: {e}")
         # SportyBet's own reason (bizCode and message) helps more than a generic line
         said = str(e).split("bizCode", 1)[-1].strip() if "bizCode" in str(e) else ""
         result["error"] = ("SportyBet didn't return a booking code. Try again in a minute."
                            + (f" (SportyBet said: {said[:120]})" if said else ""))
+        return result
+    for i, _, _ in refused:
+        picks[i].update(status="unavailable", reason="SportyBet doesn't offer this market on this match right now")
+    to_book = [t for t in to_book if t not in refused]
+    if share is None:
+        result["error"] = "SportyBet doesn't offer any of these picks' markets on these matches right now."
         return result
 
     booked_odds: List[Optional[float]] = []
