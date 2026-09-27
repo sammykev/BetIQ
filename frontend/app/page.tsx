@@ -18,7 +18,7 @@ import {
 import { ChatBot } from "@/components/ChatBot";
 import { DateStrip } from "@/components/DateStrip";
 import { MatchdayList } from "@/components/MatchdayList";
-import { fetchMatchday, fetchStrip, matchKey, type MatchdayMatch, type MatchdayResponse, type StripResponse } from "@/lib/matchday";
+import { awaitingScore, fetchMatchday, fetchStrip, matchKey, type MatchdayMatch, type MatchdayResponse, type StripResponse } from "@/lib/matchday";
 import { SportCard, type SportPrediction } from "@/components/SportCard";
 import { SportModal } from "@/components/SportModal";
 import { PaywallModal } from "@/components/PaywallModal";
@@ -470,9 +470,11 @@ export default function HomePage() {
   );
 
   // Today: matches that have kicked off show as results rows instead of cards
-  const started = new Set((isToday ? md?.matches ?? [] : []).filter(m => m.status !== "scheduled").map(m => m.key));
+  // Kicked off counts as played, score or not (some matches' scores come late)
+  const underway = (m: MatchdayMatch) => m.status !== "scheduled" || awaitingScore(m);
+  const started = new Set((isToday ? md?.matches ?? [] : []).filter(underway).map(m => m.key));
   const dayPredictions = validPredictions.filter(p => p.date === day && !started.has(matchKey(p.home, p.away)));
-  const playedToday: MatchdayMatch[] = isToday ? (md?.matches ?? []).filter(m => m.status !== "scheduled") : [];
+  const playedToday: MatchdayMatch[] = isToday ? (md?.matches ?? []).filter(underway) : [];
 
   // Counts per league for tab badges (the chosen day)
   const counts: Record<string, number> = {};

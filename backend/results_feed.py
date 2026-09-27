@@ -21,7 +21,7 @@ ESPN's also carry "stats" ({possession, shots, sot, corners, fouls, ...:
 import glob
 import os
 from datetime import date, datetime, timedelta, timezone
-from typing import Dict, Iterable, List, Optional, Set
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 import international_fixtures as intl
 
@@ -156,6 +156,66 @@ def parse_espn(data: Dict) -> List[Dict]:
                 res[key] = pair if None not in pair else None
         out.append(res)
     return out
+
+
+# ── API-Football: the backup for matches ESPN lists but never scores ─────────
+# (small friendlies, some confederation games). One request lists every match
+# of a day worldwide with its score; the free plan allows 100 a day, shared
+# with the referee lookup and the nightly stats collector.
+AF_BASE = "https://v3.football.api-sports.io"
+_AF_LIVE = {"1H", "HT", "2H", "ET", "BT", "P", "LIVE", "INT", "SUSP"}
+_AF_DONE = {"FT", "AET", "PEN", "AWD", "WO"}
+_AF_OFF = {"PST", "CANC", "ABD"}
+
+
+def parse_api_football(data: Dict) -> List[Dict]:
+    """API-Football's fixtures for a day as feed results (live and final only)."""
+    out = []
+    for f in (data or {}).get("response") or []:
+        fx, teams, goals = f.get("fixture") or {}, f.get("teams") or {}, f.get("goals") or {}
+        st = (fx.get("status") or {})
+        short = (st.get("short") or "").upper()
+        if short in _AF_LIVE:
+            status = "live"
+        elif short in _AF_DONE:
+            status = "finished"
+        elif short in _AF_OFF:
+            status = "postponed"
+        else:
+            continue
+        try:
+            ko = datetime.fromisoformat(str(fx.get("date")).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        home = ((teams.get("home") or {}).get("name") or "").strip()
+        away = ((teams.get("away") or {}).get("name") or "").strip()
+        if not home or not away:
+            continue
+        # Bets settle on 90 minutes: after extra time, the regulation score
+        ft = (f.get("score") or {}).get("fulltime") or {}
+        aet = short in ("AET", "PEN")
+        hg, ag = (ft.get("home"), ft.get("away")) if aet else (goals.get("home"), goals.get("away"))
+        minute = None
+        if status == "live":
+            minute = "HT" if short == "HT" else (f"{st.get('elapsed')}'" if st.get("elapsed") is not None else "Live")
+        out.append({"date": ko.astimezone(timezone.utc).date().isoformat(), "home": home, "away": away,
+                    "status": status, "minute": minute,
+                    "hg": _int(hg) if status != "postponed" else None, "ag": _int(ag) if status != "postponed" else None,
+                    "aet": aet, "corners": None, "bookings": None, "source": "api-football"})
+    return out
+
+
+async def fetch_api_football(client, day: date, api_key: str) -> Tuple[List[Dict], Optional[str]]:
+    """(results, error) for one day from API-Football (dates in UTC)."""
+    try:
+        r = await client.get(f"{AF_BASE}/fixtures", params={"date": day.isoformat()},
+                             headers={"x-apisports-key": api_key})
+        data = r.json()
+    except Exception as e:
+        return [], type(e).__name__
+    if data.get("errors") and not data.get("response"):
+        return [], str(data["errors"])[:120]
+    return parse_api_football(data), None
 
 
 def _bookings(comp: Dict, home: Dict, away: Dict) -> Optional[List[int]]:

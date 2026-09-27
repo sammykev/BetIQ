@@ -6,7 +6,7 @@ import { Check, ChevronDown, Minus, X as Cross } from "lucide-react";
 import { TeamBadge } from "@/components/PredictionCard";
 import { CompetitionBadge } from "@/components/CompetitionBadge";
 import { localTime } from "@/lib/matchTime";
-import { MARKET_LABELS, lost, won, type Grade, type MatchdayMatch } from "@/lib/matchday";
+import { MARKET_LABELS, awaitingScore, lost, won, type Grade, type MatchdayMatch } from "@/lib/matchday";
 import { LiveStats } from "@/components/LiveStats";
 import { useAccess } from "@/lib/access";
 
@@ -49,6 +49,7 @@ export function StatusCell({ m }: { m: MatchdayMatch }) {
   }
   if (m.status === "finished") return <span className="text-[11px] font-bold text-n-400">{m.aet ? "AET" : "FT"}</span>;
   if (m.status === "postponed") return <span className="text-[11px] font-bold text-warn">PP</span>;
+  if (awaitingScore(m)) return <span className="text-[11px] font-bold text-n-400" title="Kicked off: waiting for the score">…</span>;
   return <span className="text-[12px] font-semibold text-n-300 tnum">{m.time ? localTime(m.date, m.time) : "TBD"}</span>;
 }
 
@@ -142,6 +143,7 @@ function Detail({ m, onOpen }: { m: MatchdayMatch; onOpen?: (m: MatchdayMatch) =
         </div>
       )}
       {m.status === "postponed" && <p className="text-xs text-n-400">Postponed: nothing to grade.</p>}
+      {awaitingScore(m) && <p className="text-xs text-n-400">Kicked off: waiting for the score. Some smaller matches&apos; scores come in late.</p>}
       {m.status !== "postponed" && onOpen && (
         <button onClick={() => onOpen(m)} className="text-xs font-semibold text-accent hover:underline">
           {m.status === "live" ? "Follow it on the match page →" : m.status === "finished" ? "Match page →" : "Full match analysis →"}

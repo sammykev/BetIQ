@@ -2824,6 +2824,13 @@ async def _refresh_matchdays(days_back: int = 1, trigger: str = "schedule") -> D
                         report["errors"] += got["errors"]
             except Exception as e:
                 report["errors"].append(f"ESPN: {type(e).__name__}")
+        # Backup: matches under way that ESPN still shows as not started
+        # (it lists some small friendlies but never scores them)
+        backup: List[Dict] = []
+        stale = _unscored(need, espn, now)
+        if stale:
+            _md_status["stage"] = f"asking API-Football ({len(stale)} unscored)"
+            backup, report["backup"] = await _backup_results(r, stale)
         near = {(date.fromisoformat(d) + timedelta(days=o)).isoformat() for d in need for o in (-1, 0, 1)}
         csv = []
         # The league CSVs arrive a day or two after a match: the 3-hourly sweep
@@ -2837,7 +2844,7 @@ async def _refresh_matchdays(days_back: int = 1, trigger: str = "schedule") -> D
         for d, entries in need.items():
             day, changed = days[d], False
             matched = set()
-            for source in (espn, csv):
+            for source in (espn, backup, csv):
                 for k, res in matchday.match_results(entries, source):
                     matched.add(k)
                     before = {f: (day[k].get("result") or {}).get(f) for f in ("status", "hg", "ag")}
@@ -2870,6 +2877,66 @@ async def _refresh_matchdays(days_back: int = 1, trigger: str = "schedule") -> D
     if report["updated"]:
         print(f"[MatchDay] {trigger}: {report['updated']} results updated over {report['dates']}")
     return report
+
+
+AF_LIVE_EVERY = 15 * 60   # seconds between backup requests
+AF_LIVE_DAILY_CAP = 24     # of the key's 100 a day (referees 12, nightly stats collector 60)
+_af_live_last = [0.0]
+
+
+def _unscored(need: Dict[str, Dict[str, Dict]], espn: List[Dict], now: datetime) -> Dict[str, Dict]:
+    """{entry key: entry} for matches kicked off 5+ minutes ago that ESPN
+    gives no live or final score for (and that we don't have final)."""
+    import matchday
+    out = {}
+    for entries in need.values():
+        got = dict(matchday.match_results(entries, espn))
+        for k, e in entries.items():
+            ko = matchday.kickoff(e)
+            if not ko or ko > now - timedelta(minutes=5):
+                continue
+            if (e.get("result") or {}).get("status") in ("finished", "postponed"):
+                continue
+            if (got.get(k) or {}).get("status") in ("live", "finished", "postponed"):
+                continue
+            out[k] = e
+    return out
+
+
+async def _backup_results(r, stale: Dict[str, Dict]) -> Tuple[List[Dict], Dict[str, Any]]:
+    """API-Football results for the days of `stale` matches: at most every
+    AF_LIVE_EVERY and AF_LIVE_DAILY_CAP requests a day."""
+    import results_feed
+    key = os.getenv("APIFOOTBALL_KEY", "").strip()
+    if not key:
+        return [], {"skipped": "set APIFOOTBALL_KEY to score matches ESPN doesn't"}
+    if time.time() - _af_live_last[0] < AF_LIVE_EVERY:
+        return [], {"skipped": "asked recently", "unscored": len(stale)}
+    count_key = f"betiq:af:live:{date.today().isoformat()}"
+    try:
+        used = int(r.get(count_key) or 0)
+    except Exception:
+        used = 0
+    days = sorted({e["date"] for e in stale.values() if e.get("date")})
+    if used + len(days) > AF_LIVE_DAILY_CAP:
+        return [], {"skipped": f"used today's {AF_LIVE_DAILY_CAP} requests", "unscored": len(stale)}
+    _af_live_last[0] = time.time()
+    out: List[Dict] = []
+    report: Dict[str, Any] = {"requests": 0, "errors": [], "unscored": len(stale)}
+    async with httpx.AsyncClient(timeout=20) as client:
+        for d in days:
+            got, err = await results_feed.fetch_api_football(client, date.fromisoformat(d), key)
+            report["requests"] += 1
+            if err:
+                report["errors"].append(f"{d}: {err}")
+            out += got
+    try:
+        r.incrby(count_key, report["requests"])
+        r.expire(count_key, 2 * 86400)
+    except Exception:
+        pass
+    report["results"] = len(out)
+    return out, report
 
 
 MD_RUN_LIMIT = {"live": 170, "sweep": 900}   # seconds before a run is given up (live: under its 3 minutes)
@@ -2939,7 +3006,8 @@ async def get_matchday(date_: str = Query("", alias="date")):
     return {"date": d.isoformat(), "today": today.isoformat(), "matches": matches,
             "summary": matchday.day_summary(day.values()),
             "updated": _md_status.get("at"),
-            "check": {k: _md_status.get(k) for k in ("started", "stage", "error", "failed_at")}}
+            "check": {**{k: _md_status.get(k) for k in ("started", "stage", "error", "failed_at")},
+                      "backup": ((_md_status.get("report") or {}).get("backup"))}}
 
 
 _strip_cache: Dict[str, Tuple[float, Any]] = {}

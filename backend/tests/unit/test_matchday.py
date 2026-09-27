@@ -6,6 +6,7 @@ record; and the endpoints and refresh job in main.py.
 
 import asyncio
 import json
+import time
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
@@ -406,3 +407,88 @@ class TestNeverStuck:
         main._get_redis()
         monkeypatch.setattr(main, "_redis", None)
         assert seen["socket_timeout"] and seen["socket_keepalive"] and seen["health_check_interval"]
+
+
+def af_fixture(home, away, short, gh=None, ga=None, elapsed=None, when="2026-09-27T04:00:00+00:00", ft=None):
+    return {"fixture": {"date": when, "status": {"short": short, "elapsed": elapsed}},
+            "teams": {"home": {"name": home}, "away": {"name": away}},
+            "goals": {"home": gh, "away": ga}, "score": {"fulltime": ft or {"home": gh, "away": ga}}}
+
+
+class TestApiFootballBackup:
+    """ESPN lists some small friendlies but never scores them: API-Football
+    fills those in, sparingly (a small daily share of the free plan)."""
+
+    def test_parse(self):
+        got = results_feed.parse_api_football({"response": [
+            af_fixture("Cook Islands", "Tahiti", "FT", 0, 3),
+            af_fixture("Fiji", "Papua New Guinea", "2H", 1, 0, elapsed=67),
+            af_fixture("China", "New Zealand", "HT", 0, 0),
+            af_fixture("Mali", "Togo", "AET", 2, 1, ft={"home": 1, "away": 1}),
+            af_fixture("Seychelles", "Sri Lanka", "NS"),
+            af_fixture("Chad", "Niger", "PST")]})
+        by = {r["home"]: r for r in got}
+        assert (by["Cook Islands"]["status"], by["Cook Islands"]["hg"], by["Cook Islands"]["ag"]) == ("finished", 0, 3)
+        assert (by["Fiji"]["status"], by["Fiji"]["minute"]) == ("live", "67'") and by["China"]["minute"] == "HT"
+        assert (by["Mali"]["hg"], by["Mali"]["ag"], by["Mali"]["aet"]) == (1, 1, True)   # 90-minute score
+        assert "Seychelles" not in by and by["Chad"]["status"] == "postponed"
+        assert by["Cook Islands"]["date"] == "2026-09-27" and by["Cook Islands"]["source"] == "api-football"
+
+    def test_scheduled_never_wipes_a_live_score(self):
+        e = TestGrading().entry()
+        matchday.apply_result(e, {"status": "live", "minute": "30'", "hg": 1, "ag": 0, "source": "api-football"})
+        assert not matchday.apply_result(e, {"status": "scheduled", "source": "espn"})
+        assert e["result"]["hg"] == 1 and e["result"]["status"] == "live"
+
+    def test_unscored_matches_get_the_backup(self, redis, monkeypatch):
+        import curl_cffi.requests as cr
+        d = date.today().isoformat()
+        early = (datetime.now(timezone.utc) - timedelta(hours=3)).strftime("%H:%M")
+        if early > datetime.now(timezone.utc).strftime("%H:%M"):
+            d = (date.today() - timedelta(days=1)).isoformat()
+        day = {}
+        matchday.merge_predictions(day, [pred("Cook Islands", "Tahiti", d=d, t=early),
+                                         pred("Arsenal", "Chelsea", d=d, t=early)],
+                                   datetime.now(timezone.utc) - timedelta(hours=4))
+        main._md_save(redis, d, day)
+
+        class Session:
+            def __init__(self, *a, **k): pass
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+        monkeypatch.setattr(cr, "AsyncSession", Session)
+
+        async def fetch_espn(client, days, slugs):   # ESPN: Arsenal final, Cook Islands never started
+            return {"results": [{"date": d, "home": "Arsenal", "away": "Chelsea", **finished(2, 0)},
+                                {"date": d, "home": "Cook Islands", "away": "Tahiti", "status": "scheduled", "source": "espn"}],
+                    "requests": 1, "errors": []}
+        asked = []
+
+        async def fetch_af(client, day, key):
+            asked.append(day)
+            return results_feed.parse_api_football({"response": [
+                af_fixture("Cook Islands", "Tahiti", "FT", 0, 3, when=f"{d}T{early}:00+00:00")]}), None
+        monkeypatch.setattr(results_feed, "fetch_espn", fetch_espn)
+        monkeypatch.setattr(results_feed, "fetch_api_football", fetch_af)
+        monkeypatch.setattr(main, "_af_live_last", [0.0])
+        monkeypatch.setenv("APIFOOTBALL_KEY", "k")
+
+        rep = asyncio.run(main._refresh_matchdays(1, "live"))
+        saved = json.loads(redis.kv[f"betiq:md:{d}"])
+        assert saved["cook islands|tahiti"]["result"]["hg"] == 0 and saved["cook islands|tahiti"]["result"]["ag"] == 3
+        assert saved["arsenal|chelsea"]["result"]["hg"] == 2
+        assert rep["backup"]["requests"] == 1 and rep["backup"]["unscored"] == 1 and asked == [date.fromisoformat(d)]
+        # Everything scored now: no more backup requests
+        rep = asyncio.run(main._refresh_matchdays(1, "live"))
+        assert "backup" not in rep and len(asked) == 1
+
+    def test_backup_is_rationed(self, redis, monkeypatch):
+        stale = {"a|b": {"date": "2026-09-27"}}
+        monkeypatch.delenv("APIFOOTBALL_KEY", raising=False)
+        assert "APIFOOTBALL_KEY" in asyncio.run(main._backup_results(redis, stale))[1]["skipped"]
+        monkeypatch.setenv("APIFOOTBALL_KEY", "k")
+        monkeypatch.setattr(main, "_af_live_last", [time.time()])
+        assert asyncio.run(main._backup_results(redis, stale))[1]["skipped"] == "asked recently"
+        monkeypatch.setattr(main, "_af_live_last", [0.0])
+        redis.kv[f"betiq:af:live:{date.today().isoformat()}"] = str(main.AF_LIVE_DAILY_CAP)
+        assert "used today's" in asyncio.run(main._backup_results(redis, stale))[1]["skipped"]

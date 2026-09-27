@@ -171,6 +171,10 @@ def apply_result(entry: Dict, res: Dict) -> bool:
     """Put a feed result on an entry (never a finished one back to live) and
     grade it. True if anything changed."""
     old = entry.get("result") or {}
+    # A match doesn't go back to not started: one source still showing it
+    # scheduled mustn't wipe the live score another source gave
+    if res.get("status") not in (FINISHED, LIVE, POSTPONED) and old.get("status") == LIVE:
+        return False
     if old.get("status") == FINISHED:
         # Final already: a second source only fills in stats it lacked
         if res.get("status") != FINISHED:
