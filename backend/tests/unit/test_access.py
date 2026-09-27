@@ -43,6 +43,13 @@ class TestRules:
         # Given the feature: no tier needed
         assert access.allowed(feat(tier="premium", allow=["u1"]), "u1", False, "free", True)
 
+    @pytest.mark.parametrize("needs", auth.TIERS)
+    @pytest.mark.parametrize("has", auth.TIERS)
+    def test_plans_stack(self, has, needs):
+        # Lite has everything Free has; Premium everything Lite (and Free) has
+        rank = auth.TIERS.index
+        assert access.allowed(feat(tier=needs), "u1", False, has, True) == (rank(has) >= rank(needs))
+
     def test_validate(self):
         assert access.validate({"state": "off", "junk": 1}) == {"state": "off"}
         with pytest.raises(ValueError):

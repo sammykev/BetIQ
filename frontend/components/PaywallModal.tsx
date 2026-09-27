@@ -90,13 +90,12 @@ export function PaywallModal({ onClose, onSuccess, need }: Props) {
           ₦{PLANS[plan].ngn.toLocaleString("en-US")}<span className="text-sm text-n-400 font-sans font-semibold"> / month</span>
         </p>
         <ul className="space-y-2 flex-1">
-          {plan === "premium" && perks("lite").length > 0 && (
-            <li className="flex items-start gap-2 text-sm text-n-200"><Check size={14} className="text-accent mt-0.5 shrink-0" />Everything in Lite</li>
-          )}
+          {/* Plans stack: Lite has everything free, Premium everything in Lite */}
+          <li className="flex items-start gap-2 text-sm text-n-200 font-semibold"><Check size={14} className="text-accent mt-0.5 shrink-0" />
+            {plan === "premium" ? "Everything in Lite, plus:" : "Everything free, plus:"}</li>
           {list.map(p => (
             <li key={p} className="flex items-start gap-2 text-sm text-n-200"><Check size={14} className="text-accent mt-0.5 shrink-0" />{p}</li>
           ))}
-          {list.length === 0 && plan === "lite" && <li className="text-sm text-n-400">Everything free, with no limits</li>}
         </ul>
         {lacks && <p className="text-[11px] text-warn">Doesn&apos;t include what you just opened: that&apos;s in Premium.</p>}
         {!user ? (

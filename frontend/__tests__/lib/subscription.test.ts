@@ -1,4 +1,4 @@
-import { isFreshPayment, nextExpiry, paidByUser, paymentTime, renewal, tierOf } from "@/lib/subscription";
+import { isFreshPayment, nextExpiry, paidByUser, paymentTime, renewal, tierAtLeast, tierOf } from "@/lib/subscription";
 import { planKobo, planLabel } from "@/lib/pricing";
 
 describe("pricing", () => {
@@ -102,5 +102,14 @@ describe("tiers", () => {
     expect(days(renewal({ subscription: "lite", subscription_expires: later }, "lite", now))).toBe(43);
     expect(days(renewal({ subscription: "lite", subscription_expires: later }, "premium", now))).toBe(30);
     expect(days(renewal(undefined, "premium", now))).toBe(30);
+  });
+});
+
+describe("plans stack", () => {
+  it("gives Lite everything free and Premium everything in Lite", () => {
+    const tiers = ["free", "lite", "premium"];
+    for (const has of tiers) for (const needs of tiers)
+      expect(tierAtLeast(has, needs)).toBe(tiers.indexOf(has) >= tiers.indexOf(needs));
+    expect(tierAtLeast("gold", "lite")).toBe(false);   // unknown counts as free
   });
 });
