@@ -4333,7 +4333,7 @@ ADMIN_JOBS = {
     "fd_referees": ("Collect past referees (football-data.org)", lambda: _collect_fd_referees("manual")),
     "football_sync": ("Download league results (football-data.co.uk)", lambda: _manual_football_sync()),
     "matchday_sweep": ("Scores and grades for the last 7 days", lambda: _refresh_matchdays(MD_DAYS_BACK, "manual")),
-    "daily_slips": ("Rebuild today's daily odds slips", lambda: _build_daily(date.today().isoformat(), force=True)),
+    "daily_slips": ("Remake today's daily odds slips (new booking codes)", lambda: _build_daily(date.today().isoformat(), force=True)),
     "shot_blend": ("Score our shot lines against SportyBet's", lambda: _shot_blend_job()),
     "market_review": ("Weekly accuracy review (pause markets falling short)", lambda: _review_job()),
     "set_pieces_reload": ("Reload corners, cards & shots models (after the nightly checks)",
@@ -6353,18 +6353,43 @@ def _cached_sport_predictions(sport: str) -> List[Dict]:
 DAILY_KEY = "betiq:daily:{}"
 DAILY_RECORD_KEY = "betiq:daily:record"
 _daily_lock = asyncio.Lock()
+_daily_memory: Dict[str, Dict[str, Any]] = {}   # when the database is down: still one set a day
 
 
-async def _build_daily(day: str, force: bool = False) -> Optional[Dict[str, Any]]:
-    """Today's three slips, built once (the first ask of the day, or the
-    morning job) and kept, so everyone sees the same slips all day."""
-    import daily_slips
-    r = _get_redis()
-    async with _daily_lock:
-        if r and not force:
+def _daily_load(r, day: str) -> Optional[Dict[str, Any]]:
+    if r:
+        try:
             raw = r.get(DAILY_KEY.format(day))
             if raw:
                 return json.loads(raw)
+        except Exception:
+            pass
+    return _daily_memory.get(day)
+
+
+def _daily_save(r, doc: Dict[str, Any]) -> None:
+    import daily_slips
+    if doc["date"] == date.today().isoformat():
+        _daily_memory.clear()
+        _daily_memory[doc["date"]] = doc
+    if r:
+        try:
+            r.set(DAILY_KEY.format(doc["date"]), json.dumps(doc), ex=daily_slips.KEEP_DAYS * 86400)
+        except Exception as e:
+            print(f"[Daily] couldn't save {doc['date']}: {e}")
+
+
+async def _build_daily(day: str, force: bool = False) -> Optional[Dict[str, Any]]:
+    """The day's three slips, made once (the morning job) and booked on
+    SportyBet straight away, so everyone gets the same slips and codes all
+    day. `force` (admin) makes them again."""
+    import daily_slips
+    r = _get_redis()
+    async with _daily_lock:
+        if not force:
+            doc = _daily_load(r, day)
+            if doc:
+                return doc
         if not _predictions_cache:
             return None
         slips = []
@@ -6380,14 +6405,43 @@ async def _build_daily(day: str, force: bool = False) -> Optional[Dict[str, Any]
                     break
             slips.append(built)
         doc = {"date": day, "built_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "slips": slips}
-        if r:
-            r.set(DAILY_KEY.format(day), json.dumps(doc), ex=daily_slips.KEEP_DAYS * 86400)
+        await _book_daily(doc)
+        _daily_save(r, doc)
+        print(f"[Daily] {day}: " + ", ".join(
+            f"{int(s['target'])}x " + ((s.get("booking") or {}).get("code") or ("no slip" if s["status"] == "none" else "no code yet"))
+            for s in slips))
         return doc
 
 
-def _grade_daily(r, doc: Dict[str, Any]) -> None:
+async def _book_daily(doc: Dict[str, Any]) -> bool:
+    """Book each slip that has no code yet (and picks still to play) on
+    SportyBet; True if any slip's booking changed."""
+    import booking_slip
+    import daily_slips
+    import sportybet
+    now = daily_slips.now_utc()
+    changed = False
+    for s in doc.get("slips") or []:
+        if not daily_slips.needs_booking(s, now):
+            continue
+        tries = (s.get("booking") or {}).get("tries", 0)
+        sent: List[Dict[str, Any]] = []
+        try:
+            sent = booking_slip.validate(daily_slips.selections(s, now))
+            res = await booking_slip.to_sportybet(
+                sent, sportybet.fetch_events_for_date, sportybet.find_event, sportybet.share_selections,
+                linked=_linked_event, market_map=_sb_market_map())
+        except Exception as e:
+            print(f"[Daily] booking the {s.get('target')}x slip failed: {e}")
+            res = {"error": "Couldn't reach SportyBet to book this slip."}
+        s["booking"] = {**daily_slips.booking(res, sent, now.isoformat(timespec="seconds")), "tries": tries + 1}
+        changed = True
+    return changed
+
+
+def _grade_daily(r, doc: Dict[str, Any]) -> bool:
     """Settle a day's slips from the results; a slip that settles counts
-    towards the record once."""
+    towards the record once. True if anything changed."""
     import daily_slips
     days: Dict[str, Dict] = {}
 
@@ -6401,27 +6455,32 @@ def _grade_daily(r, doc: Dict[str, Any]) -> None:
             changed = True
             if before == "pending" and s["status"] in ("won", "lost"):
                 r.hincrby(DAILY_RECORD_KEY, f"{int(s['target'])}:{s['status']}", 1)
-    if changed:
-        r.set(DAILY_KEY.format(doc["date"]), json.dumps(doc), ex=daily_slips.KEEP_DAYS * 86400)
+    return changed
+
+
+def _daily_public(s: Dict[str, Any]) -> Dict[str, Any]:
+    """A slip as the page gets it: the booking without its bookkeeping."""
+    b = s.get("booking")
+    if not b:
+        return s
+    return {**s, "booking": {k: b.get(k) for k in ("code", "share_url", "total_odds", "booked", "of", "error", "at")}}
 
 
 @app.get("/api/daily-slips")
 async def get_daily_slips(day: str = Query("", alias="date"), _access=Depends(require_feature("daily_slips"))):
-    """A day's 10x / 15x / 20x slips (today's are built on first ask), each
+    """A day's 10x / 15x / 20x slips with their SportyBet booking codes, each
     pick graded and, while it's being played, its live score; and the record
-    of every slip so far."""
+    of every slip so far. Read-only: the slips and codes are made by the
+    morning job (_daily_job), not by visitors."""
     import daily_slips
     today = date.today().isoformat()
     d = _date_param(day or today).isoformat()
     r = _get_redis()
-    if d == today:
-        doc = await _build_daily(d)
-    else:
-        raw = r.get(DAILY_KEY.format(d)) if r else None
-        doc = json.loads(raw) if raw else None
+    doc = _daily_load(r, d)
     if doc and r:
         async with _daily_lock:
-            _grade_daily(r, doc)
+            if _grade_daily(r, doc):
+                _daily_save(r, doc)
         for s in doc.get("slips") or []:
             _attach_live(r, [{"status": "pending", "legs": s.get("picks") or []}])
     record: Dict[str, Dict[str, int]] = {}
@@ -6429,17 +6488,64 @@ async def get_daily_slips(day: str = Query("", alias="date"), _access=Depends(re
         k = k.decode() if isinstance(k, bytes) else str(k)
         target, _, outcome = k.partition(":")
         record.setdefault(target, {"won": 0, "lost": 0})[outcome] = int(v)
+    h, m = daily_slips.BUILD_AT
     return {"date": d, "today": today, "built_at": (doc or {}).get("built_at"),
-            "slips": (doc or {}).get("slips") or [], "record": record,
-            "min_prob": daily_slips.MIN_PROB, "targets": list(daily_slips.TARGETS)}
+            "slips": [_daily_public(s) for s in (doc or {}).get("slips") or []], "record": record,
+            "min_prob": daily_slips.MIN_PROB, "targets": list(daily_slips.TARGETS),
+            "publish_at_utc": f"{h:02d}:{m:02d}", "retry_minutes": daily_slips.RETRY_MINUTES}
+
+
+@app.post("/api/daily-slips/track")
+async def track_daily_slip(request: Request, body: Dict[str, Any], _access=Depends(require_feature("daily_slips"))):
+    """Add a daily slip's booking code to the account's tickets (Dashboard →
+    Tickets), graded leg by leg like any code it books. Body: {date, target}."""
+    import auth
+    import daily_slips
+    import tickets
+    uid = await auth.require_user(request, str(body.get("uid") or ""))
+    d = _date_param(str(body.get("date") or date.today().isoformat())).isoformat()
+    try:
+        target = float(body.get("target"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="target must be 10, 15 or 20")
+    doc = _daily_load(_get_redis(), d)
+    s = next((x for x in (doc or {}).get("slips") or [] if float(x.get("target", 0)) == target), None)
+    code = ((s or {}).get("booking") or {}).get("code")
+    if not code:
+        raise HTTPException(status_code=404, detail="That slip has no booking code yet.")
+    sels, booked = daily_slips.ticket_legs(s)
+    b = s["booking"]
+    _record_ticket(uid, tickets.new_ticket(code, sels, booked, "daily", b.get("share_url"), b.get("total_odds"),
+                                           datetime.now(timezone.utc).isoformat(timespec="seconds")))
+    return {"tracked": True, "code": code}
 
 
 async def _daily_job() -> None:
-    """Build today's slips in the morning, before anyone asks."""
+    """Make today's slips in the morning (and book them), before anyone asks."""
     try:
         await _build_daily(date.today().isoformat())
     except Exception as e:
         print(f"[Daily] build failed: {e}")
+
+
+async def _daily_tick() -> None:
+    """Every few minutes: make today's slips if the morning job was missed
+    (the server was restarting, or predictions weren't ready), and book any
+    slip SportyBet couldn't book yet."""
+    import daily_slips
+    try:
+        today = date.today().isoformat()
+        r = _get_redis()
+        doc = _daily_load(r, today)
+        if doc is None:
+            if daily_slips.due(daily_slips.now_utc()):
+                await _build_daily(today)
+            return
+        async with _daily_lock:
+            if await _book_daily(doc):
+                _daily_save(r, doc)
+    except Exception as e:
+        print(f"[Daily] tick failed: {e}")
 
 
 @app.post("/api/optimizer/code")
@@ -6638,6 +6744,8 @@ async def startup():
     scheduler.add_job(_matchday_sweep, "interval", hours=3, id="matchday_sweep",
                       max_instances=1, coalesce=True)
     scheduler.add_job(_daily_job, "cron", hour=6, minute=5, id="daily_slips")   # 07:05 in Lagos
+    scheduler.add_job(_daily_tick, "interval", minutes=5, id="daily_slips_tick", max_instances=1, coalesce=True,
+                      next_run_time=datetime.now() + timedelta(minutes=3))
     # Mondays 05:50 UTC, before the daily slips (06:05) are built
     scheduler.add_job(_review_job, "cron", day_of_week="mon", hour=5, minute=50, id="market_review",
                       max_instances=1, coalesce=True)

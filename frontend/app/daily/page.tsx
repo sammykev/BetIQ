@@ -13,35 +13,37 @@ import { API, type LegLive, type LegStatus } from "@/lib/matchday";
 
 // Daily odds (backend daily_slips.py): three slips a day at about 10x, 15x
 // and 20x, only from picks the model rates 85%+, each with its honest chance.
+// The server makes them once each morning and books each on SportyBet: every
+// visitor gets the same slips and booking codes.
 
 interface Pick {
   home: string; away: string; date: string; time?: string; league?: string;
   market: string; market_name?: string; code: string; label?: string;
   prob: number; odds: number; bookable?: boolean; status: LegStatus; live?: LegLive;
 }
+/** The server's booking of the slip on SportyBet (made with the slip). */
+interface Booking {
+  code: string | null; share_url: string | null; total_odds?: number | null;
+  booked: number; of: number; error?: string | null; at: string;
+}
 interface Slip {
   target: number; status: "pending" | "won" | "lost" | "void" | "none"; error?: string;
   total_odds?: number; win_chance?: number; games?: number; within_target?: boolean;
-  days?: number; bookable?: boolean; picks: Pick[];
+  days?: number; bookable?: boolean; picks: Pick[]; booking?: Booking;
 }
 interface DailyResponse {
   date: string; today: string; built_at: string | null; slips: Slip[];
   record: Record<string, { won: number; lost: number }>; min_prob: number; targets: number[];
+  publish_at_utc?: string; retry_minutes?: number;
 }
-interface Booked {
-  code: string | null; share_url: string | null; error?: string | null;
-  picks?: { status: string; reason?: string }[];
-  /** Picks left out before asking SportyBet: already started or settled. */
-  skipped?: number;
-}
-/** Still bookable: not settled, and kick-off (UTC date + time) hasn't passed. */
-const bookable = (p: Pick) => p.status === "pending" && !p.live &&
+/** Still to play: not settled, and kick-off (UTC date + time) hasn't passed. */
+const notStarted = (p: Pick) => p.status === "pending" && !p.live &&
   !(Date.parse(`${p.date}T${p.time || "23:59"}:00Z`) <= Date.now());
 
 const PERKS = [
   "Three slips every morning, at about 10, 15 and 20 odds",
   "Only picks our model rates 85% or more",
-  "Book any slip on SportyBet in one tap",
+  "A ready SportyBet booking code with every slip",
   "Every slip graded, with a public record",
 ];
 const pct = (x?: number) => (typeof x === "number" ? `${Math.round(x * 100)}%` : "—");
@@ -61,12 +63,11 @@ function daysBefore(iso: string, n: number): string[] {
 const dayName = (iso: string, today: string) =>
   iso === today ? "Today" : new Date(`${iso}T12:00:00Z`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
 
-function SlipView({ s, isToday }: { s: Slip; isToday: boolean }) {
+function SlipView({ s, isToday, date, retry }: { s: Slip; isToday: boolean; date: string; retry: number }) {
   const { user } = useUser();
   const authFetch = useAuthedFetch();
-  const [booking, setBooking] = useState(false);
-  const [booked, setBooked] = useState<Booked | null>(null);
   const [copied, setCopied] = useState(false);
+  const [tracking, setTracking] = useState<"idle" | "busy" | "done" | string>("idle");
 
   if (s.status === "none") {
     return (
@@ -76,33 +77,24 @@ function SlipView({ s, isToday }: { s: Slip; isToday: boolean }) {
       </div>
     );
   }
-  const toBook = s.picks.filter(bookable);
-  const open = isToday && s.picks.some(p => p.status === "pending");
-  const book = async () => {
-    setBooking(true); setBooked(null);
-    const skipped = s.picks.length - toBook.length;
-    try {
-      // Matches that have kicked off can't go on a code: book the rest
-      const selections = toBook.map(p => ({ home: p.home, away: p.away, date: p.date, time: p.time, league: p.league,
-        market: p.market, marketName: p.market_name, code: p.code, label: p.label, prob: p.prob }));
-      const r = await authFetch(`${API}/api/booking/convert`, { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ platform: "sportybet", selections, source: "daily", uid: user?.id }) });
-      const d = await r.json().catch(() => null);
-      // SportyBet's own answer (or the server's), not a generic line
-      if (!r.ok || !d) throw new Error(typeof d?.detail === "string" ? d.detail : "");
-      setBooked({ ...d, skipped, error: d.code ? null : d.error || "SportyBet didn't return a code. Try again in a minute." });
-    } catch (e) {
-      setBooked({ code: null, share_url: null, skipped,
-        error: (e as Error).message || "Couldn't reach the server. Check your connection and try again." });
-    }
-    finally { setBooking(false); }
-  };
+  const b = s.booking;
+  const toPlay = s.picks.filter(notStarted).length;
+  const started = s.picks.filter(p => p.status === "pending" && !notStarted(p)).length;
+  const settled = s.picks.filter(p => p.status !== "pending").length;
   const copy = async (code: string) => {
     try { await navigator.clipboard.writeText(code); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* ignore */ }
   };
-  const failed = booked?.picks?.filter(p => p.status !== "booked").length ?? 0;
-  const started = s.picks.filter(p => p.status === "pending" && !bookable(p)).length;
-  const settled = s.picks.filter(p => p.status !== "pending").length;
+  // Put the code in the account's tickets, graded leg by leg (Dashboard → Tickets)
+  const track = async () => {
+    setTracking("busy");
+    try {
+      const r = await authFetch(`${API}/api/daily-slips/track`, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date, target: s.target, uid: user?.id }) });
+      const d = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(typeof d?.detail === "string" ? d.detail : "Couldn't add it. Try again.");
+      setTracking("done");
+    } catch (e) { setTracking((e as Error).message || "Couldn't add it. Try again."); }
+  };
 
   return (
     <article className={clsx("card overflow-hidden", s.status === "won" && "border-accent/40", s.status === "lost" && "border-danger/30")}>
@@ -116,11 +108,54 @@ function SlipView({ s, isToday }: { s: Slip; isToday: boolean }) {
           <p className="text-xs text-n-400">Chance the whole slip lands: <span className="font-bold text-n-0 tnum">{pctFine(s.win_chance)}</span></p>
         </div>
       </header>
+
+      <section className="mx-4 sm:mx-5 mb-4 rounded-xl border border-n-800 bg-surface-sunken p-3 sm:p-4 space-y-2">
+        <p className="eyebrow flex items-center gap-1.5"><Ticket size={12} /> SportyBet booking code</p>
+        {b?.code ? (
+          <>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-mono text-3xl font-bold text-n-0 tracking-[0.18em]">{b.code}</span>
+              <span className="flex gap-2">
+                {b.share_url && <a href={b.share_url} target="_blank" rel="noreferrer" className="btn-secondary !px-3 !py-1.5 !text-xs"><ExternalLink size={12} /> Open</a>}
+                <button onClick={() => copy(b.code!)} className="btn-primary !px-3 !py-1.5 !text-xs">
+                  {copied ? <Check size={12} /> : <Copy size={12} />}{copied ? "Copied" : "Copy code"}</button>
+              </span>
+            </div>
+            {b.booked < s.picks.length && (
+              <p className="text-[11px] text-warn">The code holds {b.booked} of the {s.picks.length} picks: SportyBet wasn&apos;t offering the others when we booked it.</p>
+            )}
+            {isToday && started > 0 && s.status === "pending" && (
+              <p className="text-[11px] text-n-400">{started} match{started > 1 ? "es have" : " has"} kicked off: SportyBet leaves {started > 1 ? "those" : "it"} out if you load the code now.</p>
+            )}
+            {user && s.status === "pending" && (
+              tracking === "done" ? (
+                <p className="text-xs text-accent flex items-center gap-1"><Check size={12} /> In your tickets: we&apos;ll grade it as the results come in.</p>
+              ) : (
+                <div className="flex flex-wrap items-center gap-2">
+                  <button onClick={track} disabled={tracking === "busy"} className="btn-secondary !px-3 !py-1.5 !text-xs">
+                    {tracking === "busy" ? <Loader2 size={12} className="animate-spin" /> : <Ticket size={12} />} Track in my tickets
+                  </button>
+                  {tracking !== "idle" && tracking !== "busy" && <span className="text-xs text-danger">{tracking}</span>}
+                </div>
+              )
+            )}
+          </>
+        ) : isToday && toPlay > 0 ? (
+          <p className="text-sm text-n-300">
+            <Loader2 size={13} className="inline animate-spin mr-1.5 text-n-400" />
+            The code is on its way: SportyBet didn&apos;t take the slip yet, so we try again every {retry} minutes.
+            {b?.error && <span className="block text-[11px] text-n-500 mt-1">Last try: {b.error}</span>}
+          </p>
+        ) : (
+          <p className="text-sm text-n-400">No booking code: SportyBet didn&apos;t take this slip before its matches started.</p>
+        )}
+      </section>
+
       {(!s.bookable || s.within_target === false || (s.days ?? 1) > 1) && (
-        <p className="px-4 sm:px-5 -mt-2 pb-3 text-[11px] text-n-500">
+        <p className="px-4 sm:px-5 pb-3 text-[11px] text-n-500">
           {[s.within_target === false && `Closest to ${s.target}x the picks allowed`,
             (s.days ?? 1) > 1 && "includes tomorrow's matches",
-            !s.bookable && "some picks aren't on SportyBet yet"].filter(Boolean).join(" · ")}
+            !s.bookable && "some picks weren't on SportyBet yet"].filter(Boolean).join(" · ")}
         </p>
       )}
       <ul className="px-4 sm:px-5 border-t border-dashed border-n-700 divide-y divide-n-800/70">
@@ -128,36 +163,6 @@ function SlipView({ s, isToday }: { s: Slip; isToday: boolean }) {
           <LegRow key={i} showProb leg={{ ...p, marketName: p.market_name, status: p.status }} />
         ))}
       </ul>
-      {open && (
-        <footer className="px-4 sm:px-5 py-3 border-t border-n-800 space-y-2">
-          {booked?.code ? (
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="font-mono text-2xl font-bold text-n-0 tracking-[0.18em]">{booked.code}</span>
-              <span className="flex gap-2">
-                {booked.share_url && <a href={booked.share_url} target="_blank" rel="noreferrer" className="btn-secondary !px-3 !py-1.5 !text-xs"><ExternalLink size={12} /> Open</a>}
-                <button onClick={() => copy(booked.code!)} className="btn-primary !px-3 !py-1.5 !text-xs">
-                  {copied ? <Check size={12} /> : <Copy size={12} />}{copied ? "Copied" : "Copy code"}</button>
-              </span>
-            </div>
-          ) : (
-            toBook.length === 0 ? (
-              <p className="text-xs text-n-400">Every match left on this slip has kicked off, so it can&apos;t be booked now.</p>
-            ) : (
-              <button onClick={book} disabled={booking} className="btn-primary w-full sm:w-auto">
-                {booking ? <><Loader2 size={15} className="animate-spin" /> Booking…</> : <><Ticket size={15} /> Book on SportyBet</>}
-              </button>
-            )
-          )}
-          {booked?.error && <p className="text-xs text-danger">{booked.error}</p>}
-          {booked?.code && failed > 0 && <p className="text-xs text-warn">{failed} pick{failed > 1 ? "s" : ""} couldn&apos;t go on the code (started, suspended or not on SportyBet).</p>}
-          {!booked && started > 0 && toBook.length > 0 && (
-            <p className="text-[11px] text-n-400">{started} match{started > 1 ? "es have" : " has"} kicked off, so the code will cover the other {toBook.length}.</p>
-          )}
-          {booked?.code && (booked.skipped ?? 0) > 0 && (
-            <p className="text-[11px] text-n-400">{booked.skipped} pick{booked.skipped! > 1 ? "s" : ""} left out: already started or settled.</p>
-          )}
-        </footer>
-      )}
     </article>
   );
 }
@@ -198,6 +203,9 @@ function Daily() {
 
   const isToday = data.date === data.today;
   const s = data.slips[pick];
+  // When the morning job makes them, in the visitor's own time
+  const publishAt = new Date(`${data.today}T${data.publish_at_utc ?? "06:05"}:00Z`)
+    .toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   return (
     <div className="space-y-5">
       <div className="flex gap-1.5 overflow-x-auto [scrollbar-width:none] -mx-1 px-1">
@@ -208,7 +216,9 @@ function Daily() {
       </div>
 
       {data.slips.length === 0 ? (
-        <p className="card p-6 text-center text-sm text-n-400">{isToday ? "Today's slips aren't ready yet: predictions are still loading. Check back shortly." : "No slips were made that day."}</p>
+        <p className="card p-6 text-center text-sm text-n-400">{isToday
+          ? `Today's slips and booking codes come out at ${publishAt} each morning. Check back then, or look at yesterday's.`
+          : "No slips were made that day."}</p>
       ) : (
         <>
           <div className="grid grid-cols-3 gap-2 sm:gap-3" role="tablist" aria-label="Slips">
@@ -228,15 +238,15 @@ function Daily() {
               );
             })}
           </div>
-          {s && <SlipView key={`${data.date}-${s.target}`} s={s} isToday={isToday} />}
+          {s && <SlipView key={`${data.date}-${s.target}`} s={s} isToday={isToday} date={data.date} retry={data.retry_minutes ?? 15} />}
         </>
       )}
 
       <div className="rounded-xl border border-n-800 bg-surface-sunken px-4 py-3 text-xs text-n-400 flex gap-2.5">
         <Info size={14} className="text-n-500 shrink-0 mt-0.5" />
         <p>Every pick is one our model rates {pct(data.min_prob)} or more, but a slip only wins if all of them do, so its
-          own chance is much lower. That&apos;s the percentage on each slip. Slips are built each morning and graded at full time;
-          the record counts every one. 18+ · Bet responsibly.</p>
+          own chance is much lower. That&apos;s the percentage on each slip. Slips are made once each morning, booked on
+          SportyBet for you, and graded at full time; the record counts every one. 18+ · Bet responsibly.</p>
       </div>
     </div>
   );
@@ -247,7 +257,7 @@ export default function DailyPage() {
     <AppShell>
       <div className="space-y-6 animate-fade-in">
         <PageHeader eyebrow="Every morning" title="Daily odds"
-          description="Three slips a day at about 10, 15 and 20 odds, built only from picks our model rates 85% or more." />
+          description="Three slips a day at about 10, 15 and 20 odds, built only from picks our model rates 85% or more, each with its SportyBet booking code." />
         <FeatureGate feature="daily_slips" title="Daily odds" perks={PERKS}>
           <Daily />
         </FeatureGate>

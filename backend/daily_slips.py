@@ -6,8 +6,14 @@ Every pick being 85%+ doesn't make the slip 85%: the chances multiply, so a
 10x slip of 85-90% picks lands a few times in twenty. Each slip carries that
 honest combined chance (the optimizer's win_chance), and every slip is kept
 and graded, so the record shows how they really do.
+
+The slips are made once a day, in the morning, and the server books each on
+SportyBet straight away: everyone gets the same booking code with the slip.
+A slip SportyBet couldn't book then is tried again every RETRY_MINUTES
+until its matches start.
 """
 
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 
 import tickets
@@ -16,6 +22,8 @@ TARGETS = (10, 15, 20)
 MIN_PROB = 0.85
 SPREAD = 0.07          # total odds within ±7% of the target
 KEEP_DAYS = 120
+BUILD_AT = (6, 5)       # UTC (07:05 in Lagos): the day's slips are made then
+RETRY_MINUTES = 15      # a slip without a booking code is tried again after this
 
 # Tried in order until one gives a slip: today's matches that SportyBet lists
 # first (so the slip can be booked), then more days, then unlisted matches
@@ -70,3 +78,69 @@ def grade(s: Dict[str, Any], result_for: Callable[[Dict], Optional[Dict]]) -> bo
         s["status"] = new
         changed = True
     return changed
+
+
+def _kickoff(p: Dict) -> Optional[datetime]:
+    try:
+        return datetime.fromisoformat(f"{p['date']}T{p.get('time') or '23:59'}:00+00:00")
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def open_picks(s: Dict[str, Any], now: datetime) -> List[Dict]:
+    """The slip's picks that can still go on a code: unsettled, not kicked off."""
+    return [p for p in s.get("picks") or []
+            if p.get("status") == "pending" and not ((k := _kickoff(p)) and k <= now)]
+
+
+def selections(s: Dict[str, Any], now: datetime) -> List[Dict[str, Any]]:
+    """The booking request (booking_slip.validate's shape) for a slip's open picks."""
+    return [{"home": p["home"], "away": p["away"], "date": p["date"], "time": p.get("time") or "",
+             "league": p.get("league") or "", "market": p["market"], "marketName": p.get("market_name") or "",
+             "code": p["code"], "label": p.get("label") or p["code"], "prob": p.get("prob")}
+            for p in open_picks(s, now)]
+
+
+def booking(result: Dict[str, Any], sent: List[Dict[str, Any]], at: str) -> Dict[str, Any]:
+    """What's stored of a booking attempt: the code, and which picks it holds."""
+    picks = result.get("picks") or []
+    on_code = [{"home": sel["home"], "away": sel["away"], "market": sel["market"], "code": sel["code"]}
+               for sel, p in zip(sent, picks) if p.get("status") == "booked"]
+    return {"code": result.get("code"), "share_url": result.get("share_url"),
+            "total_odds": result.get("total_odds"), "booked": len(on_code), "of": len(sent),
+            "on_code": on_code, "error": None if result.get("code") else (result.get("error") or "No code"),
+            "at": at, "tries": 1}
+
+
+def needs_booking(s: Dict[str, Any], now: datetime) -> bool:
+    """A slip with no code yet, picks still to play, and no try in the last
+    RETRY_MINUTES."""
+    if s.get("status") != "pending" or (s.get("booking") or {}).get("code"):
+        return False
+    if not open_picks(s, now):
+        return False
+    last = (s.get("booking") or {}).get("at")
+    try:
+        return not last or (now - datetime.fromisoformat(last)).total_seconds() >= RETRY_MINUTES * 60
+    except ValueError:
+        return True
+
+
+def due(now: datetime) -> bool:
+    """Whether today's slips should exist by now."""
+    return (now.hour, now.minute) >= BUILD_AT
+
+
+def ticket_legs(s: Dict[str, Any]):
+    """(selections, booked outcomes) for the slip's picks on its booking
+    code: what tickets.new_ticket takes when an account tracks the slip."""
+    on = {(p["home"], p["away"], p["market"], p["code"]) for p in (s.get("booking") or {}).get("on_code") or []}
+    picks = [p for p in s.get("picks") or [] if (p["home"], p["away"], p["market"], p["code"]) in on]
+    sels = [{"home": p["home"], "away": p["away"], "date": p["date"], "time": p.get("time") or "",
+             "league": p.get("league") or "", "market": p["market"], "marketName": p.get("market_name") or "",
+             "code": p["code"], "label": p.get("label") or p["code"], "prob": p.get("prob")} for p in picks]
+    return sels, [{"status": "booked", "odds": p.get("odds")} for p in picks]
+
+
+def now_utc() -> datetime:
+    return datetime.now(timezone.utc)
