@@ -479,6 +479,56 @@ async def probe_leagues(days: int = 45) -> Dict[str, Any]:
     return out
 
 
+async def probe_fixtures(days: int = 21) -> Dict[str, Any]:
+    """What ESPN returns for the Europa and Conference League: the default
+    view, the calendar's next dates, and each day's events with their state."""
+    from curl_cffi.requests import AsyncSession
+    import europe_fixtures
+    import international_fixtures as intl
+    today = date.today()
+    out: Dict[str, Any] = {}
+
+    def events(page):
+        rows = []
+        for ev in (page or {}).get("events") or []:
+            comp = (ev.get("competitions") or [{}])[0]
+            st = ((comp.get("status") or ev.get("status") or {}).get("type") or {})
+            names = [((c.get("team") or {}).get("displayName") or "?") + f"({c.get('homeAway')})"
+                     for c in comp.get("competitors") or []]
+            rows.append(f"{str(ev.get('date'))[:16]} {st.get('state')} {' v '.join(names)}")
+        return rows
+
+    async with AsyncSession(impersonate=intl.IMPERSONATE, timeout=30) as session:
+        for code, (slug, *_r) in europe_fixtures.COMPETITIONS.items():
+            info: Dict[str, Any] = {}
+            r = await session.get(f"{intl.ESPN_BASE}/{slug}/scoreboard", headers=intl._ESPN_HEADERS)
+            page = r.json() if r.status_code == 200 else {}
+            league = ((page.get("leagues") or [{}])[0])
+            cal = league.get("calendar") or []
+            flat = []
+            for item in cal:
+                if isinstance(item, dict):
+                    for e in item.get("entries") or [item]:
+                        flat.append(str(e.get("startDate") or e.get("value") or "")[:10])
+                else:
+                    flat.append(str(item)[:10])
+            info["default"] = {"status": r.status_code, "season": league.get("season"),
+                               "events": events(page)[:6],
+                               "calendar_next": [d for d in flat if d >= today.isoformat()][:8]}
+            days = {}
+            for i in range(days_ahead := days):
+                d = today + pd.Timedelta(days=i)
+                r = await session.get(f"{intl.ESPN_BASE}/{slug}/scoreboard", headers=intl._ESPN_HEADERS,
+                                      params={"dates": f"{d:%Y%m%d}"})
+                ev = events(r.json()) if r.status_code == 200 else [f"HTTP {r.status_code}"]
+                if ev:
+                    days[d.strftime("%Y-%m-%d")] = ev[:4] + ([f"... {len(ev)} in all"] if len(ev) > 4 else [])
+                await asyncio.sleep(0.3)
+            info["days_with_events"] = days
+            out[code] = info
+    return out
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--train", action="store_true", help="only train and publish, with the stored verdict")
@@ -488,6 +538,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         for slug, v in asyncio.run(probe_leagues()).items():
             print(f"{slug:7} {json.dumps(v, ensure_ascii=False)}")
         import europe_fixtures
+        print("Raw ESPN answers:", json.dumps(asyncio.run(probe_fixtures()), ensure_ascii=False))
         rep = asyncio.run(europe_fixtures.fetch(14))
         print("Europa/Conference League fixtures, next 14 days:", json.dumps(
             {"sources": rep["sources"], "how": rep.get("how"), "errors": rep["errors"],
