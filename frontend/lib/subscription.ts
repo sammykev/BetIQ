@@ -80,10 +80,7 @@ export function tierAtLeast(tier: string, needed: string): boolean {
 }
 
 // ── Free trial for new accounts (backend trial.py decides; admin → Users) ──
-export interface TrialConfig {
-  enabled: boolean; days: number; tier: "lite" | "premium"; since: string | null;
-  require_phone: boolean; per_ip_week: number;
-}
+export interface TrialConfig { enabled: boolean; days: number; tier: "lite" | "premium"; since: string | null }
 type TrialMeta = Meta & { trial?: unknown; trial_used?: unknown };
 
 /** Days left of an active trial (rounded up), or null when not on one. */

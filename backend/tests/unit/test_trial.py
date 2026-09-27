@@ -27,8 +27,7 @@ def admin(monkeypatch):
 
 def test_off_by_default(admin):
     c, _ = admin
-    assert c.get("/api/trial").json() == {"enabled": False, "days": 7, "tier": "premium", "since": None,
-                                          "require_phone": False, "per_ip_week": 3}
+    assert c.get("/api/trial").json() == {"enabled": False, "days": 7, "tier": "premium", "since": None}
 
 
 def test_switching_on_dates_it_and_keeps_the_date(admin):
@@ -41,7 +40,7 @@ def test_switching_on_dates_it_and_keeps_the_date(admin):
     assert c.get("/api/trial").json() == again
 
 
-@pytest.mark.parametrize("body", [{"days": 0}, {"days": 31}, {"days": "x"}, {"tier": "gold"}, {"per_ip_week": 0}])
+@pytest.mark.parametrize("body", [{"days": 0}, {"days": 31}, {"days": "x"}, {"tier": "gold"}])
 def test_rejects_bad_settings(admin, body):
     c, _ = admin
     assert c.put("/api/admin/trial", json=body).status_code == 400
@@ -76,49 +75,36 @@ CFG = {**trial.DEFAULTS, "enabled": True, "since": "2026-09-20T00:00:00+00:00"}
 
 
 def clerk(uid="user_new", email="Ok.Nkwocha+bets@Gmail.com", created=NOW - timedelta(days=1), meta=None,
-          email_status="verified", phones=()):
+          email_status="verified"):
     return {"id": uid, "created_at": int(created.timestamp() * 1000), "public_metadata": meta or {},
             "primary_email_address_id": "e1",
-            "email_addresses": [{"id": "e1", "email_address": email, "verification": {"status": email_status}}],
-            "phone_numbers": [{"phone_number": p, "verification": {"status": "verified"}} for p in phones]}
+            "email_addresses": [{"id": "e1", "email_address": email, "verification": {"status": email_status}}]}
 
 
-def check(user, cfg=CFG, device="device-123456", seen=None, ip=0):
+def check(user, cfg=CFG, seen=None):
     seen = seen or {}
-    return trial.check(user, cfg, device, lambda kind, d: seen.get((kind, d)), ip, NOW)
+    return trial.check(user, cfg, lambda d: seen.get(d), NOW)
 
 
 class TestCheck:
     def test_a_new_account_gets_it_until_sign_up_plus_days(self):
         v = check(clerk())
         assert v["expires"] == NOW - timedelta(days=1) + timedelta(days=7)
-        assert set(v["ids"]) == {"email", "device"}
+        assert v["email"] == trial.digest("email", "oknkwocha@gmail.com")
 
     def test_gmail_dots_and_tags_are_the_same_mailbox(self):
         assert trial.canonical_email("Ok.Nkwocha+bets@Gmail.com") == "oknkwocha@gmail.com"
         assert trial.canonical_email("o.k.nkwocha@googlemail.com") == "oknkwocha@gmail.com"
         assert trial.canonical_email("a.b+x@yahoo.com") == "a.b@yahoo.com"
-        first = check(clerk())["ids"]["email"]
-        seen = {("email", first): "user_old"}
+        seen = {check(clerk())["email"]: "user_old"}
         assert check(clerk(email="oknkwocha@gmail.com"), seen=seen) == {"reason": "email_used"}
-
-    def test_same_device_or_phone_or_too_many_from_one_network(self):
-        ids = check(clerk(phones=["+234 801 234 5678"]))["ids"]
-        assert check(clerk(email="new@yahoo.com"), seen={("device", ids["device"]): "user_old"}) == {"reason": "device_used"}
-        assert check(clerk(email="new@yahoo.com", phones=["2348012345678"]), device="other-device-1",
-                     seen={("phone", ids["phone"]): "user_old"}) == {"reason": "phone_used"}
-        assert check(clerk(), ip=3) == {"reason": "ip_limit"}
+        assert "expires" in check(clerk(email="someone.else@gmail.com"), seen=seen)
         # Its own earlier record doesn't count against it
-        assert "expires" in check(clerk(), seen={("device", ids["device"]): "user_new"})
+        assert "expires" in check(clerk(), seen={check(clerk())["email"]: "user_new"})
 
     def test_email_must_be_real_and_verified(self):
         assert check(clerk(email="x@mailinator.com")) == {"reason": "disposable_email"}
         assert check(clerk(email_status="unverified")) == {"reason": "email_unverified"}
-
-    def test_phone_when_required(self):
-        cfg = {**CFG, "require_phone": True}
-        assert check(clerk(), cfg=cfg) == {"reason": "needs_phone"}
-        assert "phone" in check(clerk(phones=["+2348012345678"]), cfg=cfg)["ids"]
 
     def test_not_for_old_accounts_plans_or_repeat(self):
         assert check(clerk(created=NOW - timedelta(days=30))) == {"reason": "account_too_old"}
@@ -157,8 +143,8 @@ def site(monkeypatch):
     return TestClient(main.app), fake, writes
 
 
-def start(c, uid, device="device-aaaaaa"):
-    return c.post("/api/trial/start", json={"device": device}, headers={"x-test-user": uid}).json()
+def start(c, uid):
+    return c.post("/api/trial/start", headers={"x-test-user": uid}).json()
 
 
 def test_start_records_and_refuses_a_second_account(site):
@@ -167,13 +153,13 @@ def test_start_records_and_refuses_a_second_account(site):
     assert got["started"] and got["tier"] == "premium" and got["days"] == 7
     assert writes[0][1]["trial"] is True and writes[0][1]["trial_used"] is True
     assert "someone" not in json.dumps(fake.kv)                        # identifiers are hashed
-    # Same mailbox, other device: refused, and told why; the account stops asking
-    again = start(c, "user_b", device="device-bbbbbb")
+    # Same mailbox (Gmail dots and +tag): refused, and told why; the account stops asking
+    again = start(c, "user_b")
     assert (again["started"], again["reason"]) == (False, "email_used") and "already had" in again["message"]
     assert writes[-1] == ("user_b", {"trial_used": True, "trial_denied": "email_used"})
-    # New mailbox, same device: refused
-    assert start(c, "user_c")["reason"] == "device_used"
-    assert fake.h[main.TRIAL_STATS_KEY] == {"started": 1, "refused:email_used": 1, "refused:device_used": 1}
+    # Another mailbox: its own trial
+    assert start(c, "user_c")["started"]
+    assert fake.h[main.TRIAL_STATS_KEY] == {"started": 2, "refused:email_used": 1}
 
 
 def test_start_when_off_or_unconfigured(site, monkeypatch):

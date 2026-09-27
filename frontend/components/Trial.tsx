@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useUser } from "@clerk/nextjs";
-import { Crown, Gift, Loader2, Phone, X } from "lucide-react";
+import { Crown, Gift, X } from "lucide-react";
 import { refreshAccess, TIER_NAMES } from "@/lib/access";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
 import { tierOf, trialDaysLeft, type TrialConfig } from "@/lib/subscription";
@@ -32,24 +32,6 @@ const store = {
   set: (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* ignore */ } },
 };
 
-/** This browser's id: a trial is recorded against it, so one device can't
- *  start trial after trial with new accounts. */
-function deviceId(): string {
-  let id = store.get("betiq:device");
-  if (!id) {
-    id = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID()
-      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
-    store.set("betiq:device", id);
-  }
-  return id;
-}
-
-type Clerkish = NonNullable<ReturnType<typeof useUser>["user"]>;
-type PhoneResource = Awaited<ReturnType<Clerkish["createPhoneNumber"]>>;
-const clerkError = (e: unknown) =>
-  (e as { errors?: { longMessage?: string; message?: string }[] })?.errors?.[0]?.longMessage
-  ?? (e as { errors?: { message?: string }[] })?.errors?.[0]?.message ?? "Something went wrong. Try again.";
-
 function Modal({ children, onClose }: { children: ReactNode; onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-[60] bg-ink/80 backdrop-blur-sm flex items-center justify-center p-4"
@@ -59,69 +41,10 @@ function Modal({ children, onClose }: { children: ReactNode; onClose: () => void
   );
 }
 
-/** Adds and verifies a phone number on the account (a text with a code). */
-function PhoneStep({ user, days, onVerified, onClose }: { user: Clerkish; days: number; onVerified: () => void; onClose: () => void }) {
-  const [number, setNumber] = useState("+234");
-  const [code, setCode] = useState("");
-  const [phone, setPhone] = useState<PhoneResource | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const send = async () => {
-    setBusy(true); setError(null);
-    try {
-      const wanted = number.replace(/[^\d+]/g, "");
-      const p = user.phoneNumbers.find(x => x.phoneNumber === wanted) ?? await user.createPhoneNumber({ phoneNumber: wanted });
-      await p.prepareVerification();
-      setPhone(p);
-    } catch (e) { setError(clerkError(e)); }
-    setBusy(false);
-  };
-  const verify = async () => {
-    if (!phone) return;
-    setBusy(true); setError(null);
-    try {
-      await phone.attemptVerification({ code: code.trim() });
-      await user.reload();
-      onVerified();
-    } catch (e) { setError(clerkError(e)); setBusy(false); }
-  };
-
-  return (
-    <Modal onClose={onClose}>
-      <span className="mx-auto w-14 h-14 rounded-full bg-brand-400/15 text-accent flex items-center justify-center"><Phone size={22} /></span>
-      <div>
-        <p className="display text-2xl text-n-0">Verify your phone</p>
-        <p className="text-sm text-n-300 mt-2">One free trial per phone number. Verify yours to start your {days} free days.</p>
-      </div>
-      {!phone ? (
-        <form className="space-y-2" onSubmit={e => { e.preventDefault(); send(); }}>
-          <input value={number} onChange={e => setNumber(e.target.value)} inputMode="tel" autoComplete="tel"
-            aria-label="Phone number" className="w-full rounded-lg bg-surface-sunken border border-n-800 px-3 py-2.5 text-center text-lg tnum text-n-0 outline-none focus:border-accent" />
-          <button type="submit" disabled={busy || number.replace(/\D/g, "").length < 8} className="btn-primary w-full">
-            {busy ? <Loader2 size={15} className="animate-spin" /> : null} Text me a code</button>
-        </form>
-      ) : (
-        <form className="space-y-2" onSubmit={e => { e.preventDefault(); verify(); }}>
-          <p className="text-xs text-n-400">We sent a code to {phone.phoneNumber}.</p>
-          <input value={code} onChange={e => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))} inputMode="numeric"
-            autoComplete="one-time-code" aria-label="Code" placeholder="123456"
-            className="w-full rounded-lg bg-surface-sunken border border-n-800 px-3 py-2.5 text-center text-2xl font-mono tracking-[0.3em] text-n-0 outline-none focus:border-accent" />
-          <button type="submit" disabled={busy || code.length < 6} className="btn-primary w-full">
-            {busy ? <Loader2 size={15} className="animate-spin" /> : null} Verify and start my trial</button>
-          <button type="button" onClick={() => { setPhone(null); setCode(""); }} className="text-xs text-n-400 hover:text-n-200">Use another number</button>
-        </form>
-      )}
-      {error && <p className="text-xs text-danger">{error}</p>}
-      <button onClick={onClose} className="text-xs text-n-500 hover:text-n-300">Not now</button>
-    </Modal>
-  );
-}
-
 type TrialAnswer = { started: boolean; tier?: "lite" | "premium"; days?: number; reason?: string; message?: string | null };
 
-/** Starts the trial for a new account (the backend decides: one per email,
- *  device and, if required, phone), and says so. */
+/** Starts the trial for a new account (the backend decides: one per email
+ *  address), and says so. */
 function TrialStarter() {
   const { user, isLoaded } = useUser();
   const authFetch = useAuthedFetch();
@@ -130,8 +53,7 @@ function TrialStarter() {
 
   const ask = useCallback(async () => {
     try {
-      const r = await authFetch(`${API}/api/trial/start`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ device: deviceId() }) });
+      const r = await authFetch(`${API}/api/trial/start`, { method: "POST" });
       const d: TrialAnswer | null = r.ok ? await r.json() : null;
       if (!d) return;
       if (d.started) {
@@ -140,7 +62,7 @@ function TrialStarter() {
       }
       // Said once per account: why there's no trial
       const noted = `betiq:trial-note:${user?.id}`;
-      if (!d.started && d.message && d.reason !== "needs_phone") {
+      if (!d.started && d.message) {
         if (store.get(noted)) return;
         store.set(noted, "1");
       }
@@ -176,9 +98,6 @@ function TrialStarter() {
         <button onClick={close} className="btn-primary w-full">Start exploring</button>
       </Modal>
     );
-  }
-  if (answer.reason === "needs_phone") {
-    return <PhoneStep user={user} days={cfg?.days ?? 7} onClose={close} onVerified={() => { close(); ask(); }} />;
   }
   return (
     <Modal onClose={close}>

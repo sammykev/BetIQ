@@ -6659,10 +6659,9 @@ async def set_paywall_state(body: Dict[str, Any], _admin: str = Depends(require_
 # ── Free trial for new accounts (trial.py) ──
 # The site asks for it (POST /api/trial/start) on a new account's visits; the
 # trial is written to the account's Clerk metadata, so every plan check
-# covers it, and recorded against its email, device and phone.
+# covers it, and recorded against its email.
 TRIAL_KEY = "betiq:config:trial"
-TRIAL_ID_KEY = "betiq:trial:{}:{}"          # kind, digest → the account that had the trial
-TRIAL_IP_KEY = "betiq:trial:ip:{}"          # hashed IP → trials started this week
+TRIAL_EMAIL_KEY = "betiq:trial:email:{}"    # hashed mailbox → the account that had the trial
 TRIAL_STATS_KEY = "betiq:trial:stats"
 
 
@@ -6685,9 +6684,8 @@ async def get_trial():
 
 @app.put("/api/admin/trial")
 async def put_trial(body: Dict[str, Any], _admin: str = Depends(require_admin)):
-    """Body: {enabled?, days? (1–30), tier? (lite|premium), require_phone?,
-    per_ip_week? (1–100)}. Switching it on starts it for accounts made from
-    now on."""
+    """Body: {enabled?, days? (1–30), tier? (lite|premium)}. Switching it on
+    starts it for accounts made from now on."""
     import trial
     try:
         cfg = trial.settings(body or {}, _trial_config())
@@ -6697,23 +6695,22 @@ async def put_trial(body: Dict[str, Any], _admin: str = Depends(require_admin)):
     if not r:
         raise HTTPException(status_code=503, detail="Couldn't save: the database isn't connected")
     r.set(TRIAL_KEY, json.dumps(cfg))
-    _audit(_admin, "trial", **{k: cfg[k] for k in ("enabled", "days", "tier", "require_phone", "per_ip_week")})
+    _audit(_admin, "trial", **{k: cfg[k] for k in ("enabled", "days", "tier")})
     return cfg
 
 
 @app.get("/api/admin/trial/stats")
 async def trial_stats(_admin: str = Depends(require_admin)):
-    """Trials started, and refused by reason (repeat email, device, phone…)."""
+    """Trials started, and refused by reason (email already used, throwaway…)."""
     r = _get_redis()
     raw = (r.hgetall(TRIAL_STATS_KEY) if r else None) or {}
     return {(k.decode() if isinstance(k, bytes) else str(k)): int(v) for k, v in raw.items()}
 
 
 @app.post("/api/trial/start")
-async def start_trial(request: Request, body: Dict[str, Any]):
+async def start_trial(request: Request):
     """Start the signed-in account's free trial if it qualifies (trial.check).
-    Body: {device} — the id the site keeps in this browser. Returns
-    {started, tier, days, expires} or {started: false, reason, message}."""
+    Returns {started, tier, days, expires} or {started: false, reason, message}."""
     import auth
     import trial
     if not auth.premium_enforced():
@@ -6728,10 +6725,7 @@ async def start_trial(request: Request, body: Dict[str, Any]):
     r = _get_redis()
     if not r:
         return {"started": False, "reason": "unavailable", "message": None}
-    device = str((body or {}).get("device") or "")[:100]
-    ip_key = TRIAL_IP_KEY.format(trial.digest("ip", security.client_ip(request)))
-    recorded = lambda kind, d: r.get(TRIAL_ID_KEY.format(kind, d))
-    verdict = trial.check(user, cfg, device, recorded, int(r.get(ip_key) or 0))
+    verdict = trial.check(user, cfg, lambda d: r.get(TRIAL_EMAIL_KEY.format(d)))
     reason = verdict.get("reason")
     if reason:
         if reason in trial.MESSAGES:
@@ -6745,10 +6739,7 @@ async def start_trial(request: Request, body: Dict[str, Any]):
                                                 "trial": True, "trial_used": True})
     if code != 200:
         raise HTTPException(status_code=503, detail="Couldn't start your trial just now. Try again.")
-    for kind, d in verdict["ids"].items():
-        r.set(TRIAL_ID_KEY.format(kind, d), uid, ex=trial.KEEP_DAYS * 86400)
-    r.incr(ip_key)
-    r.expire(ip_key, 7 * 86400)
+    r.set(TRIAL_EMAIL_KEY.format(verdict["email"]), uid, ex=trial.KEEP_DAYS * 86400)
     r.hincrby(TRIAL_STATS_KEY, "started", 1)
     print(f"[Trial] {uid}: {cfg['tier']} until {expires}")
     return {"started": True, "tier": cfg["tier"], "days": cfg["days"], "expires": expires}

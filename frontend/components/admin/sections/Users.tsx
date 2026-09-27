@@ -6,9 +6,7 @@ import { API, Btn, Card, Pill, Skeleton, Stat, Toggle, inputClass, num, useAdmin
 import { ColumnChart } from "../charts";
 
 const REFUSED: Record<string, string> = {
-  email_used: "email already used", device_used: "device already used", phone_used: "phone already used",
-  ip_limit: "network limit", disposable_email: "throwaway email", email_unverified: "email not verified",
-  needs_phone: "asked to verify phone",
+  email_used: "email already used", disposable_email: "throwaway email", email_unverified: "email not verified",
 };
 
 /** The free trial new accounts get (backend /api/trial, started by the site's /api/trial). */
@@ -56,35 +54,6 @@ function FreeTrial({ stats }: { stats?: { active: number; started: number; conve
           </select>
         </div>
       </div>
-      <div className="grid gap-2 grid-cols-1 sm:grid-cols-2">
-        {/* Phone numbers are a Clerk Pro feature: without them nobody could verify,
-            so the switch only shows to turn it off if it was ever turned on */}
-        {cfg.require_phone ? (
-          <Toggle on busy={busy === "phone"} onChange={() => save({ require_phone: false }, "phone")}
-            label="Require a verified phone" hint="Needs Clerk Pro: switch off unless you have it" />
-        ) : (
-          <div className="rounded-xl bg-surface-sunken px-3 py-2.5 text-sm">
-            <span className="block font-semibold text-n-0">Phone check: off</span>
-            <span className="block text-[11px] text-n-400">One trial per phone needs Clerk Pro (phone numbers)</span>
-          </div>
-        )}
-        <label className="flex items-center justify-between gap-3 rounded-xl bg-surface-sunken px-3 py-2.5 text-sm">
-          <span className="min-w-0">
-            <span className="block font-semibold text-n-0">Per network, per week</span>
-            <span className="block text-[11px] text-n-400">Trials from one IP address in 7 days</span>
-          </span>
-          <select value={cfg.per_ip_week ?? 3} disabled={busy !== null} onChange={e => save({ per_ip_week: Number(e.target.value) }, "ip")}
-            className="rounded-md bg-surface border border-n-800 px-2 py-1 text-xs text-n-200">
-            {[1, 2, 3, 5, 10, 25].map(n => <option key={n} value={n}>{n}</option>)}
-          </select>
-        </label>
-      </div>
-      {cfg.require_phone && (
-        <p className="rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-[11px] text-n-300">
-          Phone numbers are a Clerk Pro feature. Without them new users can&apos;t verify and won&apos;t get a trial:
-          switch this off unless your Clerk plan has them.
-        </p>
-      )}
       {stats && (
         <div className="grid grid-cols-3 gap-3">
           <Stat label="On a trial now" value={num(stats.active)} />
@@ -101,8 +70,8 @@ function FreeTrial({ stats }: { stats?: { active: number; started: number; conve
         </p>
       )}
       <p className="text-[11px] text-n-500">
-        One trial per email (Gmail dots and +tags count as the same address), per device and, if required, per phone; throwaway
-        email addresses get none. A new account gets the plan from sign-up for the days set, once, with no card; it starts on their first visit. Accounts made before
+        One trial per email address (Gmail dots and +tags count as the same address); it must be verified, and throwaway
+        addresses get none. A new account gets the plan from sign-up for the days set, once, with no card; it starts on their first visit. Accounts made before
         the trial was switched on don&apos;t get one. Paying for the same plan during a trial adds 30 days on top of what&apos;s left.
       </p>
     </div>
