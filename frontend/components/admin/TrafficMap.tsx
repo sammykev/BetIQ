@@ -7,8 +7,8 @@ import { Maximize2, Minimize2, LocateFixed } from "lucide-react";
 import { countryName, flag, num } from "./ui";
 import type { CityPoint } from "./WorldMap";
 
-// Where visitors are, on a real map you can pan and zoom (Leaflet, CARTO
-// street tiles). One bubble per city, sized by page views, and a pulsing pin
+// Where visitors are, on a real map you can pan and zoom (Leaflet,
+// OpenStreetMap tiles: no key needed; darkened with a filter in dark mode). One bubble per city, sized by page views, and a pulsing pin
 // for everyone on the site in the last few minutes.
 //
 // Locations are what Vercel reports for a visitor's connection: city level,
@@ -19,17 +19,15 @@ import type { CityPoint } from "./WorldMap";
 
 const MAX_ZOOM = 12;
 const UNCERTAINTY_M = 11_000;
-const TILES = {
-  light: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
-  dark: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
-};
-const ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>';
+// CARTO's basemaps now need an API key; OpenStreetMap's own tiles don't (fine
+// for an admin-only map's light use, with the attribution shown)
+const TILES = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+const ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
 
 const css = (name: string) => {
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return v ? `rgb(${v.split(/\s+/).join(",")})` : "#65a30d";
 };
-const isDark = () => document.documentElement.classList.contains("dark");
 
 export function TrafficMap({ cities, live = [] }: { cities: CityPoint[]; live?: { lat: number | null; lon: number | null }[] }) {
   const box = useRef<HTMLDivElement>(null);
@@ -42,8 +40,6 @@ export function TrafficMap({ cities, live = [] }: { cities: CityPoint[]; live?: 
   // Create the map once (Leaflet needs the browser, so it's loaded here)
   useEffect(() => {
     let cancelled = false;
-    let tiles: import("leaflet").TileLayer | null = null;
-    let observer: MutationObserver | null = null;
     (async () => {
       const L = (await import("leaflet")).default;
       if (cancelled || !holder.current || map.current) return;
@@ -51,17 +47,14 @@ export function TrafficMap({ cities, live = [] }: { cities: CityPoint[]; live?: 
         center: [15, 10], zoom: 2, minZoom: 2, maxZoom: MAX_ZOOM, worldCopyJump: true,
         zoomSnap: 0.5, attributionControl: true, preferCanvas: true,
       });
-      tiles = L.tileLayer(isDark() ? TILES.dark : TILES.light, { attribution: ATTRIBUTION, subdomains: "abcd", maxZoom: MAX_ZOOM }).addTo(m);
-      // Follow the admin's light/dark switch
-      observer = new MutationObserver(() => tiles?.setUrl(isDark() ? TILES.dark : TILES.light));
-      observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+      // The dark look is a CSS filter on these tiles (below), so it follows the theme switch by itself
+      L.tileLayer(TILES, { attribution: ATTRIBUTION, maxZoom: MAX_ZOOM, className: "betiq-tiles" }).addTo(m);
       layers.current = { cities: L.layerGroup().addTo(m), live: L.layerGroup().addTo(m) };
       map.current = m;
       setReady(true);
     })();
     return () => {
       cancelled = true;
-      observer?.disconnect();
       map.current?.remove();
       map.current = null;
       layers.current = null;
@@ -163,6 +156,7 @@ export function TrafficMap({ cities, live = [] }: { cities: CityPoint[]; live?: 
           border:2px solid #fff; box-shadow:0 0 0 0 var(--pin); animation:betiq-pulse 1.8s infinite; }
         @keyframes betiq-pulse { 0% { box-shadow:0 0 0 0 var(--pin); } 100% { box-shadow:0 0 0 14px transparent; } }
         .leaflet-container { font: inherit; background: rgb(var(--surface-sunken, var(--surface))); }
+        .dark .betiq-tiles { filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.9) saturate(0.35); }
       `}</style>
     </div>
   );
