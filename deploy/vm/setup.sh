@@ -50,7 +50,8 @@ grep '^DOMAIN=' .env
 
 echo "==> Auto-deploy: check GitHub for new commits every 5 minutes"
 line="*/5 * * * * bash $HERE/update.sh >> $HOME/betiq-deploy.log 2>&1"
-( crontab -l 2>/dev/null | grep -v 'deploy/vm/update.sh' ; echo "$line" ) | crontab -
+# (A new server has no crontab yet: `crontab -l` fails, which must not stop the script)
+{ crontab -l 2>/dev/null | grep -v 'deploy/vm/update.sh' || true; echo "$line"; } | crontab -
 
 if grep -q '^FOOTBALL_DATA_API_KEY=$' .env; then
   echo
