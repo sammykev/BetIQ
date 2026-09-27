@@ -266,3 +266,38 @@ class TestRefresh:
         assert saved["status"] == "won" and saved["legs"][0]["status"] == "won"
         assert "u1" not in redis.smembers(main.TICKETS_OPEN_KEY)
         assert redis.hgetall(main.TICKETS_STATS_KEY)["won"] == 1
+
+    def test_live_runs_ask_espn_only_and_settle_on_new_scores(self, redis, monkeypatch):
+        import curl_cffi.requests as cr
+        d = date.today().isoformat()
+        started = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%H:%M")
+        if started > datetime.now(timezone.utc).strftime("%H:%M"):
+            d = (date.today() - timedelta(days=1)).isoformat()
+        day = {}
+        matchday.merge_predictions(day, [pred(d=d, t=started)], datetime.now(timezone.utc) - timedelta(hours=2))
+        main._md_save(redis, d, day)
+
+        class Session:
+            def __init__(self, *a, **k): pass
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+        monkeypatch.setattr(cr, "AsyncSession", Session)
+        score = {"hg": 1}
+
+        async def fetch_espn(client, days, slugs):
+            return {"results": [{"date": d, "home": "Arsenal", "away": "Chelsea", "status": "live", "minute": 50,
+                                 "hg": score["hg"], "ag": 0}], "requests": 1, "errors": []}
+        monkeypatch.setattr(results_feed, "fetch_espn", fetch_espn)
+        monkeypatch.setattr(results_feed, "csv_results", lambda days: pytest.fail("live runs don't read the CSVs"))
+        settles = []
+        monkeypatch.setattr(main, "_settle_tickets", lambda r: settles.append(1) or {"settled": 0})
+        monkeypatch.setattr(main, "_md_last_settle", [0.0])
+
+        first = asyncio.run(main._refresh_matchdays(1, "live"))
+        assert first["updated"] == 1 and len(settles) == 1          # a new score: settle
+        again = asyncio.run(main._refresh_matchdays(1, "live"))
+        assert again["updated"] == 0 and again["tickets"] == {"skipped": "no new scores"} and len(settles) == 1
+        score["hg"] = 2
+        asyncio.run(main._refresh_matchdays(1, "live"))
+        assert len(settles) == 2                                      # the next goal settles again
+        assert main.MD_LIVE_MINUTES == 3

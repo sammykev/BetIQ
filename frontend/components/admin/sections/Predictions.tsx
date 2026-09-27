@@ -482,7 +482,7 @@ export function PredictionsSection() {
       </Card>
 
       <Card title="Results & booking codes" icon={<Target size={15} />}
-        subtitle="Scores come from ESPN every 15 minutes while matches are on; every code a signed-in user makes is settled from them"
+        subtitle="Scores come from ESPN every 3 minutes while matches are on; every code a signed-in user makes is settled from them"
         action={<Btn onClick={async () => { await post("/api/admin/jobs/matchday_sweep/run"); flash("ok", "Checking the last 7 days' scores…"); }}>Check now</Btn>}>
         {!data ? <Skeleton rows={2} /> : <TicketsAndResults info={data.matchday} tickets={ticketStats} />}
       </Card>

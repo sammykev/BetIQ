@@ -2547,7 +2547,9 @@ async def model_metrics(_admin: str = Depends(require_admin)):
 MD_KEY = "betiq:md:{}"
 MD_TTL = 120 * 86400
 MD_DAYS_BACK, MD_DAYS_AHEAD = 7, 14      # what the site's date strip shows
-MD_LIVE_MINUTES = 15                      # live scores: how often while matches are on
+MD_LIVE_MINUTES = 3                       # live scores: how often while matches are on
+MD_SETTLE_MINUTES = 15                    # live runs settle tickets at least this often (or on a new score)
+_md_last_settle: List[float] = [0.0]
 _md_status: Dict[str, Any] = {"at": None, "trigger": None, "report": None}
 _md_read_cache: Dict[str, Tuple[float, Dict]] = {}
 
@@ -2668,11 +2670,14 @@ async def _refresh_matchdays(days_back: int = 1, trigger: str = "schedule") -> D
             except Exception as e:
                 report["errors"].append(f"ESPN: {type(e).__name__}")
         near = {(date.fromisoformat(d) + timedelta(days=o)).isoformat() for d in need for o in (-1, 0, 1)}
-        try:
-            csv = await asyncio.to_thread(results_feed.csv_results, near)
-        except Exception as e:
-            csv = []
-            report["errors"].append(f"CSV: {type(e).__name__}")
+        csv = []
+        # The league CSVs arrive a day or two after a match: the 3-hourly sweep
+        # reads them; the 3-minute live runs only ask ESPN
+        if trigger != "live":
+            try:
+                csv = await asyncio.to_thread(results_feed.csv_results, near)
+            except Exception as e:
+                report["errors"].append(f"CSV: {type(e).__name__}")
         for d, entries in need.items():
             day, changed = days[d], False
             matched = set()
@@ -2687,10 +2692,16 @@ async def _refresh_matchdays(days_back: int = 1, trigger: str = "schedule") -> D
             if changed:
                 _md_save(r, d, day)
     report["errors"] = report["errors"][:20]
-    try:
-        report["tickets"] = await asyncio.to_thread(_settle_tickets, r)
-    except Exception as e:
-        report["tickets"] = {"error": str(e)}
+    # Settling reads every account with open tickets (a Redis command each):
+    # live runs do it when a score changed, or every MD_SETTLE_MINUTES
+    if trigger == "live" and not report["updated"] and time.time() - _md_last_settle[0] < MD_SETTLE_MINUTES * 60:
+        report["tickets"] = {"skipped": "no new scores"}
+    else:
+        _md_last_settle[0] = time.time()
+        try:
+            report["tickets"] = await asyncio.to_thread(_settle_tickets, r)
+        except Exception as e:
+            report["tickets"] = {"error": str(e)}
     _md_status.update(at=now.isoformat(timespec="seconds"), trigger=trigger, report=report)
     if report["updated"]:
         print(f"[MatchDay] {trigger}: {report['updated']} results updated over {report['dates']}")
