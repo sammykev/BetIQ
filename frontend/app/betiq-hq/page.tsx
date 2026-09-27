@@ -79,6 +79,17 @@ export default function AdminPage() {
     flash: (type, text) => { setToast({ type, text }); setTimeout(() => setToast(null), 3500); },
   }), [adminFetch]);
 
+  // Problems worth a red banner (backend /api/admin/alerts): the database
+  // missing, a setting's name broken in .env, live scores stalled
+  const [alerts, setAlerts] = useState<{ level: "danger" | "warn"; title: string; detail: string }[]>([]);
+  useEffect(() => {
+    if (!authed) return;
+    const load = () => api.get("/api/admin/alerts").then(d => setAlerts(d?.alerts ?? []));
+    load();
+    const t = setInterval(load, 60_000);
+    return () => clearInterval(t);
+  }, [authed, api, reloadKey]);
+
   // The open tab lives in the URL (#traffic), so reloading keeps it
   useEffect(() => {
     const fromHash = () => {
@@ -189,6 +200,21 @@ export default function AdminPage() {
             ))}
           </nav>
         </header>
+
+        {alerts.length > 0 && (
+          <div className="max-w-6xl mx-auto px-4 pt-4 space-y-2" role="alert">
+            {alerts.map(a => (
+              <div key={a.title} className={clsx("rounded-xl border px-4 py-3 flex gap-3",
+                a.level === "danger" ? "border-danger/50 bg-danger/10" : "border-warn/40 bg-warn/10")}>
+                <AlertTriangle size={17} className={clsx("shrink-0 mt-0.5", a.level === "danger" ? "text-danger" : "text-warn")} />
+                <div className="min-w-0">
+                  <p className={clsx("text-sm font-bold", a.level === "danger" ? "text-danger" : "text-warn")}>{a.title}</p>
+                  <p className="text-xs text-n-200 mt-0.5 break-words">{a.detail}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
 
         <main className="max-w-6xl mx-auto px-4 py-5" key={`${tab}-${reloadKey}`}>
           {section}

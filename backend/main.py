@@ -61,13 +61,53 @@ def _within_window(match_date: str, today: Optional[date] = None) -> bool:
     last = (today or date.today()) + timedelta(days=PREDICTION_DAYS)
     return not match_date or match_date <= last.isoformat()
 
+# Settings the server needs by name; a name with stray characters around it
+# in .env (e.g. "4145r1546UPSTASH_REDIS_URL") silently leaves it unset
+KNOWN_SETTINGS = ("UPSTASH_REDIS_URL", "CLERK_ISSUER", "CLERK_SECRET_KEY", "CLERK_AUTHORIZED_PARTIES",
+                  "ADMIN_SECRET", "ADMIN_USER_IDS", "TRAFFIC_KEY", "FOOTBALL_DATA_API_KEY", "FRONTEND_URL",
+                  "APIFOOTBALL_KEY", "ODDS_API_KEY", "GROQ_API_KEY", "PAYSTACK_SECRET_KEY")
+_STARTED_AT = time.time()
+
+
+def _mangled_settings() -> List[Tuple[str, str]]:
+    """[(name found in the environment, the setting it was meant to be)] for
+    known settings that are unset while a name containing them is set."""
+    out = []
+    for name in sorted(os.environ):
+        for known in KNOWN_SETTINGS:
+            if name != known and known in name and not os.getenv(known) and len(name) - len(known) <= 24:
+                out.append((name, known))
+    return out
+
+
 # Redis client — only active when UPSTASH_REDIS_URL is set
 _redis = None
+_redis_problem: Dict[str, Any] = {"error": None, "retry_at": 0.0, "warned": False}
+REDIS_RETRY_SECONDS = 30
+
+
+def _redis_missing_reason() -> str:
+    """Why there's no database, in words the admin can act on."""
+    if not REDIS_URL:
+        bad = [f for f, known in _mangled_settings() if known == "UPSTASH_REDIS_URL"]
+        if bad:
+            return (f'UPSTASH_REDIS_URL isn\'t set: .env has "{bad[0]}" instead (stray characters before the '
+                    "name). Fix that line, then run: sudo docker compose up -d")
+        return "UPSTASH_REDIS_URL isn't set in the server's .env: nothing is saved or read (tickets, results, settings)."
+    return f"Can't connect to the database: {_redis_problem['error'] or 'unknown error'}"
+
+
 def _get_redis():
     global _redis
     if _redis is not None:
         return _redis
     if not REDIS_URL:
+        if not _redis_problem["warned"]:
+            print(f"[Redis] WARNING: {_redis_missing_reason()}")
+            _redis_problem["warned"] = True
+        return None
+    # A failing database isn't asked again on every request: every 30s
+    if time.time() < _redis_problem["retry_at"]:
         return None
     try:
         import redis as redis_lib
@@ -79,9 +119,12 @@ def _get_redis():
                                     health_check_interval=30, retry_on_timeout=True)
         _redis.ping()
         print("[Redis] Connected to Upstash Redis.")
+        _redis_problem.update(error=None, retry_at=0.0)
         return _redis
     except Exception as e:
-        print(f"[Redis] Could not connect: {e}")
+        print(f"[Redis] WARNING: could not connect: {e}")
+        _redis = None
+        _redis_problem.update(error=f"{type(e).__name__}: {str(e)[:160]}", retry_at=time.time() + REDIS_RETRY_SECONDS)
         return None
 
 app = FastAPI(title="Sport Bet Predictions API", version="2.0.0")
@@ -220,6 +263,37 @@ def require_feature(fid: str):
     async def dependency(request: Request) -> Optional[str]:
         return await check_feature(request, fid)
     return dependency
+
+
+LIVE_STALE_MINUTES = 15
+
+
+@app.get("/api/admin/alerts")
+async def admin_alerts(_admin: str = Depends(require_admin)):
+    """Problems the admin page shows as a red banner: the database missing or
+    unreachable, settings whose names are broken in .env, live scores stalled."""
+    alerts: List[Dict[str, str]] = []
+    if _get_redis() is None:
+        alerts.append({"level": "danger", "title": "Database not connected",
+                       "detail": _redis_missing_reason() + " The site shows no tickets, results or settings until it's fixed; "
+                                 "the data itself is safe in Upstash."})
+    for found, meant in _mangled_settings():
+        if meant != "UPSTASH_REDIS_URL":
+            alerts.append({"level": "warn", "title": f"{meant} isn't set",
+                           "detail": f'.env has "{found}": stray characters around the name. Fix that line, '
+                                     "then run: sudo docker compose up -d"})
+    up_minutes = (time.time() - _STARTED_AT) / 60
+    last = _md_status.get("at")
+    try:
+        age = (datetime.now(timezone.utc) - datetime.fromisoformat(last)).total_seconds() / 60 if last else None
+    except ValueError:
+        age = None
+    if up_minutes > 10 and (age is None or age > LIVE_STALE_MINUTES):
+        why = _md_status.get("error")
+        alerts.append({"level": "warn", "title": "Live scores aren't updating",
+                       "detail": (f"Last score check: {last or 'none since the server started'}"
+                                  + (f" ({why})" if why else "") + ". It should run every 3 minutes.")})
+    return {"alerts": alerts}
 
 
 _clerk_keys_cache: List[Any] = [0.0, None]
@@ -6336,6 +6410,9 @@ async def startup():
         faulthandler.register(signal.SIGUSR1, all_threads=True)
     except Exception:
         pass
+    for found, meant in _mangled_settings():
+        print(f'[Settings] WARNING: .env has "{found}" — did you mean "{meant}"? It is unset until the name is fixed.')
+    _get_redis()                # says loudly, right away, if the database is missing
     _load_h2h_cache()
     _load_predictions_cache()   # serve cached predictions instantly while pipeline rebuilds
     asyncio.create_task(_link_on_startup())  # every deploy re-links to SportyBet straight away
