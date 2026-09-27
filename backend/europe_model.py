@@ -515,16 +515,16 @@ async def probe_fixtures(days: int = 21) -> Dict[str, Any]:
             info["default"] = {"status": r.status_code, "season": league.get("season"),
                                "events": events(page)[:6],
                                "calendar_next": [d for d in flat if d >= today.isoformat()][:8]}
-            days = {}
-            for i in range(days_ahead := days):
+            by_day = {}
+            for i in range(days):
                 d = today + pd.Timedelta(days=i)
                 r = await session.get(f"{intl.ESPN_BASE}/{slug}/scoreboard", headers=intl._ESPN_HEADERS,
                                       params={"dates": f"{d:%Y%m%d}"})
                 ev = events(r.json()) if r.status_code == 200 else [f"HTTP {r.status_code}"]
                 if ev:
-                    days[d.strftime("%Y-%m-%d")] = ev[:4] + ([f"... {len(ev)} in all"] if len(ev) > 4 else [])
+                    by_day[d.strftime("%Y-%m-%d")] = ev[:4] + ([f"... {len(ev)} in all"] if len(ev) > 4 else [])
                 await asyncio.sleep(0.3)
-            info["days_with_events"] = days
+            info["days_with_events"] = by_day
             out[code] = info
     return out
 
