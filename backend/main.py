@@ -2752,6 +2752,7 @@ async def data_status(_admin: str = Depends(require_admin)):
         "international_set_pieces": {**_intl_sp_info, "active": _intl_set_pieces is not None,
                                      "shots_active": _intl_shots is not None},
         "shots": {**_shots_info, "active": _shots is not None},
+        "shots_blend": _shot_blend,
         "referees": _referee_status(),
         "matchday": _md_status,
         "club_cups": _club_cups_status(),
@@ -4322,6 +4323,7 @@ ADMIN_JOBS = {
     "football_sync": ("Download league results (football-data.co.uk)", lambda: _manual_football_sync()),
     "matchday_sweep": ("Scores and grades for the last 7 days", lambda: _refresh_matchdays(MD_DAYS_BACK, "manual")),
     "daily_slips": ("Rebuild today's daily odds slips", lambda: _build_daily(date.today().isoformat(), force=True)),
+    "shot_blend": ("Score our shot lines against SportyBet's", lambda: _shot_blend_job()),
     "set_pieces_reload": ("Reload corners, cards & shots models (after the nightly checks)",
                           lambda: _reload_set_pieces()),
 }
@@ -5639,9 +5641,13 @@ def _with_priced_set_pieces(pred: Dict, event: Optional[Dict]) -> Dict:
     prices for whichever of the two our models don't cover for it
     (internationals, clubs outside the league data) — set_pieces.from_prices."""
     have = pred.get("set_pieces") or {}
-    if not event or ("corners" in have and "bookings" in have):
+    if not event:
         return pred
-    priced = set_pieces.from_prices(event, getattr(_set_pieces, "size", None)) or {}
+    priced = {} if ("corners" in have and "bookings" in have) else (
+        set_pieces.from_prices(event, getattr(_set_pieces, "size", None)) or {})
+    # Shot lines too, for national teams we have too little data on
+    if str(pred.get("league") or "").startswith("INT"):
+        priced.update(shots.from_prices(event, getattr(_intl_shots, "size", None)) or {})
     extra = {k: v for k, v in priced.items() if k not in have}
     return {**pred, "set_pieces": {**have, **extra}} if extra else pred
 
@@ -5947,6 +5953,14 @@ def _load_international_set_pieces() -> None:
     frame = international_stats.rows_frame(data)
     _intl_shots = None
     if any((shot_verdict.get("use") or {}).values()) and shot_verdict.get("params"):
+        # The check chose to start teams' shot ratings from their Elo: the same
+        # ratings here, from the synced results history
+        if (shot_verdict["params"] or {}).get("elo_weight"):
+            import intl_elo
+            import football_data_sync
+            elo = intl_elo.EloTimeline.from_file(football_data_sync.INTERNATIONAL_PATH)
+            set_pieces.STRENGTH = elo.strength if elo else None
+            _intl_sp_info["elo"] = {"teams": elo.teams()} if elo else {"error": "no results history file"}
         _intl_shots = shots.ShotModel.fit(frame.dropna(subset=list(shots.ShotModel.REQUIRED)), shot_verdict["params"])
     use = verdict.get("use") or {}
     if not any(use.values()) or not verdict.get("params"):
@@ -5973,7 +5987,63 @@ def _international_set_pieces(fx: Dict, referee: Optional[str] = None,
         shot_use = (_intl_sp_info.get("shots_check") or {}).get("use") or {}
         got = _intl_shots.markets(home, away, fx.get("league")) or {}
         keep.update({k: v for k, v in got.items() if shot_use.get(k)})
+    # SportyBet's own shot lines, where it prices them: the fallback when we
+    # have too little data on a side, mixed with ours when the settled
+    # comparison (_shot_blend) showed the mix predicts better
+    try:
+        priced = shots.from_prices(_linked_event(fx), getattr(_intl_shots, "size", None)) or {}
+    except Exception:
+        priced = {}
+    weight = float((_shot_blend.get("weights") or {}).get("international") or 0.0)
+    for stat, line in priced.items():
+        if stat not in keep:
+            keep[stat] = line
+        elif weight:
+            keep[stat] = shots.blend(keep[stat], line, weight)
     return keep or None
+
+
+# ── Our shot lines vs SportyBet's (shots.blend_report) ──
+SHOT_BLEND_KEY = "betiq:shots:blend"
+SHOT_BLEND_DAYS = 90
+_shot_blend: Dict[str, Any] = {"weights": {}, "report": None, "at": None}
+
+
+def _restore_shot_blend() -> None:
+    r = _get_redis()
+    if r and not _shot_blend.get("at"):
+        try:
+            _shot_blend.update(json.loads(r.get(SHOT_BLEND_KEY) or "{}"))
+        except Exception:
+            pass
+
+
+async def _shot_blend_job() -> Dict[str, Any]:
+    try:
+        return await asyncio.to_thread(_refresh_shot_blend)
+    except Exception as e:
+        print(f"[Shots] vs SportyBet failed: {e}")
+        return {"error": str(e)}
+
+
+def _refresh_shot_blend() -> Dict[str, Any]:
+    """Score our shot lines against SportyBet's on the settled matches of the
+    last SHOT_BLEND_DAYS days and choose, per group, how much of SportyBet's
+    to mix in (none unless the mix predicted better on enough lines)."""
+    r = _get_redis()
+    if not r:
+        return {"skipped": "no Redis"}
+    today = date.today()
+    days = _md_many(r, [(today - timedelta(days=i)).isoformat() for i in range(1, SHOT_BLEND_DAYS + 1)])
+    report = shots.blend_report(e for day in days.values() for e in day.values())
+    _shot_blend.update(weights={g: v["chosen"] for g, v in report.items()}, report=report,
+                       at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    try:
+        r.set(SHOT_BLEND_KEY, json.dumps(_shot_blend))
+    except Exception:
+        pass
+    print(f"[Shots] vs SportyBet: {json.dumps(report)}")
+    return report
 
 
 def _bookable_markets():
@@ -6413,6 +6483,7 @@ async def startup():
     for found, meant in _mangled_settings():
         print(f'[Settings] WARNING: .env has "{found}" — did you mean "{meant}"? It is unset until the name is fixed.')
     _get_redis()                # says loudly, right away, if the database is missing
+    _restore_shot_blend()
     _load_h2h_cache()
     _load_predictions_cache()   # serve cached predictions instantly while pipeline rebuilds
     asyncio.create_task(_link_on_startup())  # every deploy re-links to SportyBet straight away
@@ -6433,6 +6504,8 @@ async def startup():
     scheduler.add_job(_matchday_sweep, "interval", hours=3, id="matchday_sweep",
                       max_instances=1, coalesce=True)
     scheduler.add_job(_daily_job, "cron", hour=6, minute=5, id="daily_slips")   # 07:05 in Lagos
+    scheduler.add_job(_shot_blend_job, "interval", hours=6, id="shot_blend",
+                      next_run_time=datetime.now() + timedelta(minutes=15))
     scheduler.start()
 
 

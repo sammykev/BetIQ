@@ -19,9 +19,23 @@ import sys
 from datetime import datetime, timezone
 
 import international_stats
+import intl_elo
 import model_store
 import set_pieces
 import shots
+
+
+def load_elo():
+    """National-team Elo from the latest results history (the repository's
+    copy if the download fails)."""
+    import urllib.request
+    import football_data_sync
+    try:
+        with urllib.request.urlopen(football_data_sync.INTERNATIONAL_URL, timeout=60) as resp:
+            return intl_elo.EloTimeline.from_csv_text(resp.read().decode("utf-8"))
+    except Exception as e:
+        print(f"Results history download failed ({e}); using the local copy")
+        return intl_elo.EloTimeline.from_file(football_data_sync.INTERNATIONAL_PATH)
 
 
 def main() -> int:
@@ -43,9 +57,20 @@ def main() -> int:
     frame = international_stats.rows_frame(data)
     verdict = set_pieces.tune_international(frame)
     data["model"] = {**verdict, "at": datetime.now(timezone.utc).isoformat()}
-    # Shots and shots on target: the same test, on the matches with shot counts
+    # Shots and shots on target: the same test, on the matches with shot counts,
+    # also trying each team's Elo (from the full results history) as where its
+    # ratings start: the check keeps it only if it scores better unseen
     shot_frame = frame.dropna(subset=list(shots.ShotModel.REQUIRED)) if not frame.empty else frame
-    shot_verdict = set_pieces.tune_international(shot_frame, model_cls=shots.ShotModel)
+    elo = load_elo()
+    set_pieces.STRENGTH = elo.strength if elo else None
+    try:
+        shot_verdict = set_pieces.tune_international(shot_frame, model_cls=shots.ShotModel)
+    finally:
+        set_pieces.STRENGTH = None
+    if elo:
+        rated = sum(1 for rec in shot_frame.itertuples(index=False)
+                    if elo.strength(rec.HomeTeam, rec.Date) is not None and elo.strength(rec.AwayTeam, rec.Date) is not None)
+        shot_verdict["elo_coverage"] = {"teams": elo.teams(), "matches_rated": rated, "matches": int(len(shot_frame))}
     data["shots_model"] = {**shot_verdict, "at": datetime.now(timezone.utc).isoformat()}
     international_stats.save(r, data)
     print("Model check:", json.dumps(data["model"], indent=1, default=str))

@@ -66,6 +66,12 @@ def snapshot(pred: Dict) -> Dict[str, Any]:
         if isinstance(over, (int, float)):
             out[f"{stat}_mean"] = _num(node.get("mean"))
             out[f"{stat}_over"] = _num(over)
+    # Stats taken from (or mixed with) SportyBet's lines: shots.blend_report
+    # compares only our model's own numbers with SportyBet's
+    marked = {stat: ("sportybet" if node.get("source") == "sportybet" else "blend")
+              for stat, node in sp.items() if isinstance(node, dict) and (node.get("source") == "sportybet" or node.get("blend"))}
+    if marked:
+        out["not_model"] = marked
     ref = pred.get("referee")
     if isinstance(ref, dict) and ref.get("name"):
         out["referee"] = ref["name"]

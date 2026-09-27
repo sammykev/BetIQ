@@ -21,6 +21,9 @@ on:
       cup_minutes:
         description: "Minutes of European/cup collection"
         default: "100"
+      af_budget:
+        description: "API-Football requests this run may use (0 on extra runs: the live-score backup shares the free plan's 100 a day)"
+        default: "60"
       probe:
         description: "Only show what ESPN returns per European/cup competition"
         type: boolean
@@ -57,6 +60,7 @@ jobs:
           UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
           APIFOOTBALL_KEY: ${{ secrets.APIFOOTBALL_KEY }}
           INTL_STATS_MINUTES: ${{ github.event.inputs.minutes || '60' }}
+          APIFOOTBALL_DAILY_BUDGET: ${{ github.event.inputs.af_budget || '60' }}
         run: python collect_international_stats.py
 
       # European competitions and domestic cups for the club model, then a

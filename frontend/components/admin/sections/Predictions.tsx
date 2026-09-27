@@ -170,9 +170,27 @@ function MarketAccuracy() {
 
 /** Shots and shots-on-target markets: club model (checked on each league
  * data refresh) and international (checked nightly). */
-function Shots({ club, intl }: { club: any; intl: any }) {
+/** One line of the Elo / SportyBet comparisons: lower Brier is better. */
+function Versus({ label, ours, theirs, verdict, names = ["before", "after"] }: {
+  label: string; ours?: number | null; theirs?: number | null; verdict: string; names?: [string, string];
+}) {
+  return (
+    <p className="text-xs text-n-300">
+      <span className="font-semibold text-n-0">{label}:</span> {verdict}
+      {typeof ours === "number" && typeof theirs === "number" && (
+        <span className="text-n-500 tnum"> · {names[0]} {ours.toFixed(4)}, {names[1]} {theirs.toFixed(4)} (error score: lower is better)</span>
+      )}
+    </p>
+  );
+}
+
+function Shots({ club, intl, blend }: { club: any; intl: any; blend?: any }) {
   const check = club?.check ?? {};
   const ic = intl?.shots_check ?? {};
+  const elo = ic.elo;
+  const without = ic.holdout_without_elo ?? {};
+  const teamSot = (h: any) => ["sot_home", "sot_away"].reduce((t, k) => t + (h?.[k]?.model ?? 0), 0);
+  const bi = blend?.report?.international;
   const withShots = intl?.dataset?.with_shots ?? 0;
   return (
     <div className="space-y-3">
@@ -187,6 +205,22 @@ function Shots({ club, intl }: { club: any; intl: any }) {
       {Object.keys(check).length > 0 && <StatChecks scores={check} use={club?.use ?? {}} />}
       {ic.reason && <p className="text-xs text-n-400">Internationals: {ic.reason}.</p>}
       {ic.holdout && Object.keys(ic.holdout).length > 0 && <StatChecks scores={ic.holdout} use={ic.use ?? {}} />}
+      {elo && (
+        <Versus label="Elo head start (internationals)"
+          verdict={elo.chosen ? `in use at weight ${elo.chosen}: it predicted unseen matches better` : "tested, not better than without it: off"}
+          ours={elo.chosen && without.sot_home ? teamSot(without) : null}
+          theirs={elo.chosen && without.sot_home ? teamSot(ic.holdout) : null} />
+      )}
+      {ic.elo_coverage && (
+        <p className="text-[11px] text-n-500">Elo known for both sides in {num(ic.elo_coverage.matches_rated)} of {num(ic.elo_coverage.matches)} matches with shots.</p>
+      )}
+      {bi && (
+        <Versus label="SportyBet's shot lines (internationals)"
+          verdict={bi.chosen ? `mixed in at ${Math.round(bi.chosen * 100)}%: it predicted ${num(bi.lines)} settled lines better`
+            : bi.reason ?? `ours alone did at least as well on ${num(bi.lines)} settled lines: used only where we lack data`}
+          ours={bi.brier?.["0.0"]} theirs={bi.chosen ? bi.brier?.[String(bi.chosen)] : bi.brier?.["1.0"]}
+          names={["ours", bi.chosen ? "mixed" : "SportyBet's"]} />
+      )}
     </div>
   );
 }
@@ -546,7 +580,7 @@ export function PredictionsSection() {
 
       <Card title="Shots & shots on target" icon={<Target size={15} />}
         subtitle="Each stat is offered only where it beat the league average on matches the model hadn't seen; lower score is better">
-        {!data ? <Skeleton rows={2} /> : <Shots club={data.shots} intl={data.international_set_pieces} />}
+        {!data ? <Skeleton rows={2} /> : <Shots club={data.shots} intl={data.international_set_pieces} blend={data.shots_blend} />}
       </Card>
 
       <Card title="Results & booking codes" icon={<Target size={15} />}

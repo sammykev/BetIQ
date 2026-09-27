@@ -37,6 +37,13 @@ GAMMA = 0.6         # damping of the combined team ratings (tuned walk-forward o
 TEAM_GAMMA = 1.0    # the same for one team's own corners (tuned walk-forward on 2023-24)
 LEAGUE_DECAY = 0.995
 MIN_MATCHES = 6     # per team before we price its matches
+# Strength prior (internationals, intl_elo.py): a team's ratings start from
+# exp(±ELO_WEIGHT × its Elo strength) instead of the average, so a stronger
+# side with little data is expected to create more (and allow less). Off
+# (0) unless the walk-forward check chose a weight. STRENGTH is set by the
+# caller: (team, date or None) → strength, or None when unknown.
+ELO_WEIGHT = 0.0
+STRENGTH = None
 # Referees (bookings only): each one's bookings relative to what the teams
 # alone predicted, shrunk towards 1 by REF_PRIOR matches' worth. Walk-forward
 # on the Premier League + Championship (the leagues whose data names the
@@ -155,7 +162,9 @@ DEFAULT_SIZE = {"corners": 75.0, "bookings": 16.0}
 _PRICE_MARKETS = {"corners": "166", "bookings": "139"}
 
 
-def from_prices(event: Optional[Dict], sizes: Optional[Dict[str, Optional[float]]] = None) -> Optional[Dict]:
+def from_prices(event: Optional[Dict], sizes: Optional[Dict[str, Optional[float]]] = None,
+                markets: Optional[Dict[str, str]] = None, lines: Optional[Dict[str, Tuple[float, ...]]] = None,
+                default_size: Optional[Dict[str, float]] = None) -> Optional[Dict]:
     """Corners / bookings lines for a match we have no stats for (internationals),
     implied by SportyBet's own over/under price: the margin taken out, a
     negative binomial fitted to that one line, the other lines read off it.
@@ -164,8 +173,9 @@ def from_prices(event: Optional[Dict], sizes: Optional[Dict[str, Optional[float]
     if not event:
         return None
     sizes = sizes or {}
+    markets, lines, default_size = markets or _PRICE_MARKETS, lines or LINES, default_size or DEFAULT_SIZE
     out: Dict[str, Dict] = {}
-    for stat, market_id in _PRICE_MARKETS.items():
+    for stat, market_id in markets.items():
         best = None
         for m in event.get("markets") or []:
             spec = m.get("specifier") or ""
@@ -190,14 +200,14 @@ def from_prices(event: Optional[Dict], sizes: Optional[Dict[str, Optional[float]
         if not best:
             continue
         line, p = best
-        r = sizes.get(stat) or DEFAULT_SIZE[stat]
+        r = sizes.get(stat) or default_size.get(stat) or default_size.get(stat.split("_")[0])
         lo, hi = 0.3, 40.0
         for _ in range(50):  # P(over line) rises with the mean
             mid = (lo + hi) / 2
             lo, hi = (mid, hi) if p_over(line, mid, r) < p else (lo, mid)
         mu = (lo + hi) / 2
         out[stat] = {"mean": round(mu, 2), "source": "sportybet",
-                     "over": {f"{l}": round(p_over(l, mu, r), 3) for l in LINES[stat]}}
+                     "over": {f"{l}": round(p_over(l, mu, r), 3) for l in lines[stat]}}
     return out or None
 
 
@@ -250,7 +260,12 @@ class SetPieceModel:
     def _rating(self, team: str, stat: str) -> Tuple[float, float]:
         w, f, a = self.team.get(team, {}).get(stat, (0.0, 0.0, 0.0))
         prior = self._p("prior")
-        return (f + prior) / (w + prior), (a + prior) / (w + prior)
+        start_f = start_a = 1.0
+        weight = self._p("elo_weight")
+        if weight and STRENGTH is not None:
+            import intl_elo
+            start_f, start_a = intl_elo.strength_prior(STRENGTH(team, getattr(self, "_when", None)), weight)
+        return (f + prior * start_f) / (w + prior), (a + prior * start_a) / (w + prior)
 
     def referee_factor(self, referee: Optional[str], career: Optional[Dict] = None) -> float:
         """How many more (>1) or fewer bookings than usual this referee gives:
@@ -334,6 +349,7 @@ class SetPieceModel:
                 continue
             league = row.get("league") or ""
             referee = row.get("Referee") if isinstance(row.get("Referee"), str) else None
+            model._when = row["Date"]   # strengths as they stood before this match
             if test_from is None or row["Date"] >= test_from:
                 exp = model.expected(row["HomeTeam"], row["AwayTeam"], league, referee)
                 if exp:
@@ -346,6 +362,7 @@ class SetPieceModel:
                             rows.append((row["Date"], team_stat, exp[f"{stat}_team"][side], counts[stat][side],
                                          avgs[side]))
             model.update(row["HomeTeam"], row["AwayTeam"], league, counts, referee)
+        model._when = None   # from here on: today's strengths
         return model, rows
 
     @staticmethod
@@ -437,6 +454,7 @@ INTERNATIONAL_GRID = [
     for prior in (6.0, 12.0, 20.0) for gamma in (0.4, 0.6, 0.8) for decay in (0.85, 0.92)
 ]
 MIN_HOLDOUT = 200
+ELO_WEIGHTS = (0.25, 0.5, 0.8)
 
 
 def tune_international(matches: pd.DataFrame, today: Optional[pd.Timestamp] = None, model_cls=None) -> Dict:
@@ -471,6 +489,24 @@ def tune_international(matches: pd.DataFrame, today: Optional[pd.Timestamp] = No
         best = with_refs if b_with is not None and b_without is not None and b_with < b_without else without
     else:
         best = {**best, "use_referees": False}
+    # The strength prior (Elo), when a strength source is set: each weight
+    # on top of those settings, kept only if it scores better before the holdout
+    if STRENGTH is not None:
+        pre = matches[matches["Date"] < holdout]
+        base_total = sum(v["model"] for k, v in score(pre, best, tune_start, model_cls=model_cls).items()
+                         if k in model_cls.all_stats())
+        tried = {0.0: round(base_total, 4)}
+        best_weight, best_total = 0.0, base_total
+        for weight in ELO_WEIGHTS:
+            total = sum(v["model"] for k, v in score(pre, {**best, "elo_weight": weight}, tune_start,
+                                                     model_cls=model_cls).items() if k in model_cls.all_stats())
+            tried[weight] = round(total, 4)
+            if total < best_total:
+                best_weight, best_total = weight, total
+        report["elo"] = {"tried": tried, "chosen": best_weight}
+        if best_weight:
+            report["holdout_without_elo"] = score(matches, best, holdout, model_cls=model_cls)
+            best = {**best, "elo_weight": best_weight}
     report["params"] = best
     report["holdout"] = score(matches, best, holdout, model_cls=model_cls)
     for stat, v in report["holdout"].items():
