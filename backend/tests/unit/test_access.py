@@ -3,6 +3,7 @@ Feature switches (access.py): on / testers / off, the tier each feature
 needs, accounts given a feature, and the API enforcing them (main.py).
 """
 
+import asyncio
 import json
 
 import pytest
@@ -12,6 +13,8 @@ import access
 import auth
 import main
 from tests.unit.test_user_endpoints import FakeRedis
+
+ORIGINAL_USER_TIER = auth.user_tier
 
 
 def feat(state="on", tier="free", allow=()):
@@ -130,3 +133,54 @@ class TestApi:
         who["tier"] = "premium"
         r = c.post("/api/optimizer", json={"min_odds": 2, "max_odds": 5})
         assert (r.status_code, r.json()["detail"]) == (404, "feature_off")
+
+
+class TestClerkSetup:
+    """The server reads plans from Clerk with CLERK_SECRET_KEY: it must be the
+    same Clerk application the site signs in with (CLERK_ISSUER)."""
+
+    def patch(self, monkeypatch, replies):
+        monkeypatch.setattr(auth, "CLERK_ISSUER", "https://site.clerk.accounts.dev")
+        monkeypatch.setattr(auth, "CLERK_SECRET_KEY", "sk_test_x")
+
+        async def get_json(url, headers=None):
+            for part, reply in replies.items():
+                if part in url:
+                    return reply
+            raise AssertionError(url)
+        monkeypatch.setattr(auth, "_get_json", get_json)
+
+    def test_same_application(self, monkeypatch):
+        self.patch(monkeypatch, {"api.clerk.com/v1/jwks": (200, {"keys": [{"kid": "a"}]}),
+                                 "well-known": (200, {"keys": [{"kid": "a"}]})})
+        assert asyncio.run(auth.check_clerk_keys())["ok"]
+
+    def test_key_from_another_application(self, monkeypatch):
+        self.patch(monkeypatch, {"api.clerk.com/v1/jwks": (200, {"keys": [{"kid": "dev"}]}),
+                                 "well-known": (200, {"keys": [{"kid": "prod"}]})})
+        got = asyncio.run(auth.check_clerk_keys())
+        assert not got["ok"] and "different Clerk application" in got["reason"]
+
+    def test_rejected_key(self, monkeypatch):
+        self.patch(monkeypatch, {"api.clerk.com/v1/jwks": (401, None)})
+        assert "rejected" in asyncio.run(auth.check_clerk_keys())["reason"]
+
+    def test_unknown_user_is_free_and_the_admin_check_says_why(self, monkeypatch, api):
+        self.patch(monkeypatch, {"api.clerk.com/v1/jwks": (200, {"keys": [{"kid": "a"}]}),
+                                 "well-known": (200, {"keys": [{"kid": "a"}]}),
+                                 "/v1/users/user_gone123": (404, None),
+                                 "/v1/users/user_paid123": (200, {"public_metadata": {
+                                     "subscription": "premium", "subscription_expires": "2999-01-01T00:00:00.000Z"}})})
+        monkeypatch.setattr(auth, "user_tier", ORIGINAL_USER_TIER)
+        monkeypatch.setattr(main, "_clerk_keys_cache", [0.0, None])
+        _, who = api
+        who["via"] = "secret"
+        c = TestClient(main.app)
+        gone = c.get("/api/admin/access-check?uid=user_gone123").json()
+        assert gone["tier"] == "free" and "doesn't exist" in gone["note"]
+        assert gone["features"]["match_analysis"]["allowed"] is False
+        paid = c.get("/api/admin/access-check?uid=user_paid123").json()
+        assert (paid["tier"], paid["subscription"], paid["note"]) == ("premium", "premium", None)
+        assert paid["features"]["match_analysis"]["allowed"] and paid["features"]["daily_slips"]["allowed"]
+        assert c.get("/api/admin/access-check?uid=nope").status_code == 400
+        assert asyncio.run(auth.user_tier("user_gone123")) == "free"

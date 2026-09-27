@@ -5,7 +5,7 @@ import Link from "next/link";
 import { SignInButton } from "@clerk/nextjs";
 import { Check, Loader2, Lock, EyeOff } from "lucide-react";
 import { PaywallModal } from "@/components/PaywallModal";
-import { useAccess, TIER_NAMES, type FeatureId } from "@/lib/access";
+import { useAccess, tierAtLeast, TIER_NAMES, type FeatureId } from "@/lib/access";
 import type { Plan } from "@/lib/pricing";
 
 /** A switched-off page or feature: what a visitor sees if they land on it. */
@@ -22,10 +22,22 @@ export function Unavailable({ title = "Not available" }: { title?: string }) {
 
 /** A feature the visitor's tier doesn't include: what it does, and the upgrade. */
 export function Locked({ feature, title, perks }: { feature: FeatureId; title: string; perks: string[] }) {
-  const { signedIn, needs } = useAccess();
+  const { signedIn, needs, tier: mine } = useAccess();
   const [paywall, setPaywall] = useState(false);
   const tier = needs(feature);
   const plan = (tier === "free" ? "lite" : tier) as Plan;
+  // Their plan covers it, but the server refused: don't sell them what they have
+  if (signedIn && mine !== "free" && tierAtLeast(mine, tier)) {
+    return (
+      <section className="card p-6 sm:p-8 text-center space-y-3 max-w-xl mx-auto">
+        <span className="mx-auto w-12 h-12 rounded-full bg-warn/15 text-warn flex items-center justify-center"><Lock size={20} /></span>
+        <p className="font-display font-extrabold text-2xl uppercase tracking-wide text-n-0">{title}</p>
+        <p className="text-sm text-n-400">Your {TIER_NAMES[mine]} plan includes this, but we couldn&apos;t confirm it just now.
+          Try again in a minute; if it keeps happening, contact support and we&apos;ll sort it out.</p>
+        <button onClick={() => window.location.reload()} className="btn-secondary">Try again</button>
+      </section>
+    );
+  }
   return (
     <section className="card p-6 sm:p-8 text-center space-y-5 max-w-xl mx-auto">
       <span className="mx-auto w-12 h-12 rounded-full bg-brand-400/15 text-accent flex items-center justify-center"><Lock size={20} /></span>

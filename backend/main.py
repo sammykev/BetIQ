@@ -217,6 +217,50 @@ def require_feature(fid: str):
     return dependency
 
 
+_clerk_keys_cache: List[Any] = [0.0, None]
+
+
+async def _clerk_keys() -> Dict[str, Any]:
+    """auth.check_clerk_keys, at most every 10 minutes."""
+    import auth
+    if _clerk_keys_cache[1] is None or time.time() - _clerk_keys_cache[0] > 600:
+        _clerk_keys_cache[:] = [time.time(), await auth.check_clerk_keys()]
+    return _clerk_keys_cache[1]
+
+
+@app.get("/api/admin/access-check")
+async def admin_access_check(uid: str, _admin: str = Depends(require_admin)):
+    """How the server sees one account: its plan as Clerk reports it (fresh,
+    not cached) and, feature by feature, whether it gets in."""
+    import access
+    import auth
+    uid = uid.strip()
+    if not re.fullmatch(r"user_[A-Za-z0-9]{6,64}", uid):
+        raise HTTPException(status_code=400, detail="Give a Clerk user id (user_…)")
+    note, tier, status, meta = None, None, None, {}
+    if not auth.premium_enforced():
+        note = "The server doesn't check plans yet: CLERK_ISSUER and CLERK_SECRET_KEY are both needed."
+    else:
+        auth._tier_cache.pop(uid, None)
+        status, meta = await auth.clerk_user(uid)
+        if status == 404:
+            note = ("Clerk says this account doesn't exist, so the server treats it as Free. "
+                    "CLERK_SECRET_KEY is probably from a different Clerk application than the site's.")
+        elif status != 200:
+            note = f"Couldn't read the account from Clerk (HTTP {status})."
+        tier = auth.tier_from_metadata(meta) if status == 200 else "free"
+    admin = uid in ADMIN_USER_IDS
+    paywall = _paywall_enabled()
+    feats = _features()
+    return {"uid": uid, "tier": tier, "admin": admin, "paywall": paywall, "note": note,
+            "subscription": meta.get("subscription") if status == 200 else None,
+            "expires": meta.get("subscription_expires") if status == 200 else None,
+            "keys": await _clerk_keys() if auth.premium_enforced() else None,
+            "features": {fid: {"allowed": access.allowed(f, uid, admin, tier or "premium", paywall),
+                               "visible": access.visible(f, uid, admin), "state": f["state"], "tier": f["tier"]}
+                         for fid, f in feats.items()}}
+
+
 @app.get("/api/admin/features")
 async def admin_get_features(_admin: str = Depends(require_admin)):
     """Every switchable feature, grouped, with its state, tier and accounts."""
@@ -4066,11 +4110,12 @@ async def admin_security(_admin: str = Depends(require_admin)):
     events = security.recent_events(200)
     day_ago = time.time() - 86400
     recent = [e for e in events if e.get("at", 0) >= day_ago]
+    keys = await _clerk_keys() if auth.premium_enforced() else {"ok": False, "reason": ""}
     checks = [
         {"id": "clerk_issuer", "ok": auth.auth_enforced(), "label": "Signed-in users verified (CLERK_ISSUER)",
          "fix": "Set CLERK_ISSUER in the server's .env: without it, user data endpoints trust the uid the browser sends."},
-        {"id": "premium", "ok": auth.premium_enforced(), "label": "Paywall enforced on the server (CLERK_SECRET_KEY)",
-         "fix": "Set CLERK_SECRET_KEY (Clerk dashboard → API keys → Secret key) in the server's .env so premium analysis can't be fetched directly."},
+        {"id": "premium", "ok": auth.premium_enforced() and keys["ok"], "label": "Paywall enforced on the server (CLERK_SECRET_KEY)",
+         "fix": keys["reason"] or "Set CLERK_SECRET_KEY (Clerk dashboard → API keys → Secret key) in the server's .env so premium analysis can't be fetched directly."},
         {"id": "admin_ids", "ok": bool(ADMIN_USER_IDS), "label": "Admins sign in with Clerk (ADMIN_USER_IDS)",
          "fix": "Add your Clerk user id to ADMIN_USER_IDS in the server's .env and on Vercel, then you rarely need the secret."},
         {"id": "admin_secret", "ok": len(ADMIN_SECRET) >= 24, "label": "Admin secret is long (24+ characters)",

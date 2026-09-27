@@ -120,7 +120,7 @@ async def require_user(request: Request, claimed_uid: str = "") -> str:
 # Dashboard → API keys); without it tiers aren't enforced here.
 
 CLERK_SECRET_KEY = os.getenv("CLERK_SECRET_KEY", "").strip()
-PREMIUM_CACHE_SECONDS = 300
+PREMIUM_CACHE_SECONDS = 60
 TIERS = ("free", "lite", "premium")   # lowest to highest
 _tier_cache: dict = {}  # uid -> (checked at, tier)
 
@@ -152,22 +152,30 @@ def tier_at_least(tier: str, needed: str) -> bool:
     return TIERS.index(tier if tier in TIERS else "free") >= TIERS.index(needed if needed in TIERS else "free")
 
 
+async def clerk_user(uid: str):
+    """(HTTP status, public metadata) for a Clerk user, from Clerk's API."""
+    status, body = await _get_json(f"https://api.clerk.com/v1/users/{uid}",
+                                   {"Authorization": f"Bearer {CLERK_SECRET_KEY}"})
+    return status, (body or {}).get("public_metadata") or {}
+
+
 async def user_tier(uid: str) -> str:
     """A Clerk user's current tier (cached briefly)."""
     import time
-    import httpx
     hit = _tier_cache.get(uid)
     if hit and time.time() - hit[0] < PREMIUM_CACHE_SECONDS:
         return hit[1]
-    async with httpx.AsyncClient(timeout=10) as client:
-        r = await client.get(f"https://api.clerk.com/v1/users/{uid}",
-                             headers={"Authorization": f"Bearer {CLERK_SECRET_KEY}"})
-    if r.status_code == 404:
+    status, meta = await clerk_user(uid)
+    if status == 404:
+        # A signed-in user Clerk doesn't know: almost always a secret key from
+        # another Clerk application than CLERK_ISSUER (see check_clerk_keys)
+        print(f"[Auth] WARNING: Clerk has no user {uid} — is CLERK_SECRET_KEY from the same "
+              "Clerk application as CLERK_ISSUER?")
         tier = "free"
-    elif r.status_code != 200:
+    elif status != 200:
         raise HTTPException(status_code=503, detail="Couldn't check your subscription. Try again.")
     else:
-        tier = tier_from_metadata(r.json().get("public_metadata"))
+        tier = tier_from_metadata(meta)
     _tier_cache[uid] = (time.time(), tier)
     if len(_tier_cache) > 5000:
         _tier_cache.clear()
@@ -177,3 +185,32 @@ async def user_tier(uid: str) -> str:
 async def user_is_premium(uid: str) -> bool:
     """Whether a Clerk user has an unexpired premium subscription."""
     return await user_tier(uid) == "premium"
+
+
+async def _get_json(url: str, headers: Optional[dict] = None):
+    import httpx
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.get(url, headers=headers or {})
+    return r.status_code, (r.json() if r.status_code == 200 else None)
+
+
+async def check_clerk_keys() -> dict:
+    """Whether CLERK_SECRET_KEY belongs to the same Clerk application as
+    CLERK_ISSUER: both publish the same signing keys. {"ok", "reason"}."""
+    if not CLERK_ISSUER or not CLERK_SECRET_KEY:
+        return {"ok": False, "reason": "CLERK_ISSUER and CLERK_SECRET_KEY must both be set."}
+    try:
+        status, mine = await _get_json("https://api.clerk.com/v1/jwks",
+                                       {"Authorization": f"Bearer {CLERK_SECRET_KEY}"})
+        if status in (401, 403):
+            return {"ok": False, "reason": "Clerk rejected CLERK_SECRET_KEY: copy it again from Clerk → API keys."}
+        if status != 200:
+            return {"ok": False, "reason": f"Couldn't reach Clerk to check the key (HTTP {status})."}
+        _, site = await _get_json(f"{CLERK_ISSUER}/.well-known/jwks.json")
+    except Exception as e:
+        return {"ok": False, "reason": f"Couldn't reach Clerk to check the key ({type(e).__name__})."}
+    kids = lambda d: {k.get("kid") for k in (d or {}).get("keys") or []}
+    if kids(mine) and kids(site) and not (kids(mine) & kids(site)):
+        return {"ok": False, "reason": "CLERK_SECRET_KEY is from a different Clerk application than the site "
+                                       "signs in with (e.g. Development vs Production): every subscriber looks Free."}
+    return {"ok": True, "reason": ""}

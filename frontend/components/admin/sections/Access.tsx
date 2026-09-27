@@ -131,6 +131,66 @@ function Row({ f, users, onChange }: { f: Feature; users: { id: string; email: s
   );
 }
 
+interface CheckResult {
+  uid: string; tier: Tier | null; admin: boolean; paywall: boolean; note: string | null;
+  subscription: string | null; expires: string | null; keys: { ok: boolean; reason: string } | null;
+  features: Record<string, { allowed: boolean; visible: boolean; state: State; tier: Tier }>;
+}
+
+/** How the server sees one account: its plan from Clerk, and each feature. */
+function AccountCheck({ users, labels }: { users: { id: string; email: string }[]; labels: Record<string, string> }) {
+  const { get } = useAdmin();
+  const [q, setQ] = useState("");
+  const [who, setWho] = useState<string | null>(null);
+  const [res, setRes] = useState<CheckResult | null>(null);
+  const [busy, setBusy] = useState(false);
+  const matches = q.trim() ? users.filter(u => u.email.toLowerCase().includes(q.trim().toLowerCase())).slice(0, 6) : [];
+  const check = async (uid: string, label: string) => {
+    setBusy(true); setWho(label); setQ(""); setRes(await get(`/api/admin/access-check?uid=${encodeURIComponent(uid)}`)); setBusy(false);
+  };
+  const rawId = /^user_[A-Za-z0-9]{6,}$/.test(q.trim()) ? q.trim() : null;
+  const name = (t: Tier | null) => (t ? TIERS.find(x => x.id === t)?.label : "not checked");
+  return (
+    <Card title="Check an account" icon={<Search size={15} />}
+      subtitle="What the server sees for one account: its plan as Clerk reports it, and which features it gets">
+      <div className="relative">
+        <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-n-500" />
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Email (or user id)" className={`${inputClass} pl-8`} />
+      </div>
+      {(matches.length > 0 || rawId) && (
+        <ul className="rounded-lg border border-n-800 divide-y divide-n-800 overflow-hidden">
+          {matches.map(u => (
+            <li key={u.id}><button type="button" onClick={() => check(u.id, u.email)} className="w-full px-3 py-2 text-xs text-left text-n-200 hover:bg-surface-raised">{u.email}</button></li>
+          ))}
+          {rawId && <li><button type="button" onClick={() => check(rawId, rawId)} className="w-full px-3 py-2 text-xs text-left text-n-200 hover:bg-surface-raised">Check {rawId}</button></li>}
+        </ul>
+      )}
+      {busy && <Skeleton rows={2} />}
+      {!busy && res && (
+        <div className="space-y-3">
+          <p className="text-sm text-n-200">
+            <span className="text-n-0 font-semibold">{who}</span>: the server sees{" "}
+            <span className="font-semibold text-n-0">{name(res.tier)}</span>
+            {res.expires && <span className="text-n-400"> · Clerk says {res.subscription ?? "no plan"} until {new Date(res.expires).toLocaleDateString()}</span>}
+            {res.admin && <span className="text-info"> · admin (gets everything)</span>}
+            {!res.paywall && <span className="text-warn"> · paywall off: everyone gets every plan</span>}
+          </p>
+          {res.note && <p className="text-xs text-warn rounded-lg border border-warn/30 bg-warn/5 px-3 py-2">{res.note}</p>}
+          {res.keys && !res.keys.ok && <p className="text-xs text-danger rounded-lg border border-danger/30 bg-danger/5 px-3 py-2">{res.keys.reason}</p>}
+          <div className="flex flex-wrap gap-1.5">
+            {Object.entries(res.features).map(([id, f]) => (
+              <Pill key={id} tone={f.allowed ? "ok" : f.visible ? "warn" : "muted"}>
+                {f.allowed ? "✓" : f.visible ? "🔒" : "–"} {labels[id] ?? id}
+              </Pill>
+            ))}
+          </div>
+          <p className="text-[11px] text-n-500">✓ gets it · 🔒 sees it but the plan doesn&apos;t include it · – switched off or testers only</p>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 export function AccessSection() {
   const { adminFetch, get, flash } = useAdmin();
   const [features, setFeatures] = useState<Feature[] | null>(null);
@@ -162,6 +222,7 @@ export function AccessSection() {
   const groups = Array.from(new Set(features.map(f => f.group)));
   return (
     <div className="space-y-4">
+      <AccountCheck users={users} labels={Object.fromEntries(features.map(f => [f.id, f.label]))} />
       <div className="rounded-xl border border-n-800 bg-surface-sunken px-4 py-3 text-xs text-n-400 space-y-1">
         <p><span className="text-n-0 font-semibold">On</span>: everyone sees it and it needs the plan shown.{" "}
           <span className="text-warn font-semibold">Testers</span>: only the accounts you add (and admins) see it.{" "}
