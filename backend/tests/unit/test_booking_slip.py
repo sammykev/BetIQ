@@ -25,6 +25,16 @@ def ms(iso):
     return int(datetime.fromisoformat(iso).replace(tzinfo=timezone.utc).timestamp() * 1000)
 
 
+@pytest.fixture(autouse=True)
+def before_kickoff(monkeypatch):
+    """The fixtures kick off on 2026-09-26: book them as if it were earlier."""
+    class Clock:
+        @staticmethod
+        def time():
+            return ms("2026-09-20T12:00:00") / 1000
+    monkeypatch.setattr(booking_slip, "time", Clock)
+
+
 EVENT = {
     "eventId": "sr:match:111", "homeTeamName": "Arsenal", "awayTeamName": "Chelsea",
     "estimateStartTime": ms("2026-09-26T16:30:00"),
@@ -150,6 +160,32 @@ class TestToSportybet:
         result, _, _ = run([sel()], share_error=sportybet.SportyBetError("HTTP 403"))
         assert result["code"] is None and "booking code" in result["error"]
         assert result["picks"][0]["status"] == "matched"
+
+    def test_share_failure_passes_on_sportybets_reason(self):
+        result, _, _ = run([sel()], share_error=sportybet.SportyBetError("POST /orders/share: bizCode 4302 Event closed"))
+        assert "SportyBet said: 4302 Event closed" in result["error"]
+
+    def test_started_matches_are_left_out_and_the_rest_booked(self):
+        later = {**EVENT, "eventId": "sr:match:222", "homeTeamName": "Leeds", "awayTeamName": "Everton",
+                 "estimateStartTime": ms("2026-09-26T19:00:00")}
+
+        async def fetch(day):
+            return [EVENT, later]
+        shared = []
+
+        async def post(ids):
+            shared.append(ids)
+            return {"code": "NEW1", "url": "u", "odds": {}, "unavailable": set()}
+        # 17:00: Arsenal v Chelsea (16:30) has started, Leeds v Everton (19:00) hasn't
+        now = ms("2026-09-26T17:00:00") / 1000
+        out = asyncio.run(to_sportybet([sel(), sel(home="Leeds", away="Everton")], fetch, sportybet.find_event, post, now=now))
+        assert [p["status"] for p in out["picks"]] == ["unavailable", "booked"]
+        assert out["picks"][0]["reason"] == "Already started" and out["code"] == "NEW1"
+        assert [i["eventId"] for i in shared[0]] == ["sr:match:222"]
+        # All started: no request to SportyBet, and a plain reason
+        out = asyncio.run(to_sportybet([sel()], fetch, sportybet.find_event, post, now=now))
+        assert out["code"] is None and out["error"] == "Every match on this slip has already started."
+        assert len(shared) == 1
 
 
 # ── SportyBet client ─────────────────────────────────────────────────────────

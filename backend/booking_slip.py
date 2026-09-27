@@ -15,6 +15,7 @@ approximated.
 """
 
 import re
+import time
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 # (model market id, option code) → (SportyBet market id, outcome id); specifier added for lines
@@ -266,6 +267,16 @@ def validate(selections: Any) -> List[Dict[str, Any]]:
     return list(by_match.values())
 
 
+def _start_seconds(event: Optional[Dict]) -> Optional[float]:
+    """An event's kick-off (SportyBet's estimateStartTime, in ms) in seconds;
+    None when unknown (missing, or 0)."""
+    try:
+        ms = int((event or {})["estimateStartTime"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return ms / 1000 if ms > 0 else None
+
+
 async def to_sportybet(
     selections: List[Dict[str, Any]],
     fetch_events: Callable[[str], Awaitable[List[Dict]]],
@@ -273,6 +284,7 @@ async def to_sportybet(
     post_share: Callable[[List[Dict]], Awaitable[Dict[str, Any]]],
     linked: Optional[Callable[[Dict[str, Any]], Optional[Dict]]] = None,
     market_map: Optional[Dict[str, Dict[str, Any]]] = None,
+    now: Optional[float] = None,
 ) -> Dict[str, Any]:
     """
     Book the slip on SportyBet. Every selection comes back with a status:
@@ -327,6 +339,12 @@ async def to_sportybet(
         if not event_id:
             picks.append({**pick, "status": "not_found", "reason": "SportyBet hasn't listed this match (yet)"})
             continue
+        # Kicked off: SportyBet won't take it (and may refuse the whole code),
+        # so it's left out and the rest still get booked
+        start = _start_seconds(event)
+        if start is not None and start <= (time.time() if now is None else now):
+            picks.append({**pick, "status": "unavailable", "reason": "Already started"})
+            continue
         to_book.append((len(picks), {"eventId": event_id, **ids}, event))
         picks.append({**pick, "status": "matched"})  # found; "booked" once SportyBet accepts it
 
@@ -335,6 +353,8 @@ async def to_sportybet(
     if not to_book:
         result["error"] = ("Couldn't reach SportyBet's match list from our server. Try again in a few minutes."
                            if listing_down else
+                           "Every match on this slip has already started."
+                           if picks and all(p.get("reason") == "Already started" for p in picks) else
                            "SportyBet hasn't listed these matches yet. It adds most internationals "
                            "a few days before kick-off, and skips some smaller ones."
                            if any(p["status"] == "not_found" for p in picks)
@@ -345,7 +365,10 @@ async def to_sportybet(
         share = await post_share([ids for _, ids, _ in to_book])
     except Exception as e:
         print(f"[Booking] SportyBet share failed: {e}")
-        result["error"] = "SportyBet didn't return a booking code. Try again in a minute."
+        # SportyBet's own reason (bizCode and message) helps more than a generic line
+        said = str(e).split("bizCode", 1)[-1].strip() if "bizCode" in str(e) else ""
+        result["error"] = ("SportyBet didn't return a booking code. Try again in a minute."
+                           + (f" (SportyBet said: {said[:120]})" if said else ""))
         return result
 
     booked_odds: List[Optional[float]] = []

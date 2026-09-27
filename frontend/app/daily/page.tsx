@@ -28,7 +28,15 @@ interface DailyResponse {
   date: string; today: string; built_at: string | null; slips: Slip[];
   record: Record<string, { won: number; lost: number }>; min_prob: number; targets: number[];
 }
-interface Booked { code: string | null; share_url: string | null; error?: string; picks?: { status: string }[] }
+interface Booked {
+  code: string | null; share_url: string | null; error?: string | null;
+  picks?: { status: string; reason?: string }[];
+  /** Picks left out before asking SportyBet: already started or settled. */
+  skipped?: number;
+}
+/** Still bookable: not settled, and kick-off (UTC date + time) hasn't passed. */
+const bookable = (p: Pick) => p.status === "pending" && !p.live &&
+  !(Date.parse(`${p.date}T${p.time || "23:59"}:00Z`) <= Date.now());
 
 const PERKS = [
   "Three slips every morning, at about 10, 15 and 20 odds",
@@ -68,24 +76,32 @@ function SlipView({ s, isToday }: { s: Slip; isToday: boolean }) {
       </div>
     );
   }
-  const open = s.picks.some(p => p.status === "pending") && isToday;
+  const toBook = s.picks.filter(bookable);
+  const open = isToday && s.picks.some(p => p.status === "pending");
   const book = async () => {
     setBooking(true); setBooked(null);
+    const skipped = s.picks.length - toBook.length;
     try {
-      const selections = s.picks.map(p => ({ home: p.home, away: p.away, date: p.date, time: p.time, league: p.league,
+      // Matches that have kicked off can't go on a code: book the rest
+      const selections = toBook.map(p => ({ home: p.home, away: p.away, date: p.date, time: p.time, league: p.league,
         market: p.market, marketName: p.market_name, code: p.code, label: p.label, prob: p.prob }));
       const r = await authFetch(`${API}/api/booking/convert`, { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ platform: "sportybet", selections, source: "daily", uid: user?.id }) });
-      const d = await r.json();
-      if (!r.ok || !d?.code) throw new Error();
-      setBooked(d);
-    } catch { setBooked({ code: null, share_url: null, error: "SportyBet didn't return a code. Try again in a minute." }); }
+      const d = await r.json().catch(() => null);
+      // SportyBet's own answer (or the server's), not a generic line
+      if (!r.ok || !d) throw new Error(typeof d?.detail === "string" ? d.detail : "");
+      setBooked({ ...d, skipped, error: d.code ? null : d.error || "SportyBet didn't return a code. Try again in a minute." });
+    } catch (e) {
+      setBooked({ code: null, share_url: null, skipped,
+        error: (e as Error).message || "Couldn't reach the server. Check your connection and try again." });
+    }
     finally { setBooking(false); }
   };
   const copy = async (code: string) => {
     try { await navigator.clipboard.writeText(code); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* ignore */ }
   };
   const failed = booked?.picks?.filter(p => p.status !== "booked").length ?? 0;
+  const started = s.picks.filter(p => p.status === "pending" && !bookable(p)).length;
   const settled = s.picks.filter(p => p.status !== "pending").length;
 
   return (
@@ -124,12 +140,22 @@ function SlipView({ s, isToday }: { s: Slip; isToday: boolean }) {
               </span>
             </div>
           ) : (
-            <button onClick={book} disabled={booking} className="btn-primary w-full sm:w-auto">
-              {booking ? <><Loader2 size={15} className="animate-spin" /> Booking…</> : <><Ticket size={15} /> Book on SportyBet</>}
-            </button>
+            toBook.length === 0 ? (
+              <p className="text-xs text-n-400">Every match left on this slip has kicked off, so it can&apos;t be booked now.</p>
+            ) : (
+              <button onClick={book} disabled={booking} className="btn-primary w-full sm:w-auto">
+                {booking ? <><Loader2 size={15} className="animate-spin" /> Booking…</> : <><Ticket size={15} /> Book on SportyBet</>}
+              </button>
+            )
           )}
           {booked?.error && <p className="text-xs text-danger">{booked.error}</p>}
-          {booked?.code && failed > 0 && <p className="text-xs text-warn">{failed} pick{failed > 1 ? "s" : ""} couldn&apos;t go on the code (not on SportyBet any more).</p>}
+          {booked?.code && failed > 0 && <p className="text-xs text-warn">{failed} pick{failed > 1 ? "s" : ""} couldn&apos;t go on the code (started, suspended or not on SportyBet).</p>}
+          {!booked && started > 0 && toBook.length > 0 && (
+            <p className="text-[11px] text-n-400">{started} match{started > 1 ? "es have" : " has"} kicked off, so the code will cover the other {toBook.length}.</p>
+          )}
+          {booked?.code && (booked.skipped ?? 0) > 0 && (
+            <p className="text-[11px] text-n-400">{booked.skipped} pick{booked.skipped! > 1 ? "s" : ""} left out: already started or settled.</p>
+          )}
         </footer>
       )}
     </article>
