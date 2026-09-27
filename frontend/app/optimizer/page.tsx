@@ -257,6 +257,12 @@ export default function OptimizerPage() {
   const confirmed = (m: (typeof MARKETS)[number], s: LinkStatus | null) =>
     !m.needs || !s || m.needs.some(k => s.markets?.[k]);
   const [link, setLink] = useState<LinkStatus | null>(null);
+  // Markets the weekly accuracy review paused: the server leaves them out
+  const [paused, setPaused] = useState<{ market: string; name: string }[]>([]);
+  useEffect(() => {
+    fetch(`${API}/api/market-review/paused`).then(r => (r.ok ? r.json() : null))
+      .then(d => setPaused(d?.paused ?? [])).catch(() => {});
+  }, []);
 
   useEffect(() => {
     fetch(`${API}/api/sportybet/status`)
@@ -438,6 +444,12 @@ export default function OptimizerPage() {
                   </p>
                 );
               })()}
+              {paused.length > 0 && (
+                <p className="basis-full text-[11px] text-warn">
+                  Paused for now: {paused.map(p => p.name).join(", ")}. Recent picks came in less often than we said, so
+                  slips leave {paused.length === 1 ? "it" : "them"} out until our weekly accuracy check clears.
+                </p>
+              )}
               {unconfirmed.length > 0 && (
                 <p className="basis-full text-[11px] text-n-500">
                   {unconfirmed.map(m => m.label).join(" & ")}: SportyBet hasn&apos;t confirmed these markets yet, so

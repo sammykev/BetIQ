@@ -6,7 +6,7 @@ import { Database, Download, Flag, Globe2, MousePointerClick, Radio, Star, Targe
 import { TrackRecord } from "@/components/TrackRecord";
 import { MatchdayList } from "@/components/MatchdayList";
 import { fetchMatchday, type MatchdayMatch, type MatchdayResponse } from "@/lib/matchday";
-import { API, BarList, Btn, Card, Skeleton, Stat, ago, inputClass, num, useAdmin } from "../ui";
+import { API, BarList, Btn, Card, Pill, Skeleton, Stat, Toggle, ago, inputClass, num, useAdmin } from "../ui";
 
 const toneOf = (acc: number) => (acc >= 60 ? "text-accent" : acc >= 45 ? "text-warn" : "text-danger");
 
@@ -164,6 +164,145 @@ function MarketAccuracy() {
           </p>
         </>
       )}
+    </div>
+  );
+}
+
+const REVIEW_TONE: Record<string, "ok" | "warn" | "danger" | "muted" | "info"> = {
+  pause: "danger", watch: "warn", ok: "ok", better: "info", few: "muted",
+};
+const REVIEW_LABEL: Record<string, string> = {
+  pause: "Falling short", watch: "Watch", ok: "On track", better: "Better than said", few: "Too few",
+};
+
+/** The weekly accuracy review (market_review.py): markets whose picks came in
+ * clearly less often than the model said are paused from the optimizer,
+ * daily odds and code check until they recover. */
+function WeeklyReview() {
+  const { get, post, flash, adminFetch } = useAdmin();
+  const [rev, setRev] = useState<any>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const load = () => get("/api/admin/market-review").then(d => setRev(d ?? { error: true }));
+  useEffect(() => { load(); }, [get]);
+
+  const save = async (patch: object, key: string) => {
+    setBusy(key);
+    try {
+      const r = await adminFetch(`${API}/api/admin/market-review`, {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.detail || "Couldn't save");
+      setRev(d);
+      flash("ok", "Saved: slips use it straight away");
+    } catch (e: any) {
+      flash("err", e instanceof TypeError ? "Couldn't reach the server, so nothing was saved" : e?.message || "Couldn't save");
+    }
+    setBusy(null);
+  };
+  const runNow = async () => {
+    setBusy("run");
+    try {
+      await post("/api/admin/jobs/market_review/run");
+      flash("ok", "Reviewing the last four weeks…");
+      setTimeout(() => { load(); setBusy(null); }, 8_000);
+    } catch { flash("err", "Couldn't start the review"); setBusy(null); }
+  };
+
+  if (!rev) return <Skeleton rows={4} />;
+  if (rev.error) return <p className="text-xs text-n-400">Couldn&apos;t load the review.</p>;
+  const latest = rev.latest;
+  const blocked = new Set<string>(rev.blocked ?? []);
+  const auto = rev.mode === "auto";
+  const override = (m: string) => rev.overrides?.[m] ?? "auto";
+  const reviewed = new Map<string, any>((latest?.markets ?? []).map((m: any) => [m.market, m]));
+  // Reviewed markets first, then any pinned by hand that the review didn't cover
+  const rows = [...(latest?.markets ?? []),
+    ...Object.keys(rev.overrides ?? {}).filter(m => !reviewed.has(m))
+      .map(m => ({ market: m, name: rev.markets?.find((x: any) => x.market === m)?.name ?? m, status: "few", why: "not in the latest review" }))];
+  const names = (ids: string[]) => ids.map(id => rev.markets?.find((x: any) => x.market === id)?.name ?? id).join(", ");
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-2 grid-cols-1 sm:grid-cols-2">
+        <Toggle on={auto} busy={busy === "mode"} onChange={() => save({ mode: auto ? "flag" : "auto" }, "mode")}
+          label={auto ? "Pause markets automatically" : "Flag only"}
+          hint={auto ? "Markets falling short are left out of slips until they recover" : "Falling-short markets are reported but still used"} />
+        <div className="flex items-center justify-between gap-3 rounded-xl bg-surface-sunken px-3 py-2.5">
+          <div className="min-w-0 text-[11px] text-n-400">
+            <p className="text-sm font-semibold text-n-0">{latest?.at ? `Reviewed ${ago(latest.at)}` : "Not reviewed yet"}</p>
+            Mondays 06:50 (Lagos) · last {rev.rules?.window_days ?? 28} days · {num(latest?.matches ?? 0)} matches
+          </div>
+          <Btn onClick={runNow} busy={busy === "run"}>Run now</Btn>
+        </div>
+      </div>
+      {blocked.size > 0 && (
+        <p className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-n-200">
+          <span className="font-semibold text-danger">Left out of slips now:</span> {names(Array.from(blocked))}
+        </p>
+      )}
+      {rows.length > 0 ? (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[600px] text-xs tnum">
+            <thead>
+              <tr className="text-left text-n-500">
+                <th className="py-1.5 pr-2 font-medium">Market</th><th className="py-1.5 px-2 font-medium">Verdict</th>
+                <th className="py-1.5 px-2 font-medium text-right">Came in</th><th className="py-1.5 px-2 font-medium text-right">Said</th>
+                <th className="py-1.5 px-2 font-medium text-right">80%+ picks</th><th className="py-1.5 pl-2 font-medium text-right">Use it</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((m: any) => (
+                <tr key={m.market} className="border-t border-n-800 align-top">
+                  <td className="py-1.5 pr-2">
+                    <span className="text-n-200">{m.name}</span>
+                    <span className="block text-[10px] text-n-500">{m.why}</span>
+                  </td>
+                  <td className="py-1.5 px-2 whitespace-nowrap">
+                    <Pill tone={REVIEW_TONE[m.status] ?? "muted"}>{REVIEW_LABEL[m.status] ?? m.status}</Pill>
+                    {m.paused && <span className="block text-[10px] text-danger mt-0.5">{auto ? "paused" : "would pause"}</span>}
+                  </td>
+                  <td className="py-1.5 px-2 text-right text-n-0 font-semibold">{pctText(m.hit_rate)}</td>
+                  <td className="py-1.5 px-2 text-right text-n-300">{pctText(m.model_said)}</td>
+                  <td className="py-1.5 px-2 text-right text-n-300">
+                    {m.top?.picks ? `${pctText(m.top.hit_rate)} vs ${pctText(m.top.model_said)}` : "—"}
+                  </td>
+                  <td className="py-1.5 pl-2 text-right">
+                    <select value={override(m.market)} disabled={busy === m.market}
+                      onChange={e => save({ overrides: { ...(rev.overrides ?? {}), [m.market]: e.target.value } }, m.market)}
+                      className="rounded-md bg-surface-sunken border border-n-800 px-1.5 py-1 text-[11px] text-n-200">
+                      <option value="auto">{blocked.has(m.market) ? "Review (off)" : "Review (on)"}</option>
+                      <option value="on">Always on</option>
+                      <option value="off">Off</option>
+                    </select>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : <p className="text-xs text-n-400">No review yet: it runs every Monday, or press Run now.</p>}
+      {rev.history?.length > 1 && (
+        <div>
+          <p className="eyebrow mb-1.5">Past reviews</p>
+          <ul className="space-y-1 text-[11px] text-n-400">
+            {rev.history.slice(0, 6).map((h: any) => (
+              <li key={h.at}>
+                <span className="text-n-200">{new Date(h.at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
+                {" · "}{num(h.matches)} matches
+                {h.newly_paused?.length > 0 && <> · <span className="text-danger">paused {names(h.newly_paused)}</span></>}
+                {h.restored?.length > 0 && <> · <span className="text-accent">back: {names(h.restored)}</span></>}
+                {h.watch?.length > 0 && <> · watching {names(h.watch)}</>}
+                {!h.newly_paused?.length && !h.restored?.length && !h.watch?.length && " · no changes"}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <p className="text-[11px] text-n-500">
+        Every market&apos;s picks (outcomes rated 50%+) over the last four weeks, and its 80%+ picks on their own (what daily
+        odds use). A market is paused when its picks came in at least {Math.abs(Math.round((rev.rules?.pause_gap ?? -0.05) * 100))} points
+        below what the model said, over {rev.rules?.min_matches ?? 30}+ matches, by more than chance explains. It keeps being
+        predicted and checked, and comes back when a review finds it on track. &quot;Always on&quot; and &quot;Off&quot; override the review.
+      </p>
     </div>
   );
 }
@@ -566,6 +705,11 @@ export function PredictionsSection() {
       <Card title="International corners & cards" icon={<Globe2 size={15} />}
         subtitle="Collected nightly from ESPN, topped up by API-Football; lower score is better">
         {!data ? <Skeleton rows={2} /> : <InternationalSetPieces info={data.international_set_pieces} />}
+      </Card>
+
+      <Card title="Weekly accuracy review" icon={<Target size={15} />}
+        subtitle="Markets whose picks come in clearly less often than we say are left out of slips until they recover">
+        <WeeklyReview />
       </Card>
 
       <Card title="Accuracy by market" icon={<Target size={15} />}

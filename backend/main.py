@@ -271,7 +271,8 @@ LIVE_STALE_MINUTES = 15
 @app.get("/api/admin/alerts")
 async def admin_alerts(_admin: str = Depends(require_admin)):
     """Problems the admin page shows as a red banner: the database missing or
-    unreachable, settings whose names are broken in .env, live scores stalled."""
+    unreachable, settings whose names are broken in .env, live scores
+    stalled, markets the weekly accuracy review just paused."""
     alerts: List[Dict[str, str]] = []
     if _get_redis() is None:
         alerts.append({"level": "danger", "title": "Database not connected",
@@ -293,6 +294,16 @@ async def admin_alerts(_admin: str = Depends(require_admin)):
         alerts.append({"level": "warn", "title": "Live scores aren't updating",
                        "detail": (f"Last score check: {last or 'none since the server started'}"
                                   + (f" ({why})" if why else "") + ". It should run every 3 minutes.")})
+    import market_review
+    _restore_review()
+    try:
+        at = (_review.get("latest") or {}).get("at")
+        review_age = (datetime.now(timezone.utc) - datetime.fromisoformat(at)).total_seconds() / 86400 if at else None
+    except ValueError:
+        review_age = None
+    review_alert = market_review.alert(_review, review_age)
+    if review_alert:
+        alerts.append(review_alert)
     return {"alerts": alerts}
 
 
@@ -4324,6 +4335,7 @@ ADMIN_JOBS = {
     "matchday_sweep": ("Scores and grades for the last 7 days", lambda: _refresh_matchdays(MD_DAYS_BACK, "manual")),
     "daily_slips": ("Rebuild today's daily odds slips", lambda: _build_daily(date.today().isoformat(), force=True)),
     "shot_blend": ("Score our shot lines against SportyBet's", lambda: _shot_blend_job()),
+    "market_review": ("Weekly accuracy review (pause markets falling short)", lambda: _review_job()),
     "set_pieces_reload": ("Reload corners, cards & shots models (after the nightly checks)",
                           lambda: _reload_set_pieces()),
 }
@@ -6046,6 +6058,116 @@ def _refresh_shot_blend() -> Dict[str, Any]:
     return report
 
 
+# ── Weekly accuracy review (market_review.py) ──
+REVIEW_KEY = "betiq:review"
+_review: Dict[str, Any] = {"mode": "auto", "overrides": {}, "latest": None, "history": [], "loaded": False}
+
+
+def _restore_review() -> None:
+    r = _get_redis()
+    if r and not _review.get("loaded"):
+        try:
+            _review.update(json.loads(r.get(REVIEW_KEY) or "{}"), loaded=True)
+        except Exception:
+            pass
+
+
+def _save_review() -> bool:
+    r = _get_redis()
+    if not r:
+        return False
+    try:
+        r.set(REVIEW_KEY, json.dumps({k: v for k, v in _review.items() if k != "loaded"}))
+        return True
+    except Exception:
+        return False
+
+
+def _paused_markets() -> set:
+    """Markets the optimizer, daily slips and code check leave out now."""
+    import market_review
+    _restore_review()
+    return market_review.blocked(_review)
+
+
+async def _review_job() -> Dict[str, Any]:
+    try:
+        return await asyncio.to_thread(_run_review)
+    except Exception as e:
+        print(f"[Review] failed: {e}")
+        return {"error": str(e)}
+
+
+def _run_review() -> Dict[str, Any]:
+    """Review every market over the last market_review.WINDOW_DAYS settled days."""
+    import market_review
+    r = _get_redis()
+    if not r:
+        return {"skipped": "no Redis"}
+    _restore_review()
+    today = date.today()
+    days = _md_many(r, [(today - timedelta(days=i)).isoformat() for i in range(1, market_review.WINDOW_DAYS + 1)])
+    result = market_review.review((e for day in days.values() for e in day.values()),
+                                  (_review.get("latest") or {}).get("paused") or [])
+    _review.update(market_review.remember(_review, result, datetime.now(timezone.utc).isoformat(timespec="seconds")))
+    _save_review()
+    print(f"[Review] {result['matches']} matches · paused {result['paused'] or 'none'} · "
+          f"newly {result['newly_paused'] or 'none'} · restored {result['restored'] or 'none'}")
+    return result
+
+
+def _review_view() -> Dict[str, Any]:
+    import market_review
+    return {"mode": _review.get("mode", "auto"), "overrides": _review.get("overrides") or {},
+            "latest": _review.get("latest"), "history": _review.get("history") or [],
+            "blocked": sorted(market_review.blocked(_review)),
+            "markets": [{"market": m, "name": n} for m, n in _market_names().items()],
+            "rules": {"window_days": market_review.WINDOW_DAYS, "min_matches": market_review.MIN_MATCHES,
+                      "pause_gap": market_review.PAUSE_GAP, "pause_z": market_review.PAUSE_Z}}
+
+
+def _market_names() -> Dict[str, str]:
+    import optimizer
+    return dict(optimizer.MARKET_NAMES)
+
+
+@app.get("/api/admin/market-review")
+async def get_market_review(_admin: str = Depends(require_admin)):
+    """The latest weekly accuracy review, past ones, and the settings."""
+    _restore_review()
+    return _review_view()
+
+
+@app.put("/api/admin/market-review")
+async def put_market_review(body: Dict[str, Any], _admin: str = Depends(require_admin)):
+    """Body: {mode?: auto|flag, overrides?: {market: on|off|auto}}."""
+    import market_review
+    _restore_review()
+    try:
+        new = market_review.settings(body or {}, _review)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    before = {k: _review.get(k) for k in ("mode", "overrides")}
+    _review.update(new)
+    if not _save_review():
+        _review.update(before)
+        raise HTTPException(status_code=503, detail="Couldn't save: the database isn't connected")
+    _audit(_admin, "market_review", **new)
+    return _review_view()
+
+
+@app.get("/api/market-review/paused")
+async def paused_markets():
+    """Markets left out of slips right now, for the optimizer page's note."""
+    import market_review
+    _restore_review()
+    latest = {m["market"]: m for m in (_review.get("latest") or {}).get("markets") or []}
+    return {"paused": [{"market": m, "name": _market_names().get(m, m),
+                        "why": (latest.get(m) or {}).get("why") if (_review.get("overrides") or {}).get(m) != "off"
+                        else "switched off by the admin"}
+                       for m in sorted(market_review.blocked(_review))]}
+
+
 def _bookable_markets():
     """(market, code) → whether a SportyBet code can take the pick now:
     trusted markets always, VERIFIED ones once SportyBet's own labels
@@ -6139,8 +6261,18 @@ async def _optimize_request(body: Dict[str, Any]) -> Dict[str, Any]:
     # Bookable-only slips skip markets SportyBet hasn't confirmed yet (a code
     # couldn't take those picks)
     bookable = _bookable_markets() if bookable_only else None
+    # Markets the weekly accuracy review paused (or the admin switched off)
+    paused = _paused_markets()
+    if markets and markets <= paused:
+        import market_review
+        return {"error": (f"{market_review.names(sorted(markets))} {'is' if len(markets) == 1 else 'are'} paused: "
+                          "recent picks came in less often than we said, so we're not using "
+                          f"{'it' if len(markets) == 1 else 'them'} until the accuracy check clears. Add other markets."),
+                "paused": sorted(markets), "matches_considered": 0, "target": [lo, hi], "target_odds": target}
 
     def allowed(market: str, code: str) -> bool:
+        if market in paused:
+            return False
         if market in only and code not in only[market]:
             return False  # a line the user left out
         return bookable is None or bookable(market, code)
@@ -6336,9 +6468,10 @@ async def optimize_code(body: Dict[str, Any], _access=Depends(require_feature("c
         p = _prediction_for_leg(sel, by_event)
         return _with_priced_set_pieces(p, _linked_event(p)) if p else None
 
+    bookable, paused = _bookable_markets(), _paused_markets()
     report = await asyncio.to_thread(
         code_check.analyse, selections, find,
-        _linked_event, confirmed, _bookable_markets())
+        _linked_event, confirmed, lambda m, c: m not in paused and bookable(m, c))
     return {"code": code.upper(), **report}
 
 
@@ -6484,6 +6617,7 @@ async def startup():
         print(f'[Settings] WARNING: .env has "{found}" — did you mean "{meant}"? It is unset until the name is fixed.')
     _get_redis()                # says loudly, right away, if the database is missing
     _restore_shot_blend()
+    _restore_review()
     _load_h2h_cache()
     _load_predictions_cache()   # serve cached predictions instantly while pipeline rebuilds
     asyncio.create_task(_link_on_startup())  # every deploy re-links to SportyBet straight away
@@ -6504,6 +6638,9 @@ async def startup():
     scheduler.add_job(_matchday_sweep, "interval", hours=3, id="matchday_sweep",
                       max_instances=1, coalesce=True)
     scheduler.add_job(_daily_job, "cron", hour=6, minute=5, id="daily_slips")   # 07:05 in Lagos
+    # Mondays 05:50 UTC, before the daily slips (06:05) are built
+    scheduler.add_job(_review_job, "cron", day_of_week="mon", hour=5, minute=50, id="market_review",
+                      max_instances=1, coalesce=True)
     scheduler.add_job(_shot_blend_job, "interval", hours=6, id="shot_blend",
                       next_run_time=datetime.now() + timedelta(minutes=15))
     scheduler.start()
