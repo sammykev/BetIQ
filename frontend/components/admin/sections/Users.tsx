@@ -57,8 +57,17 @@ function FreeTrial({ stats }: { stats?: { active: number; started: number; conve
         </div>
       </div>
       <div className="grid gap-2 grid-cols-1 sm:grid-cols-2">
-        <Toggle on={!!cfg.require_phone} busy={busy === "phone"} onChange={() => save({ require_phone: !cfg.require_phone }, "phone")}
-          label="Require a verified phone" hint="One trial per phone number (a text code)" />
+        {/* Phone numbers are a Clerk Pro feature: without them nobody could verify,
+            so the switch only shows to turn it off if it was ever turned on */}
+        {cfg.require_phone ? (
+          <Toggle on busy={busy === "phone"} onChange={() => save({ require_phone: false }, "phone")}
+            label="Require a verified phone" hint="Needs Clerk Pro: switch off unless you have it" />
+        ) : (
+          <div className="rounded-xl bg-surface-sunken px-3 py-2.5 text-sm">
+            <span className="block font-semibold text-n-0">Phone check: off</span>
+            <span className="block text-[11px] text-n-400">One trial per phone needs Clerk Pro (phone numbers)</span>
+          </div>
+        )}
         <label className="flex items-center justify-between gap-3 rounded-xl bg-surface-sunken px-3 py-2.5 text-sm">
           <span className="min-w-0">
             <span className="block font-semibold text-n-0">Per network, per week</span>
@@ -72,8 +81,8 @@ function FreeTrial({ stats }: { stats?: { active: number; started: number; conve
       </div>
       {cfg.require_phone && (
         <p className="rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-[11px] text-n-300">
-          Needs phone numbers switched on in Clerk (Configure → User &amp; authentication → Phone), with text messages to
-          Nigeria allowed on your Clerk plan. Otherwise new users can&apos;t verify and won&apos;t get a trial.
+          Phone numbers are a Clerk Pro feature. Without them new users can&apos;t verify and won&apos;t get a trial:
+          switch this off unless your Clerk plan has them.
         </p>
       )}
       {stats && (
