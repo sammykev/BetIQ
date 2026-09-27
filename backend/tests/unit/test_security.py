@@ -236,3 +236,11 @@ class TestCors:
         assert "access-control-allow-origin" not in r.headers
         r = client.get("/api/sportybet/status", headers={"Origin": "https://predict-withbetiq.vercel.app"})
         assert r.headers["access-control-allow-origin"] == "https://predict-withbetiq.vercel.app"
+
+    @pytest.mark.parametrize("method", ["GET", "POST", "PUT", "DELETE"])
+    def test_our_site_may_use_every_method_the_site_sends(self, client, method):
+        # The browser asks first (preflight); a refused method blocks the request
+        r = client.options("/api/admin/features/optimizer", headers={
+            "Origin": "https://predict-withbetiq.vercel.app", "Access-Control-Request-Method": method,
+            "Access-Control-Request-Headers": "authorization, content-type, x-admin-secret"})
+        assert r.status_code == 200 and method in r.headers["access-control-allow-methods"]

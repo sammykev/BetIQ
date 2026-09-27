@@ -152,7 +152,10 @@ export function AccessSection() {
       setFeatures(fs => fs?.map(f => (f.id === id ? { ...f, ...d } : f)) ?? fs);
       refreshAccess();
       flash("ok", "Saved: takes effect within a few seconds");
-    } catch (e: any) { flash("err", e?.message || "Couldn't save"); }
+    } catch (e: any) {
+      // A TypeError is the request never arriving (network, or the browser refusing it)
+      flash("err", e instanceof TypeError ? "Couldn't reach the server, so nothing was saved" : e?.message || "Couldn't save");
+    }
   };
 
   if (!features) return <Card title="Access"><Skeleton rows={6} /></Card>;

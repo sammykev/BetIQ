@@ -282,7 +282,7 @@ app.add_middleware(security.SecurityMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_methods=["GET", "POST", "DELETE"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],   # PUT: admin → Access saves
     allow_headers=["Authorization", "Content-Type", "X-Admin-Secret"],
     max_age=3600,
 )
