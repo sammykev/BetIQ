@@ -85,6 +85,7 @@ def error_text(status: int, body: Dict[str, Any]) -> str:
     if errors and isinstance(errors, list):
         detail = detail or errors[0].get("message", "")
     hint = {401: " (check the four X_ keys)",
+            402: " (X charges for API use: add credits in the X developer console, under Billing)",
             403: " (the app needs Read and write permission, and new access tokens made after setting it)",
             429: " (X's posting limit: try later)"}.get(status, "")
     return f"HTTP {status}: {detail}".strip() + hint

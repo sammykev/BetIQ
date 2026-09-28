@@ -57,6 +57,7 @@ class TestCompose:
     def test_errors_explain_themselves(self):
         assert "Read and write" in x_poster.error_text(403, {"detail": "Forbidden"})
         assert "X_ keys" in x_poster.error_text(401, {"title": "Unauthorized"})
+        assert "add credits" in x_poster.error_text(402, {"title": "CreditsDepleted", "detail": "credits depleted"})
 
 
 @pytest.fixture
