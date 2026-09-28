@@ -61,8 +61,11 @@ def verify_session_token(token: str) -> str:
     except jwt.PyJWTError as e:
         raise HTTPException(status_code=401, detail=f"invalid_session: {type(e).__name__}")
     if AUTHORIZED_PARTIES:
-        azp = str(claims.get("azp", "")).rstrip("/")
-        if azp not in AUTHORIZED_PARTIES:
+        # A browser's token names the site it was made for (azp): it must be
+        # ours. The mobile app's tokens have none (there's no web origin), and
+        # are signed by the same Clerk instance, so they pass.
+        azp = str(claims.get("azp", "") or "").rstrip("/")
+        if azp and azp not in AUTHORIZED_PARTIES:
             raise HTTPException(status_code=401, detail="invalid_session: unauthorized_party")
     sub = claims.get("sub")
     if not isinstance(sub, str) or not sub:
