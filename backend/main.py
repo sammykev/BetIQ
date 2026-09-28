@@ -3228,6 +3228,10 @@ TICKETS_STATS_KEY = "betiq:tickets:stats"
 TICKET_SOURCES = {"slip", "optimizer", "code_check", "chat", "match", "daily", "other"}
 
 
+ANON_UID = "anonymous"      # codes made by visitors who aren't signed in (admin sees them all)
+ANON_MAX_TICKETS = 1000
+
+
 def _record_ticket(uid: str, ticket: Dict[str, Any]) -> None:
     import tickets
     r = _get_redis()
@@ -3237,7 +3241,8 @@ def _record_ticket(uid: str, ticket: Dict[str, Any]) -> None:
     raw = r.get(key)
     items: List[Dict] = [t for t in (json.loads(raw) if raw else []) if t.get("code") != ticket["code"]]
     items.insert(0, ticket)
-    r.set(key, json.dumps(items[:tickets.MAX_TICKETS], separators=(",", ":")), ex=365 * 86400)
+    cap = ANON_MAX_TICKETS if uid == ANON_UID else tickets.MAX_TICKETS
+    r.set(key, json.dumps(items[:cap], separators=(",", ":")), ex=365 * 86400)
     r.sadd(TICKETS_OPEN_KEY, uid)
     r.hincrby(TICKETS_STATS_KEY, "created", 1)
     r.hincrby(TICKETS_STATS_KEY, f"source:{ticket.get('source') or 'other'}", 1)
@@ -3322,6 +3327,77 @@ async def admin_tickets(_admin: str = Depends(require_admin)):
             "sources": {k.split(":", 1)[1]: v for k, v in stats.items() if k.startswith("source:")},
             "daily": [{"date": d, "codes": int(c or 0)} for d, c in zip(dates, counts)],
             "open_accounts": r.scard(TICKETS_OPEN_KEY)}
+
+
+_all_tickets_cache: List[Any] = [0.0, None]
+_names_cache: Dict[str, Tuple[float, Dict[str, str]]] = {}
+
+
+def _all_tickets(r) -> List[Dict[str, Any]]:
+    """Every account's tickets, newest first, each with its account id
+    (cached a minute: it reads every account that has made a code)."""
+    if _all_tickets_cache[1] is not None and time.time() - _all_tickets_cache[0] < 60:
+        return _all_tickets_cache[1]
+    keys = [k.decode() if isinstance(k, bytes) else k for k in r.scan_iter(match="betiq:user:*:tickets", count=500)]
+    out: List[Dict[str, Any]] = []
+    for i in range(0, len(keys), 100):
+        chunk = keys[i:i + 100]
+        for key, raw in zip(chunk, r.mget(chunk)):
+            uid = key[len("betiq:user:"):-len(":tickets")]
+            try:
+                items = json.loads(raw) if raw else []
+            except ValueError:
+                continue
+            out += [{**t, "uid": uid} for t in items if isinstance(t, dict)]
+    out.sort(key=lambda t: t.get("created_at") or "", reverse=True)
+    _all_tickets_cache[:] = [time.time(), out]
+    return out
+
+
+async def _account_names(uids: List[str]) -> Dict[str, Dict[str, str]]:
+    """Name and email per account, from Clerk (kept 10 minutes)."""
+    import auth
+    now = time.time()
+    need = [u for u in set(uids) if u not in _names_cache or now - _names_cache[u][0] > 600]
+    if need and auth.CLERK_SECRET_KEY:
+        try:
+            found = await auth.clerk_names(need)
+        except Exception as e:
+            print(f"[Tickets] couldn't read names from Clerk: {e}")
+            found = {}
+        for u in need:
+            if u in found:
+                _names_cache[u] = (now, found[u])
+    return {u: _names_cache[u][1] for u in uids if u in _names_cache}
+
+
+@app.get("/api/admin/tickets/all")
+async def admin_all_tickets(limit: int = 200, status: str = "", source: str = "", q: str = "",
+                            _admin: str = Depends(require_admin)):
+    """Every booking code made on the site, newest first, with the account
+    that made it (name, email) and its legs. Filters: status
+    (open|won|lost|void), source, q (code, name or email)."""
+    r = _get_redis()
+    if not r:
+        raise HTTPException(status_code=503, detail="The database isn't connected")
+    limit = max(1, min(int(limit), 1000))
+    items = await asyncio.to_thread(_all_tickets, r)
+    if status:
+        items = [t for t in items if t.get("status") == status]
+    if source:
+        items = [t for t in items if (t.get("source") or "other") == source]
+    names = await _account_names([t["uid"] for t in items if t["uid"] != ANON_UID])
+    if q:
+        ql = q.strip().lower()
+        items = [t for t in items if ql in (t.get("code") or "").lower()
+                 or ql in (names.get(t["uid"], {}).get("name") or "").lower()
+                 or ql in (names.get(t["uid"], {}).get("email") or "").lower()]
+    page = items[:limit]
+    return {"total": len(items), "tickets": [
+        {**{k: t.get(k) for k in ("code", "created_at", "source", "share_url", "status", "total_odds", "settled_at", "legs")},
+         "uid": t["uid"], "name": "Not signed in" if t["uid"] == ANON_UID else names.get(t["uid"], {}).get("name") or "",
+         "email": names.get(t["uid"], {}).get("email") or ""}
+        for t in page]}
 
 
 def _attach_live(r, items: List[Dict]) -> None:
@@ -6233,6 +6309,8 @@ async def _optimize_request(body: Dict[str, Any]) -> Dict[str, Any]:
         target = float(body.get("target_odds") or (lo * hi) ** 0.5)
         max_games = int(body.get("max_games", optimizer.MAX_GAMES))
         min_prob = min(0.95, max(0.5, float(body.get("min_prob", 0.6))))
+        # Optional cap on each pick's price (the daily slips use it): picks at or above it are left out
+        max_leg = float(body["max_leg_odds"]) if body.get("max_leg_odds") else None
         days = min(PREDICTION_DAYS, max(1, int(body.get("days", 3))))
     except (TypeError, ValueError):
         raise HTTPException(status_code=400, detail="Invalid optimizer settings")
@@ -6286,6 +6364,8 @@ async def _optimize_request(body: Dict[str, Any]) -> Dict[str, Any]:
     pairs = [(_with_priced_set_pieces(p, linked[id(p)]), linked[id(p)]) for p in preds]
     preds = [p for p, _ in pairs]
     groups = [optimizer.candidates(p, ev, min_prob, markets, allowed) for p, ev in pairs]
+    if max_leg:
+        groups = [[o for o in g if o.odds < max_leg] for g in groups]
     if bookable_only:
         # Shots are on some matches and lines only: bookable when SportyBet priced that very line
         groups = [[o for o in g if o.market not in booking_slip.LISTED_ONLY or o.odds_source == "sportybet"]
@@ -6734,15 +6814,16 @@ async def convert_slip(request: Request, body: Dict[str, Any]):
         uid = await auth.optional_user(request)
         if not uid and not auth.auth_enforced():
             uid = str(body.get("uid") or "")[:64] or None
-        if uid:
-            source = body.get("source") if body.get("source") in TICKET_SOURCES else "other"
-            try:
-                _record_ticket(uid, tickets.new_ticket(
-                    result["code"], selections, result.get("picks") or [], source, result.get("share_url"),
-                    result.get("total_odds"), datetime.now(timezone.utc).isoformat(timespec="seconds")))
+        # Signed out: kept too, so the admin sees every code the site makes
+        source = body.get("source") if body.get("source") in TICKET_SOURCES else "other"
+        try:
+            _record_ticket(uid or ANON_UID, tickets.new_ticket(
+                result["code"], selections, result.get("picks") or [], source, result.get("share_url"),
+                result.get("total_odds"), datetime.now(timezone.utc).isoformat(timespec="seconds")))
+            if uid:
                 result["tracked"] = True
-            except Exception as e:
-                print(f"[Tickets] Couldn't record {result['code']}: {e}")
+        except Exception as e:
+            print(f"[Tickets] Couldn't record {result['code']}: {e}")
     return result
 
 

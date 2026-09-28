@@ -21,7 +21,7 @@ const PERKS: [FeatureId, string][] = [
   ["ai_preview", "AI match previews with this week's team news"],
   ["code_check", "Check any SportyBet code and make it safer"],
   ["optimizer", "Optimizer: build a slip for the exact odds you want"],
-  ["daily_slips", "Daily 10, 15 and 20 odds slips from today's 70%+ picks"],
+  ["daily_slips", "Daily 10, 15 and 20 odds slips from today's 80%+ picks"],
   ["ai_chat", "AI assistant that builds slips on request"],
   ["sport.basketball", "Basketball predictions"],
   ["sport.tennis", "Tennis predictions"],

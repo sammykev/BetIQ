@@ -7,6 +7,7 @@ import { TrackRecord } from "@/components/TrackRecord";
 import { MatchdayList } from "@/components/MatchdayList";
 import { fetchMatchday, type MatchdayMatch, type MatchdayResponse } from "@/lib/matchday";
 import { API, BarList, Btn, Card, Pill, Skeleton, Stat, Toggle, ago, inputClass, num, useAdmin } from "../ui";
+import { AllTickets } from "../AllTickets";
 
 const toneOf = (acc: number) => (acc >= 60 ? "text-accent" : acc >= 45 ? "text-warn" : "text-danger");
 
@@ -532,10 +533,16 @@ function LiveMatches() {
 /** Booking codes made by signed-in accounts, and the match-day results job. */
 function TicketsAndResults({ info, tickets }: { info: any; tickets: any }) {
   const rep = info?.report ?? {};
+  const [all, setAll] = useState(false);
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <Stat label="Codes made" value={num(tickets?.created ?? 0)} sub={tickets ? `${num(tickets.open_accounts ?? 0)} accounts with open tickets` : undefined} />
+        {/* Tap to see every code, who made it and its picks */}
+        <button type="button" onClick={() => setAll(a => !a)} aria-expanded={all}
+          className={clsx("text-left rounded-xl transition-shadow hover:ring-1 hover:ring-accent/50", all && "ring-1 ring-accent")}>
+          <Stat label="Codes made" value={num(tickets?.created ?? 0)}
+            sub={all ? "Tap to hide the list" : "Tap to see every code and who made it"} />
+        </button>
         <Stat label="Tickets won" value={tickets && tickets.won + tickets.lost ? `${tickets.won}/${tickets.won + tickets.lost}` : "—"}
           sub={tickets?.hit_rate != null ? `${Math.round(tickets.hit_rate * 100)}% of settled` : "none settled yet"} tone="accent" />
         <Stat label="Results check" value={info?.at ? ago(info.at) : "Never"} sub={info?.trigger ? `by ${info.trigger}` : undefined} />
@@ -546,6 +553,7 @@ function TicketsAndResults({ info, tickets }: { info: any; tickets: any }) {
         <p className="text-xs text-n-400">By source: {Object.entries(tickets.sources as Record<string, number>).map(([k, v]) => `${k.replace("_", " ")} ${v}`).join(" · ")}</p>
       )}
       {rep.errors?.length > 0 && <p className="text-xs text-warn">Result sources: {rep.errors.slice(0, 3).join(" · ")}</p>}
+      {all && <AllTickets sources={tickets?.sources} />}
     </div>
   );
 }

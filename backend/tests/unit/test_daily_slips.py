@@ -1,5 +1,5 @@
 """
-Daily odds (daily_slips.py): three slips a day from the day's 70%+ picks, built once,
+Daily odds (daily_slips.py): three slips a day from the day's 80%+ picks, none at 2.0 odds or more, built once,
 graded from the results, and counted in the record once each.
 """
 
@@ -24,9 +24,10 @@ def result(target, legs, time="00:00"):
 
 
 class TestSlips:
-    def test_requests_ask_for_70_percent_picks_near_the_target(self):
+    def test_requests_ask_for_80_percent_picks_under_2_odds_near_the_target(self):
         body = daily_slips.request(10, daily_slips.ATTEMPTS[0])
-        assert body["min_prob"] == 0.70 and body["min_odds"] < 10 < body["max_odds"]
+        assert body["min_prob"] == 0.80 and body["max_leg_odds"] == 2.0
+        assert body["min_odds"] < 10 < body["max_odds"]
         assert body["bookable_only"] is True and body["days"] == 1
 
     def test_only_the_days_own_matches(self):
@@ -78,7 +79,7 @@ def test_built_once_booked_graded_and_recorded(api, monkeypatch, sportybet):
     async def optimize(body):
         calls.append(body)
         if body["target_odds"] == 20:
-            return {"error": "Not enough 70% picks for 20x"}
+            return {"error": "Not enough 80% picks for 20x"}
         return result(body["target_odds"], [("Arsenal", "Chelsea", today, "goals_ou", "O15")], time="23:59")
     monkeypatch.setattr(main, "_optimize_request", optimize)
 

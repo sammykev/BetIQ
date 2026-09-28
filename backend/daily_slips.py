@@ -1,9 +1,10 @@
 """
 Daily odds: three slips a day at about 10x, 15x and 20x, built by the
 optimizer only from the day's own matches, and only from picks the model
-rates 70% or more.
+rates 80% or more, none of them priced at 2.0 odds or more (a long price on
+one leg means a riskier slip, whatever the model says).
 
-Every pick being 70%+ doesn't make the slip 70%: the chances multiply, so a
+Every pick being 80%+ doesn't make the slip 80%: the chances multiply, so a
 10x slip lands far less often than any one of its picks. Each slip carries that
 honest combined chance (the optimizer's win_chance), and every slip is kept
 and graded, so the record shows how they really do.
@@ -20,7 +21,8 @@ from typing import Any, Callable, Dict, List, Optional
 import tickets
 
 TARGETS = (10, 15, 20)
-MIN_PROB = 0.70
+MIN_PROB = 0.80
+MAX_LEG_ODDS = 2.0      # every pick priced under this
 SPREAD = 0.07          # total odds within ±7% of the target
 KEEP_DAYS = 120
 BUILD_AT = (6, 5)       # UTC (07:05 in Lagos): the day's slips are made then
@@ -37,7 +39,7 @@ PICK_FIELDS = ("home", "away", "date", "time", "league", "market", "market_name"
 def request(target: float, attempt: Dict[str, Any]) -> Dict[str, Any]:
     """The optimizer request for one target."""
     return {"target_odds": target, "min_odds": round(target * (1 - SPREAD), 2),
-            "max_odds": round(target * (1 + SPREAD), 2), "min_prob": MIN_PROB,
+            "max_odds": round(target * (1 + SPREAD), 2), "min_prob": MIN_PROB, "max_leg_odds": MAX_LEG_ODDS,
             "max_games": 30, **attempt}
 
 

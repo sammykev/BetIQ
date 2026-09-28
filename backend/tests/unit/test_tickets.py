@@ -93,10 +93,11 @@ class TestRecording:
         self.book(monkeypatch, {"uid": "u1"})
         assert len(json.loads(redis.kv["betiq:user:u1:tickets"])) == 1
 
-    def test_anonymous_codes_are_not_tracked(self, redis, monkeypatch):
+    def test_signed_out_codes_are_kept_for_the_admin_only(self, redis, monkeypatch):
         r = self.book(monkeypatch, {})
         assert r.json()["code"] == "ABC123" and "tracked" not in r.json()
-        assert not any(k.endswith(":tickets") for k in redis.kv)
+        # Not in anyone's dashboard: only the admin's list of every code
+        assert [k for k in redis.kv if k.endswith(":tickets")] == [main._ukey(main.ANON_UID, "tickets")]
 
     def test_admin_stats(self, redis, monkeypatch):
         monkeypatch.setattr(main, "ADMIN_SECRET", "s3cret")

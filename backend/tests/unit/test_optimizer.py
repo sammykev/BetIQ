@@ -117,6 +117,10 @@ class TestEndpoint:
         assert r["matches_considered"] == 8  # the day-9 match is outside 3 days
         assert all(p["date"] == self.tomorrow for p in r["picks"])
 
+    def test_max_leg_odds_leaves_out_long_prices(self):
+        capped = self.post(min_odds=3, max_odds=6, days=3, max_leg_odds=1.5).json()
+        assert capped["picks"] and all(p["odds"] < 1.5 for p in capped["picks"])
+
     def test_filters(self):
         assert self.post(min_odds=1.1, max_odds=2, bookable_only=True).json()["matches_considered"] == 1
         assert self.post(min_odds=1.1, max_odds=2, leagues=["INT-FRI"]).json()["matches_considered"] == 1
