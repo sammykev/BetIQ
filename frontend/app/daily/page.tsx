@@ -12,7 +12,8 @@ import { useAuthedFetch } from "@/lib/useAuthedFetch";
 import { API, type LegLive, type LegStatus } from "@/lib/matchday";
 
 // Daily odds (backend daily_slips.py): three slips a day at about 10x, 15x
-// and 20x, only from picks the model rates 85%+, each with its honest chance.
+// and 20x from the day's own matches, only from picks the model rates 70%+,
+// each with its honest chance.
 // The server makes them once each morning and books each on SportyBet: every
 // visitor gets the same slips and booking codes.
 
@@ -42,7 +43,7 @@ const notStarted = (p: Pick) => p.status === "pending" && !p.live &&
 
 const PERKS = [
   "Three slips every morning, at about 10, 15 and 20 odds",
-  "Only picks our model rates 85% or more",
+  "Today's matches only, every pick rated 70% or more",
   "A ready SportyBet booking code with every slip",
   "Every slip graded, with a public record",
 ];
@@ -63,7 +64,7 @@ function daysBefore(iso: string, n: number): string[] {
 const dayName = (iso: string, today: string) =>
   iso === today ? "Today" : new Date(`${iso}T12:00:00Z`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
 
-function SlipView({ s, isToday, date, retry }: { s: Slip; isToday: boolean; date: string; retry: number }) {
+function SlipView({ s, isToday, date, retry, minProb }: { s: Slip; isToday: boolean; date: string; retry: number; minProb: number }) {
   const { user } = useUser();
   const authFetch = useAuthedFetch();
   const [copied, setCopied] = useState(false);
@@ -73,7 +74,7 @@ function SlipView({ s, isToday, date, retry }: { s: Slip; isToday: boolean; date
     return (
       <div className="card p-5 text-sm text-n-300">
         <p className="font-semibold text-n-0 mb-1">No {s.target}x slip {isToday ? "today" : "that day"}</p>
-        <p className="text-n-400">{s.error || `Not enough picks at 85% or more to reach ${s.target}x.`}</p>
+        <p className="text-n-400">{s.error || `Not enough picks at ${pct(minProb)} or more in ${isToday ? "today's" : "that day's"} matches to reach ${s.target}x.`}</p>
       </div>
     );
   }
@@ -154,7 +155,7 @@ function SlipView({ s, isToday, date, retry }: { s: Slip; isToday: boolean; date
       {(!s.bookable || s.within_target === false || (s.days ?? 1) > 1) && (
         <p className="px-4 sm:px-5 pb-3 text-[11px] text-n-500">
           {[s.within_target === false && `Closest to ${s.target}x the picks allowed`,
-            (s.days ?? 1) > 1 && "includes tomorrow's matches",
+            (s.days ?? 1) > 1 && "includes the next day's matches",
             !s.bookable && "some picks weren't on SportyBet yet"].filter(Boolean).join(" · ")}
         </p>
       )}
@@ -238,7 +239,7 @@ function Daily() {
               );
             })}
           </div>
-          {s && <SlipView key={`${data.date}-${s.target}`} s={s} isToday={isToday} date={data.date} retry={data.retry_minutes ?? 15} />}
+          {s && <SlipView key={`${data.date}-${s.target}`} s={s} isToday={isToday} date={data.date} retry={data.retry_minutes ?? 15} minProb={data.min_prob} />}
         </>
       )}
 
@@ -257,7 +258,7 @@ export default function DailyPage() {
     <AppShell>
       <div className="space-y-6 animate-fade-in">
         <PageHeader eyebrow="Every morning" title="Daily odds"
-          description="Three slips a day at about 10, 15 and 20 odds, built only from picks our model rates 85% or more, each with its SportyBet booking code." />
+          description="Three slips a day at about 10, 15 and 20 odds, from that day's matches only and picks our model rates 70% or more, each with its SportyBet booking code." />
         <FeatureGate feature="daily_slips" title="Daily odds" perks={PERKS}>
           <Daily />
         </FeatureGate>

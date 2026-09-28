@@ -1,9 +1,10 @@
 """
 Daily odds: three slips a day at about 10x, 15x and 20x, built by the
-optimizer only from picks the model rates 85% or more.
+optimizer only from the day's own matches, and only from picks the model
+rates 70% or more.
 
-Every pick being 85%+ doesn't make the slip 85%: the chances multiply, so a
-10x slip of 85-90% picks lands a few times in twenty. Each slip carries that
+Every pick being 70%+ doesn't make the slip 70%: the chances multiply, so a
+10x slip lands far less often than any one of its picks. Each slip carries that
 honest combined chance (the optimizer's win_chance), and every slip is kept
 and graded, so the record shows how they really do.
 
@@ -19,16 +20,15 @@ from typing import Any, Callable, Dict, List, Optional
 import tickets
 
 TARGETS = (10, 15, 20)
-MIN_PROB = 0.85
+MIN_PROB = 0.70
 SPREAD = 0.07          # total odds within ±7% of the target
 KEEP_DAYS = 120
 BUILD_AT = (6, 5)       # UTC (07:05 in Lagos): the day's slips are made then
 RETRY_MINUTES = 15      # a slip without a booking code is tried again after this
 
-# Tried in order until one gives a slip: today's matches that SportyBet lists
-# first (so the slip can be booked), then more days, then unlisted matches
-ATTEMPTS = ({"days": 1, "bookable_only": True}, {"days": 2, "bookable_only": True},
-            {"days": 1, "bookable_only": False}, {"days": 2, "bookable_only": False})
+# Today's matches only. Tried in order until one gives a slip: the ones
+# SportyBet lists first (so the slip can be booked), then all of today's
+ATTEMPTS = ({"days": 1, "bookable_only": True}, {"days": 1, "bookable_only": False})
 
 PICK_FIELDS = ("home", "away", "date", "time", "league", "market", "market_name", "code", "label",
                "prob", "odds", "odds_source", "bookable")

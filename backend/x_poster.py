@@ -115,7 +115,9 @@ def compose(doc: Dict[str, Any], site: str) -> Optional[str]:
         odds = f"{float(s['total_odds']):.2f}" if s.get("total_odds") else f"~{int(s['target'])}"
         lines.append(f"{int(s['target'])}x slip: {odds} odds · " + (f"code {code}" if code else "code on the site"))
     link = f"{site.rstrip('/')}/daily"
-    tail = ["", "Every pick rated 85%+ by our model. Load a code on SportyBet, or see the picks:", link,
+    import daily_slips
+    tail = ["", f"Today's matches, every pick rated {round(daily_slips.MIN_PROB * 100)}%+ by our model. "
+            "Load a code on SportyBet, or see the picks:", link,
             "", "18+ · Bet responsibly #BetIQ"]
     text = "\n".join(lines + tail)
     if weight(text) > MAX_WEIGHT:
