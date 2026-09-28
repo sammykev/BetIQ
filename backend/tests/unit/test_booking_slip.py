@@ -624,6 +624,19 @@ class TestKickoffMatching:
         assert sportybet.find_event("SE Palmeiras", "Atletico Mineiro", events) is None  # strict pass misses
         assert sportybet.find_event_by_kickoff("SE Palmeiras", "Atletico Mineiro", self.KO, events)["eventId"] == "sr:match:1"
 
+    def test_never_a_different_opponent(self):
+        # Slovakia at the same kick-off, but against England: not our Slovakia v Faroe Islands
+        events = [self.ev("sr:match:1", "Slovakia", "England")]
+        assert sportybet.team_similarity("Faroe Islands", "England") < 0.7
+        assert sportybet.find_event_by_kickoff("Slovakia", "Faroe Islands", self.KO, events) is None
+        assert sportybet.find_event_by_kickoff("Faroe Islands", "Slovakia", self.KO,
+                                               [self.ev("sr:match:2", "England", "Slovakia")]) is None
+
+    def test_abbreviations_still_match(self):
+        assert sportybet.team_similarity("Faroe Islands", "Faroe Is.") >= 0.95
+        assert sportybet.find_event("Slovakia", "Faroe Islands", [self.ev("sr:match:3", "Slovakia", "Faroe Is.")])["eventId"] == "sr:match:3"
+        assert sportybet.team_similarity("Inter", "Internacional") < 0.95          # not an abbreviation
+
     def test_not_at_another_kickoff(self):
         events = [self.ev("sr:match:1", "Palmeiras SP", "Clube Atletico Mineiro", "2026-09-26T21:00:00")]
         assert sportybet.find_event_by_kickoff("SE Palmeiras", "Atletico Mineiro", self.KO, events) is None
@@ -637,6 +650,13 @@ class TestKickoffMatching:
     def test_never_the_reverse_fixture(self):
         events = [self.ev("sr:match:1", "Chelsea", "Arsenal")]
         assert sportybet.find_event_by_kickoff("Arsenal", "Chelsea", self.KO, events) is None
+
+    def test_one_sportybet_match_never_serves_two_of_ours(self):
+        events = [self.ev("sr:match:1", "Palmeiras SP", "Clube Atletico Mineiro")]
+        preds = [{"home": "Palmeiras", "away": "Atletico Mineiro", "date": "2026-09-26", "time": "18:45"},
+                 {"home": "SE Palmeiras", "away": "Atletico MG", "date": "2026-09-26", "time": "18:45"}]
+        links = main._match_predictions_to_events(preds, events, [])
+        assert list(links) == ["Palmeiras|Atletico Mineiro|2026-09-26"]
 
     def test_linking_uses_the_kickoff_and_reports_the_rest(self):
         events = [self.ev("sr:match:1", "Palmeiras SP", "Clube Atletico Mineiro"),

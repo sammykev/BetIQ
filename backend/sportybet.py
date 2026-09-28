@@ -469,10 +469,24 @@ def _keys(name: str) -> set:
     return {k for k in keys if k}
 
 
+def _expand_abbreviations(wa: set, wb: set) -> set:
+    """`wa` with short abbreviations spelled out as `wb` has them ("faroe is"
+    beside "faroe islands" → faroe islands); only 2–3 letters, so "inter"
+    never becomes "internacional"."""
+    out = set()
+    for w in wa:
+        full = [x for x in wb if 2 <= len(w) <= 3 and len(x) > len(w) and x.startswith(w)] if w not in wb else []
+        out.add(full[0] if len(full) == 1 else w)
+    return out
+
+
 def _similarity(ka: str, kb: str) -> float:
     if ka == kb:
         return 1.0
     wa, wb = set(ka.split()), set(kb.split())
+    wa, wb = _expand_abbreviations(wa, wb), _expand_abbreviations(wb, wa)
+    if wa == wb:
+        return 0.95
     shared = wa & wb
     if (wa <= wb or wb <= wa) and max(len(w) for w in shared or {""}) >= 3:
         return 0.95
@@ -489,6 +503,19 @@ def team_similarity(a: str, b: str) -> float:
     "Manchester United" (or Real / Atlético Madrid) come out far apart.
     """
     return max((_similarity(ka, kb) for ka in _keys(a) for kb in _keys(b)), default=0.0)
+
+
+def shares_word(a: str, b: str) -> bool:
+    """Whether two names have a word in common (after aliases and short
+    abbreviations): "Faroe Is." / "Faroe Islands" do, "Faroe Islands" /
+    "England" don't, however alike the letters."""
+    for ka in _keys(a):
+        for kb in _keys(b):
+            wa, wb = set(ka.split()), set(kb.split())
+            wa, wb = _expand_abbreviations(wa, wb), _expand_abbreviations(wb, wa)
+            if any(len(w) >= 3 for w in wa & wb):
+                return True
+    return False
 
 
 def find_event(home: str, away: str, events: Iterable[Dict]) -> Optional[Dict]:
@@ -518,11 +545,14 @@ def _markers(name: str) -> set:
 
 def find_event_by_kickoff(home: str, away: str, kickoff_ms: int, events: Iterable[Dict]) -> Optional[Dict]:
     """
-    Second pass for names the strict match misses ("Czechia" / "Czech
-    Republic", club naming differences): an event starting within 20 minutes
-    of our kick-off where one team matches clearly and the other at least
-    loosely — a team can't play two matches at once. Reversed fixtures and
-    youth / women's / reserve sides are never taken.
+    Second pass for names the strict match misses (club naming differences
+    such as "SE Palmeiras" / "Palmeiras SP"): an event starting within 20
+    minutes of our kick-off where one team matches clearly and the other is
+    recognisably the same side — a close spelling, or a word in common.
+    Letter-likeness alone isn't enough ("Faroe Islands" / "England" are 50%
+    alike): that is a different opponent, and a link would price and book
+    the wrong match. Reversed fixtures and youth / women's / reserve sides
+    are never taken.
     """
     best, best_score = None, 0.0
     for ev in events:
@@ -537,7 +567,8 @@ def find_event_by_kickoff(home: str, away: str, kickoff_ms: int, events: Iterabl
             continue
         sh, sa = team_similarity(home, h), team_similarity(away, a)
         strong, weak = max(sh, sa), min(sh, sa)
-        if not ((strong >= 0.95 and weak >= 0.3) or weak >= 0.7):
+        ours, theirs = (away, a) if sa <= sh else (home, h)
+        if not (weak >= 0.7 or (strong >= 0.95 and weak >= 0.3 and shares_word(ours, theirs))):
             continue
         if team_similarity(home, a) > sh or team_similarity(away, h) > sa:
             continue

@@ -5519,17 +5519,26 @@ def _match_predictions_to_events(preds: List[Dict], events: List[Dict],
     for ev in events:
         by_day.setdefault(sportybet._utc_day(ev) or "", []).append(ev)
     links: Dict[str, Dict] = {}
-    for p in preds:
+
+    def near(p: Dict) -> List[Dict]:
         d = date.fromisoformat(p["date"])
-        near = [ev for k in {(d + timedelta(days=o)).isoformat() for o in (-1, 0, 1)} for ev in by_day.get(k, [])]
-        ev = sportybet.find_event(p["home"], p["away"], near)
+        return [ev for k in {(d + timedelta(days=o)).isoformat() for o in (-1, 0, 1)} for ev in by_day.get(k, [])]
+    # Both names first, for every prediction; the kick-off pass then only
+    # takes events nobody claimed, so one SportyBet match never serves two of ours
+    found = {id(p): sportybet.find_event(p["home"], p["away"], near(p)) for p in preds}
+    taken = {ev.get("eventId") for ev in found.values() if ev}
+    for p in preds:
+        ev = found[id(p)]
         kickoff = _kickoff_ms(p)
         if ev is None and kickoff is not None:
-            ev = sportybet.find_event_by_kickoff(p["home"], p["away"], kickoff, near)
+            ev = sportybet.find_event_by_kickoff(p["home"], p["away"], kickoff,
+                                                 [e for e in near(p) if e.get("eventId") not in taken])
+            if ev:
+                taken.add(ev.get("eventId"))
         if ev and ev.get("eventId"):
             links[_sb_key(p["home"], p["away"], p["date"])] = sportybet.slim_event(ev)
         elif unlinked is not None:
-            guess, score = sportybet.closest_event(p["home"], p["away"], near)
+            guess, score = sportybet.closest_event(p["home"], p["away"], near(p))
             unlinked.append({
                 "match": f"{p['home']} vs {p['away']}", "date": p["date"], "time": p.get("time") or "",
                 "league": p.get("league_name") or p.get("league") or "",
