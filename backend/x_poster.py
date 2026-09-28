@@ -78,6 +78,18 @@ async def post(text: str) -> Tuple[int, Dict[str, Any]]:
     return r.status_code, body
 
 
+async def publish(text: str) -> Dict[str, Any]:
+    """Post `text`: {ok, id, url} or {ok: False, error}."""
+    try:
+        code, body = await post(text)
+    except Exception as e:
+        return {"ok": False, "error": f"couldn't reach X ({type(e).__name__})"}
+    pid = (body.get("data") or {}).get("id") if code in (200, 201) else None
+    if pid:
+        return {"ok": True, "id": pid, "url": f"https://x.com/i/status/{pid}"}
+    return {"ok": False, "error": error_text(code, body)}
+
+
 def error_text(status: int, body: Dict[str, Any]) -> str:
     """X's reason for a refused post, in a line."""
     detail = body.get("detail") or body.get("title") or ""

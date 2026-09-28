@@ -66,7 +66,8 @@ def _within_window(match_date: str, today: Optional[date] = None) -> bool:
 KNOWN_SETTINGS = ("UPSTASH_REDIS_URL", "CLERK_ISSUER", "CLERK_SECRET_KEY", "CLERK_AUTHORIZED_PARTIES",
                   "ADMIN_SECRET", "ADMIN_USER_IDS", "TRAFFIC_KEY", "FOOTBALL_DATA_API_KEY", "FRONTEND_URL",
                   "APIFOOTBALL_KEY", "ODDS_API_KEY", "GROQ_API_KEY", "PAYSTACK_SECRET_KEY",
-                  "X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN", "X_ACCESS_SECRET")
+                  "X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN", "X_ACCESS_SECRET",
+                  "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID")
 _STARTED_AT = time.time()
 
 
@@ -305,11 +306,7 @@ async def admin_alerts(_admin: str = Depends(require_admin)):
     review_alert = market_review.alert(_review, review_age)
     if review_alert:
         alerts.append(review_alert)
-    import x_poster
-    x_today = _x_day(_get_redis(), date.today().isoformat()) if _x_enabled() else {}
-    if x_today.get("status") == "failed" and int(x_today.get("tries") or 0) >= x_poster.MAX_TRIES:
-        alerts.append({"level": "warn", "title": "Today's daily odds weren't posted on X",
-                       "detail": f"{x_today.get('error')}. Fix it, then use Post now in Messaging → Daily odds on X."})
+    alerts += _post_alerts()
     return {"alerts": alerts}
 
 
@@ -6644,122 +6641,149 @@ async def _daily_tick() -> None:
         print(f"[Daily] tick failed: {e}")
 
 
-# ── The daily odds on X (x_poster.py) ──
-X_CONFIG_KEY = "betiq:config:x"
-X_DAY_KEY = "betiq:x:{}"
-X_POST_BY = (8, 0)      # UTC (09:00 Lagos): post then even if a slip is still waiting for its code
+# ── The daily odds on X and Telegram (x_poster.py, telegram_poster.py) ──
+# Each channel module: KEYS, MAX_TRIES, configured(), missing(),
+# compose(doc, site) -> text | None, async publish(text) -> {ok, id, url, error}
+POST_CHANNELS = {"x": "x_poster", "telegram": "telegram_poster"}
+POST_CONFIG_KEY = "betiq:config:{}"         # channel → {"enabled": bool}
+POST_DAY_KEY = "betiq:post:{}:{}"           # channel, date → that day's post
+POST_BY = (8, 0)        # UTC (09:00 Lagos): post then even if a slip is still waiting for its code
+
+
+def _channel(ch: str):
+    import importlib
+    if ch not in POST_CHANNELS:
+        raise HTTPException(status_code=404, detail="Unknown channel")
+    return importlib.import_module(POST_CHANNELS[ch])
 
 
 def _site_url() -> str:
     return FRONTEND_URL if FRONTEND_URL.startswith("https://") else "https://predict-withbetiq.vercel.app"
 
 
-def _x_enabled() -> bool:
+def _post_enabled(ch: str) -> bool:
     r = _get_redis()
     try:
-        return bool(r and json.loads(r.get(X_CONFIG_KEY) or "{}").get("enabled"))
+        return bool(r and json.loads(r.get(POST_CONFIG_KEY.format(ch)) or "{}").get("enabled"))
     except Exception:
         return False
 
 
-def _x_day(r, day: str) -> Dict[str, Any]:
+def _post_day(r, ch: str, day: str) -> Dict[str, Any]:
     try:
-        return json.loads(r.get(X_DAY_KEY.format(day)) or "{}") if r else {}
+        return json.loads(r.get(POST_DAY_KEY.format(ch, day)) or "{}") if r else {}
     except Exception:
         return {}
 
 
-def _x_ready(doc: Dict[str, Any], now: datetime) -> bool:
-    """Every slip that can still be booked has its code, or it's X_POST_BY."""
+def _post_ready(doc: Dict[str, Any], now: datetime) -> bool:
+    """Every slip that can still be booked has its code, or it's POST_BY."""
     import daily_slips
-    if (now.hour, now.minute) >= X_POST_BY:
+    if (now.hour, now.minute) >= POST_BY:
         return True
     return all((s.get("booking") or {}).get("code") or not daily_slips.open_picks(s, now)
                for s in doc.get("slips") or [] if s.get("status") != "none")
 
 
-async def _post_daily(doc: Dict[str, Any], force: bool = False) -> Dict[str, Any]:
-    """Post the day's slips on X, once a day (`force`: again). The day's
-    state: {status: posted|failed|skipped, id, url, text, error, tries, at}."""
-    import x_poster
+async def _post_daily(ch: str, doc: Dict[str, Any], force: bool = False) -> Dict[str, Any]:
+    """Post the day's slips to one channel, once a day (`force`: again). The
+    day's state: {status: posted|failed|skipped, id, url, text, error, tries, at}."""
+    mod = _channel(ch)
     r = _get_redis()
-    state = _x_day(r, doc["date"])
+    state = _post_day(r, ch, doc["date"])
     if state.get("status") == "posted" and not force:
         return state
-    if not x_poster.configured():
-        return {"status": "failed", "error": f"Missing in .env: {', '.join(x_poster.missing())}"}
-    text = x_poster.compose(doc, _site_url())
+    if not mod.configured():
+        return {"status": "failed", "error": f"Missing in .env: {', '.join(mod.missing())}"}
+    text = mod.compose(doc, _site_url())
     at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     if not text:
         state = {"status": "skipped", "error": "No slip with a booking code to post", "at": at}
     else:
-        try:
-            code, body = await x_poster.post(text)
-        except Exception as e:
-            code, body = 0, {"detail": f"couldn't reach X ({type(e).__name__})"}
         tries = int(state.get("tries") or 0) + 1
-        if code in (200, 201) and (body.get("data") or {}).get("id"):
-            pid = body["data"]["id"]
-            state = {"status": "posted", "id": pid, "url": f"https://x.com/i/status/{pid}", "text": text,
-                     "at": at, "tries": tries}
-            print(f"[X] posted the daily odds: {state['url']}")
+        sent = await mod.publish(text)
+        if sent.get("ok"):
+            state = {"status": "posted", "id": sent.get("id"), "url": sent.get("url"), "text": text, "at": at, "tries": tries}
+            print(f"[Post:{ch}] posted the daily odds: {sent.get('url') or sent.get('id')}")
         else:
-            state = {"status": "failed", "error": x_poster.error_text(code, body), "text": text, "at": at, "tries": tries}
-            print(f"[X] post failed ({tries}/{x_poster.MAX_TRIES}): {state['error']}")
+            state = {"status": "failed", "error": sent.get("error"), "text": text, "at": at, "tries": tries}
+            print(f"[Post:{ch}] failed ({tries}/{mod.MAX_TRIES}): {sent.get('error')}")
     if r:
-        r.set(X_DAY_KEY.format(doc["date"]), json.dumps(state), ex=14 * 86400)
+        r.set(POST_DAY_KEY.format(ch, doc["date"]), json.dumps(state), ex=14 * 86400)
     return state
 
 
 async def _maybe_post_daily(doc: Dict[str, Any]) -> None:
-    """From the daily tick: post today's slips once they're booked."""
+    """From the daily tick: post today's slips to each switched-on channel once they're booked."""
     import daily_slips
-    import x_poster
-    if not _x_enabled() or not x_poster.configured() or doc.get("date") != date.today().isoformat():
+    if doc.get("date") != date.today().isoformat() or not _post_ready(doc, daily_slips.now_utc()):
         return
-    state = _x_day(_get_redis(), doc["date"])
-    if state.get("status") in ("posted", "skipped") or int(state.get("tries") or 0) >= x_poster.MAX_TRIES:
-        return
-    if _x_ready(doc, daily_slips.now_utc()):
-        await _post_daily(doc)
+    for ch in POST_CHANNELS:
+        mod = _channel(ch)
+        if not _post_enabled(ch) or not mod.configured():
+            continue
+        state = _post_day(_get_redis(), ch, doc["date"])
+        if state.get("status") in ("posted", "skipped") or int(state.get("tries") or 0) >= mod.MAX_TRIES:
+            continue
+        try:
+            await _post_daily(ch, doc)
+        except Exception as e:
+            print(f"[Post:{ch}] error: {e}")
 
 
-@app.get("/api/admin/x")
-async def admin_x(_admin: str = Depends(require_admin)):
-    """Posting the daily odds on X: keys, switch, today's post and a preview."""
-    import x_poster
+def _post_alerts() -> List[Dict[str, str]]:
+    """Banner lines for channels that gave up on today's post."""
+    out = []
+    r = _get_redis()
+    for ch in POST_CHANNELS:
+        if not _post_enabled(ch):
+            continue
+        mod = _channel(ch)
+        state = _post_day(r, ch, date.today().isoformat())
+        if state.get("status") == "failed" and int(state.get("tries") or 0) >= mod.MAX_TRIES:
+            name = "X" if ch == "x" else "Telegram"
+            out.append({"level": "warn", "title": f"Today's daily odds weren't posted on {name}",
+                        "detail": f"{state.get('error')}. Fix it, then use Post now in Messaging → Daily odds on {name}."})
+    return out
+
+
+@app.get("/api/admin/post/{ch}")
+async def admin_post_channel(ch: str, _admin: str = Depends(require_admin)):
+    """One channel: keys, switch, today's post and a preview."""
+    mod = _channel(ch)
     today = date.today().isoformat()
     r = _get_redis()
     doc = _daily_load(r, today)
-    return {"configured": x_poster.configured(), "missing": x_poster.missing(), "enabled": _x_enabled(),
-            "today": _x_day(r, today), "preview": x_poster.compose(doc, _site_url()) if doc else None,
-            "post_by_utc": f"{X_POST_BY[0]:02d}:{X_POST_BY[1]:02d}", "max_tries": x_poster.MAX_TRIES}
+    return {"channel": ch, "configured": mod.configured(), "missing": mod.missing(), "enabled": _post_enabled(ch),
+            "today": _post_day(r, ch, today), "preview": mod.compose(doc, _site_url()) if doc else None,
+            "post_by_utc": f"{POST_BY[0]:02d}:{POST_BY[1]:02d}", "max_tries": mod.MAX_TRIES}
 
 
-@app.put("/api/admin/x")
-async def put_admin_x(body: Dict[str, Any], _admin: str = Depends(require_admin)):
-    """Body: {enabled}: post the daily odds on X each morning."""
+@app.put("/api/admin/post/{ch}")
+async def put_admin_post_channel(ch: str, body: Dict[str, Any], _admin: str = Depends(require_admin)):
+    """Body: {enabled}: post the daily odds to this channel each morning."""
+    _channel(ch)
     r = _get_redis()
     if not r:
         raise HTTPException(status_code=503, detail="Couldn't save: the database isn't connected")
     enabled = bool((body or {}).get("enabled"))
-    r.set(X_CONFIG_KEY, json.dumps({"enabled": enabled}))
-    _audit(_admin, "x_posting", enabled=enabled)
-    return await admin_x(_admin)
+    r.set(POST_CONFIG_KEY.format(ch), json.dumps({"enabled": enabled}))
+    _audit(_admin, "daily_posting", channel=ch, enabled=enabled)
+    return await admin_post_channel(ch, _admin)
 
 
-@app.post("/api/admin/x/post")
-async def admin_x_post(body: Dict[str, Any] = None, _admin: str = Depends(require_admin)):
-    """Post today's daily odds on X now. Body: {again?: true} to post even
-    if today's post already went out."""
-    import x_poster
-    if not x_poster.configured():
-        raise HTTPException(status_code=400, detail=f"Missing in .env: {', '.join(x_poster.missing())}")
+@app.post("/api/admin/post/{ch}/now")
+async def admin_post_now(ch: str, body: Dict[str, Any] = None, _admin: str = Depends(require_admin)):
+    """Post today's daily odds to this channel now. Body: {again?: true} to
+    post even if today's post already went out."""
+    mod = _channel(ch)
+    if not mod.configured():
+        raise HTTPException(status_code=400, detail=f"Missing in .env: {', '.join(mod.missing())}")
     doc = _daily_load(_get_redis(), date.today().isoformat())
     if not doc:
         raise HTTPException(status_code=404, detail="Today's slips aren't made yet")
-    state = await _post_daily(doc, force=bool((body or {}).get("again")))
-    _audit(_admin, "x_post", status=state.get("status"))
+    state = await _post_daily(ch, doc, force=bool((body or {}).get("again")))
+    _audit(_admin, "daily_post", channel=ch, status=state.get("status"))
     return state
 
 

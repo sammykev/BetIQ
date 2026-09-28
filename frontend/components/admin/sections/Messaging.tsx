@@ -4,12 +4,22 @@ import { useEffect, useState } from "react";
 import { Bot, ExternalLink, Mail, Megaphone, MessageSquare, Send } from "lucide-react";
 import { API, Btn, Card, Pill, Stat, Toggle, ago, inputClass, num, useAdmin } from "../ui";
 
-/** Posting the day's 10 / 15 / 20 odds slips on X each morning (backend x_poster.py). */
-function DailyOnX() {
+/** The Telegram message is HTML: shown here as the channel will read it. */
+const plain = (html: string) => html.replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+  .replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&amp;/g, "&");
+
+const CHANNEL_SETUP: Record<string, string> = {
+  x: "An X developer app with Read and write permission (and API credits)",
+  telegram: "A bot from @BotFather, added to your channel as an administrator",
+};
+
+/** Posting the day's 10 / 15 / 20 odds slips to one channel each morning
+ * (backend x_poster.py / telegram_poster.py). */
+function DailyPost({ ch, name }: { ch: "x" | "telegram"; name: string }) {
   const { get, flash, adminFetch } = useAdmin();
   const [x, setX] = useState<any>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const load = () => get("/api/admin/x").then(d => setX(d ?? { error: true }));
+  const load = () => get(`/api/admin/post/${ch}`).then(d => setX(d ?? { error: true }));
   useEffect(() => { load(); }, [get]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const call = async (method: string, path: string, body: object, key: string) => {
@@ -25,25 +35,25 @@ function DailyOnX() {
     } finally { setBusy(null); }
   };
   const toggle = async () => {
-    const d = await call("PUT", "/api/admin/x", { enabled: !x.enabled }, "toggle");
-    if (d) { setX(d); flash("ok", d.enabled ? "The daily odds will be posted on X each morning" : "Posting on X is off"); }
+    const d = await call("PUT", `/api/admin/post/${ch}`, { enabled: !x.enabled }, "toggle");
+    if (d) { setX(d); flash("ok", d.enabled ? `The daily odds will be posted on ${name} each morning` : `Posting on ${name} is off`); }
   };
   const postNow = async () => {
     const again = x?.today?.status === "posted";
     if (again && !confirm("Today's slips are already posted. Post them again?")) return;
-    const d = await call("POST", "/api/admin/x/post", { again }, "post");
-    if (d) { flash(d.status === "posted" ? "ok" : "err", d.status === "posted" ? "Posted on X" : d.error || "Not posted"); load(); }
+    const d = await call("POST", `/api/admin/post/${ch}/now`, { again }, "post");
+    if (d) { flash(d.status === "posted" ? "ok" : "err", d.status === "posted" ? `Posted on ${name}` : d.error || "Not posted"); load(); }
   };
 
   if (!x) return <p className="text-xs text-n-400">Loading…</p>;
-  if (x.error) return <p className="text-xs text-n-400">Couldn&apos;t load the X settings.</p>;
+  if (x.error) return <p className="text-xs text-n-400">Couldn&apos;t load the {name} settings.</p>;
   const t = x.today ?? {};
   const lagos = (utc: string) => { const [h, m] = utc.split(":").map(Number); return `${String((h + 1) % 24).padStart(2, "0")}:${String(m).padStart(2, "0")}`; };
   return (
     <div className="space-y-3">
       {!x.configured && (
         <p className="rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-xs text-n-200">
-          Add to the server&apos;s .env: <span className="font-mono">{x.missing.join(", ")}</span>. Then run{" "}
+          {CHANNEL_SETUP[ch]}. Add to the server&apos;s .env: <span className="font-mono">{x.missing.join(", ")}</span>. Then run{" "}
           <span className="font-mono">sudo docker compose up -d</span>.
         </p>
       )}
@@ -67,12 +77,13 @@ function DailyOnX() {
       {x.preview ? (
         <div>
           <p className="eyebrow mb-1.5">Today&apos;s post</p>
-          <pre className="whitespace-pre-wrap rounded-xl border border-n-800 bg-surface-sunken p-3 text-xs text-n-200 font-sans">{x.preview}</pre>
+          <pre className="whitespace-pre-wrap rounded-xl border border-n-800 bg-surface-sunken p-3 text-xs text-n-200 font-sans max-h-80 overflow-y-auto">{plain(x.preview)}</pre>
         </div>
       ) : <p className="text-xs text-n-400">Today&apos;s slips aren&apos;t ready yet (or none has a booking code), so there&apos;s nothing to post.</p>}
       <p className="text-[11px] text-n-500">
-        One post a day: each slip&apos;s total odds and SportyBet booking code, with a link to the picks on the site. X&apos;s free
-        plan allows about 500 posts a month, so a post a day is well within it.
+        {ch === "x"
+          ? "One post a day: each slip's total odds and SportyBet booking code, with a link to the picks on the site. X charges for API use (credits in the X developer console)."
+          : "One message a day: every slip with its booking code and all its picks (times in Lagos time), and a link to the site. Telegram's bot API is free."}
       </p>
     </div>
   );
@@ -116,8 +127,12 @@ export function MessagingSection() {
 
   return (
     <div className="space-y-4">
+      <Card title="Daily odds on Telegram" icon={<Send size={15} />} subtitle="Post the 10, 15 and 20 odds slips, with every pick, to your Telegram channel every morning">
+        <DailyPost ch="telegram" name="Telegram" />
+      </Card>
+
       <Card title="Daily odds on X" icon={<Send size={15} />} subtitle="Post the 10, 15 and 20 odds slips on X every morning">
-        <DailyOnX />
+        <DailyPost ch="x" name="X" />
       </Card>
 
       <Card title="Site banner" icon={<Megaphone size={15} />} subtitle="A bar across the top of every page"

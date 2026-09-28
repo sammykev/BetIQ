@@ -67,6 +67,8 @@ def site(monkeypatch):
     monkeypatch.setattr(main, "_daily_memory", {})
     for k, v in KEYS.items():
         monkeypatch.setenv(k, v)
+    for k in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"):
+        monkeypatch.delenv(k, raising=False)
     posts = []
 
     async def post(text):
@@ -87,50 +89,52 @@ def site(monkeypatch):
 
 def test_posts_once_a_day_when_switched_on(site, monkeypatch):
     fake, posts, _ = site
-    monkeypatch.setattr(main, "_x_ready", lambda doc, now: True)
+    monkeypatch.setattr(main, "_post_ready", lambda doc, now: True)
     asyncio.run(main._daily_tick())
     assert posts == []                                   # off until switched on
     c = TestClient(main.app)
-    assert c.put("/api/admin/x", json={"enabled": True}).json()["enabled"] is True
+    assert c.put("/api/admin/post/x", json={"enabled": True}).json()["enabled"] is True
+    assert fake.kv["betiq:config:x"]                     # the same switch as before
     asyncio.run(main._daily_tick())
     asyncio.run(main._daily_tick())
     assert len(posts) == 1 and "code ABC123" in posts[0]
-    state = c.get("/api/admin/x").json()
+    state = c.get("/api/admin/post/x").json()
     assert state["today"]["status"] == "posted" and state["today"]["url"] == "https://x.com/i/status/191"
     assert state["configured"] and "BetIQ Daily Odds" in state["preview"]
     # Post now: refuses a second post unless asked again
-    assert c.post("/api/admin/x/post", json={}).json()["status"] == "posted" and len(posts) == 1
-    c.post("/api/admin/x/post", json={"again": True})
+    assert c.post("/api/admin/post/x/now", json={}).json()["status"] == "posted" and len(posts) == 1
+    c.post("/api/admin/post/x/now", json={"again": True})
     assert len(posts) == 2
+    assert c.get("/api/admin/post/nope").status_code == 404
 
 
 def test_waits_for_the_codes_until_the_deadline():
     now = datetime(2026, 9, 28, 6, 30, tzinfo=timezone.utc)
     later = {"home": "A", "away": "B", "date": "2026-09-28", "time": "18:00", "status": "pending"}
     waiting = {"slips": [{"status": "pending", "picks": [later], "booking": None}]}
-    assert not main._x_ready(waiting, now)
-    assert main._x_ready(waiting, now.replace(hour=8))
+    assert not main._post_ready(waiting, now)
+    assert main._post_ready(waiting, now.replace(hour=8))
     booked = {"slips": [{"status": "pending", "picks": [later], "booking": {"code": "X1"}}]}
-    assert main._x_ready(booked, now)
+    assert main._post_ready(booked, now)
 
 
 def test_failures_stop_after_three_and_alert(site, monkeypatch):
     fake, posts, post = site
     post.fail = True
-    monkeypatch.setattr(main, "_x_ready", lambda doc, now: True)
+    monkeypatch.setattr(main, "_post_ready", lambda doc, now: True)
     monkeypatch.setattr(main, "_STARTED_AT", datetime.now().timestamp())
-    fake.kv[main.X_CONFIG_KEY] = json.dumps({"enabled": True})
+    fake.kv["betiq:config:x"] = json.dumps({"enabled": True})
     for _ in range(5):
         asyncio.run(main._daily_tick())
     assert len(posts) == 3
     alerts = TestClient(main.app).get("/api/admin/alerts").json()["alerts"]
-    x_alert = next(a for a in alerts if "X" in a["title"])
+    x_alert = next(a for a in alerts if "on X" in a["title"])
     assert "Read and write" in x_alert["detail"]
 
 
 def test_missing_keys(site, monkeypatch):
     monkeypatch.delenv("X_ACCESS_SECRET")
     c = TestClient(main.app)
-    assert c.get("/api/admin/x").json()["missing"] == ["X_ACCESS_SECRET"]
-    r = c.post("/api/admin/x/post", json={})
+    assert c.get("/api/admin/post/x").json()["missing"] == ["X_ACCESS_SECRET"]
+    r = c.post("/api/admin/post/x/now", json={})
     assert r.status_code == 400 and "X_ACCESS_SECRET" in r.json()["detail"]
