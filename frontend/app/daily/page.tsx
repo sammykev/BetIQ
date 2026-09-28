@@ -42,7 +42,7 @@ const notStarted = (p: Pick) => p.status === "pending" && !p.live &&
   !(Date.parse(`${p.date}T${p.time || "23:59"}:00Z`) <= Date.now());
 
 const PERKS = [
-  "Three slips every morning, at about 10, 15 and 20 odds",
+  "Five slips every morning, at about 10, 15, 20, 50 and 100 odds",
   "Today's matches only, every pick rated 80% or more and under 2.0 odds",
   "A ready SportyBet booking code with every slip",
   "Every slip graded, with a public record",
@@ -222,7 +222,7 @@ function Daily() {
           : "No slips were made that day."}</p>
       ) : (
         <>
-          <div className="grid grid-cols-3 gap-2 sm:gap-3" role="tablist" aria-label="Slips">
+          <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 sm:gap-3" role="tablist" aria-label="Slips">
             {data.slips.map((x, i) => {
               const rec = data.record[String(x.target)];
               return (
@@ -258,7 +258,7 @@ export default function DailyPage() {
     <AppShell>
       <div className="space-y-6 animate-fade-in">
         <PageHeader eyebrow="Every morning" title="Daily odds"
-          description="Three slips a day at about 10, 15 and 20 odds, from that day's matches only and picks our model rates 80% or more (none at 2.0 odds or more), each with its SportyBet booking code." />
+          description="Five slips a day at about 10, 15, 20, 50 and 100 odds, from that day's matches only and picks our model rates 80% or more (none at 2.0 odds or more), each with its SportyBet booking code." />
         <FeatureGate feature="daily_slips" title="Daily odds" perks={PERKS}>
           <Daily />
         </FeatureGate>

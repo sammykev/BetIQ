@@ -29,24 +29,24 @@ DOC = {"date": "2026-09-28", "slips": [
 
 
 class TestCompose:
-    def test_every_slip_code_and_pick_in_lagos_time(self):
+    def test_odds_and_codes_only_no_match_names(self):
         text = tg.compose(DOC, "https://predict-withbetiq.vercel.app")
         assert text.startswith("<b>BetIQ Daily Odds · Monday 28 September</b>")
-        assert "<b>10x slip · 10.24 odds</b>\nSportyBet code: <code>ABC123</code>" in text
-        assert "• Arsenal v Chelsea (19:00): Over 1.5 goals @ 1.22" in text      # 18:00 UTC
-        assert "(20:45)" in text and "15x" not in text
-        assert "SportyBet code: on the site shortly" in text
-        assert "Barça &lt;B&gt; v Real &amp; Co" in text                       # escaped for HTML
+        assert "<b>10x</b> (10.24 odds): <code>ABC123</code>" in text
+        assert "<b>20x</b> (20.30 odds): code on the site shortly" in text
+        assert "15x" not in text                                            # no slip that day
+        for name in ("Arsenal", "Chelsea", "PSG", "Barça", "Over 1.5"):
+            assert name not in text
         assert "https://predict-withbetiq.vercel.app/daily" in text and "18+" in text
 
     def test_nothing_to_post(self):
         assert tg.compose({"date": "2026-09-28", "slips": [{"target": 10, "status": "none", "picks": []}]}, "https://x") is None
 
-    def test_too_long_keeps_the_codes(self):
-        many = {**DOC, "slips": [{**DOC["slips"][0], "picks": [pick(f"Home{i}" * 5, f"Away{i}" * 5, "Over 1.5 goals", 1.2)
-                                                                   for i in range(80)]}]}
-        text = tg.compose(many, "https://x")
-        assert len(text) <= tg.MAX_LENGTH and "<code>ABC123</code>" in text and "Home1" not in text
+    def test_every_target_listed(self):
+        slips = [{"target": t, "status": "pending", "total_odds": t * 1.01, "booking": {"code": f"C{t}"},
+                  "picks": [pick("A", "B", "x", 1.2)]} for t in (10, 15, 20, 50, 100)]
+        text = tg.compose({"date": "2026-09-28", "slips": slips}, "https://x")
+        assert all(f"<code>C{t}</code>" in text for t in (10, 15, 20, 50, 100)) and len(text) < tg.MAX_LENGTH
 
 
 def test_links_and_errors():

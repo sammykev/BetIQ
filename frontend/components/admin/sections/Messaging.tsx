@@ -83,7 +83,7 @@ function DailyPost({ ch, name }: { ch: "x" | "telegram"; name: string }) {
       <p className="text-[11px] text-n-500">
         {ch === "x"
           ? "One post a day: each slip's total odds and SportyBet booking code, with a link to the picks on the site. X charges for API use (credits in the X developer console)."
-          : "One message a day: every slip with its booking code and all its picks (times in Lagos time), and a link to the site. Telegram's bot API is free."}
+          : "One message a day: each slip's odds and SportyBet booking code, and a link to the site (no match names or picks). Telegram's bot API is free."}
       </p>
     </div>
   );
@@ -127,11 +127,11 @@ export function MessagingSection() {
 
   return (
     <div className="space-y-4">
-      <Card title="Daily odds on Telegram" icon={<Send size={15} />} subtitle="Post the 10, 15 and 20 odds slips, with every pick, to your Telegram channel every morning">
+      <Card title="Daily odds on Telegram" icon={<Send size={15} />} subtitle="Post the day's slips (10 to 100 odds) with their booking codes to your Telegram channel every morning">
         <DailyPost ch="telegram" name="Telegram" />
       </Card>
 
-      <Card title="Daily odds on X" icon={<Send size={15} />} subtitle="Post the 10, 15 and 20 odds slips on X every morning">
+      <Card title="Daily odds on X" icon={<Send size={15} />} subtitle="Post the day's slips (10 to 100 odds) with their booking codes on X every morning">
         <DailyPost ch="x" name="X" />
       </Card>
 

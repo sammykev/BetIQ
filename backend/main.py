@@ -6838,7 +6838,7 @@ async def track_daily_slip(request: Request, body: Dict[str, Any], _access=Depen
     try:
         target = float(body.get("target"))
     except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail="target must be 10, 15 or 20")
+        raise HTTPException(status_code=400, detail="target must be 10, 15, 20, 50 or 100")
     doc = _daily_load(_get_redis(), d)
     s = next((x for x in (doc or {}).get("slips") or [] if float(x.get("target", 0)) == target), None)
     code = ((s or {}).get("booking") or {}).get("code")

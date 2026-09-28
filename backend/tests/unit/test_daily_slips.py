@@ -30,6 +30,9 @@ class TestSlips:
         assert body["min_odds"] < 10 < body["max_odds"]
         assert body["bookable_only"] is True and body["days"] == 1
 
+    def test_five_slips_a_day(self):
+        assert daily_slips.TARGETS == (10, 15, 20, 50, 100)
+
     def test_only_the_days_own_matches(self):
         assert all(a["days"] == 1 for a in daily_slips.ATTEMPTS)
 
@@ -78,7 +81,7 @@ def test_built_once_booked_graded_and_recorded(api, monkeypatch, sportybet):
 
     async def optimize(body):
         calls.append(body)
-        if body["target_odds"] == 20:
+        if body["target_odds"] >= 20:
             return {"error": "Not enough 80% picks for 20x"}
         return result(body["target_odds"], [("Arsenal", "Chelsea", today, "goals_ou", "O15")], time="23:59")
     monkeypatch.setattr(main, "_optimize_request", optimize)
@@ -89,7 +92,8 @@ def test_built_once_booked_graded_and_recorded(api, monkeypatch, sportybet):
 
     asyncio.run(main._build_daily(today))
     got = c.get("/api/daily-slips").json()
-    ten, fifteen, twenty = got["slips"]
+    ten, fifteen, twenty, fifty, hundred = got["slips"]
+    assert [s["target"] for s in got["slips"]] == [10, 15, 20, 50, 100]
     assert (ten["target"], ten["status"], ten["win_chance"]) == (10, "pending", 0.16)
     assert twenty["status"] == "none" and len([b for b in calls if b["target_odds"] == 20]) == len(daily_slips.ATTEMPTS)
     # Booked by the server, one code per slip, the same for everyone
@@ -109,7 +113,7 @@ def test_built_once_booked_graded_and_recorded(api, monkeypatch, sportybet):
     matchday.apply_result(day["arsenal|chelsea"], finished(2, 1))
     main._md_save(api, today, day)
     got = c.get("/api/daily-slips").json()
-    assert [s["status"] for s in got["slips"]] == ["won", "won", "none"]
+    assert [s["status"] for s in got["slips"]] == ["won", "won", "none", "none", "none"]
     assert got["slips"][0]["picks"][0]["live"]["score"] == [2, 1]
     c.get("/api/daily-slips")
     assert c.get("/api/daily-slips").json()["record"] == {"10": {"won": 1, "lost": 0}, "15": {"won": 1, "lost": 0}}
@@ -133,7 +137,7 @@ def test_a_slip_sportybet_refused_is_tried_again_later(api, monkeypatch, sportyb
     assert slip["booking"]["code"] is None and "didn't return" in slip["booking"]["error"]
     # Too soon: not tried again
     asyncio.run(main._daily_tick())
-    assert len(calls) == 3
+    assert len(calls) == 5                 # one try per slip
     # After RETRY_MINUTES the tick books it
     book.fail = False
     doc = json.loads(api.kv[f"betiq:daily:{today}"])
@@ -144,7 +148,7 @@ def test_a_slip_sportybet_refused_is_tried_again_later(api, monkeypatch, sportyb
     main._daily_memory.clear()
     asyncio.run(main._daily_tick())
     slips = TestClient(main.app).get("/api/daily-slips").json()["slips"]
-    assert all(s["booking"]["code"] for s in slips) and len(calls) == 6
+    assert all(s["booking"]["code"] for s in slips) and len(calls) == 10
 
 
 def test_missed_morning_job_is_made_up_by_the_tick(api, monkeypatch, sportybet):
