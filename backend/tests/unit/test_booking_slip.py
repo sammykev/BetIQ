@@ -632,6 +632,18 @@ class TestKickoffMatching:
         assert sportybet.find_event_by_kickoff("Faroe Islands", "Slovakia", self.KO,
                                                [self.ev("sr:match:2", "England", "Slovakia")]) is None
 
+    def test_never_a_youth_game_for_a_first_team_fixture(self):
+        # SportyBet sometimes names U21 sides plainly and says so only in the competition
+        u21 = {**self.ev("sr:match:4", "England", "Slovakia"), "_tournament": "International · U21 European Championship, Qual."}
+        assert sportybet.find_event("England", "Slovakia", [u21]) is None
+        assert sportybet.find_event_by_kickoff("England", "Slovakia", self.KO, [u21]) is None
+        # "Slovakia" is contained in "Slovakia U21": the strict pass must still refuse it
+        named = self.ev("sr:match:5", "England U21", "Slovakia U21")
+        assert sportybet.find_event("England", "Slovakia", [named]) is None
+        assert sportybet.find_event("England U21", "Slovakia U21", [named])["eventId"] == "sr:match:5"
+        senior = {**self.ev("sr:match:6", "England", "Slovakia"), "_tournament": "International · UEFA Nations League"}
+        assert sportybet.find_event("England", "Slovakia", [u21, senior])["eventId"] == "sr:match:6"
+
     def test_abbreviations_still_match(self):
         assert sportybet.team_similarity("Faroe Islands", "Faroe Is.") >= 0.95
         assert sportybet.find_event("Slovakia", "Faroe Islands", [self.ev("sr:match:3", "Slovakia", "Faroe Is.")])["eventId"] == "sr:match:3"

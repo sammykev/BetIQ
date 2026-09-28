@@ -1168,6 +1168,97 @@ def _pick_confidence(p: Dict) -> float:
 # defaults), by name → league; in the admin data status
 _unknown_clubs: Dict[str, str] = {}
 
+# Fixtures an admin took off the site (a source listed a match that isn't
+# happening): home|away|date → {home, away, date, at, by, source}
+HIDDEN_KEY = "betiq:hidden:matches"
+_hidden: Dict[str, Dict[str, Any]] = {}
+_hidden_loaded = [False]
+
+
+def _hidden_key(home: str, away: str, day: str) -> str:
+    return f"{(home or '').strip().lower()}|{(away or '').strip().lower()}|{str(day or '')[:10]}"
+
+
+def _load_hidden() -> None:
+    r = _get_redis()
+    if not r:
+        return
+    try:
+        _hidden.clear()
+        _hidden.update(json.loads(r.get(HIDDEN_KEY) or "{}"))
+        _hidden_loaded[0] = True
+    except Exception as e:
+        print(f"[Hidden] couldn't load: {e}")
+
+
+def _is_hidden(fx: Dict) -> bool:
+    if not _hidden_loaded[0]:
+        _load_hidden()
+    return bool(_hidden) and _hidden_key(fx.get("home", ""), fx.get("away", ""), fx.get("date", "")) in _hidden
+
+
+def _fixture_source(p: Dict) -> str:
+    """Where a fixture came from, for the admin: the source and its competition."""
+    mid = str(p.get("match_id") or "")
+    src = {"espn": "ESPN", "sofa": "SofaScore", "odds": "The Odds API"}.get(mid.split(":", 1)[0]) if ":" in mid else None
+    return " · ".join(x for x in (src or ("football-data.org" if mid.isdigit() else None),
+                                  p.get("league_name") or p.get("league")) if x) or "unknown"
+
+
+@app.get("/api/admin/matches/hidden")
+async def admin_hidden_matches(_admin: str = Depends(require_admin)):
+    _load_hidden()
+    return {"hidden": sorted(_hidden.values(), key=lambda h: (h.get("date") or "", h.get("home") or ""))}
+
+
+@app.post("/api/admin/matches/hide")
+async def admin_hide_match(body: Dict[str, Any], _admin: str = Depends(require_admin)):
+    """Take a fixture off the site: predictions, match-day list, optimizer
+    and daily odds, now and in every rebuild. Body: {home, away, date}."""
+    import matchday
+    global _predictions_cache
+    home, away, day = str(body.get("home") or ""), str(body.get("away") or ""), str(body.get("date") or "")[:10]
+    if not home or not away or len(day) != 10:
+        raise HTTPException(status_code=400, detail="Give home, away and date (YYYY-MM-DD)")
+    r = _get_redis()
+    if not r:
+        raise HTTPException(status_code=503, detail="Couldn't save: the database isn't connected")
+    _load_hidden()
+    was = next((p for p in _predictions_cache if _hidden_key(p.get("home", ""), p.get("away", ""), p.get("date", ""))
+                == _hidden_key(home, away, day)), {})
+    _hidden[_hidden_key(home, away, day)] = {"home": home, "away": away, "date": day, "by": _admin,
+                                             "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                                             "source": _fixture_source(was) if was else None}
+    r.set(HIDDEN_KEY, json.dumps(_hidden))
+    _predictions_cache = [p for p in _predictions_cache if not _is_hidden(p)]
+    _save_predictions_cache()
+    # Off the day's list too, unless it has a result already
+    removed = False
+    try:
+        md = _md_load(r, day)
+        k = matchday.key(home, away)
+        if k in md and not (md[k].get("result") or {}).get("status"):
+            del md[k]
+            _md_save(r, day, md)
+            removed = True
+    except Exception as e:
+        print(f"[Hidden] match-day entry: {e}")
+    _audit(_admin, "hide_match", match=f"{home} v {away}", date=day)
+    return {"hidden": True, "removed_from_day": removed}
+
+
+@app.post("/api/admin/matches/unhide")
+async def admin_unhide_match(body: Dict[str, Any], _admin: str = Depends(require_admin)):
+    """Put a hidden fixture back (it returns with the next predictions rebuild)."""
+    r = _get_redis()
+    if not r:
+        raise HTTPException(status_code=503, detail="Couldn't save: the database isn't connected")
+    _load_hidden()
+    _hidden.pop(_hidden_key(str(body.get("home") or ""), str(body.get("away") or ""), str(body.get("date") or "")), None)
+    r.set(HIDDEN_KEY, json.dumps(_hidden))
+    _audit(_admin, "unhide_match", match=f"{body.get('home')} v {body.get('away')}", date=body.get("date"))
+    return {"hidden": False}
+
 
 def _note_unknown_clubs(model, fx: Dict) -> None:
     """Remember a fixture's clubs the model has no matches for."""
@@ -1190,6 +1281,8 @@ def _build_predictions(predictor, fixtures: list, live_odds: dict) -> list:
     for fx in fixtures:
         if not _within_window(fx.get("date", "")):
             continue
+        if _is_hidden(fx):
+            continue       # an admin took this fixture off the site (a wrong one from a source)
         try:
             key = f"{fx['home']}:{fx['away']}:{fx.get('date','')}"
             odds = live_odds.get(key, {})
@@ -7199,6 +7292,7 @@ async def startup():
     _get_redis()                # says loudly, right away, if the database is missing
     _restore_shot_blend()
     _restore_review()
+    _load_hidden()
     _load_h2h_cache()
     _load_predictions_cache()   # serve cached predictions instantly while pipeline rebuilds
     asyncio.create_task(_link_on_startup())  # every deploy re-links to SportyBet straight away

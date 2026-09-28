@@ -519,10 +519,14 @@ def shares_word(a: str, b: str) -> bool:
 
 
 def find_event(home: str, away: str, events: Iterable[Dict]) -> Optional[Dict]:
-    """The event for this fixture: each team must match its own side, clearly."""
+    """The event for this fixture: each team must match its own side, clearly,
+    and be the same kind of side (never a U21, women's or reserve game for a
+    first-team fixture, whether the label is on the teams or the competition)."""
     best, best_score = None, 0.0
     for ev in events:
         h, a = ev.get("homeTeamName") or "", ev.get("awayTeamName") or ""
+        if not same_kind(home, away, ev):
+            continue
         sh, sa = team_similarity(home, h), team_similarity(away, a)
         if min(sh, sa) < 0.8:
             continue
@@ -541,6 +545,22 @@ KICKOFF_TOLERANCE_MS = 20 * 60 * 1000
 
 def _markers(name: str) -> set:
     return {m.lower() for m in _SIDE_MARKER.findall(name or "")}
+
+
+# Competitions for youth, women's or reserve sides (SportyBet sometimes says
+# so only here: "U21 European Championship, Qualification" with plain names)
+_NOT_FIRST_TEAM = re.compile(r"\bu-?\s?\d{2}\b|under[- ]?\d{2}|\byouth\b|\bwomen|\bfemin|\bolympic|\breserve|\bamateur", re.I)
+
+
+def same_kind(home: str, away: str, ev: Dict) -> bool:
+    """Whether the event is the same kind of side as our fixture: the teams
+    carry the same markers (U21, W, II…), and a youth / women's / reserve
+    competition only ever serves a fixture that is one too."""
+    h, a = ev.get("homeTeamName") or "", ev.get("awayTeamName") or ""
+    if _markers(home) != _markers(h) or _markers(away) != _markers(a):
+        return False
+    ours_first_team = not (_markers(home) or _markers(away))
+    return not (ours_first_team and _NOT_FIRST_TEAM.search(str(ev.get("_tournament") or "")))
 
 
 def find_event_by_kickoff(home: str, away: str, kickoff_ms: int, events: Iterable[Dict]) -> Optional[Dict]:
@@ -563,7 +583,7 @@ def find_event_by_kickoff(home: str, away: str, kickoff_ms: int, events: Iterabl
         if abs(start - kickoff_ms) > KICKOFF_TOLERANCE_MS:
             continue
         h, a = ev.get("homeTeamName") or "", ev.get("awayTeamName") or ""
-        if _markers(home) != _markers(h) or _markers(away) != _markers(a):
+        if not same_kind(home, away, ev):
             continue
         sh, sa = team_similarity(home, h), team_similarity(away, a)
         strong, weak = max(sh, sa), min(sh, sa)

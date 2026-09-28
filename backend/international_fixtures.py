@@ -110,6 +110,12 @@ _SOFA_COMPETITIONS = re.compile(
     r"international friendl|nations league|world cup|qualification|africa cup|afcon|"
     r"euro\b|european championship|copa am[eé]rica|gold cup|asian cup", re.I)
 _YOUTH = re.compile(r"\bU-?\d{2}\b|\bolympic", re.I)
+_WOMEN = re.compile(r"\bwomen|\bfemin|\bladies\b|_w\b|\(w\)|\bw\b$", re.I)
+
+
+def not_senior(text: str) -> bool:
+    """Whether names / a competition belong to a youth or women's side."""
+    return bool(_YOUTH.search(text or "") or _WOMEN.search(text or "") or re.search(r"under[- ]?\d{2}|u\d{2}_", text or "", re.I))
 # Longest span fetched day by day when the date-range request fails
 ESPN_DAILY_MAX = 14
 
@@ -178,6 +184,9 @@ def parse_espn(data: Dict, slug: str) -> Tuple[List[Dict], List[Dict]]:
         a_name = ((away.get("team") or {}).get("displayName") or "").strip()
         kickoff = _parse_time(ev.get("date") or comp.get("date") or "")
         if not h_name or not a_name or kickoff is None or "TBD" in (h_name + a_name).upper():
+            continue
+        # Senior men's sides only (a U21 or women's game must never pass as the first team's)
+        if not_senior(f"{h_name} {a_name} {league.get('name') or ''} {ev.get('name') or ''}"):
             continue
 
         status = ((comp.get("status") or ev.get("status") or {}).get("type") or {})
@@ -270,6 +279,8 @@ def parse_odds_events(events: Iterable[Dict], sport_key: str, title: str,
         kickoff = _parse_time(ev.get("commence_time") or "")
         home, away = (ev.get("home_team") or "").strip(), (ev.get("away_team") or "").strip()
         if kickoff is None or not home or not away or not (start <= kickoff.date() <= end):
+            continue
+        if not_senior(f"{home} {away} {title} {sport_key}"):
             continue
         fixtures.append(_fixture(f"odds:{ev.get('id')}", home, away, kickoff, title, sport_key))
     return fixtures

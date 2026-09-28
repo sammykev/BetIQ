@@ -2,12 +2,13 @@
 
 import { Fragment, useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
-import { Database, Download, Flag, Globe2, MousePointerClick, Radio, Star, Target } from "lucide-react";
+import { Database, Download, EyeOff, Flag, Globe2, MousePointerClick, Radio, Star, Target } from "lucide-react";
 import { TrackRecord } from "@/components/TrackRecord";
 import { MatchdayList } from "@/components/MatchdayList";
 import { fetchMatchday, type MatchdayMatch, type MatchdayResponse } from "@/lib/matchday";
 import { API, BarList, Btn, Card, Pill, Skeleton, Stat, Toggle, ago, inputClass, num, useAdmin } from "../ui";
 import { AllTickets } from "../AllTickets";
+import { HideFixtures } from "../HideFixtures";
 
 const toneOf = (acc: number) => (acc >= 60 ? "text-accent" : acc >= 45 ? "text-warn" : "text-danger");
 
@@ -783,6 +784,12 @@ export function PredictionsSection() {
             )}
           </>
         )}
+      </Card>
+
+      <Card title="Wrong fixtures" icon={<EyeOff size={15} />}
+        subtitle="Take a match a source got wrong off the site; each shows where it came from">
+        <HideFixtures preds={preds} onChange={() =>
+          fetch(`${API}/api/predictions?limit=500`).then(r => r.json()).then(d => setPreds(d.predictions ?? [])).catch(() => {})} />
       </Card>
 
       <div className="grid gap-4 lg:grid-cols-2">
