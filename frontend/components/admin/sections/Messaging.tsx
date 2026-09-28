@@ -1,8 +1,82 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bot, Mail, Megaphone, MessageSquare } from "lucide-react";
-import { API, Btn, Card, Pill, Stat, inputClass, num, useAdmin } from "../ui";
+import { Bot, ExternalLink, Mail, Megaphone, MessageSquare, Send } from "lucide-react";
+import { API, Btn, Card, Pill, Stat, Toggle, ago, inputClass, num, useAdmin } from "../ui";
+
+/** Posting the day's 10 / 15 / 20 odds slips on X each morning (backend x_poster.py). */
+function DailyOnX() {
+  const { get, flash, adminFetch } = useAdmin();
+  const [x, setX] = useState<any>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const load = () => get("/api/admin/x").then(d => setX(d ?? { error: true }));
+  useEffect(() => { load(); }, [get]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const call = async (method: string, path: string, body: object, key: string) => {
+    setBusy(key);
+    try {
+      const r = await adminFetch(`${API}${path}`, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.detail || "Didn't work");
+      return d;
+    } catch (e: any) {
+      flash("err", e instanceof TypeError ? "Couldn't reach the server" : e?.message || "Didn't work");
+      return null;
+    } finally { setBusy(null); }
+  };
+  const toggle = async () => {
+    const d = await call("PUT", "/api/admin/x", { enabled: !x.enabled }, "toggle");
+    if (d) { setX(d); flash("ok", d.enabled ? "The daily odds will be posted on X each morning" : "Posting on X is off"); }
+  };
+  const postNow = async () => {
+    const again = x?.today?.status === "posted";
+    if (again && !confirm("Today's slips are already posted. Post them again?")) return;
+    const d = await call("POST", "/api/admin/x/post", { again }, "post");
+    if (d) { flash(d.status === "posted" ? "ok" : "err", d.status === "posted" ? "Posted on X" : d.error || "Not posted"); load(); }
+  };
+
+  if (!x) return <p className="text-xs text-n-400">Loading…</p>;
+  if (x.error) return <p className="text-xs text-n-400">Couldn&apos;t load the X settings.</p>;
+  const t = x.today ?? {};
+  const lagos = (utc: string) => { const [h, m] = utc.split(":").map(Number); return `${String((h + 1) % 24).padStart(2, "0")}:${String(m).padStart(2, "0")}`; };
+  return (
+    <div className="space-y-3">
+      {!x.configured && (
+        <p className="rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-xs text-n-200">
+          Add to the server&apos;s .env: <span className="font-mono">{x.missing.join(", ")}</span>. Then run{" "}
+          <span className="font-mono">sudo docker compose up -d</span>.
+        </p>
+      )}
+      <div className="grid gap-2 grid-cols-1 sm:grid-cols-2">
+        <Toggle on={!!x.enabled} busy={busy === "toggle"} onChange={toggle} label={x.enabled ? "Posting each morning" : "Posting off"}
+          hint={`Once the slips have their codes (07:05), by ${lagos(x.post_by_utc)} at the latest (Lagos)`} />
+        <div className="flex items-center justify-between gap-3 rounded-xl bg-surface-sunken px-3 py-2.5">
+          <div className="min-w-0 text-sm">
+            <span className="block font-semibold text-n-0">Today</span>
+            <span className="block text-[11px] text-n-400 truncate">
+              {t.status === "posted" ? `Posted ${ago(t.at)}` : t.status === "failed" ? `Failed ${t.tries}×: ${t.error}`
+                : t.status === "skipped" ? t.error : "Not posted yet"}
+            </span>
+          </div>
+          <span className="flex gap-1.5 shrink-0">
+            {t.url && <a href={t.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-lg border border-n-800 px-2.5 py-1.5 text-xs text-n-300 hover:text-n-0"><ExternalLink size={12} /> View</a>}
+            <Btn onClick={postNow} busy={busy === "post"} disabled={!x.configured || !x.preview}><Send size={12} /> Post now</Btn>
+          </span>
+        </div>
+      </div>
+      {x.preview ? (
+        <div>
+          <p className="eyebrow mb-1.5">Today&apos;s post</p>
+          <pre className="whitespace-pre-wrap rounded-xl border border-n-800 bg-surface-sunken p-3 text-xs text-n-200 font-sans">{x.preview}</pre>
+        </div>
+      ) : <p className="text-xs text-n-400">Today&apos;s slips aren&apos;t ready yet (or none has a booking code), so there&apos;s nothing to post.</p>}
+      <p className="text-[11px] text-n-500">
+        One post a day: each slip&apos;s total odds and SportyBet booking code, with a link to the picks on the site. X&apos;s free
+        plan allows about 500 posts a month, so a post a day is well within it.
+      </p>
+    </div>
+  );
+}
 
 export function MessagingSection() {
   const { get, post, flash, adminFetch } = useAdmin();
@@ -42,6 +116,10 @@ export function MessagingSection() {
 
   return (
     <div className="space-y-4">
+      <Card title="Daily odds on X" icon={<Send size={15} />} subtitle="Post the 10, 15 and 20 odds slips on X every morning">
+        <DailyOnX />
+      </Card>
+
       <Card title="Site banner" icon={<Megaphone size={15} />} subtitle="A bar across the top of every page"
         action={live ? <Pill tone="ok">Live</Pill> : <Pill>Off</Pill>}>
         {live && <p className="rounded-lg bg-info/10 border border-info/25 px-3 py-2 text-sm text-info">📢 {live}</p>}
