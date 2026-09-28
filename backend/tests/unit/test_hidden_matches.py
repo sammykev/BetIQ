@@ -68,3 +68,18 @@ def test_hide_and_show_again(admin):
 def test_bad_requests(admin):
     c, _, _, _ = admin
     assert c.post("/api/admin/matches/hide", json={"home": "A"}).status_code == 400
+
+
+def test_sofascore_u21_with_plain_names_is_left_out():
+    """SofaScore can give a U21 game plain names and a senior-sounding
+    competition, with "u21" only in the slugs."""
+    def event(slug_suffix, name_suffix=""):
+        return {"id": 9, "slug": f"faroe-islands{slug_suffix}-slovakia{slug_suffix}", "startTimestamp": 1790956800,
+                "status": {"type": "notstarted"},
+                "tournament": {"name": "UEFA Nations League", "uniqueTournament": {"id": 10783, "name": "UEFA Nations League"}},
+                "homeTeam": {"name": f"Faroe Islands{name_suffix}", "slug": f"faroe-islands{slug_suffix}", "national": True},
+                "awayTeam": {"name": f"Slovakia{name_suffix}", "slug": f"slovakia{slug_suffix}", "national": True}}
+    assert intl.parse_sofascore({"events": [event("-u21")]})[0] == []
+    assert intl.parse_sofascore({"events": [event("", " U21")]})[0] == []
+    senior = intl.parse_sofascore({"events": [event("")]})[0]
+    assert [(f["home"], f["away"], f["league"]) for f in senior] == [("Faroe Islands", "Slovakia", "INT-UNL")]

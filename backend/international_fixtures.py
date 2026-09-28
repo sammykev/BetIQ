@@ -211,6 +211,23 @@ def parse_espn(data: Dict, slug: str) -> Tuple[List[Dict], List[Dict]]:
     return fixtures, results
 
 
+def _sofa_labels(ev: Dict) -> str:
+    """Every name and slug SofaScore gives a match, its teams and competition.
+    A youth side can come with plain names ("Faroe Islands", "Slovakia") and
+    even a senior-sounding competition, the "U21" only in its slugs or short
+    names ("faroe-islands-u21"), so all of them are checked."""
+    tour = ev.get("tournament") or {}
+    unique = tour.get("uniqueTournament") or {}
+    parts = [ev.get("slug"), tour.get("name"), tour.get("slug"), unique.get("name"), unique.get("slug"),
+             (tour.get("category") or {}).get("name"), (tour.get("category") or {}).get("slug")]
+    for side in ("homeTeam", "awayTeam"):
+        t = ev.get(side) or {}
+        parts += [t.get("name"), t.get("shortName"), t.get("slug"), t.get("nameCode"), t.get("fullName"),
+                  (t.get("fieldTranslations") or {}).get("nameTranslation", {}).get("en")
+                  if isinstance((t.get("fieldTranslations") or {}).get("nameTranslation"), dict) else None]
+    return " ".join(str(p) for p in parts if p).replace("-", " ").replace("_", " ")
+
+
 def sofascore_internationals(data: Dict) -> Iterable[Tuple[Dict, str, str, str, datetime]]:
     """(event, home, away, competition, kick-off) for each senior men's
     national-team match in one SofaScore day."""
@@ -226,7 +243,7 @@ def sofascore_internationals(data: Dict) -> Iterable[Tuple[Dict, str, str, str, 
                 continue
         elif not _SOFA_COMPETITIONS.search(comp):
             continue
-        if "F" in (home.get("gender"), away.get("gender")) or _YOUTH.search(f"{h_name} {a_name} {comp}"):
+        if "F" in (home.get("gender"), away.get("gender")) or not_senior(_sofa_labels(ev)):
             continue
         try:
             kickoff = datetime.fromtimestamp(int(ev["startTimestamp"]), timezone.utc)
