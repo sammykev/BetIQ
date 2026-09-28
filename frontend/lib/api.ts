@@ -240,9 +240,21 @@ export interface FactMatch {
   venue: "H" | "A"; opponent: string; outcome: "W" | "D" | "L";
 }
 export interface FactSummary { played: number; won: number; drawn: number; lost: number; scored: number; conceded: number; }
+/** A stat for and against the team, and the match total, over the matches that recorded it. */
+export interface StatAverage { for: number | null; against: number | null; total: number | null; matches: number }
+/** A team's numbers for each market over its last matches (backend match_facts.averages). */
+export interface TeamAverages {
+  played: number;
+  goals: { for: number | null; against: number | null; total: number | null };
+  over: Record<"0.5" | "1.5" | "2.5" | "3.5", number>;
+  btts: number; clean_sheet: number; failed_to_score: number;
+  results: { won: number; drawn: number; lost: number };
+  corners: StatAverage | null; bookings: StatAverage | null; shots: StatAverage | null; sot: StatAverage | null;
+}
 export interface MatchFacts {
   home: FactMatch[]; away: FactMatch[]; h2h: FactMatch[];
   summary: { home: FactSummary | null; away: FactSummary | null; h2h: FactSummary | null };
+  averages?: { home: TeamAverages | null; away: TeamAverages | null; n: number };
 }
 
 type Fetcher = (url: string, init?: RequestInit) => Promise<Response>;

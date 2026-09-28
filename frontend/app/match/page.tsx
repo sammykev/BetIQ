@@ -4,7 +4,7 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AccessError, fetchMatchAnalysis, fetchExplanation, fetchMatchFacts } from "@/lib/api";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
-import type { MatchAnalysis, Market, MatchExplanation, MatchFacts, FactMatch, Prediction, TeamForm } from "@/lib/api";
+import type { MatchAnalysis, Market, MatchExplanation, MatchFacts, FactMatch, Prediction, TeamForm, TeamAverages } from "@/lib/api";
 import { kickoff } from "@/lib/matchTime";
 import { TeamBadge } from "@/components/PredictionCard";
 import { CompetitionBadge } from "@/components/CompetitionBadge";
@@ -421,11 +421,99 @@ function HeadToHead({ facts, home, away }: { facts: MatchFacts; home: string; aw
   );
 }
 
+type AvgRow = { label: string; get: (a: TeamAverages) => number | null | undefined; pct?: boolean; count?: (a: TeamAverages) => number | undefined };
+const AVG_GROUPS: { title: string; rows: AvgRow[] }[] = [
+  { title: "Goals", rows: [
+    { label: "Scored", get: a => a.goals.for },
+    { label: "Conceded", get: a => a.goals.against },
+    { label: "Match goals", get: a => a.goals.total },
+    { label: "Over 1.5", get: a => a.over["1.5"], pct: true },
+    { label: "Over 2.5", get: a => a.over["2.5"], pct: true },
+    { label: "Over 3.5", get: a => a.over["3.5"], pct: true },
+    { label: "Both teams scored", get: a => a.btts, pct: true },
+    { label: "Clean sheets", get: a => a.clean_sheet, pct: true },
+    { label: "Failed to score", get: a => a.failed_to_score, pct: true },
+  ] },
+  { title: "Result", rows: [
+    { label: "Won", get: a => a.results.won, pct: true },
+    { label: "Drawn", get: a => a.results.drawn, pct: true },
+    { label: "Lost", get: a => a.results.lost, pct: true },
+  ] },
+  { title: "Corners", rows: [
+    { label: "Won", get: a => a.corners?.for, count: a => a.corners?.matches },
+    { label: "Conceded", get: a => a.corners?.against, count: a => a.corners?.matches },
+    { label: "Match corners", get: a => a.corners?.total, count: a => a.corners?.matches },
+  ] },
+  { title: "Cards (booking points)", rows: [
+    { label: "Team", get: a => a.bookings?.for, count: a => a.bookings?.matches },
+    { label: "Opponents", get: a => a.bookings?.against, count: a => a.bookings?.matches },
+    { label: "Match total", get: a => a.bookings?.total, count: a => a.bookings?.matches },
+  ] },
+  { title: "Shots", rows: [
+    { label: "Shots", get: a => a.shots?.for, count: a => a.shots?.matches },
+    { label: "Shots conceded", get: a => a.shots?.against, count: a => a.shots?.matches },
+    { label: "On target", get: a => a.sot?.for, count: a => a.sot?.matches },
+    { label: "On target conceded", get: a => a.sot?.against, count: a => a.sot?.matches },
+  ] },
+];
+
+/** Each team's numbers for every market over its last matches, side by side. */
+function TeamAveragesPanel({ facts, home, away }: { facts: MatchFacts; home: string; away: string }) {
+  const h = facts.averages?.home, a = facts.averages?.away;
+  if (!h && !a) return null;
+  const show = (t: TeamAverages | null | undefined, row: AvgRow) => {
+    const v = t ? row.get(t) : null;
+    if (v === null || v === undefined) return "—";
+    return row.pct ? `${Math.round(v * 100)}%` : v.toFixed(1);
+  };
+  // The group's rows only where at least one side has the stat
+  const groups = AVG_GROUPS.map(g => ({ ...g, rows: g.rows.filter(r => (h && r.get(h) != null) || (a && r.get(a) != null)) }))
+    .filter(g => g.rows.length);
+  const statN = (t: TeamAverages | null | undefined) =>
+    t ? Math.max(t.corners?.matches ?? 0, t.bookings?.matches ?? 0, t.shots?.matches ?? 0, t.sot?.matches ?? 0) : 0;
+  return (
+    <div className="card p-4">
+      <PanelTitle right={<span className="text-[11px] text-n-500 tnum">last {facts.averages?.n ?? 10}</span>}>
+        <span className="inline-flex items-center gap-2"><BarChart3 size={15} className="text-accent" /> Team averages</span>
+      </PanelTitle>
+      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-x-3 pb-2 border-b border-n-800">
+        <span className="flex items-center gap-2 min-w-0"><TeamBadge name={home} size={18} /><span className="text-xs font-bold text-n-0 truncate">{home}</span></span>
+        <span />
+        <span className="flex items-center gap-2 min-w-0 justify-end"><span className="text-xs font-bold text-n-0 truncate text-right">{away}</span><TeamBadge name={away} size={18} /></span>
+      </div>
+      {groups.map(g => (
+        <div key={g.title} className="pt-2.5">
+          <p className="eyebrow text-center mb-1">{g.title}</p>
+          <ul>
+            {g.rows.map(r => {
+              const hv = h ? r.get(h) : null, av = a ? r.get(a) : null;
+              const hiH = hv != null && av != null && hv > av, hiA = hv != null && av != null && av > hv;
+              return (
+                <li key={r.label} className="grid grid-cols-[1fr_auto_1fr] items-center gap-x-3 py-1">
+                  <span className={clsx("font-mono tnum text-sm", hiH ? "text-n-0 font-bold" : "text-n-300")}>{show(h, r)}</span>
+                  <span className="text-[12px] text-n-400 text-center">{r.label}</span>
+                  <span className={clsx("font-mono tnum text-sm text-right", hiA ? "text-n-0 font-bold" : "text-n-300")}>{show(a, r)}</span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ))}
+      <p className="text-[11px] text-n-500 mt-3">
+        Averages per match over each team&apos;s last {h?.played ?? a?.played ?? 10} games in all competitions, including matches
+        just played. Corners, cards and shots come from the games that recorded them
+        ({[h && `${home} ${statN(h)}`, a && `${away} ${statN(a)}`].filter(Boolean).join(", ")}). Cards count yellow 1, red 2, as SportyBet does.
+      </p>
+    </div>
+  );
+}
+
 function MatchFactsPanels({ facts, home, away }: { facts: MatchFacts | null; home: string; away: string }) {
   if (!facts) return null;
   return (
     <>
       <RecentForm facts={facts} home={home} away={away} />
+      <TeamAveragesPanel facts={facts} home={home} away={away} />
       <HeadToHead facts={facts} home={home} away={away} />
     </>
   );

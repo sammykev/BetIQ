@@ -1691,6 +1691,10 @@ async def _run_pipeline():
             await asyncio.to_thread(_fit_shots, history)
         except Exception as e:
             print(f"[Pipeline] Shots model failed (non-fatal): {e}")
+        # Fresh fits: they hold the history's matches (live_learning.py)
+        import live_learning
+        live_learning.mark_trained(_set_pieces, history)
+        live_learning.mark_trained(_shots, history)
         print(f"[Pipeline] {len(combined)} training matches.")
 
         # Training takes minutes of CPU. On a worker thread the API keeps
@@ -1701,8 +1705,20 @@ async def _run_pipeline():
 
         # Make predictor available immediately so card analysis works during API calibration
         global _predictor
+        # A newly loaded model holds its training matches; the one already
+        # running (kept when no fresh model was found) also holds every match
+        # fed in since, so its memory stays
+        if getattr(predictor, "_applied_keys", None) is None or predictor is not _predictor:
+            live_learning.mark_trained(predictor, combined, predictor.canon)
         _predictor = predictor
         print("[Pipeline] Predictor ready — card analysis now available.")
+        # Then every match finished since the training data was made
+        try:
+            learned = await asyncio.to_thread(_learn_finished_matches, LEARN_DAYS)
+            if learned:
+                print(f"[Pipeline] Learned {learned['matches']} finished matches the models didn't hold.")
+        except Exception as e:
+            print(f"[Pipeline] Learning recent results failed (non-fatal): {e}")
 
         # Archive yesterday's predictions from the OLD cache before we start
         # overwriting it below.
@@ -1919,19 +1935,25 @@ async def _fetch_and_save_results():
     combined.to_csv(RESULTS_CSV, index=False)
     print(f"[Results] {len(combined)} results saved to {RESULTS_CSV}")
 
-    # Push new results into the live predictor without a full retrain
+    # New results into the live model, each match once (live_learning.py):
+    # most of the last 30 days are already in its training data or were
+    # learned from the live scores, and must not count again
     if _predictor is not None:
-        updated = 0
-        for _, r in new_df.iterrows():
+        import live_learning
+        moved: set = set()
+        for r in new_df.to_dict("records"):
+            row = live_learning.result_row(r)
+            if not row:
+                continue
             try:
-                _predictor._update(
-                    r["HomeTeam"], r["AwayTeam"], r["Result"],
-                    float(r["FTHG"]), float(r["FTAG"]),
-                )
-                updated += 1
-            except Exception:
-                pass
-        print(f"[Results] Applied {updated} results to live model.")
+                moved |= live_learning.learn(row, predictor=_predictor,
+                                             competition=intl.LEAGUE_CODE if row["league"] == intl.LEAGUE_CODE
+                                             else row["league"])
+            except Exception as e:
+                print(f"[Results] Couldn't learn {row['HomeTeam']} v {row['AwayTeam']}: {e}")
+        print(f"[Results] {len(moved) // 2} new result(s) learned by the live model (it already held the rest).")
+        if moved:
+            _repredict(moved)
 
     # Web search fallback: find results for past predictions still marked "pending"
     # that the API didn't return (e.g. international friendlies, cup games)
@@ -2287,9 +2309,16 @@ def _recent_results_frame() -> pd.DataFrame:
             if e.get("sport") not in (None, "football"):
                 continue
             canon = _predictor.canon if _predictor is not None else (lambda n: n)
+            # The live feed's stats too, so a team's averages include the match just played
+            stats = {}
+            for key, (hc, ac) in (("corners", ("HC", "AC")), ("bookings", ("HB", "AB")),
+                                  ("shots", ("HS", "AS")), ("sot", ("HST", "AST"))):
+                pair = res.get(key)
+                if isinstance(pair, (list, tuple)) and len(pair) == 2 and None not in pair:
+                    stats[hc], stats[ac] = pair
             rows.append({"Date": e.get("date") or d, "HomeTeam": canon(e.get("home", "")),
                          "AwayTeam": canon(e.get("away", "")), "FTHG": res["hg"], "FTAG": res["ag"],
-                         "comp": e.get("league_name") or match_facts.comp_name(e.get("league"))})
+                         "comp": e.get("league_name") or match_facts.comp_name(e.get("league")), **stats})
     df = match_facts.index([pd.DataFrame(rows)]) if rows else pd.DataFrame(columns=match_facts.COLUMNS)
     _recent_md = (time.time(), df)
     return df
@@ -2321,7 +2350,7 @@ async def _facts_for(home: str, away: str, day: str = "") -> Dict[str, Any]:
     else:
         h, a = home, away
     idx = await asyncio.to_thread(_team_results, {h, a})
-    return match_facts.facts(idx, h, a, day or None)
+    return match_facts.facts(idx, h, a, day or None, stats_for=_intl_stats_for)
 
 
 @app.get("/api/match/facts")
@@ -2767,6 +2796,7 @@ async def data_status(_admin: str = Depends(require_admin)):
                                      "shots_active": _intl_shots is not None},
         "shots": {**_shots_info, "active": _shots is not None},
         "shots_blend": _shot_blend,
+        "learning": _learn_status,
         "referees": _referee_status(),
         "matchday": _md_status,
         "club_cups": _club_cups_status(),
@@ -3046,8 +3076,84 @@ async def _guarded_refresh(days_back: int, trigger: str) -> None:
                           error=f"{type(e).__name__} at {_md_status.get('stage')}")
 
 
+LEARN_DAYS = 10           # finished matches looked at after a model is (re)built
+_learn_status: Dict[str, Any] = {"at": None, "matches": 0, "total": 0, "last": [], "repredicted": 0}
+
+
+def _learn_finished_matches(days: int = 1) -> Optional[Dict[str, Any]]:
+    """Feed every finished match of the last `days` days (and today) that the
+    models don't hold yet into them, then redo the upcoming predictions of the
+    teams that played. Returns {matches, teams, repredicted} or None when
+    nothing was new."""
+    import live_learning
+    if _predictor is None:
+        return None
+    r = _get_redis()
+    if not r:
+        return None
+    today = date.today()
+    stored = _md_many(r, [(today - timedelta(days=o)).isoformat() for o in range(days, -1, -1)])
+    moved: set = set()
+    learned = []
+    for day in stored.values():
+        for e in (day or {}).values():
+            row = live_learning.row_from_entry(e)
+            if not row:
+                continue
+            international = intl.is_international(row["league"])
+            got = live_learning.learn(row, predictor=_predictor, set_pieces=_set_pieces, shots=_shots,
+                                      international=international,
+                                      competition=intl.LEAGUE_CODE if international else row["league"])
+            if got:
+                moved |= got
+                learned.append(f"{row['HomeTeam']} {row['FTHG']}-{row['FTAG']} {row['AwayTeam']}")
+    if not learned:
+        return None
+    redone = _repredict(moved)
+    _learn_status.update(at=datetime.now(timezone.utc).isoformat(timespec="seconds"), matches=len(learned),
+                         total=_learn_status["total"] + len(learned), last=(learned + _learn_status["last"])[:20],
+                         repredicted=redone)
+    print(f"[Learn] {len(learned)} finished match(es) learned; {redone} upcoming prediction(s) redone: "
+          + "; ".join(learned[:5]))
+    return {"matches": len(learned), "teams": sorted(moved), "repredicted": redone}
+
+
+def _repredict(teams: set) -> int:
+    """Redo the not-yet-started predictions involving `teams` (model names)
+    with the models as they now stand, keeping their odds; returns how many."""
+    import live_learning
+    global _predictions_cache
+    if not teams or _predictor is None or not _predictions_cache:
+        return 0
+    now = datetime.now(timezone.utc)
+    unknown = dict(_unknown_clubs)           # _build_predictions starts that list afresh
+    out, redone = [], 0
+    try:
+        for p in _predictions_cache:
+            if (p.get("sport") in (None, "football") and not live_learning.kicked_off(p, now)
+                    and (_predictor.canon(p.get("home", "")) in teams or _predictor.canon(p.get("away", "")) in teams)):
+                odds = {"1": p.get("odds_home") or 0, "X": p.get("odds_draw") or 0, "2": p.get("odds_away") or 0}
+                new = _build_predictions(_predictor, [p], {f"{p['home']}:{p['away']}:{p.get('date', '')}": odds})
+                if new:
+                    out.append({**p, **new[0]})
+                    redone += 1
+                    continue
+            out.append(p)
+    finally:
+        _unknown_clubs.update(unknown)
+    if redone:
+        _predictions_cache = out
+        _save_predictions_cache()
+    return redone
+
+
 async def _matchday_live() -> None:
     await _guarded_refresh(1, "live")
+    # Matches that just finished: into the models, and their teams' next predictions redone
+    try:
+        await asyncio.to_thread(_learn_finished_matches, 1)
+    except Exception as e:
+        print(f"[Learn] failed: {e}")
 
 
 async def _matchday_sweep() -> None:
@@ -6035,6 +6141,45 @@ def _shot_markets(home: str, away: str, league: Optional[str]) -> Optional[Dict]
     return keep or None
 
 
+# National-team match stats (corners, bookings, shots) by (date, team keys):
+# the match page's team averages, whose results come from another source
+_intl_stats_by_key: Dict[Tuple[str, str, str], Dict[str, float]] = {}
+
+
+def _index_intl_stats(frame: pd.DataFrame) -> None:
+    import match_facts
+    if frame is None or frame.empty:
+        return
+    ours = match_facts.frame(frame)
+    table: Dict[Tuple[str, str, str], Dict[str, float]] = {}
+    for rec in ours.to_dict("records"):
+        try:
+            day = pd.Timestamp(rec["Date"]).date().isoformat()
+        except (TypeError, ValueError):
+            continue
+        stats = {k: float(rec[k]) for k in match_facts.STAT_COLS if rec.get(k) == rec.get(k) and rec.get(k) is not None}
+        if stats:
+            table[(day, intl.team_key(rec["HomeTeam"]), intl.team_key(rec["AwayTeam"]))] = stats
+    _intl_stats_by_key.clear()
+    _intl_stats_by_key.update(table)
+
+
+def _intl_stats_for(day: str, home: str, away: str) -> Optional[Dict[str, float]]:
+    """A national-team match's stats from the international dataset (a day either side)."""
+    if not _intl_stats_by_key:
+        return None
+    h, a = intl.team_key(home), intl.team_key(away)
+    try:
+        d = date.fromisoformat(day)
+    except ValueError:
+        return None
+    for o in (0, -1, 1):
+        got = _intl_stats_by_key.get(((d + timedelta(days=o)).isoformat(), h, a))
+        if got:
+            return got
+    return None
+
+
 def _load_international_set_pieces() -> None:
     """Fit the international corners/bookings model from the collected data,
     with the settings the nightly check chose — if it beat the competition
@@ -6051,6 +6196,7 @@ def _load_international_set_pieces() -> None:
     shot_verdict = data.get("shots_model") or {}
     _intl_sp_info = {"dataset": international_stats.summary(data), "check": verdict, "shots_check": shot_verdict}
     frame = international_stats.rows_frame(data)
+    _index_intl_stats(frame)
     _intl_shots = None
     if any((shot_verdict.get("use") or {}).values()) and shot_verdict.get("params"):
         # The check chose to start teams' shot ratings from their Elo: the same
