@@ -64,3 +64,12 @@ def _local_development_auth(monkeypatch):
     import auth
     monkeypatch.setattr(auth, "ALLOW_UNVERIFIED_UID", True)
     yield
+
+
+@pytest.fixture(autouse=True)
+def _paywall_off(monkeypatch):
+    """Tests run with the paywall switched off (admin → Features), as the
+    server can't check plans without Clerk keys. Paywall tests switch it on."""
+    import main
+    monkeypatch.setattr(main, "_paywall_enabled", lambda: False)
+    yield

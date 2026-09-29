@@ -38,9 +38,6 @@ interface TicketRecord {
 
 interface Stats {
   tickets?: TicketRecord;
-  won: number; lost: number; void: number;
-  total_stake: number; total_return: number; roi: number;
-  accuracy: number; streak: number; streak_type: string | null;
   saved_count: number; codes_count: number;
 }
 
@@ -112,7 +109,7 @@ export default function DashboardPage() {
       ]);
       // Offline / error replies arrive as objects like {"error": "offline"} —
       // only accept the shapes each view actually renders.
-      setStats(s && typeof (s as Stats).accuracy === "number" ? (s as Stats) : null);
+      setStats(s && typeof (s as Stats).tickets === "object" ? (s as Stats) : null);
       setCodes(asList<Code>(c));
       setRefStats(ref && typeof (ref as { link?: unknown }).link === "string" ? (ref as { code: string; count: number; link: string }) : null);
       setLeaderboard(asList(lb));

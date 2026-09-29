@@ -199,6 +199,28 @@ class TestPremium:
         monkeypatch.setattr(auth, "user_is_premium", free)
         assert asyncio.run(main.require_premium(self._req())) is None
 
+    def test_plans_unchecked_refuses_all_but_admins(self, monkeypatch):
+        # Paywall on but no Clerk keys: nobody's plan can be checked, so paid
+        # content is refused rather than given away
+        monkeypatch.setattr(main, "_paywall_enabled", lambda: True)
+        monkeypatch.setattr(auth, "premium_enforced", lambda: False)
+        monkeypatch.setattr(main, "_features_cache", [0.0, None])
+        monkeypatch.setattr(main, "_get_redis", lambda: None)
+
+        async def visitor(request): return None, None
+        async def admin(request): return "secret", None
+        monkeypatch.setattr(main, "_admin_identity", visitor)
+        with pytest.raises(HTTPException) as e:
+            asyncio.run(main.require_premium(self._req()))
+        assert (e.value.status_code, e.value.detail) == (503, main.PLANS_UNCHECKED)
+        assert TestClient(main.app).post("/api/optimizer", json={"min_odds": 2, "max_odds": 5}).status_code == 503
+        monkeypatch.setattr(main, "_admin_identity", admin)
+        assert asyncio.run(main.require_premium(self._req())) is None
+        # Switched off in admin: everyone, as before
+        monkeypatch.setattr(main, "_admin_identity", visitor)
+        monkeypatch.setattr(main, "_paywall_enabled", lambda: False)
+        assert asyncio.run(main.require_premium(self._req())) is None
+
     def test_signed_out_needs_sign_in(self, monkeypatch):
         monkeypatch.setattr(main, "_paywall_enabled", lambda: True)
         monkeypatch.setattr(auth, "premium_enforced", lambda: True)
@@ -257,16 +279,16 @@ class TestAccountAccess:
 
     def test_reads_are_refused(self, client, redis):
         victim = "user_victim12345678"
-        for kind in ("bets", "codes", "saves", "tickets", "prefs"):
+        for kind in ("codes", "saves", "tickets"):
             redis.set(f"betiq:user:{victim}:{kind}", json.dumps([{"secret": kind}]))
-        for path in ("bets", "codes", "saves", "stats", "tickets", "prefs"):
+        for path in ("codes", "saves", "stats", "tickets"):
             r = client.get(f"/api/user/{path}?uid={victim}")
             assert (r.status_code, r.json()["detail"]) == (503, "auth_not_configured"), path
             assert "secret" not in r.text
 
     def test_writes_are_refused(self, client, redis):
         victim = "user_victim12345678"
-        for path, body in (("bets", {"bet": {"result": "won"}}), ("codes", {"entry": {"code": "X"}}),
-                           ("saves", {"prediction": {"home": "A", "away": "B"}}), ("prefs", {"digest": True})):
-            assert client.post(f"/api/user/{path}", json={"uid": victim, **body}).status_code == 503, path
+        r = client.post("/api/user/saves", json={"uid": victim, "prediction": {"home": "A", "away": "B"}})
+        assert r.status_code == 503
+        assert client.delete(f"/api/user/saves?home=A&away=B&uid={victim}").status_code == 503
         assert not [k for k in redis.kv if victim in k]

@@ -182,23 +182,33 @@ def _audit(actor: str, action: str, **detail) -> None:
         pass
 
 
+PLANS_UNCHECKED = "Paid features are unavailable right now. Try again later."
+
+
+def _plans_unchecked() -> HTTPException:
+    """Refuse paid content: without CLERK_ISSUER and CLERK_SECRET_KEY the
+    server can't tell who has paid, and letting everyone in would give paid
+    features away (logged once)."""
+    global _warned_premium
+    if not _warned_premium:
+        print("[Auth] ERROR: paid features are refusing everyone but admins — set "
+              "CLERK_ISSUER and CLERK_SECRET_KEY on the backend.")
+        _warned_premium = True
+    return HTTPException(status_code=503, detail=PLANS_UNCHECKED)
+
+
 async def require_premium(request: Request) -> Optional[str]:
     """Premium content (match analysis, AI explanation): a signed-in premium
-    user, an admin, or anyone while the paywall is switched off. Not enforced
-    until CLERK_ISSUER and CLERK_SECRET_KEY are both set (logged once)."""
+    user, an admin, or anyone while the paywall is switched off. With the
+    paywall on, refused (503) until CLERK_ISSUER and CLERK_SECRET_KEY are set."""
     import auth
     if not _paywall_enabled():
-        return None
-    if not auth.premium_enforced():
-        global _warned_premium
-        if not _warned_premium:
-            print("[Auth] WARNING: premium content isn't protected — set CLERK_ISSUER and "
-                  "CLERK_SECRET_KEY on the backend.")
-            _warned_premium = True
         return None
     via, uid = await _admin_identity(request)
     if via:
         return uid
+    if not auth.premium_enforced():
+        raise _plans_unchecked()
     if not uid:
         raise HTTPException(status_code=401, detail="Sign in to see this.")
     if not await auth.user_is_premium(uid):
@@ -236,7 +246,8 @@ def _features() -> Dict[str, Dict[str, Any]]:
 async def check_feature(request: Request, fid: str) -> Optional[str]:
     """Let this request use a feature, or refuse it: 404 feature_off when it's
     switched off (or for testers only), 401 signed out, 402 lite_required /
-    premium_required without the tier. Returns the user id, if signed in."""
+    premium_required without the tier, 503 while plans can't be checked (no
+    CLERK_ISSUER / CLERK_SECRET_KEY). Returns the user id, if signed in."""
     import access
     import auth
     f = _features()[fid]
@@ -247,12 +258,7 @@ async def check_feature(request: Request, fid: str) -> Optional[str]:
     if f["tier"] == "free" or access.granted(f, uid, admin) or not _paywall_enabled():
         return uid
     if not auth.premium_enforced():
-        global _warned_premium
-        if not _warned_premium:
-            print("[Auth] WARNING: paid features aren't protected — set CLERK_ISSUER and "
-                  "CLERK_SECRET_KEY on the backend.")
-            _warned_premium = True
-        return uid
+        raise _plans_unchecked()
     if not uid:
         raise HTTPException(status_code=401, detail="Sign in to see this.")
     if not auth.tier_at_least(await auth.user_tier(uid), f["tier"]):
@@ -3491,8 +3497,6 @@ def _settle_tickets(r) -> Dict[str, int]:
                     if t["status"] in ("won", "lost", "void"):
                         report["settled"] += 1
                         r.hincrby(TICKETS_STATS_KEY, t["status"], 1)
-                        if t["status"] == "won":   # the dashboard's Top predictors
-                            r.zincrby("betiq:leaderboard", 1, uid)
         if changed:
             r.set(key, json.dumps(items, separators=(",", ":")), ex=365 * 86400)
         # Nothing left to settle (or only legs we can't settle, all played)
@@ -4820,35 +4824,6 @@ async def delete_save(request: Request, home: str, away: str, date: str = "", ui
     return _set_saved(uid, {"home": home, "away": away, "date": date}, False)
 
 
-@app.get("/api/user/bets")
-async def get_bets(request: Request, uid: str = ""):
-    uid = await require_user(request, uid)
-    r = _get_redis()
-    if not r: return []
-    raw = r.get(_ukey(uid, "bets"))
-    return json.loads(raw) if raw else []
-
-
-@app.post("/api/user/bets")
-async def log_bet(request: Request, body: Dict[str, Any]):
-    uid = await require_user(request, body.get("uid", ""))
-    bet = body.get("bet", {})
-    if not bet: raise HTTPException(status_code=400, detail="Missing bet")
-    r = _get_redis()
-    if not r: raise HTTPException(status_code=503, detail="No Redis")
-    key = _ukey(uid, "bets")
-    raw = r.get(key)
-    bets: List[Dict] = json.loads(raw) if raw else []
-    bet["logged_at"] = datetime.utcnow().isoformat()
-    bets.insert(0, bet)
-    bets = bets[:200]
-    r.set(key, json.dumps(bets), ex=365 * 86400)
-    # Update leaderboard if won
-    if bet.get("result") == "won":
-        r.zincrby("betiq:leaderboard", 1, uid)
-    return {"ok": True, "total_bets": len(bets)}
-
-
 @app.get("/api/user/codes")
 async def get_codes(request: Request, uid: str = ""):
     uid = await require_user(request, uid)
@@ -4858,85 +4833,22 @@ async def get_codes(request: Request, uid: str = ""):
     return json.loads(raw) if raw else []
 
 
-@app.post("/api/user/codes")
-async def save_code(request: Request, body: Dict[str, Any]):
-    uid = await require_user(request, body.get("uid", ""))
-    entry = body.get("entry", {})
-    if not entry: raise HTTPException(status_code=400, detail="Missing entry")
-    r = _get_redis()
-    if not r: raise HTTPException(status_code=503, detail="No Redis")
-    key = _ukey(uid, "codes")
-    raw = r.get(key)
-    codes: List[Dict] = json.loads(raw) if raw else []
-    entry["saved_at"] = datetime.utcnow().isoformat()
-    codes.insert(0, entry)
-    codes = codes[:100]
-    r.set(key, json.dumps(codes), ex=365 * 86400)
-    return {"ok": True}
-
-
 @app.get("/api/user/stats")
 async def get_user_stats(request: Request, uid: str = ""):
+    """The account's record from the codes it booked here, settled by the
+    server from the results (never self-reported), and what it has saved."""
+    import tickets
     uid = await require_user(request, uid)
     r = _get_redis()
     if not r: return {}
-    bets_raw  = r.get(_ukey(uid, "bets"))
+    tickets_raw = r.get(_ukey(uid, "tickets"))
     saves_raw = r.get(_ukey(uid, "saves"))
     codes_raw = r.get(_ukey(uid, "codes"))
-    bets:  List[Dict] = json.loads(bets_raw)  if bets_raw  else []
-    saves: List[Dict] = json.loads(saves_raw) if saves_raw else []
-    codes: List[Dict] = json.loads(codes_raw) if codes_raw else []
-
-    won   = sum(1 for b in bets if b.get("result") == "won")
-    lost  = sum(1 for b in bets if b.get("result") == "lost")
-    void  = sum(1 for b in bets if b.get("result") == "void")
-    total_stake   = sum(float(b.get("stake", 0))  for b in bets)
-    total_return  = sum(float(b.get("payout", 0)) for b in bets)
-    roi = round((total_return - total_stake) / total_stake * 100, 1) if total_stake > 0 else 0
-
-    # Current streak
-    streak, streak_type = 0, None
-    for b in bets:
-        res = b.get("result")
-        if res not in ("won", "lost"): continue
-        if streak_type is None: streak_type = res
-        if res == streak_type: streak += 1
-        else: break
-
-    # The record that counts: codes booked here, settled from the results
-    import tickets
-    tickets_raw = r.get(_ukey(uid, "tickets"))
-    booked = tickets.summary(json.loads(tickets_raw) if tickets_raw else [])
     return {
-        "tickets": booked,
-        "won": won, "lost": lost, "void": void,
-        "total_stake": round(total_stake, 2),
-        "total_return": round(total_return, 2),
-        "roi": roi,
-        "accuracy": round(won / (won + lost) * 100, 1) if (won + lost) > 0 else 0,
-        "streak": streak, "streak_type": streak_type,
-        "saved_count": len(saves),
-        "codes_count": len(codes),
+        "tickets": tickets.summary(json.loads(tickets_raw) if tickets_raw else []),
+        "saved_count": len(json.loads(saves_raw) if saves_raw else []),
+        "codes_count": len(json.loads(codes_raw) if codes_raw else []),
     }
-
-
-@app.get("/api/user/prefs")
-async def get_prefs(request: Request, uid: str = ""):
-    uid = await require_user(request, uid)
-    r = _get_redis()
-    if not r: return {}
-    raw = r.get(_ukey(uid, "prefs"))
-    return json.loads(raw) if raw else {"followed_leagues": [], "digest": False}
-
-
-@app.post("/api/user/prefs")
-async def set_prefs(request: Request, body: Dict[str, Any]):
-    uid = await require_user(request, body.get("uid", ""))
-    r = _get_redis()
-    if not r: raise HTTPException(status_code=503, detail="No Redis")
-    prefs = {k: v for k, v in body.items() if k != "uid"}
-    r.set(_ukey(uid, "prefs"), json.dumps(prefs), ex=365 * 86400)
-    return {"ok": True}
 
 
 # "table_tennis" is how a table-tennis prediction names its sport (the event modal uses it)
@@ -5487,6 +5399,20 @@ async def get_value_bets():
         return []
 
 
+OLD_LEADERBOARD_KEY = "betiq:leaderboard"   # counted self-reported "won" bets: deleted at startup
+LEADERBOARD_SIZE = 20
+
+
+def _leaderboard(r) -> List[Tuple[str, int]]:
+    """Accounts by winning tickets: codes booked here and settled by the
+    server from the results, so nobody can report their own wins."""
+    wins: Dict[str, int] = {}
+    for t in _all_tickets(r):
+        if t.get("status") == "won" and t["uid"] != ANON_UID:
+            wins[t["uid"]] = wins.get(t["uid"], 0) + 1
+    return sorted(wins.items(), key=lambda kv: (-kv[1], kv[0]))[:LEADERBOARD_SIZE]
+
+
 @app.get("/api/leaderboard")
 async def get_leaderboard(request: Request, uid: str = ""):
     """Top predictors. Public, so it never returns user ids (those are what the
@@ -5497,10 +5423,10 @@ async def get_leaderboard(request: Request, uid: str = ""):
     import auth
     me = (uid or None) if auth.unverified_uid_allowed() else await optional_user(request)
     try:
-        entries = r.zrevrange("betiq:leaderboard", 0, 19, withscores=True)
-        return [{"name": f"#{uid[-6:]}", "wins": int(score), "you": uid == me} for uid, score in entries]
+        rows = await asyncio.to_thread(_leaderboard, r)
     except Exception:
         return []
+    return [{"name": f"#{u[-6:]}", "wins": n, "you": u == me} for u, n in rows]
 
 
 @app.post("/api/track/match")
@@ -7290,7 +7216,12 @@ async def startup():
         pass
     for found, meant in _mangled_settings():
         print(f'[Settings] WARNING: .env has "{found}" — did you mean "{meant}"? It is unset until the name is fixed.')
-    _get_redis()                # says loudly, right away, if the database is missing
+    r = _get_redis()            # says loudly, right away, if the database is missing
+    if r:
+        try:
+            r.delete(OLD_LEADERBOARD_KEY)   # self-reported wins; the leaderboard now reads tickets
+        except Exception:
+            pass
     _restore_shot_blend()
     _restore_review()
     _load_hidden()
