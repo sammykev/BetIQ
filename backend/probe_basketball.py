@@ -223,8 +223,84 @@ async def logos() -> None:
                 line(f"  thesportsdb {team}: {e}")
 
 
-async def main(pages: int) -> None:
-    for part in (lambda: sportybet_listing(pages), sportybet_results, espn, others, logos):
+async def results_depth() -> None:
+    """How far back SportyBet's results go, and how a long window pages."""
+    line("\n=== 6. SportyBet results: history depth ===")
+    session = sportybet.shared_session()
+    today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    ms = lambda d: int(d.timestamp() * 1000)
+    for back, span in ((2, 1), (8, 1), (30, 1), (60, 1), (120, 1), (200, 1), (300, 1), (400, 1), (550, 1), (730, 1),
+                       (8, 7), (40, 30)):
+        start = today - timedelta(days=back)
+        try:
+            events, pages, total = await sportybet._paged(session, "/factsCenter/eventResultList", {
+                "pageSize": 100, "sportId": BASKETBALL, "startTime": ms(start),
+                "endTime": ms(start + timedelta(days=span))}, 30)
+            comps = Counter(e.get("_tournament") for e in events)
+            quarters = sum(1 for e in events if e.get("gameScore"))
+            line(f"  {start.date()} +{span}d: {len(events)} results in {pages} pages (totalNum {total}), "
+                 f"{quarters} with quarters, {len(comps)} competitions: "
+                 + ", ".join(f"{t} {n}" for t, n in comps.most_common(8)))
+            OUT.setdefault("results_depth", {})[f"{back}+{span}"] = {"n": len(events), "total": total}
+            if events and back == 8 and span == 1:
+                odd = [e for e in events if e.get("regularTimeScore") and e.get("regularTimeScore") != e.get("setScore")]
+                line("  overtime sample:", json.dumps([{k: e.get(k) for k in (
+                    "homeTeamName", "awayTeamName", "setScore", "regularTimeScore", "gameScore")} for e in odd[:2]]))
+        except Exception as e:
+            line(f"  {start.date()} +{span}d: {e}")
+
+
+async def espn_debug() -> None:
+    line("\n=== 7. ESPN (why nothing?) ===")
+    import httpx
+    async with httpx.AsyncClient(timeout=20) as c:
+        for slug, day in (("nba", "20250301"), ("nba", "20260301"), ("wnba", "20250701"), ("nbl", "20251201")):
+            r = await c.get(f"https://site.api.espn.com/apis/site/v2/sports/basketball/{slug}/scoreboard",
+                            params={"dates": day})
+            body = r.text
+            n = len(r.json().get("events") or []) if r.status_code == 200 else None
+            line(f"  {slug} {day}: HTTP {r.status_code}, {len(body)} bytes, events={n} {body[:160]!r}")
+
+
+async def crests() -> None:
+    line("\n=== 8. Team crests (Sportradar image CDN) ===")
+    from curl_cffi.requests import AsyncSession
+    session = sportybet.shared_session()
+    events, _, _ = await sportybet._paged(session, "/factsCenter/pcUpcomingEvents", {
+        "sportId": BASKETBALL, "marketId": "219", "pageSize": 100, "todayGames": "false"}, 2)
+    async with AsyncSession(impersonate="chrome131", timeout=15) as s:
+        for e in events[:8]:
+            cid = str(e.get("homeTeamId") or "").split(":")[-1]
+            for url in (f"https://img.sportradar.com/ls/crest/big/{cid}.png",
+                        f"https://img.sportradar.com/ls/crest/medium/{cid}.png"):
+                try:
+                    r = await s.get(url)
+                    line(f"  {e.get('homeTeamName')} ({e.get('homeTeamId')}): {url.split('/crest/')[1]} "
+                         f"HTTP {r.status_code} {r.headers.get('content-type')} {len(r.content)} bytes")
+                except Exception as ex:
+                    line(f"  {url}: {ex}")
+
+
+async def euroleague_sample() -> None:
+    line("\n=== 9. EuroLeague game sample ===")
+    from curl_cffi.requests import AsyncSession
+    async with AsyncSession(impersonate="chrome131", timeout=20) as s:
+        r = await s.get("https://api-live.euroleague.net/v2/competitions/E/seasons/E2024/games")
+        games = r.json().get("data") or []
+        played = [g for g in games if g.get("played")]
+        line(f"  E2024: {len(games)} games, {len(played)} played")
+        if played:
+            g = played[0]
+            line("  local:", json.dumps(g.get("local"))[:700])
+            line("  date:", g.get("date"), "neutral:", g.get("isNeutralVenue"))
+
+
+async def main(pages: int, parts: str) -> None:
+    every = {"listing": lambda: sportybet_listing(pages), "results": sportybet_results, "espn": espn,
+             "others": others, "logos": logos, "depth": results_depth, "espn_debug": espn_debug,
+             "crests": crests, "euroleague": euroleague_sample}
+    chosen = [every[p] for p in parts.split(",")] if parts else list(every.values())
+    for part in chosen:
         try:
             await part()
         except Exception as e:
@@ -237,4 +313,6 @@ async def main(pages: int) -> None:
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--pages", type=int, default=10)
-    asyncio.run(main(ap.parse_args().pages))
+    ap.add_argument("--parts", default="", help="comma-separated: " + "listing,results,espn,others,logos,depth,espn_debug,crests,euroleague")
+    a = ap.parse_args()
+    asyncio.run(main(a.pages, a.parts))

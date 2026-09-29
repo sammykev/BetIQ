@@ -9,6 +9,9 @@ on:
       pages:
         description: "SportyBet match pages to read for markets"
         default: "10"
+      parts:
+        description: "Only these parts (comma-separated; empty: all)"
+        default: ""
 
 permissions:
   contents: read
@@ -29,7 +32,7 @@ jobs:
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r requirements.txt
       - name: Probe
-        run: python probe_basketball.py --pages ${{ github.event.inputs.pages || '10' }}
+        run: python probe_basketball.py --pages ${{ github.event.inputs.pages || '10' }} --parts "${{ github.event.inputs.parts }}"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
