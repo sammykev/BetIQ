@@ -21,6 +21,7 @@ MAX_LINES = 90           # per match, likeliest first
 FAMILIES = {
     "bb_winner": "Winner", "bb_1x2": "1X2 (regulation)", "bb_handicap": "Handicap", "bb_total": "Total Points",
     "bb_team_total": "Team Points", "bb_halves": "Halves", "bb_quarters": "Quarters", "bb_overtime": "Overtime",
+    "bb_player": "Player props",
 }
 
 
@@ -33,6 +34,8 @@ def family(market: str) -> str:
         return "bb_halves"
     if market.startswith("bb_q"):
         return "bb_quarters"
+    if market.startswith("bb_player_"):
+        return "bb_player"
     return market
 
 

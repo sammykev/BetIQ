@@ -3482,7 +3482,10 @@ def _settle_tickets(r) -> Dict[str, int]:
     bb_days: Dict[str, Dict] = {}
 
     def result_for(leg: Dict) -> Optional[Dict]:
-        if str(leg.get("market") or "").startswith("bb_"):
+        m = str(leg.get("market") or "")
+        if m.startswith("bb_player_") or m == "anytime_scorer":
+            return _props_result_for(leg)
+        if m.startswith("bb_"):
             return _bb_result_for(r, leg, bb_days)
         e = _md_entry_for(r, leg, days)
         return e.get("result") if e else None
@@ -4622,6 +4625,8 @@ ADMIN_JOBS = {
     "bb_collect": ("Basketball: collect results from SportyBet (and older days)", lambda: _bb_collect()),
     "bb_fit": ("Basketball: rate every league from the results", lambda: _bb_fit()),
     "bb_refresh": ("Basketball: price SportyBet's matches now", lambda: _bb_refresh()),
+    "props_load": ("Player props: load box scores and the check's numbers", lambda: _props_load()),
+    "fb_props": ("Player props: price goalscorers now", lambda: _fb_props_refresh()),
     "daily_slips": ("Remake today's daily odds slips (new booking codes)", lambda: _build_daily(__import__("daily_slips").today(), force=True)),
     "shot_blend": ("Score our shot lines against SportyBet's", lambda: _shot_blend_job()),
     "market_review": ("Weekly accuracy review (pause markets falling short)", lambda: _review_job()),
@@ -5117,6 +5122,11 @@ async def _bb_refresh() -> List[Dict]:
         print(f"[Basketball] listing failed: {e}")
         events, report = [], [str(e)]
     preds = await asyncio.to_thread(bp.build, events, dict(_bb_leagues))
+    try:
+        props = await _bb_add_props(preds)
+    except Exception as e:
+        props = 0
+        print(f"[Props] basketball player lines failed: {e}")
     if not preds and not events:
         _bb_save_status(listing={"events": 0, "report": report})
         return _bb_predictions
@@ -5129,7 +5139,8 @@ async def _bb_refresh() -> List[Dict]:
         except Exception as e:
             print(f"[Basketball] couldn't save predictions: {e}")
     rated = sum(1 for p in preds if p.get("rated"))
-    _bb_save_status(listing={"events": len(events), "predictions": len(preds), "rated": rated, "report": report})
+    _bb_save_status(listing={"events": len(events), "predictions": len(preds), "rated": rated, "report": report,
+                             "player_lines": props})
     print(f"[Basketball] {len(preds)} matches priced ({rated} with both teams rated) · {' · '.join(report)}")
     return preds
 
@@ -5166,6 +5177,189 @@ async def get_basketball_status(_admin: str = Depends(require_admin)):
                         for n, g, t, hc, sd in leagues],
             "backtest": {"at": bt.get("at"), "overall": bt.get("overall"), "leagues": len(bt.get("leagues") or {})}
             if bt else None}
+
+
+# ── Player props (props_collect → props_backtest → props_pricing) ─────────
+# Box scores collected nightly in GitHub Actions; the walk-forward check's
+# spreads and scale; SportyBet's player lines priced on its match pages.
+PROPS_FB_KEY = "betiq:props:fb:priced"      # football event id -> priced goalscorers
+PROPS_BB_MAX_PAGES = 40                     # basketball match pages read per refresh (props are on big games)
+FB_PROP_LEAGUES = {"PL": "Premier League", "PD": "LaLiga", "BL1": "Bundesliga", "SA": "Serie A", "FL1": "Ligue 1"}
+_props_players: Dict[Tuple[str, str], Dict[str, Dict]] = {}
+_props_calib: Dict[str, Any] = {}
+_props_fb: Dict[str, List[Dict]] = {}
+
+
+def _props_load_sync() -> Dict[str, int]:
+    import basketball_data as bd
+    import props_backtest
+    import props_collect as pc
+    r = _get_redis()
+    if not r:
+        return {}
+    got = {}
+    for sport, leagues in (("bb", ("NBA", "WNBA", "Euroleague", "Eurocup")), ("fb", tuple(pc.UNDERSTAT.values()))):
+        for league in leagues:
+            raw = r.get(pc.PLAYERS_KEY.format(sport=sport, league=league))
+            if raw:
+                _props_players[(sport, league)] = bd.decode(raw)
+                got[f"{sport}:{league}"] = len(_props_players[(sport, league)])
+    try:
+        _props_calib.clear()
+        _props_calib.update(json.loads(r.get(props_backtest.CALIB_KEY) or "{}"))
+        _props_fb.update(json.loads(r.get(PROPS_FB_KEY) or "{}"))
+    except Exception:
+        pass
+    return got
+
+
+async def _props_load() -> Dict[str, int]:
+    """The players' box scores and the walk-forward check's numbers, from Redis."""
+    try:
+        got = await asyncio.to_thread(_props_load_sync)
+    except Exception as e:
+        print(f"[Props] couldn't load: {e}")
+        return {}
+    print(f"[Props] players loaded: {got}")
+    return got
+
+
+def _bb_prop_lines(pred: Dict, page: Dict) -> List[Dict]:
+    """A basketball match's player lines, priced (props_pricing.bb_price)."""
+    import basketball_model as bm
+    import props_pricing as pr
+    import sportybet
+    league = pr.BB_LEAGUES.get(pred.get("league") or "")
+    players = _props_players.get(("bb", league)) if league else None
+    if not players:
+        return []
+    # Tonight's expected points against each team's usual (our basketball ratings)
+    lg = _bb_leagues.get(pred["league"])
+    factor: Dict[str, float] = {}
+    if lg:
+        for side, exp_pts in (("home", pred.get("exp_home_pts")), ("away", pred.get("exp_away_pts"))):
+            name = pred[side]
+            usual = lg.avg + lg.attack.get(name, 0.0) + (lg.home_court / 2)
+            if exp_pts and usual > 0:
+                # Box scores name teams their own way: every team name close to this side's
+                for t in {p["team"] for p in players.values()}:
+                    if sportybet.team_similarity(t, name) >= 0.75:
+                        factor[t] = exp_pts / usual
+    disp = {}
+    for stat, d in (((_props_calib.get("bb") or {}).get(league) or {}).get("dispersion") or {}).items():
+        disp[stat] = d
+    return pr.bb_price(page, players, factor, disp)
+
+
+async def _bb_add_props(preds: List[Dict]) -> int:
+    """Player lines on the matches of leagues we have box scores for."""
+    import props_pricing as pr
+    import sportybet
+    todo = [p for p in preds if p.get("league") in pr.BB_LEAGUES][:PROPS_BB_MAX_PAGES]
+    n = 0
+    for p in todo:
+        try:
+            page = await sportybet.event_page(p["sportybet_event_id"])
+        except Exception as e:
+            print(f"[Props] page {p['sportybet_event_id']}: {e}")
+            continue
+        lines = _bb_prop_lines(p, page or {})
+        if lines:
+            p["bb_markets"] = (p.get("bb_markets") or []) + lines
+            p["props"] = len(lines)
+            n += len(lines)
+        await asyncio.sleep(0.3)
+    return n
+
+
+async def _fb_props_refresh() -> Dict[str, int]:
+    """Anytime goalscorers on our football matches in the next three days (top five leagues)."""
+    import props_pricing as pr
+    import sportybet
+    now = datetime.now(timezone.utc)
+    last = (now + timedelta(days=3)).strftime("%Y-%m-%d")
+    scale_by = {lg: (v or {}).get("scale") or 1.0 for lg, v in (_props_calib.get("fb") or {}).items()}
+    priced: Dict[str, List[Dict]] = {}
+    for p in _predictions_cache:
+        league = FB_PROP_LEAGUES.get(p.get("league") or "")
+        players = _props_players.get(("fb", league)) if league else None
+        if not players or not (now.strftime("%Y-%m-%d") <= p.get("date", "") <= last):
+            continue
+        ev = _linked_event(p)
+        if not ev or not ev.get("eventId"):
+            continue
+        try:
+            page = await sportybet.event_page(str(ev["eventId"]))
+        except Exception as e:
+            print(f"[Props] scorer page {ev.get('eventId')}: {e}")
+            continue
+        tt = (p.get("goal_markets") or {}).get("team_totals") or {}
+        lam = {"home": pr.team_goals((tt.get("home") or {}).get("0.5")),
+               "away": pr.team_goals((tt.get("away") or {}).get("0.5"))}
+        team_exp: Dict[str, Optional[float]] = {}
+        for o in pr.scorer_offers(page or {}):
+            if o["team"] not in team_exp:
+                side = "home" if sportybet.team_similarity(o["team"], p["home"]) >= sportybet.team_similarity(o["team"], p["away"]) else "away"
+                team_exp[o["team"]] = lam[side]
+        lines = pr.scorer_price(page or {}, players, team_exp, scale_by.get(league, 1.0))
+        if lines:
+            priced[str(ev["eventId"])] = [{**x, "home": p["home"], "away": p["away"], "date": p["date"],
+                                           "time": p.get("time") or "", "league": p.get("league_name") or league}
+                                          for x in lines]
+        await asyncio.sleep(0.3)
+    _props_fb.clear()
+    _props_fb.update(priced)
+    r = _get_redis()
+    if r:
+        try:
+            r.set(PROPS_FB_KEY, json.dumps(priced), ex=6 * 3600)
+        except Exception:
+            pass
+    print(f"[Props] goalscorers priced on {len(priced)} matches")
+    return {"matches": len(priced), "players": sum(len(v) for v in priced.values())}
+
+
+@app.get("/api/props/football")
+async def get_football_props(home: str = Query(..., max_length=80), away: str = Query(..., max_length=80),
+                             date_: str = Query("", alias="date", max_length=10)):
+    """A football match's anytime goalscorers: our chance, SportyBet's price and ids."""
+    for lines in _props_fb.values():
+        if lines and lines[0]["home"] == home and lines[0]["away"] == away and (not date_ or lines[0]["date"] == date_):
+            return {"scorers": lines}
+    return {"scorers": []}
+
+
+def _props_result_for(leg: Dict) -> Optional[Dict]:
+    """A player-prop leg's result from the box scores: {"status", "value"}
+    (his count of the stat, or goals), "void" when he didn't play."""
+    import player_props as pp
+    import props_pricing as pr
+    market = str(leg.get("market") or "")
+    key = str(leg.get("code") or "").split("|")[0]
+    if market.startswith("bb_player_"):
+        stat = market[len("bb_player_"):]
+        col = pr.BB_STATS.get(stat, (None,))[0]
+        pools = [v for (sport, _), v in _props_players.items() if sport == "bb"]
+    elif market == "anytime_scorer":
+        col, pools = 5, [v for (sport, _), v in _props_players.items() if sport == "fb"]
+    else:
+        return None
+    try:
+        d0 = date.fromisoformat(leg.get("date") or "")
+    except ValueError:
+        return None
+    days = {(d0 + timedelta(days=i)).isoformat() for i in (-1, 0, 1)}
+    for players in pools:
+        p = players.get(key)
+        if not p or col is None:
+            continue
+        rows = [r for r in p["games"] if r[0] in days]
+        if rows:
+            return {"status": "finished", "value": float(rows[-1][col])}
+        # His team's game is in but he isn't: he didn't play (void)
+        if any(r[0] in days and r[1] == p["team"] for q in players.values() for r in q["games"][-5:]):
+            return {"status": "void"}
+    return None
 
 
 def _bb_result_for(r, leg: Dict, cache: Dict[str, Dict]) -> Optional[Dict]:
@@ -6775,6 +6969,14 @@ async def _optimize_request(body: Dict[str, Any],
     pairs = [(_with_priced_set_pieces(p, linked[id(p)]), linked[id(p)]) for p in preds]
     preds = [p for p, _ in pairs]
     groups = [optimizer.candidates(p, ev, min_prob, markets, allowed) for p, ev in pairs]
+    if not markets or "anytime_scorer" in markets:
+        # Anytime goalscorers priced on the match's SportyBet page (_fb_props_refresh)
+        for g, (p, ev) in zip(groups, pairs):
+            for x in _props_fb.get(str((ev or {}).get("eventId") or ""), []):
+                if min_prob <= x["prob"] < 0.995 and x["odds"] > 1.01 and "anytime_scorer" not in paused:
+                    g.append(optimizer.Option(p["home"], p["away"], p["date"], p.get("time") or "",
+                                              p.get("league_name") or "", "anytime_scorer", x["market_name"],
+                                              x["code"], x["label"], x["prob"], x["odds"], "sportybet", sb=x["sb"]))
     if bb_preds:
         import basketball_predictions
         groups += [basketball_predictions.options(p, min_prob, bb_families, lambda m, c: m not in paused)
@@ -7509,6 +7711,7 @@ async def startup():
     _load_h2h_cache()
     _load_predictions_cache()   # serve cached predictions instantly while pipeline rebuilds
     _bb_load()
+    asyncio.create_task(_props_load())
     asyncio.create_task(_link_on_startup())  # every deploy re-links to SportyBet straight away
     asyncio.create_task(_run_pipeline())
     asyncio.create_task(_load_fbref_data())
@@ -7536,6 +7739,10 @@ async def startup():
     scheduler.add_job(_bb_collect, "interval", minutes=30, id="bb_collect", max_instances=1, coalesce=True,
                       next_run_time=datetime.now() + timedelta(minutes=2))
     scheduler.add_job(_bb_fit, "interval", hours=6, id="bb_fit", max_instances=1, coalesce=True)
+    # Player props: box scores and the check's numbers (nightly in Actions), goalscorers priced
+    scheduler.add_job(_props_load, "interval", hours=3, id="props_load", max_instances=1, coalesce=True)
+    scheduler.add_job(_fb_props_refresh, "interval", minutes=45, id="fb_props", max_instances=1, coalesce=True,
+                      next_run_time=datetime.now() + timedelta(minutes=6))
     scheduler.add_job(_bb_refresh, "interval", minutes=15, id="bb_refresh", max_instances=1, coalesce=True,
                       next_run_time=datetime.now() + timedelta(minutes=1))
     scheduler.add_job(_shot_blend_job, "interval", hours=6, id="shot_blend",

@@ -37,10 +37,38 @@ def _over_under(code: str, total: Optional[float]) -> Optional[str]:
     return "won" if (total > line if over else total < line) else "lost"
 
 
+def settle_prop(market: str, code: str, result: Optional[Dict]) -> str:
+    """A player prop from his box score ({"status", "value"}): basketball
+    codes "<player>|O14.5", "|U14.5" or "|9+"; a goalscorer (code: the
+    player) won with a goal. Void when he didn't play, as on SportyBet."""
+    if not result:
+        return "pending"
+    if result.get("status") == "void":
+        return "void"
+    if result.get("status") != "finished" or result.get("value") is None:
+        return "pending"
+    v = float(result["value"])
+    if market == "anytime_scorer":
+        return "won" if v >= 1 else "lost"
+    line = code.split("|", 1)[-1]
+    m = re.match(r"^(\d+)\+$", line)
+    if m:
+        return "won" if v >= int(m.group(1)) else "lost"
+    m = re.match(r"^([OU])(\d+(?:\.\d+)?)$", line)
+    if not m:
+        return "void"
+    n = float(m.group(2))
+    if v == n:
+        return "void"
+    return "won" if (v > n) == (m.group(1) == "O") else "lost"
+
+
 def grade_leg(market: str, code: str, result: Optional[Dict]) -> str:
     """Settle one leg from a matchday result ({"status", "hg", "ag",
     "corners", "bookings", "shots", "sot", "aet"}); basketball legs (bb_…)
     from a basketball result (basketball_markets.settle)."""
+    if market.startswith("bb_player_") or market == "anytime_scorer":
+        return settle_prop(market, code, result)
     if market.startswith("bb_"):
         import basketball_markets
         return basketball_markets.settle(market, code, result)

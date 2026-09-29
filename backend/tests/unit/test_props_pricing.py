@@ -93,3 +93,29 @@ class TestScorers:
     def test_team_goals_from_the_chance_of_scoring(self):
         assert pr.team_goals(1 - 2.718281828 ** -1.5) == pytest.approx(1.5, abs=1e-6)
         assert pr.team_goals(None) is None
+
+
+class TestSettle:
+    def test_player_lines(self):
+        import tickets
+        got = {"status": "finished", "value": 16.0}
+        assert tickets.grade_leg("bb_player_pts", "t j warren|O14.5", got) == "won"
+        assert tickets.grade_leg("bb_player_pts", "t j warren|U14.5", got) == "lost"
+        assert tickets.grade_leg("bb_player_pts", "t j warren|16+", got) == "won"
+        assert tickets.grade_leg("bb_player_pts", "t j warren|17+", got) == "lost"
+        assert tickets.grade_leg("bb_player_reb", "x|O3.5", {"status": "void"}) == "void"
+        assert tickets.grade_leg("bb_player_ast", "x|O3.5", None) == "pending"
+        assert tickets.grade_leg("anytime_scorer", "bukayo saka", {"status": "finished", "value": 1.0}) == "won"
+        assert tickets.grade_leg("anytime_scorer", "bukayo saka", {"status": "finished", "value": 0.0}) == "lost"
+
+    def test_result_from_the_box_scores(self, monkeypatch):
+        import main
+        monkeypatch.setattr(main, "_props_players", {("bb", "Euroleague"): PLAYERS, ("fb", "Premier League"): FB_PLAYERS})
+        day = PLAYERS[pp.name_key("T.J. Warren")]["games"][-1][0]
+        leg = {"market": "bb_player_pts", "code": pp.name_key("T.J. Warren") + "|O14.5", "date": day}
+        assert main._props_result_for(leg) == {"status": "finished", "value": 16.0}
+        # His team played that day, he didn't: void
+        other = {"market": "bb_player_pts", "code": "someone else|O4.5", "date": day}
+        PLAYERS["someone else"] = {"name": "Someone Else", "team": "Paris Basketball", "games": bb_rows(5, 1, 1, 0)[:3]}
+        assert main._props_result_for(other) == {"status": "void"}
+        del PLAYERS["someone else"]
