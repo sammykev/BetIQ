@@ -1,0 +1,53 @@
+# Tennis and table tennis data:
+# - Nightly: the tennis model fitted on every match since 2000 (tennis_fit.py,
+#   Jeff Sackmann's ATP/WTA archives) and its walk-forward check; the ratings
+#   go to Upstash Redis for the server.
+# - By hand: probe (which sources answer), fit.
+# Needs the UPSTASH_REDIS_URL secret (same as the server).
+name: Racket data
+
+on:
+  schedule:
+    - cron: "40 3 * * *"   # daily
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "tennis_probe, tennis_fit, or tennis_sample"
+        default: "tennis_fit"
+
+concurrency:
+  group: racket-data
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+
+      - name: Tennis sources probe
+        if: github.event.inputs.job == 'tennis_probe'
+        run: python tennis_data.py --probe
+
+      - name: Tennis model fit and walk-forward check
+        if: (github.event_name == 'schedule' || github.event.inputs.job == 'tennis_fit') && hashFiles('backend/tennis_fit.py') != ''
+        env:
+          UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
+        run: python tennis_fit.py
+
+      - name: Tennis model (sample, saves nothing)
+        if: github.event.inputs.job == 'tennis_sample' && hashFiles('backend/tennis_fit.py') != ''
+        run: python tennis_fit.py --sample
