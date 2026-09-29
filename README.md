@@ -27,7 +27,6 @@ prediction against the final result, so the track record stays honest.
 - **Dashboard and admin**: saved picks, tickets, premium via Paystack, and an
   admin console for data syncs, model status, traffic and revenue.
 - **Other sports**: basketball, tennis and table tennis picks.
-- **Mobile apps**: Android and iOS builds via Capacitor.
 
 ## How the model works
 
@@ -140,7 +139,6 @@ cd frontend && npm test                # components and helpers (Jest)
 | `train-model.yml` | 04:30 UTC daily | Trains the models and publishes them to Redis for the API |
 | `find-referees.yml` | Every 3 hours | Referee appointments for upcoming matches |
 | `deploy-hf-space.yml` | On push to `main` | Optional Hugging Face Space deploy |
-| `android-build.yml`, `ios-build.yml` | On frontend changes, or manually | Mobile app builds |
 
 ## Deployment
 

@@ -80,9 +80,10 @@ class TestVerifySessionToken:
         with pytest.raises(HTTPException):
             auth.verify_session_token(token(azp="https://phishing.example"))
 
-    def test_the_mobile_apps_tokens_have_no_site_and_pass(self, enforced, monkeypatch):
+    def test_a_token_naming_no_site_is_refused(self, enforced, monkeypatch):
         monkeypatch.setattr(auth, "AUTHORIZED_PARTIES", ["https://predict-withbetiq.vercel.app"])
-        assert auth.verify_session_token(token()) == "user_alice"
+        with pytest.raises(HTTPException):
+            auth.verify_session_token(token())
 
 
 class TestRequireUser:
