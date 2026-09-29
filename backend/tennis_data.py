@@ -151,6 +151,57 @@ async def probe() -> None:
                     f"{d.get('id')} ({(d.get('lastModified') or '')[:10]}, {d.get('downloads')} dl)" for d in items))
             except Exception as e:
                 print(f"HF '{q}': {e}")
+        # Successors and mirrors of the archives
+        for url in ("https://api.github.com/repos/Tennismylife/TML-Database",
+                    "https://api.github.com/repos/Tennismylife/TML-Database/contents/?per_page=100",
+                    "https://raw.githubusercontent.com/Tennismylife/TML-Database/master/2025.csv",
+                    "https://raw.githubusercontent.com/Tennismylife/TML-Database/master/2024.csv",
+                    "https://api.github.com/search/repositories?q=atp_matches+fork:true&sort=updated&per_page=15",
+                    "https://api.github.com/search/repositories?q=tennis_wta+fork:true&sort=updated&per_page=15",
+                    "https://api.github.com/search/repositories?q=wta+matches+csv&sort=updated&per_page=15"):
+            try:
+                r = await client.get(url, headers=gh)
+                body = r.text or ""
+                if "search/repositories" in url and r.status_code == 200:
+                    info = " | ".join(f"{x['full_name']} (pushed {x.get('pushed_at','')[:10]}, fork={x.get('fork')}, {x.get('size')}kB)"
+                                      for x in r.json().get("items", []))
+                elif "contents" in url and r.status_code == 200:
+                    info = ", ".join(f"{x['name']}({x.get('size')})" for x in r.json())[:1500]
+                elif r.status_code == 200 and url.endswith(".csv"):
+                    lines = body.splitlines()
+                    info = f"{len(lines)} lines; header {lines[0][:300]!r}; last {lines[-1][:200]!r}"
+                elif r.status_code == 200 and "/repos/" in url:
+                    j = r.json()
+                    info = f"default_branch={j.get('default_branch')} pushed={j.get('pushed_at')} size={j.get('size')}"
+                else:
+                    info = body[:160]
+                print(f"{url}: HTTP {r.status_code} {info}")
+            except Exception as e:
+                print(f"{url}: {e}")
+        for ds in ("Yahya777777/ATP-Tennis-Matches-Dataset-2015-to-2025", "clarkkitchen22/Tennis-ATP-Dataset",
+                   "davidtadediji/tennis-atp", "groundhog2107/atp_tennis", "lathise/table-tennis-pre-match-elo-ratings"):
+            try:
+                r = await client.get(f"https://huggingface.co/api/datasets/{ds}", headers=hf)
+                j = r.json() if r.status_code == 200 else {}
+                files = [f"{x.get('rfilename')}" for x in j.get("siblings") or []]
+                print(f"HF {ds}: HTTP {r.status_code} files {files[:20]}")
+                csvs = [f for f in files if f.endswith(".csv")]
+                if csvs:
+                    fr = await client.get(f"https://huggingface.co/datasets/{ds}/resolve/main/{csvs[0]}", headers=hf)
+                    lines = (fr.text or "").splitlines()
+                    print(f"   {csvs[0]}: HTTP {fr.status_code} {len(lines)} lines; header {lines[0][:400] if lines else ''!r}; "
+                          f"last {lines[-1][:250] if lines else ''!r}")
+            except Exception as e:
+                print(f"HF {ds}: {e}")
+        try:
+            from curl_cffi.requests import AsyncSession
+            async with AsyncSession(impersonate="chrome131", timeout=30) as cs:
+                for y in (2025, 2026):
+                    for url in (f"http://www.tennis-data.co.uk/{y}/{y}.xlsx", f"http://www.tennis-data.co.uk/{y}w/{y}.xlsx"):
+                        rr = await cs.get(url)
+                        print(f"tennis-data.co.uk (browser) {url}: HTTP {rr.status_code} {len(rr.content)} bytes")
+        except Exception as e:
+            print(f"tennis-data.co.uk (browser): {e}")
         for y in (2024, 2025):
             try:
                 r = await client.get(TENNIS_DATA_UK.format(y=y))

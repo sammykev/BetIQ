@@ -112,13 +112,13 @@ class MatchDist:
         return sum(p for d, p in self.games_diff.items() if d + line > 0)
 
     def p_set_handicap(self, line: float) -> float:
-        return sum(p for (a, b), pr in self.sets.items() if a - b + line > 0)
+        return sum(pr for (a, b), pr in self.sets.items() if a - b + line > 0)
 
     def p_first_set(self) -> float:
         return sum(p for (a, b), p in self.first_set.items() if a > b)
 
     def p_first_set_total_over(self, line: float) -> float:
-        return sum(p for (a, b), pr in self.first_set.items() for p in (pr,) if a + b > line)
+        return sum(pr for (a, b), pr in self.first_set.items() if a + b > line)
 
 
 def match_dist(pa: float, pb: float, best_of: int = 3) -> MatchDist:
