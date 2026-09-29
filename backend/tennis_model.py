@@ -103,6 +103,7 @@ class MatchDist:
     pa: float = 0.0
     pb: float = 0.0
     detail: Dict[str, float] = field(default_factory=dict)
+    games: Dict[Tuple[int, int], float] = field(default_factory=dict)   # (A's games, B's games) -> chance
 
     def p_total_over(self, line: float) -> float:
         return sum(p for g, p in self.total_games.items() if g > line)
@@ -138,12 +139,15 @@ def match_dist(pa: float, pb: float, best_of: int = 3) -> MatchDist:
     sets: Dict[Tuple[int, int], float] = {}
     diff: Dict[int, float] = {}
     total: Dict[int, float] = {}
+    games: Dict[Tuple[int, int], float] = {}
     for (sa, sb, d, t), pr in done.items():
         sets[(sa, sb)] = sets.get((sa, sb), 0) + pr
         diff[d] = diff.get(d, 0) + pr
         total[t] = total.get(t, 0) + pr
+        g = ((t + d) // 2, (t - d) // 2)
+        games[g] = games.get(g, 0) + pr
     p_win = sum(p for (a, b), p in sets.items() if a > b)
-    return MatchDist(p_win, sets, diff, total, sd, pa, pb)
+    return MatchDist(p_win, sets, diff, total, sd, pa, pb, games=games)
 
 
 def p_match(pa: float, pb: float, best_of: int = 3) -> float:

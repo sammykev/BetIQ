@@ -46,6 +46,7 @@ export const RK_FAMILIES: Record<RacketSport, { id: string; name: string }[]> = 
     { id: "rk_total_games", name: "Total games" },
     { id: "rk_total_sets", name: "Total sets" },
     { id: "rk_to_win_set", name: "To win a set" },
+    { id: "rk_player_games", name: "Player games" },
     { id: "rk_sets", name: "Set markets" },
     { id: "rk_correct_score", name: "Correct score" },
     { id: "rk_odd_even", name: "Odd/even games" },

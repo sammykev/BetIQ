@@ -333,6 +333,19 @@ async def _share_leaving_out(post_share: Callable[[List[Dict]], Awaitable[Dict[s
     return await post_share([ids for _, ids, _ in rest]), refused
 
 
+def name_platform(result: Dict[str, Any]) -> Dict[str, Any]:
+    """Messages name SportyBet; on football.com (the same platform, the same
+    listing) the code is football.com's."""
+    if result.get("platform") == "football_com":
+        for k in ("error",):
+            if result.get(k):
+                result[k] = result[k].replace("SportyBet's match list", "the match list").replace("SportyBet", "football.com")
+        for p in result.get("picks") or []:
+            if p.get("reason"):
+                p["reason"] = p["reason"].replace("SportyBet", "football.com")
+    return result
+
+
 async def to_sportybet(
     selections: List[Dict[str, Any]],
     fetch_events: Callable[[str], Awaitable[List[Dict]]],
@@ -341,6 +354,7 @@ async def to_sportybet(
     linked: Optional[Callable[[Dict[str, Any]], Optional[Dict]]] = None,
     market_map: Optional[Dict[str, Dict[str, Any]]] = None,
     now: Optional[float] = None,
+    platform: str = "sportybet",
 ) -> Dict[str, Any]:
     """
     Book the slip on SportyBet. Every selection comes back with a status:
@@ -404,7 +418,7 @@ async def to_sportybet(
         to_book.append((len(picks), {"eventId": event_id, **ids}, event))
         picks.append({**pick, "status": "matched"})  # found; "booked" once SportyBet accepts it
 
-    result: Dict[str, Any] = {"platform": "sportybet", "code": None, "share_url": None,
+    result: Dict[str, Any] = {"platform": platform, "code": None, "share_url": None,
                               "picks": picks, "total_odds": None, "error": None}
     if not to_book:
         result["error"] = ("Couldn't reach SportyBet's match list from our server. Try again in a few minutes."

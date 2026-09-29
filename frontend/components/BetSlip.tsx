@@ -14,7 +14,9 @@ import {
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
 
-type Platform = "sportybet" | "other";
+type Platform = "sportybet" | "football_com" | "other";
+// football.com runs on SportyBet's platform: the same picks book there as they are
+const BOOK_NAME: Record<Exclude<Platform, "other">, string> = { sportybet: "SportyBet", football_com: "football.com" };
 
 interface PickResult {
   key: string;
@@ -147,7 +149,7 @@ export function SlipDrawer() {
       const res = await authFetch(`${API}/api/booking/convert`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ platform: "sportybet", selections: items, source: "slip", uid: user?.id }),
+        body: JSON.stringify({ platform, selections: items, source: "slip", uid: user?.id }),
       });
       const data = await res.json();
       if (!res.ok || !Array.isArray(data?.picks)) throw new Error(data?.detail || "failed");
@@ -223,8 +225,8 @@ export function SlipDrawer() {
               )}
             </div>
 
-            <div role="radiogroup" aria-label="Bookmaker" className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-surface-sunken">
-              {([["sportybet", "SportyBet"], ["other", "Other bookmaker"]] as const).map(([id, label]) => (
+            <div role="radiogroup" aria-label="Bookmaker" className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-surface-sunken">
+              {([["sportybet", "SportyBet"], ["football_com", "football.com"], ["other", "Other"]] as const).map(([id, label]) => (
                 <button key={id} role="radio" aria-checked={platform === id} onClick={() => setPlatform(id)}
                   className={clsx("rounded-lg py-2 text-sm font-semibold transition-colors",
                     platform === id ? "bg-surface text-n-0 shadow-sm" : "text-n-400 hover:text-n-200")}>
@@ -244,18 +246,18 @@ export function SlipDrawer() {
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-2 rounded-xl border border-brand-400/50 bg-brand-400/10 pl-4 pr-2 py-2">
                   <div>
-                    <p className="eyebrow">SportyBet code</p>
+                    <p className="eyebrow">{BOOK_NAME[platform]} code</p>
                     <p className="font-mono font-bold text-xl tracking-[0.18em] text-n-0">{result.code}</p>
                   </div>
                   <CopyButton text={result.code} label="Copy" primary />
                 </div>
                 {result.share_url && (
                   <a href={result.share_url} target="_blank" rel="noopener noreferrer" className="btn-secondary w-full !text-sm justify-center">
-                    <ExternalLink size={14} /> Open on SportyBet
+                    <ExternalLink size={14} /> Open on {BOOK_NAME[platform]}
                   </a>
                 )}
                 {result.picks.some(p => p.status !== "booked") && (
-                  <p className="text-[11px] text-warn">Highlighted picks aren&apos;t in this code — add them on SportyBet by hand.</p>
+                  <p className="text-[11px] text-warn">Highlighted picks aren&apos;t in this code — add them on {BOOK_NAME[platform]} by hand.</p>
                 )}
               </div>
             ) : (
@@ -263,13 +265,13 @@ export function SlipDrawer() {
                 {notBookable > 0 && (
                   <p className="text-[11px] text-warn flex items-start gap-1.5">
                     <AlertTriangle size={12} className="mt-px shrink-0" />
-                    {notBookable === 1 ? "1 pick is" : `${notBookable} picks are`} in a market SportyBet codes can&apos;t include; they&apos;ll be left out.
+                    {notBookable === 1 ? "1 pick is" : `${notBookable} picks are`} in a market {BOOK_NAME[platform]} codes can&apos;t include; they&apos;ll be left out.
                   </p>
                 )}
                 {(failed || result?.error) && <p className="text-xs text-danger">{failed || result?.error}</p>}
                 <button onClick={book} disabled={busy || notBookable === items.length} className="btn-primary w-full justify-center">
                   {busy ? <Loader2 size={15} className="animate-spin" /> : <Ticket size={15} />}
-                  {busy ? "Booking on SportyBet…" : "Get SportyBet code"}
+                  {busy ? `Booking on ${BOOK_NAME[platform]}…` : `Get ${BOOK_NAME[platform]} code`}
                 </button>
               </div>
             )}

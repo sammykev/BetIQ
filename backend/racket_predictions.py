@@ -27,6 +27,7 @@ FAMILIES = {
     "rk_winner": "Winner", "rk_set_handicap": "Set Handicap", "rk_games_handicap": "Games Handicap",
     "rk_total_games": "Total Games", "rk_total_sets": "Total Sets", "rk_correct_score": "Correct Score",
     "rk_odd_even": "Odd/Even", "rk_to_win_set": "To Win a Set", "rk_sets": "Set Markets",
+    "rk_player_games": "Player Games",
 }
 
 
@@ -59,6 +60,8 @@ def calibrated(p: float, kind: str, sport: str, model: Optional[Dict], code: str
 def family(market: str) -> str:
     if market in ("rk_home_set", "rk_away_set"):
         return "rk_to_win_set"
+    if market in ("rk_home_games", "rk_away_games"):
+        return "rk_player_games"
     if re.match(r"^rk_s\d_", market):
         return "rk_sets"
     return market

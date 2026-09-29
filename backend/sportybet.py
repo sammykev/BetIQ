@@ -82,9 +82,9 @@ async def reset_shared_session() -> None:
             pass
 
 
-async def _request(session: AsyncSession, method: str, path: str, **kw) -> Dict[str, Any]:
+async def _request(session: AsyncSession, method: str, path: str, base: str = BASE, **kw) -> Dict[str, Any]:
     """One API call. Returns the parsed body when bizCode is 10000, raises otherwise."""
-    r = await session.request(method, f"{BASE}{path}", **kw)
+    r = await session.request(method, f"{base}{path}", **kw)
     text = (r.text or "").strip()
     if r.status_code not in (200, 202) or not text.startswith("{"):
         raise SportyBetError(f"{method} {path}: HTTP {r.status_code}, {len(text)} bytes"
@@ -633,13 +633,52 @@ def _outcome_keys(node: Any, event_id: str = "", market: Optional[Dict] = None) 
             yield (event_id, str(market.get("id")), str(node["id"])), node
 
 
+# football.com runs on SportyBet's platform: the same API (paths, Sportradar
+# event ids, market and outcome ids), so a slip books there as it is
+FOOTBALL_COM_BASE = f"https://www.football.com/api/{COUNTRY}"
+FOOTBALL_COM_SITE = f"https://www.football.com/{COUNTRY}/"
+FOOTBALL_COM_SHARE_URL = FOOTBALL_COM_SITE + "?shareCode={code}"
+PLATFORMS = {"sportybet": "SportyBet", "football_com": "football.com"}
+_fc_shared: Optional[AsyncSession] = None
+
+
+def football_com_session() -> AsyncSession:
+    global _fc_shared
+    if _fc_shared is None:
+        _fc_shared = AsyncSession(impersonate=IMPERSONATE, timeout=20, proxy=PROXY,
+                                  headers={**_HEADERS, "Origin": "https://www.football.com", "Referer": FOOTBALL_COM_SITE})
+    return _fc_shared
+
+
+async def reset_football_com_session() -> None:
+    global _fc_shared
+    old, _fc_shared = _fc_shared, None
+    if old is not None:
+        try:
+            await old.close()
+        except Exception:
+            pass
+
+
+def share_on(platform: str):
+    """The share call for a platform ("sportybet" or "football_com")."""
+    if platform == "football_com":
+        async def share(selections: List[Dict[str, str]]) -> Dict[str, Any]:
+            return await _share_football_com(selections)
+        return share
+    return share_selections
+
+
 async def share_selections(selections: List[Dict[str, str]],
-                           session: Optional[AsyncSession] = None) -> Dict[str, Any]:
+                           session: Optional[AsyncSession] = None, platform: str = "sportybet") -> Dict[str, Any]:
     """
     Create a booking code for {eventId, marketId, specifier, outcomeId}
-    selections. Returns {"code", "url", "odds": {(event, market, outcome): float},
+    selections (on SportyBet, or football.com: the same platform). Returns
+    {"code", "url", "odds": {(event, market, outcome): float},
     "unavailable": {(event, market, outcome), …}}. Raises SportyBetError.
     """
+    if platform == "football_com":
+        return await _share_football_com(selections)
     payload = {"selections": [
         {"eventId": s["eventId"], "marketId": s["marketId"], "outcomeId": s["outcomeId"],
          **({"specifier": s["specifier"]} if s.get("specifier") else {})}
@@ -669,6 +708,35 @@ async def share_selections(selections: List[Dict[str, str]],
     unavailable = {key for key, _ in _outcome_keys(data.get("unavailableOutcomes") or [])}
     return {"code": str(code), "url": data.get("shareURL") or SHARE_URL.format(code=code),
             "odds": odds, "unavailable": unavailable}
+
+
+async def _share_football_com(selections: List[Dict[str, str]]) -> Dict[str, Any]:
+    payload = {"selections": [
+        {"eventId": s["eventId"], "marketId": s["marketId"], "outcomeId": s["outcomeId"],
+         **({"specifier": s["specifier"]} if s.get("specifier") else {})}
+        for s in selections
+    ]}
+    try:
+        data = (await _request(football_com_session(), "POST", "/orders/share", base=FOOTBALL_COM_BASE,
+                               json=payload)).get("data") or {}
+    except SportyBetError:
+        raise
+    except Exception:
+        await reset_football_com_session()
+        data = (await _request(football_com_session(), "POST", "/orders/share", base=FOOTBALL_COM_BASE,
+                               json=payload)).get("data") or {}
+    code = data.get("shareCode")
+    if not code:
+        raise SportyBetError("football.com accepted the request but returned no share code")
+    odds: Dict[Tuple[str, str, str], float] = {}
+    for key, o in _outcome_keys(data.get("outcomes") or []):
+        try:
+            odds[key] = float(o.get("odds"))
+        except (TypeError, ValueError):
+            pass
+    unavailable = {key for key, _ in _outcome_keys(data.get("unavailableOutcomes") or [])}
+    url = data.get("shareURL") or FOOTBALL_COM_SHARE_URL.format(code=code)
+    return {"code": str(code), "url": url.replace("http://", "https://", 1), "odds": odds, "unavailable": unavailable}
 
 
 SHARE_CODE = re.compile(r"^[A-Za-z0-9]{4,16}$")

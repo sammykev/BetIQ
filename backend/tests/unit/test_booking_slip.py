@@ -432,6 +432,30 @@ class TestEndpoint:
             "platform": "sportybet", "selections": [sel()]})
         assert r.status_code == 200 and r.json()["code"] == "ABC123"
 
+    def test_converts_on_football_com(self, monkeypatch):
+        """football.com is SportyBet's platform: the same ids, its own code."""
+        async def fetch(date): return [EVENT]
+        sent = []
+
+        async def fc_share(s):
+            sent.append(s)
+            return {"code": "FC1234", "url": "https://www.football.com/ng/?shareCode=FC1234", "odds": {}, "unavailable": set()}
+
+        async def sb_share(s): raise AssertionError("SportyBet shouldn't be asked")
+        monkeypatch.setattr(sportybet, "fetch_events_for_date", fetch)
+        monkeypatch.setattr(sportybet, "_share_football_com", fc_share)
+        monkeypatch.setattr(sportybet, "share_selections", sb_share)
+        r = TestClient(main.app).post("/api/booking/convert", json={"platform": "football_com", "selections": [sel()]})
+        body = r.json()
+        assert r.status_code == 200 and body["code"] == "FC1234" and body["platform"] == "football_com"
+        assert sent and sent[0][0]["eventId"] == EVENT["eventId"]
+
+    def test_football_com_messages_name_it(self):
+        import booking_slip
+        res = booking_slip.name_platform({"platform": "football_com", "error": "SportyBet didn't return a booking code.",
+                                          "picks": [{"reason": "SportyBet isn't offering this pick right now"}]})
+        assert res["error"].startswith("football.com") and res["picks"][0]["reason"].startswith("football.com")
+
     @pytest.mark.parametrize("body", [{"selections": []}, {"platform": "bet9ja", "selections": [sel()]}, {}])
     def test_bad_requests(self, body):
         assert TestClient(main.app).post("/api/booking/convert", json=body).status_code == 400

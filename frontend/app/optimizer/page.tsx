@@ -349,14 +349,18 @@ export default function OptimizerPage() {
     } finally { setBusy(false); }
   };
 
-  const book = async () => {
+  // football.com is SportyBet's platform: the same picks, its own code
+  const [bookOn, setBookOn] = useState<"sportybet" | "football_com">("sportybet");
+  const bookName = bookOn === "football_com" ? "football.com" : "SportyBet";
+  const book = async (on: "sportybet" | "football_com" = bookOn) => {
+    setBookOn(on);
     setBooking(true); setBooked(null);
     try {
       // Signed in, the server keeps the code as a ticket (Dashboard → Tickets)
       const res = await authFetch(`${API}/api/booking/convert`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ platform: "sportybet", selections, source: "optimizer", uid: user?.id }),
+        body: JSON.stringify({ platform: on, selections, source: "optimizer", uid: user?.id }),
       });
       const data = await res.json();
       // The server's own reason when it refused the slip (not a generic "try again")
@@ -364,7 +368,7 @@ export default function OptimizerPage() {
       setBooked(data);
     } catch (e) {
       setBooked({ code: null, share_url: null, total_odds: null, picks: [],
-                  error: (e as Error)?.message || "SportyBet didn't return a code. Try again in a minute." });
+                  error: (e as Error)?.message || `${on === "football_com" ? "football.com" : "SportyBet"} didn't return a code. Try again in a minute.` });
     } finally { setBooking(false); }
   };
 
@@ -625,7 +629,7 @@ export default function OptimizerPage() {
                 <div className="rounded-xl border border-accent/40 bg-surface-sunken p-4 space-y-3">
                   <div className="flex items-center justify-between">
                     <p className="eyebrow">Booking code</p>
-                    <span className="text-[11px] font-bold text-accent">SportyBet</span>
+                    <span className="text-[11px] font-bold text-accent">{bookName}</span>
                   </div>
                   <p className="font-mono text-3xl font-bold tracking-[0.2em] text-n-0">{booked.code}</p>
                   <div className="flex flex-wrap gap-2">
@@ -636,9 +640,14 @@ export default function OptimizerPage() {
                     {booked.share_url && (
                       <a href={booked.share_url} target="_blank" rel="noreferrer"
                         className="flex items-center gap-1.5 rounded-lg border border-n-700 text-n-200 px-4 py-2 text-sm">
-                        <ExternalLink size={14} /> Open on SportyBet
+                        <ExternalLink size={14} /> Open on {bookName}
                       </a>
                     )}
+                    <button onClick={() => book(bookOn === "sportybet" ? "football_com" : "sportybet")} disabled={booking}
+                      className="flex items-center gap-1.5 rounded-lg border border-n-700 text-n-300 px-4 py-2 text-sm">
+                      {booking ? <Loader2 size={14} className="animate-spin" /> : <Ticket size={14} />}
+                      Get a {bookOn === "sportybet" ? "football.com" : "SportyBet"} code too
+                    </button>
                   </div>
                   {failedPicks.length > 0 && (
                     <p className="text-xs text-warn">{failedPicks.length} pick{failedPicks.length === 1 ? " wasn't" : "s weren't"} included: {failedPicks[0].reason}</p>
@@ -665,10 +674,15 @@ export default function OptimizerPage() {
                       marked &quot;not on SportyBet&quot; are left out.
                     </p>
                   )}
-                  <button onClick={book} disabled={booking}
+                  <button onClick={() => book("sportybet")} disabled={booking}
                     className="flex-1 min-w-[12rem] flex items-center justify-center gap-2 rounded-xl bg-brand-400 hover:bg-brand-300 text-ink font-bold px-5 py-3 disabled:opacity-50">
-                    {booking ? <Loader2 size={16} className="animate-spin" /> : <Ticket size={16} />}
-                    {booking ? "Booking…" : "Get SportyBet code"}
+                    {booking && bookOn === "sportybet" ? <Loader2 size={16} className="animate-spin" /> : <Ticket size={16} />}
+                    {booking && bookOn === "sportybet" ? "Booking…" : "Get SportyBet code"}
+                  </button>
+                  <button onClick={() => book("football_com")} disabled={booking}
+                    className="flex-1 min-w-[12rem] flex items-center justify-center gap-2 rounded-xl border border-accent/60 text-n-0 font-bold px-5 py-3 disabled:opacity-50">
+                    {booking && bookOn === "football_com" ? <Loader2 size={16} className="animate-spin" /> : <Ticket size={16} />}
+                    {booking && bookOn === "football_com" ? "Booking…" : "Get football.com code"}
                   </button>
                   <button onClick={toSlip}
                     className="flex-1 min-w-[12rem] rounded-xl border border-n-700 text-n-200 font-semibold px-5 py-3">

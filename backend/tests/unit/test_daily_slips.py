@@ -86,6 +86,9 @@ def sportybet(monkeypatch):
     calls = []
 
     async def to_sportybet(sels, *a, **kw):
+        if kw.get("platform") == "football_com":      # the same slip's football.com code
+            return {"code": f"FC{len(calls)}", "share_url": f"https://fc/{len(calls)}", "total_odds": 10.1,
+                    "picks": [{"status": "booked", "odds": 1.2} for _ in sels], "error": None}
         calls.append(sels)
         if calls and getattr(to_sportybet, "fail", False):
             return {"code": None, "error": "SportyBet didn't return a booking code.", "picks": []}
@@ -121,6 +124,7 @@ def test_built_once_booked_graded_and_recorded(api, monkeypatch, sportybet):
     assert twenty["status"] == "none" and len([b for b in calls if b["target_odds"] == 20]) == len(daily_slips.ATTEMPTS)
     # Booked by the server, one code per slip, the same for everyone
     assert ten["booking"]["code"] == "CODE1" and fifteen["booking"]["code"] == "CODE2"
+    assert ten["booking"]["football_com"]["code"] == "FC1"
     assert (ten["booking"]["booked"], ten["booking"]["of"]) == (1, 1) and "on_code" not in ten["booking"]
     assert "booking" not in twenty and len(sportybet[1]) == 2
     # Kept: asking again (or the tick running again) doesn't rebuild or rebook

@@ -7892,6 +7892,17 @@ async def _book_daily(doc: Dict[str, Any]) -> bool:
             print(f"[Daily] booking the {s.get('target')}x slip failed: {e}")
             res = {"error": "Couldn't reach SportyBet to book this slip."}
         s["booking"] = {**daily_slips.booking(res, sent, now.isoformat(timespec="seconds")), "tries": tries + 1}
+        # The same slip as a football.com code (SportyBet's platform: the same picks)
+        if res.get("code"):
+            try:
+                fc = await booking_slip.to_sportybet(
+                    sent, sportybet.fetch_events_for_date, sportybet.find_event, sportybet.share_on("football_com"),
+                    linked=_linked_event, market_map=_sb_market_map(), platform="football_com")
+                if fc.get("code"):
+                    s["booking"]["football_com"] = {"code": fc["code"], "share_url": fc.get("share_url"),
+                                                    "total_odds": fc.get("total_odds")}
+            except Exception as e:
+                print(f"[Daily] football.com code for the {s.get('target')}x slip failed: {e}")
         changed = True
     return changed
 
@@ -7936,7 +7947,7 @@ def _daily_public(s: Dict[str, Any]) -> Dict[str, Any]:
     b = s.get("booking")
     if not b:
         return s
-    return {**s, "booking": {k: b.get(k) for k in ("code", "share_url", "total_odds", "booked", "of", "error", "at")}}
+    return {**s, "booking": {k: b.get(k) for k in ("code", "share_url", "total_odds", "booked", "of", "error", "at", "football_com")}}
 
 
 @app.get("/api/daily-slips")
@@ -8208,21 +8219,22 @@ async def optimize_code(body: Dict[str, Any], _access=Depends(require_feature("c
 async def convert_slip(request: Request, body: Dict[str, Any]):
     """
     Turn the bet slip into a booking code on the chosen platform.
-    Body: {"platform": "sportybet", "selections": [{home, away, date, market, code, label?}]}
+    Body: {"platform": "sportybet" | "football_com", "selections": [{home, away, date, market, code, label?}]}
     """
     import booking_slip
     import sportybet
 
     platform = body.get("platform", "sportybet")
-    if platform != "sportybet":
-        raise HTTPException(status_code=400, detail="Booking codes are only supported for SportyBet")
+    if platform not in sportybet.PLATFORMS:
+        raise HTTPException(status_code=400, detail="Booking codes are made on SportyBet or football.com")
     try:
         selections = booking_slip.validate(body.get("selections"))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    result = await booking_slip.to_sportybet(
-        selections, sportybet.fetch_events_for_date, sportybet.find_event, sportybet.share_selections,
-        linked=_linked_event, market_map=_sb_market_map())
+    # football.com is SportyBet's platform: the same events and ids, its own code
+    result = booking_slip.name_platform(await booking_slip.to_sportybet(
+        selections, sportybet.fetch_events_for_date, sportybet.find_event, sportybet.share_on(platform),
+        linked=_linked_event, market_map=_sb_market_map(), platform=platform))
     # Every code a signed-in account makes becomes a ticket, settled leg by
     # leg as the results come in (Dashboard → Tickets)
     if result.get("code"):
@@ -8234,9 +8246,11 @@ async def convert_slip(request: Request, body: Dict[str, Any]):
         # Signed out: kept too, so the admin sees every code the site makes
         source = body.get("source") if body.get("source") in TICKET_SOURCES else "other"
         try:
-            _record_ticket(uid or ANON_UID, tickets.new_ticket(
+            ticket = tickets.new_ticket(
                 result["code"], selections, result.get("picks") or [], source, result.get("share_url"),
-                result.get("total_odds"), datetime.now(timezone.utc).isoformat(timespec="seconds")))
+                result.get("total_odds"), datetime.now(timezone.utc).isoformat(timespec="seconds"))
+            ticket["platform"] = platform
+            _record_ticket(uid or ANON_UID, ticket)
             if uid:
                 result["tracked"] = True
         except Exception as e:

@@ -15,6 +15,7 @@ Our codes (stored with tickets, used to settle):
     rk_correct_score   2:0, 2:1, 3:1 …         sets (TT: games)
     rk_odd_even        ODD / EVEN              total games (TT: points)
     rk_home_set / rk_away_set   Y / N          that player wins at least one set
+    rk_home_games / rk_away_games   O7.5 / U7.5   that player's games (TT: points)
     rk_s{n}_winner     1 / 2                   set n (TT: game n)
     rk_s{n}_total      O9.5 / U9.5             games in set n (TT: points in game n)
     rk_s{n}_handicap   H-1.5 / A+1.5           games in set n (TT: points in game n)
@@ -27,8 +28,25 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 # the specifier (setnr / gamenr). From the server's probe of SportyBet's
 # tennis and table tennis match pages (web_probe.py).
 MARKETS: Dict[str, Dict[str, Tuple[str, str]]] = {
-    "tennis": {"186": ("rk_winner", "winner")},
-    "table_tennis": {"186": ("rk_winner", "winner")},
+    "tennis": {
+        "186": ("rk_winner", "winner"),
+        "188": ("rk_set_handicap", "set_handicap"),
+        "187": ("rk_games_handicap", "games_handicap"),
+        "189": ("rk_total_games", "total_games"),
+        "190": ("rk_home_games", "home_games"),
+        "191": ("rk_away_games", "away_games"),
+        "192": ("rk_home_set", "home_set"),
+        "193": ("rk_away_set", "away_set"),
+        "199": ("rk_correct_score", "correct_score"),
+        "202": ("winner", "s_winner"),          # setnr
+        "203": ("handicap", "s_handicap"),      # setnr, hcp
+        "204": ("total", "s_total"),            # setnr, total
+    },
+    "table_tennis": {
+        "186": ("rk_winner", "winner"),
+        "199": ("rk_correct_score", "correct_score"),
+        "245": ("winner", "s_winner"),          # gamenr
+    },
 }
 _OUT = {"4": "1", "5": "2", "1": "1", "2": "2", "1714": "H", "1715": "A", "12": "O", "13": "U",
         "74": "Y", "76": "N", "70": "ODD", "72": "EVEN"}
@@ -39,6 +57,7 @@ WORDS = {"tennis": {"set": "set", "sets": "sets", "game": "game", "games": "game
 KIND_NAMES = {"winner": "Winner", "set_handicap": "{Set} Handicap", "games_handicap": "{Games} Handicap",
               "total_games": "Total {Games}", "total_sets": "Total {sets}", "correct_score": "Correct Score",
               "odd_even": "Odd/Even {Games}", "home_set": "Home to Win a {Set}", "away_set": "Away to Win a {Set}",
+              "home_games": "Home {Games}", "away_games": "Away {Games}",
               "s_winner": "{n} {Set} Winner", "s_total": "{n} {Set} Total {Games}", "s_handicap": "{n} {Set} Handicap"}
 _ORD = {1: "1st", 2: "2nd", 3: "3rd", 4: "4th", 5: "5th", 6: "6th", 7: "7th"}
 
@@ -103,7 +122,8 @@ def offers(ev: Dict, sport: str) -> List[Dict[str, Any]]:
             n = int(n)
             market = f"rk_s{n}_{kind[2:]}"
         line = _num(sp.get("hcp") or sp.get("total"))
-        if kind in ("set_handicap", "games_handicap", "total_games", "total_sets", "s_total", "s_handicap") and line is None:
+        if kind in ("set_handicap", "games_handicap", "total_games", "total_sets", "s_total", "s_handicap",
+                    "home_games", "away_games") and line is None:
             continue
         for o in m.get("outcomes") or []:
             if not o.get("isActive", 1):
@@ -123,7 +143,7 @@ def offers(ev: Dict, sport: str) -> List[Dict[str, Any]]:
                 if kind in ("set_handicap", "games_handicap", "s_handicap"):
                     # The specifier is the home side's handicap
                     code = f"H{_fmt(line)}" if side == "H" else f"A{_fmt(-line)}"
-                elif kind in ("total_games", "total_sets", "s_total"):
+                elif kind in ("total_games", "total_sets", "s_total", "home_games", "away_games"):
                     code = f"{side}{line:g}"
                 else:
                     code = side
@@ -147,6 +167,9 @@ def label(o: Dict, home: str, away: str, sport: str = "tennis") -> str:
         body = f"{'Over' if code[0] == 'O' else 'Under'} {code[1:]} {w['games']}"
     elif kind == "total_sets":
         body = f"{'Over' if code[0] == 'O' else 'Under'} {code[1:]} {w['sets']}"
+    elif kind in ("home_games", "away_games"):
+        who = home if kind == "home_games" else away
+        body = f"{who} {'over' if code[0] == 'O' else 'under'} {code[1:]} {w['games']}"
     elif kind == "correct_score":
         body = f"{w['Set']}s {code}"
     elif kind == "odd_even":
@@ -181,6 +204,11 @@ def probability(md, o: Dict) -> Optional[float]:
     if kind == "correct_score":
         a, b = (int(x) for x in code.split(":"))
         return md.sets.get((a, b), 0.0)
+    if kind in ("home_games", "away_games"):
+        line, i = float(code[1:]), 0 if kind == "home_games" else 1
+        if not getattr(md, "games", None):
+            return None
+        return sum(v for g, v in md.games.items() if (g[i] > line if code[0] == "O" else g[i] < line))
     if kind == "odd_even":
         odd = sum(v for t, v in md.total_games.items() if t % 2)
         return odd if code == "ODD" else 1 - odd
@@ -234,10 +262,12 @@ def settle(market: str, code: str, result: Optional[Dict]) -> str:
     if kind in ("home_set", "away_set"):
         won_one = (sh if kind == "home_set" else sa) > 0
         return "won" if won_one == (code == "Y") else "lost"
-    if kind in ("games_handicap", "total_games", "odd_even"):
+    if kind in ("games_handicap", "total_games", "odd_even", "home_games", "away_games"):
         if len(games) != sh + sa:
             return "void"                         # set scores missing
         gh, ga = sum(g[0] for g in games), sum(g[1] for g in games)
+        if kind in ("home_games", "away_games"):
+            return ou(gh if kind == "home_games" else ga)
         if kind == "games_handicap":
             return hcp(gh, ga)
         if kind == "total_games":

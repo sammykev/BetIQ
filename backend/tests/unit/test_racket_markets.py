@@ -184,3 +184,30 @@ def test_calibration_maps_fit_totals_on_the_likelier_side():
     maps, held = tennis_fit.calibration_maps([("total_games:O", rows), ("games_handicap", rows)])
     assert maps["total_games:O"][0][1] == pytest.approx(0.8, abs=0.01)     # only the 65% rows
     assert maps["games_handicap"][0][1] == pytest.approx(0.8, abs=0.01)    # 35%/20% folded to 65%/80%
+
+
+def test_real_market_ids_from_the_probe(monkeypatch):
+    """SportyBet's own ids and outcome names (the server probe, 2026-09-29)."""
+    monkeypatch.setitem(rkm.MARKETS, "tennis", {**rkm.MARKETS["tennis"]})
+    import importlib
+    real = importlib.reload(rkm).MARKETS["tennis"]
+    monkeypatch.setitem(rkm.MARKETS, "tennis", real)
+    ev = {**EV, "markets": [
+        {"id": "190", "specifier": "total=12.5", "outcomes": [_o("12", 1.8), _o("13", 1.9)]},
+        {"id": "192", "outcomes": [_o("74", 1.3), _o("76", 3.2)]},
+        {"id": "199", "specifier": "variant=sr:correct_score:bestof:3",
+         "outcomes": [_o("sr:correct_score:bestof:3:4", 3.1, "2:0"), _o("sr:correct_score:bestof:3:5", 4.2, "2:1")]},
+        {"id": "204", "specifier": "setnr=1|total=9.5", "outcomes": [_o("12", 1.9), _o("13", 1.85)]},
+    ]}
+    offs = {(o["market"], o["code"]): o for o in rkm.offers(ev, "tennis")}
+    assert set(offs) >= {("rk_home_games", "O12.5"), ("rk_home_set", "Y"), ("rk_correct_score", "2:0"), ("rk_s1_total", "U9.5")}
+    assert offs[("rk_correct_score", "2:0")]["sb"]["outcomeId"] == "sr:correct_score:bestof:3:4"
+    md = tm.match_dist(0.65, 0.6, 3)
+    assert sum(md.games.values()) == pytest.approx(1.0)
+    po = rkm.probability(md, offs[("rk_home_games", "O12.5")])
+    assert 0 < po < 1
+    res = {"status": "finished", "sets": [2, 1], "games": [[6, 4], [3, 6], [7, 6]], "ret": False}
+    assert rkm.settle("rk_home_games", "O12.5", res) == "won"      # 16 games
+    assert rkm.settle("rk_away_games", "U12.5", res) == "lost"     # 16 games
+    import booking_slip
+    assert booking_slip.raw_ids({"sb": offs[("rk_correct_score", "2:0")]["sb"]})

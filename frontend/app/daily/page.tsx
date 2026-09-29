@@ -28,6 +28,8 @@ interface Pick {
 interface Booking {
   code: string | null; share_url: string | null; total_odds?: number | null;
   booked: number; of: number; error?: string | null; at: string;
+  /** The same slip on football.com (SportyBet's platform) */
+  football_com?: { code: string; share_url?: string | null; total_odds?: number | null } | null;
 }
 interface Slip {
   target: number; status: "pending" | "won" | "lost" | "void" | "none"; error?: string;
@@ -138,7 +140,7 @@ function SlipView({ s, isToday, date, retry, minProb, cut }: {
           left to play {isToday ? "today" : "that day"}.</p>
       )}
       <section className="mx-4 sm:mx-5 mb-4 rounded-xl border border-n-800 bg-surface-sunken p-3 sm:p-4 space-y-2">
-        <p className="eyebrow flex items-center gap-1.5"><Ticket size={12} /> SportyBet booking code</p>
+        <p className="eyebrow flex items-center gap-1.5"><Ticket size={12} /> Booking code{b?.football_com?.code ? "s" : ""}: SportyBet{b?.football_com?.code ? " & football.com" : ""}</p>
         {b?.code ? (
           <>
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -149,6 +151,19 @@ function SlipView({ s, isToday, date, retry, minProb, cut }: {
                   {copied ? <Check size={12} /> : <Copy size={12} />}{copied ? "Copied" : "Copy code"}</button>
               </span>
             </div>
+            {b.football_com?.code && (
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-n-800">
+                <span className="min-w-0">
+                  <span className="block eyebrow !text-[10px]">football.com code</span>
+                  <span className="font-mono text-xl font-bold text-n-0 tracking-[0.18em]">{b.football_com.code}</span>
+                </span>
+                <span className="flex gap-2">
+                  {b.football_com.share_url && <a href={b.football_com.share_url} target="_blank" rel="noreferrer" className="btn-secondary !px-3 !py-1.5 !text-xs"><ExternalLink size={12} /> Open</a>}
+                  <button onClick={() => navigator.clipboard?.writeText(b.football_com!.code)} className="btn-secondary !px-3 !py-1.5 !text-xs">
+                    <Copy size={12} /> Copy</button>
+                </span>
+              </div>
+            )}
             {b.booked < s.picks.length && (
               <p className="text-[11px] text-warn">The code holds {b.booked} of the {s.picks.length} picks: SportyBet wasn&apos;t offering the others when we booked it.</p>
             )}
@@ -299,7 +314,7 @@ export default function DailyPage() {
     <AppShell>
       <div className="space-y-6 animate-fade-in">
         <PageHeader eyebrow="Out at midnight" title="Daily odds"
-          description="Five slips a day at about 10, 15, 20, 50 and 100 odds, from that day's football and basketball matches only and picks our model rates 80% or more (none at 2.0 odds or more), each with its SportyBet booking code." />
+          description="Five slips a day at about 10, 15, 20, 50 and 100 odds, from that day's football, basketball, tennis and table tennis matches only and picks our model rates 80% or more (none at 2.0 odds or more), each with its SportyBet and football.com booking codes." />
         <FeatureGate feature="daily_slips" title="Daily odds" perks={PERKS}>
           <Daily />
         </FeatureGate>
