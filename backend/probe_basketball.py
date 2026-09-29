@@ -295,10 +295,48 @@ async def euroleague_sample() -> None:
             line("  date:", g.get("date"), "neutral:", g.get("isNeutralVenue"))
 
 
+async def pipeline() -> None:
+    """The server's own code against live SportyBet: yesterday's results,
+    the listing with every market, and the predictions built from it."""
+    line("\n=== 10. The server's pipeline, live ===")
+    from collections import Counter as C
+    import basketball_data as bd
+    import basketball_predictions as bp
+    day = (datetime.now(timezone.utc) - timedelta(days=1)).date().isoformat()
+    games = await bd.fetch_results_day(day)
+    line(f"  results {day}: {len(games)} games, {sum(1 for g in games if g['q'])} with quarters, "
+         f"{sum(1 for g in games if g['ot'])} overtime; sample {json.dumps(games[:1])[:300]}")
+    events, report = await bd.fetch_upcoming()
+    line(f"  listing: {len(events)} events · {' · '.join(report)}")
+    per = [len(e.get("markets") or []) for e in events]
+    ids = C(str(m.get("id")) for e in events for m in e.get("markets") or [])
+    line(f"  markets per event: min {min(per or [0])}, median {sorted(per)[len(per) // 2] if per else 0}, max {max(per or [0])}")
+    line(f"  market ids in the listing: {dict(ids.most_common())}")
+    preds = bp.build(events, {})
+    lines = [len(p['bb_markets']) for p in preds]
+    fam = C(x["family"] for p in preds for x in p["bb_markets"])
+    line(f"  predictions: {len(preds)} (market-only, no ratings here), lines kept per match: "
+         f"median {sorted(lines)[len(lines) // 2] if lines else 0}; by family {dict(fam)}")
+    for p in preds[:3]:
+        top = sorted(p["bb_markets"], key=lambda x: -x["prob"])[:4]
+        line(f"  {p['league']}: {p['home']} v {p['away']} exp {p['exp_home_pts']}-{p['exp_away_pts']} "
+             f"p_home {p['p_home']} · " + "; ".join(f"{x['label']} {x['prob']:.0%} @{x['odds']}" for x in top))
+    # The first match's lines booked for real (a share code, no bet placed)
+    import sportybet
+    if preds:
+        p = preds[0]
+        picks = [x for x in p["bb_markets"] if x["family"] in ("bb_total", "bb_handicap")][:1]
+        try:
+            share = await sportybet.share_selections([x["sb"] for x in picks])
+            line(f"  booking a {picks[0]['label']} line: code {share.get('code')}")
+        except Exception as e:
+            line(f"  booking test: {e}")
+
+
 async def main(pages: int, parts: str) -> None:
     every = {"listing": lambda: sportybet_listing(pages), "results": sportybet_results, "espn": espn,
              "others": others, "logos": logos, "depth": results_depth, "espn_debug": espn_debug,
-             "crests": crests, "euroleague": euroleague_sample}
+             "crests": crests, "euroleague": euroleague_sample, "pipeline": pipeline}
     chosen = [every[p] for p in parts.split(",")] if parts else list(every.values())
     for part in chosen:
         try:
