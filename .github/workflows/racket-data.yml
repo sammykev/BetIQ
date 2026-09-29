@@ -1,7 +1,7 @@
 # Tennis and table tennis data:
-# - Nightly: the tennis model fitted on every match since 2000 (tennis_fit.py,
-#   Jeff Sackmann's ATP/WTA archives) and its walk-forward check; the ratings
-#   go to Upstash Redis for the server.
+# - Nightly: the tennis model fitted on every match since 2005 (tennis_fit.py:
+#   TML-Database ATP archive plus SportyBet's stored results) and its
+#   walk-forward check; the ratings go to Upstash Redis for the server.
 # - By hand: probe (which sources answer), fit.
 # Needs the UPSTASH_REDIS_URL secret (same as the server).
 name: Racket data
@@ -42,6 +42,7 @@ jobs:
         if: github.event.inputs.job == 'tennis_probe'
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: python tennis_data.py --probe
 
       - name: Tennis model fit and walk-forward check

@@ -1,8 +1,9 @@
 """
 Tennis match history from the web, for the tennis model (GitHub Actions,
-"Racket data"): Jeff Sackmann's public ATP and WTA archives — tour-level,
-Challenger and qualifying, Futures/ITF — every match since 2000 with its
-surface, level, round, score and serve statistics.
+"Racket data"): ATP and WTA match archives in Jeff Sackmann's columns
+(his repositories are gone; TML-Database and mirrors carry them on) —
+every tour-level match with its surface, level, round, score and serve
+statistics.
 
     python tennis_data.py --probe            # what answers, how far back
     python tennis_data.py --since 2010 ...   # used by tennis_fit.py
@@ -19,16 +20,17 @@ import re
 from datetime import date
 from typing import Dict, Iterable, List, Optional, Tuple
 
-RAW = "https://raw.githubusercontent.com/JeffSackmann/{repo}/master/{file}"
-# (repo, file pattern, tour, level of play)
+# Jeff Sackmann's archives are gone (404 since 2026); Tennismylife's TML
+# database carries on the ATP tour-level file in the same columns, and a
+# Hugging Face mirror keeps Sackmann's ATP files.
+RAW = "https://raw.githubusercontent.com/{repo}/{branch}/{file}"
+HF = "https://huggingface.co/datasets/{repo}/resolve/main/{file}"
+# (url template with {y}, tour, level of play); the first that answers per tour/level wins
 FILES = (
-    ("tennis_atp", "atp_matches_{y}.csv", "ATP", "tour"),
-    ("tennis_atp", "atp_matches_qual_chall_{y}.csv", "ATP", "challenger"),
-    ("tennis_atp", "atp_matches_futures_{y}.csv", "ATP", "itf"),
-    ("tennis_wta", "wta_matches_{y}.csv", "WTA", "tour"),
-    ("tennis_wta", "wta_matches_qual_itf_{y}.csv", "WTA", "itf"),
+    (RAW.format(repo="Tennismylife/TML-Database", branch="master", file="{y}.csv"), "ATP", "tour"),
+    (HF.format(repo="davidtadediji/tennis-atp", file="atp_matches_{y}.csv"), "ATP", "tour"),
+    (RAW.format(repo="JeffSackmann/tennis_wta", branch="master", file="wta_matches_{y}.csv"), "WTA", "tour"),
 )
-TENNIS_DATA_UK = "http://www.tennis-data.co.uk/{y}/{y}.xlsx"     # ATP odds (probed only)
 
 _SCORE_SET = re.compile(r"^(\d+)-(\d+)(?:\((\d+)\))?$")
 
@@ -76,13 +78,22 @@ def parse_rows(text: str, tour: str, level: str) -> List[Dict]:
     return out
 
 
+def _label(url: str) -> str:
+    parts = url.split("/")
+    return f"{parts[3] if 'raw.github' in url else parts[4]}/{parts[-1]}"
+
+
 async def fetch_year(client, year: int, files=FILES) -> Tuple[List[Dict], Dict[str, int]]:
     rows: List[Dict] = []
     counts: Dict[str, int] = {}
-    for repo, pattern, tour, level in files:
-        name = pattern.format(y=year)
+    done = set()
+    for pattern, tour, level in files:
+        if (tour, level) in done:
+            continue
+        url = pattern.format(y=year)
+        name = _label(url)
         try:
-            r = await client.get(RAW.format(repo=repo, file=name))
+            r = await client.get(url)
         except Exception:
             counts[name] = -1
             continue
@@ -91,6 +102,8 @@ async def fetch_year(client, year: int, files=FILES) -> Tuple[List[Dict], Dict[s
             continue
         got = parse_rows(r.text, tour, level)
         counts[name] = len(got)
+        if got:
+            done.add((tour, level))
         rows += got
     return rows, counts
 
@@ -103,111 +116,69 @@ async def fetch_all(since: int, until: Optional[int] = None) -> List[Dict]:
         for y in range(since, until + 1):
             rows, counts = await fetch_year(client, y)
             out += rows
-            print(f"[tennis] {y}: {len(rows)} matches " + " ".join(f"{k.split('_matches')[0]}{k.split('_matches')[1][:-4] or ''}={v}"
-                                                            for k, v in counts.items()), flush=True)
+            print(f"[tennis] {y}: {len(rows)} matches " + " ".join(f"{k}={v}" for k, v in counts.items()), flush=True)
     out.sort(key=lambda r: r["date"])
     return out
 
 
 async def probe() -> None:
+    import os
     import httpx
+    gh = {"Accept": "application/vnd.github+json"}
+    if os.environ.get("GITHUB_TOKEN"):
+        gh["Authorization"] = f"Bearer {os.environ['GITHUB_TOKEN']}"
     async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
-        for y in (2000, 2010, 2020, date.today().year - 1, date.today().year):
+        for y in (2005, 2015, date.today().year - 1, date.today().year):
             rows, counts = await fetch_year(client, y)
             last = max((r["date"] for r in rows), default="")
             sv = sum(1 for r in rows if "sv" in r)
             print(f"{y}: {len(rows)} matches (serve stats on {sv}); latest {last}; files {counts}", flush=True)
             if rows:
                 print("   e.g.", rows[-1])
-        # Where the archives are now (the repos, their branches, mirrors)
-        import os
-        gh = {"Accept": "application/vnd.github+json"}
-        for url in ("https://api.github.com/repos/JeffSackmann/tennis_atp",
-                    "https://api.github.com/repos/JeffSackmann/tennis_wta",
-                    "https://api.github.com/repos/JeffSackmann/tennis_atp/contents/?per_page=5",
-                    "https://api.github.com/search/repositories?q=tennis_atp+in:name&sort=updated&per_page=10",
-                    "https://github.com/JeffSackmann/tennis_atp/raw/master/atp_matches_2024.csv",
-                    "https://raw.githubusercontent.com/JeffSackmann/tennis_atp/main/atp_matches_2024.csv"):
+        # WTA: where a match archive lives now (repos with WTA csv files)
+        for q in ("wta_matches", "wta matches", "wta tennis data", "tennis_wta", "wta elo", "tennis atp wta csv"):
             try:
-                r = await client.get(url, headers=gh)
-                body = r.text or ""
-                info = ""
-                if "search/repositories" in url and r.status_code == 200:
-                    info = " | ".join(f"{x['full_name']} (pushed {x.get('pushed_at','')[:10]}, {x.get('default_branch')})"
-                                      for x in r.json().get("items", []))
-                elif "/repos/" in url and r.status_code == 200 and "contents" not in url:
-                    j = r.json()
-                    info = f"default_branch={j.get('default_branch')} pushed={j.get('pushed_at')} archived={j.get('archived')}"
-                print(f"{url}: HTTP {r.status_code} {len(body)}b {info or body[:160]!r}")
+                r = await client.get("https://api.github.com/search/repositories",
+                                     params={"q": q, "sort": "stars", "per_page": 10}, headers=gh)
+                items = r.json().get("items", []) if r.status_code == 200 else []
+                print(f"GitHub '{q}': HTTP {r.status_code}: " + " | ".join(
+                    f"{x['full_name']} ({x.get('stargazers_count')}*, pushed {x.get('pushed_at','')[:10]}, {x.get('size')}kB, "
+                    f"{x.get('default_branch')})" for x in items))
             except Exception as e:
-                print(f"{url}: {e}")
+                print(f"GitHub '{q}': {e}")
+        for repo in ("thekasser/tennis-wta-atp", "Mriganka-codes/tennis_data", "abbygracemorrow/tennis-data",
+                     "sami0076/deucepoint", "meliasean/CourtIQ", "LuckyLoser91/TennisCourtLog", "Snowstormme/tennisd"):
+            try:
+                r = await client.get(f"https://api.github.com/repos/{repo}", headers=gh)
+                if r.status_code != 200:
+                    print(f"{repo}: HTTP {r.status_code}")
+                    continue
+                branch = r.json().get("default_branch")
+                t = await client.get(f"https://api.github.com/repos/{repo}/git/trees/{branch}", params={"recursive": 1},
+                                     headers=gh)
+                tree = t.json().get("tree", []) if t.status_code == 200 else []
+                data = [x for x in tree if x.get("type") == "blob" and x["path"].lower().endswith((".csv", ".parquet", ".csv.gz", ".json"))]
+                wta = [x for x in data if "wta" in x["path"].lower()]
+                print(f"{repo} ({branch}): {len(tree)} paths, {len(data)} data files, {len(wta)} WTA: "
+                      + ", ".join(f"{x['path']}({x.get('size')})" for x in (wta or data)[:40]))
+                for x in sorted(wta, key=lambda x: -(x.get("size") or 0))[:2]:
+                    if x["path"].endswith(".csv"):
+                        fr = await client.get(RAW.format(repo=repo, branch=branch, file=x["path"]))
+                        lines = (fr.text or "").splitlines()
+                        print(f"   {x['path']}: HTTP {fr.status_code} {len(lines)} lines; header {lines[0][:350] if lines else ''!r}; "
+                              f"last {lines[-1][:220] if lines else ''!r}")
+            except Exception as e:
+                print(f"{repo}: {e}")
         tok = os.environ.get("HF_TOKEN", "")
         hf = {"Authorization": f"Bearer {tok}"} if tok else {}
-        for q in ("tennis atp", "tennis wta", "atp matches", "table tennis"):
+        for q in ("wta", "women tennis", "tennis matches", "tennis"):
             try:
-                r = await client.get("https://huggingface.co/api/datasets", params={"search": q, "limit": 15}, headers=hf)
+                r = await client.get("https://huggingface.co/api/datasets", params={"search": q, "limit": 20}, headers=hf)
                 items = r.json() if r.status_code == 200 else []
                 print(f"HF datasets '{q}': HTTP {r.status_code}: " + " | ".join(
-                    f"{d.get('id')} ({(d.get('lastModified') or '')[:10]}, {d.get('downloads')} dl)" for d in items))
+                    f"{d.get('id')} ({(d.get('lastModified') or '')[:10]})" for d in items))
             except Exception as e:
                 print(f"HF '{q}': {e}")
-        # Successors and mirrors of the archives
-        for url in ("https://api.github.com/repos/Tennismylife/TML-Database",
-                    "https://api.github.com/repos/Tennismylife/TML-Database/contents/?per_page=100",
-                    "https://raw.githubusercontent.com/Tennismylife/TML-Database/master/2025.csv",
-                    "https://raw.githubusercontent.com/Tennismylife/TML-Database/master/2024.csv",
-                    "https://api.github.com/search/repositories?q=atp_matches+fork:true&sort=updated&per_page=15",
-                    "https://api.github.com/search/repositories?q=tennis_wta+fork:true&sort=updated&per_page=15",
-                    "https://api.github.com/search/repositories?q=wta+matches+csv&sort=updated&per_page=15"):
-            try:
-                r = await client.get(url, headers=gh)
-                body = r.text or ""
-                if "search/repositories" in url and r.status_code == 200:
-                    info = " | ".join(f"{x['full_name']} (pushed {x.get('pushed_at','')[:10]}, fork={x.get('fork')}, {x.get('size')}kB)"
-                                      for x in r.json().get("items", []))
-                elif "contents" in url and r.status_code == 200:
-                    info = ", ".join(f"{x['name']}({x.get('size')})" for x in r.json())[:1500]
-                elif r.status_code == 200 and url.endswith(".csv"):
-                    lines = body.splitlines()
-                    info = f"{len(lines)} lines; header {lines[0][:300]!r}; last {lines[-1][:200]!r}"
-                elif r.status_code == 200 and "/repos/" in url:
-                    j = r.json()
-                    info = f"default_branch={j.get('default_branch')} pushed={j.get('pushed_at')} size={j.get('size')}"
-                else:
-                    info = body[:160]
-                print(f"{url}: HTTP {r.status_code} {info}")
-            except Exception as e:
-                print(f"{url}: {e}")
-        for ds in ("Yahya777777/ATP-Tennis-Matches-Dataset-2015-to-2025", "clarkkitchen22/Tennis-ATP-Dataset",
-                   "davidtadediji/tennis-atp", "groundhog2107/atp_tennis", "lathise/table-tennis-pre-match-elo-ratings"):
-            try:
-                r = await client.get(f"https://huggingface.co/api/datasets/{ds}", headers=hf)
-                j = r.json() if r.status_code == 200 else {}
-                files = [f"{x.get('rfilename')}" for x in j.get("siblings") or []]
-                print(f"HF {ds}: HTTP {r.status_code} files {files[:20]}")
-                csvs = [f for f in files if f.endswith(".csv")]
-                if csvs:
-                    fr = await client.get(f"https://huggingface.co/datasets/{ds}/resolve/main/{csvs[0]}", headers=hf)
-                    lines = (fr.text or "").splitlines()
-                    print(f"   {csvs[0]}: HTTP {fr.status_code} {len(lines)} lines; header {lines[0][:400] if lines else ''!r}; "
-                          f"last {lines[-1][:250] if lines else ''!r}")
-            except Exception as e:
-                print(f"HF {ds}: {e}")
-        try:
-            from curl_cffi.requests import AsyncSession
-            async with AsyncSession(impersonate="chrome131", timeout=30) as cs:
-                for y in (2025, 2026):
-                    for url in (f"http://www.tennis-data.co.uk/{y}/{y}.xlsx", f"http://www.tennis-data.co.uk/{y}w/{y}.xlsx"):
-                        rr = await cs.get(url)
-                        print(f"tennis-data.co.uk (browser) {url}: HTTP {rr.status_code} {len(rr.content)} bytes")
-        except Exception as e:
-            print(f"tennis-data.co.uk (browser): {e}")
-        for y in (2024, 2025):
-            try:
-                r = await client.get(TENNIS_DATA_UK.format(y=y))
-                print(f"tennis-data.co.uk {y}: HTTP {r.status_code} {len(r.content)} bytes")
-            except Exception as e:
-                print(f"tennis-data.co.uk {y}: {e}")
 
 
 if __name__ == "__main__":
