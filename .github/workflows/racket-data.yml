@@ -40,6 +40,8 @@ jobs:
 
       - name: Tennis sources probe
         if: github.event.inputs.job == 'tennis_probe'
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: python tennis_data.py --probe
 
       - name: Tennis model fit and walk-forward check

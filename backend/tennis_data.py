@@ -87,7 +87,7 @@ async def fetch_year(client, year: int, files=FILES) -> Tuple[List[Dict], Dict[s
             counts[name] = -1
             continue
         if r.status_code != 200:
-            counts[name] = 0
+            counts[name] = -r.status_code
             continue
         got = parse_rows(r.text, tour, level)
         counts[name] = len(got)
@@ -119,6 +119,38 @@ async def probe() -> None:
             print(f"{y}: {len(rows)} matches (serve stats on {sv}); latest {last}; files {counts}", flush=True)
             if rows:
                 print("   e.g.", rows[-1])
+        # Where the archives are now (the repos, their branches, mirrors)
+        import os
+        gh = {"Accept": "application/vnd.github+json"}
+        for url in ("https://api.github.com/repos/JeffSackmann/tennis_atp",
+                    "https://api.github.com/repos/JeffSackmann/tennis_wta",
+                    "https://api.github.com/repos/JeffSackmann/tennis_atp/contents/?per_page=5",
+                    "https://api.github.com/search/repositories?q=tennis_atp+in:name&sort=updated&per_page=10",
+                    "https://github.com/JeffSackmann/tennis_atp/raw/master/atp_matches_2024.csv",
+                    "https://raw.githubusercontent.com/JeffSackmann/tennis_atp/main/atp_matches_2024.csv"):
+            try:
+                r = await client.get(url, headers=gh)
+                body = r.text or ""
+                info = ""
+                if "search/repositories" in url and r.status_code == 200:
+                    info = " | ".join(f"{x['full_name']} (pushed {x.get('pushed_at','')[:10]}, {x.get('default_branch')})"
+                                      for x in r.json().get("items", []))
+                elif "/repos/" in url and r.status_code == 200 and "contents" not in url:
+                    j = r.json()
+                    info = f"default_branch={j.get('default_branch')} pushed={j.get('pushed_at')} archived={j.get('archived')}"
+                print(f"{url}: HTTP {r.status_code} {len(body)}b {info or body[:160]!r}")
+            except Exception as e:
+                print(f"{url}: {e}")
+        tok = os.environ.get("HF_TOKEN", "")
+        hf = {"Authorization": f"Bearer {tok}"} if tok else {}
+        for q in ("tennis atp", "tennis wta", "atp matches", "table tennis"):
+            try:
+                r = await client.get("https://huggingface.co/api/datasets", params={"search": q, "limit": 15}, headers=hf)
+                items = r.json() if r.status_code == 200 else []
+                print(f"HF datasets '{q}': HTTP {r.status_code}: " + " | ".join(
+                    f"{d.get('id')} ({(d.get('lastModified') or '')[:10]}, {d.get('downloads')} dl)" for d in items))
+            except Exception as e:
+                print(f"HF '{q}': {e}")
         for y in (2024, 2025):
             try:
                 r = await client.get(TENNIS_DATA_UK.format(y=y))
