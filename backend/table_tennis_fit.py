@@ -30,7 +30,7 @@ import table_tennis_model as ttm
 MODEL_KEY = "betiq:table_tennis:model"
 REPORT_KEY = "betiq:table_tennis:check"
 CHECK_SHARE = 0.5                 # the check covers the later half of the matches
-K_MULTS = (0.25, 0.4, 0.6, 1.0, 1.5, 2.2)
+K_MULTS = (0.08, 0.12, 0.18, 0.25, 0.4, 0.6, 1.0, 1.5)
 SHRINKS = tuple(round(0.5 + 0.05 * i, 2) for i in range(15))   # 0.5 .. 1.2
 SWINGS = (0.0, 0.02, 0.03, 0.045, 0.06, 0.08)
 BUCKETS = ((0.5, 0.6), (0.6, 0.7), (0.7, 0.8), (0.8, 0.9), (0.9, 1.0))

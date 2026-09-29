@@ -17,7 +17,9 @@ from typing import Any, Callable, Dict, List, Optional
 
 import racket_markets as rkm
 
-MODEL_WEIGHT = {"tennis": 0.35, "table_tennis": 0.35}
+# Table tennis's ratings (SportyBet's own results) pick 55.7% of winners in
+# the walk-forward check (Setka Cup, Liga Pro: near coin flips): less weight
+MODEL_WEIGHT = {"tennis": 0.35, "table_tennis": 0.2}
 KEEP_MIN, KEEP_MAX = 0.50, 0.985
 MAX_LINES = 60
 FLAGS = {"tennis": "🎾", "table_tennis": "🏓"}
