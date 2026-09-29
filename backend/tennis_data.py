@@ -146,8 +146,8 @@ async def probe() -> None:
                     f"{x.get('default_branch')})" for x in items))
             except Exception as e:
                 print(f"GitHub '{q}': {e}")
-        for repo in ("thekasser/tennis-wta-atp", "Mriganka-codes/tennis_data", "abbygracemorrow/tennis-data",
-                     "sami0076/deucepoint", "meliasean/CourtIQ", "LuckyLoser91/TennisCourtLog", "Snowstormme/tennisd"):
+        for repo in ("Aneeshers/tennis-sackmann-archive", "sorukumar/tennis-analytics", "DanielTomaro13/Tennis-Modelling",
+                     "homebackend/live-tennis"):
             try:
                 r = await client.get(f"https://api.github.com/repos/{repo}", headers=gh)
                 if r.status_code != 200:
@@ -160,7 +160,7 @@ async def probe() -> None:
                 data = [x for x in tree if x.get("type") == "blob" and x["path"].lower().endswith((".csv", ".parquet", ".csv.gz", ".json"))]
                 wta = [x for x in data if "wta" in x["path"].lower()]
                 print(f"{repo} ({branch}): {len(tree)} paths, {len(data)} data files, {len(wta)} WTA: "
-                      + ", ".join(f"{x['path']}({x.get('size')})" for x in (wta or data)[:40]))
+                      + ", ".join(f"{x['path']}({x.get('size')})" for x in sorted(wta or data, key=lambda x: x['path'])[-60:]))
                 for x in sorted(wta, key=lambda x: -(x.get("size") or 0))[:2]:
                     if x["path"].endswith(".csv"):
                         fr = await client.get(RAW.format(repo=repo, branch=branch, file=x["path"]))
