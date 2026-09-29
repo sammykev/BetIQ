@@ -53,6 +53,7 @@ class Store:
         self.leagues: Dict[Tuple[str, str], Dict[str, Dict]] = {}
         self.done: set = set(x.decode() if isinstance(x, bytes) else x for x in (r.smembers(DONE_KEY) or [])) if r else set()
         self.new_done: List[str] = []
+        self.autosave = False
 
     def league(self, sport: str, league: str) -> Dict[str, Dict]:
         k = (sport, league)
@@ -75,6 +76,9 @@ class Store:
     def mark(self, gid: str) -> None:
         self.done.add(gid)
         self.new_done.append(gid)
+        self.marked = getattr(self, "marked", 0) + 1
+        if self.autosave and self.marked % 300 == 0:
+            self.save()     # a run cut short keeps what it read
 
     def save(self) -> None:
         if not self.r:
@@ -355,6 +359,7 @@ async def run(minutes: float, only: str, sample: bool) -> Dict:
     import model_store
     r = model_store._client()
     store = Store(r)
+    store.autosave = not sample
     deadline = time.time() + minutes * 60
     got: Dict[str, int] = {}
     async with httpx.AsyncClient(timeout=30, follow_redirects=True, headers=UA) as client:

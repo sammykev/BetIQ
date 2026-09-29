@@ -54,6 +54,11 @@ jobs:
         env:
           UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
         run: python props_collect.py --minutes ${{ github.event.inputs.minutes || '60' }}
+      - name: Player props walk-forward check
+        if: github.event_name == 'schedule' || github.event.inputs.job == 'props'
+        env:
+          UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
+        run: python props_backtest.py
       - name: Player box scores (sample, saves nothing)
         if: github.event.inputs.job == 'props_sample'
         env:

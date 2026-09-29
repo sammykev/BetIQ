@@ -39,8 +39,8 @@ DEFAULT_DISPERSION = {"pts": 12.0, "reb": 10.0, "ast": 8.0, "tpm": 6.0}
 MIN_PROB, MAX_PROB = 0.5, 0.985
 SCORER_MARKET = "40"
 PEN_SCORED = 0.76
-PRIOR_NPXG90 = 0.12         # a typical outfield player's non-penalty xG per 90
-PRIOR_90S = 6.0             # pull of that prior, in full games
+PRIOR_NPXG90 = 0.12         # a typical outfield player's non-penalty xG per 90 (when the league's isn't known)
+PRIOR_90S = 3.0             # pull of the league's per-90 rate, in full games
 MIN_APPS = 4
 
 
@@ -175,8 +175,17 @@ def team_xg_per_game(players: Dict[str, Dict], team: str, last: int = 20) -> Opt
     return sum(by_day[d] for d in days) / len(days) if len(days) >= 5 else None
 
 
+def league_npxg90(players: Dict[str, Dict]) -> float:
+    """The league's players' non-penalty xG per 90 (by minutes): the prior."""
+    mins = sum(float(r[4]) for p in players.values() for r in p["games"][-30:])
+    xg = sum(float(r[7]) - PEN_SCORED * float(r[10] if len(r) > 10 else 0)
+             for p in players.values() for r in p["games"][-30:])
+    return max(0.02, xg / (mins / 90)) if mins else PRIOR_NPXG90
+
+
 def scorer_lambda(p: Dict, team_exp: Optional[float], team_usual: Optional[float],
-                  team_pens_per_game: float = 0.25) -> Optional[Tuple[float, Dict]]:
+                  team_pens_per_game: float = 0.25, prior: float = PRIOR_NPXG90,
+                  scale: float = 1.0) -> Optional[Tuple[float, Dict]]:
     """His expected goals tonight (conditional on playing), and how."""
     rows = [r for r in p["games"] if float(r[4]) > 0]
     if len(rows) < MIN_APPS:
@@ -190,7 +199,7 @@ def scorer_lambda(p: Dict, team_exp: Optional[float], team_usual: Optional[float
     pens = sum(wi * float(r[10] if len(r) > 10 else 0) for wi, r in zip(w, recent))
     npxg = sum(wi * float(r[7]) for wi, r in zip(w, recent)) - PEN_SCORED * pens
     npg = sum(wi * float(r[5]) for wi, r in zip(w, recent)) - PEN_SCORED * pens
-    per90 = (0.7 * max(0.0, npxg) + 0.3 * max(0.0, npg) + PRIOR_NPXG90 * PRIOR_90S) / (mins / 90 + PRIOR_90S)
+    per90 = (0.7 * max(0.0, npxg) + 0.3 * max(0.0, npg) + prior * PRIOR_90S) / (mins / 90 + PRIOR_90S)
     factor = 1.0
     if team_exp and team_usual:
         factor = max(0.6, min(1.6, team_exp / team_usual))
@@ -198,21 +207,25 @@ def scorer_lambda(p: Dict, team_exp: Optional[float], team_usual: Optional[float
     # His share of his team's penalties (per game he plays)
     pen_share = min(1.0, pens / games_w / max(0.05, team_pens_per_game))
     lam += team_pens_per_game * factor * pen_share * PEN_SCORED
+    lam *= scale    # the walk-forward check's correction (props_backtest.py)
     return lam, {"minutes": round(exp_min), "npxg90": round(per90, 3), "factor": round(factor, 2),
                  "pen_share": round(pen_share, 2), "apps": len(rows)}
 
 
-def scorer_price(ev: Dict, players: Dict[str, Dict], team_exp: Dict[str, Optional[float]]) -> List[Dict]:
+def scorer_price(ev: Dict, players: Dict[str, Dict], team_exp: Dict[str, Optional[float]],
+                 scale: float = 1.0) -> List[Dict]:
     """Our chance of each anytime goalscorer SportyBet lists. team_exp:
-    {SportyBet team name: our expected goals for it tonight}."""
+    {SportyBet team name: our expected goals for it tonight}; scale: the
+    walk-forward check's correction."""
     out = []
+    prior = league_npxg90(players)
     for o in scorer_offers(ev):
         p = players.get(o["key"])
         if not p:
             continue
         usual = team_xg_per_game(players, p["team"])
         exp_goals = team_exp.get(o["team"])
-        got = scorer_lambda(p, exp_goals, usual)
+        got = scorer_lambda(p, exp_goals, usual, prior=prior, scale=scale)
         if not got:
             continue
         lam, detail = got
