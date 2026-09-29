@@ -142,7 +142,10 @@ def parse_espn_box(summary: Dict, day: str) -> List[Tuple[str, str, List]]:
 
 
 async def espn_bb(store: Store, client, deadline: float, sample: bool) -> int:
+    import httpx
     n = 0
+    # ESPN answers a plain client (browser-like headers get something else)
+    client = httpx.AsyncClient(timeout=30)
     today = date.today()
     for slug, (league, windows) in ESPN_BB.items():
         for start, end in windows:
@@ -153,10 +156,11 @@ async def espn_bb(store: Store, client, deadline: float, sample: bool) -> int:
                 if f"espn-day:{slug}:{day}" in store.done:
                     continue
                 try:
-                    sb = (await client.get(f"https://site.api.espn.com/apis/site/v2/sports/basketball/{slug}/scoreboard",
-                                           params={"dates": day.replace("-", "")})).json()
+                    resp = await client.get(f"https://site.api.espn.com/apis/site/v2/sports/basketball/{slug}/scoreboard",
+                                            params={"dates": day.replace("-", "")})
+                    sb = resp.json()
                 except Exception as e:
-                    print(f"  {slug} {day}: {e}")
+                    print(f"  {slug} {day}: HTTP {getattr(locals().get('resp'), 'status_code', '?')} {e}")
                     continue
                 events = sb.get("events") or []
                 finished = [e for e in events if ((e.get("competitions") or [{}])[0].get("status") or {})
