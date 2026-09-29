@@ -31,7 +31,7 @@ function TeamName({ name }: { name: string }) {
   return (
     <div className="flex items-center gap-1.5 min-w-0">
       {image && !broken ? (
-        <span className="relative inline-flex items-center justify-center w-5 h-5 rounded-full bg-zinc-100 dark:bg-zinc-800 ring-1 ring-zinc-200/80 dark:ring-zinc-700 overflow-hidden shrink-0">
+        <span className="relative inline-flex items-center justify-center w-5 h-5 rounded-full bg-n-800 ring-1 ring-n-800/80 overflow-hidden shrink-0">
           <img
             src={image}
             alt={name}
@@ -62,7 +62,7 @@ export function MatchCard({ home, away, date, time, league, flag, children, onCl
       <div className="relative z-10 px-4 py-3 flex items-center gap-3">
         <div className="flex-1 min-w-0 space-y-1.5">
           {(league || flag) && (
-            <p className="flex items-center gap-1 text-[10px] text-zinc-400 dark:text-zinc-500 font-semibold uppercase tracking-wide truncate">
+            <p className="flex items-center gap-1 text-[10px] text-n-500 font-semibold uppercase tracking-wide truncate">
               {flag && <CompetitionBadge name={league || ""} fallbackEmoji={flag} size={11} />}
               <span className="truncate">
                 {league}{date ? ` · ${date}${time && time !== "TBD" ? ` ${time}` : ""}` : ""}

@@ -54,7 +54,7 @@ function AssistantBubble({ content, predictions }: { content: string; prediction
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="bg-zinc-100 dark:bg-zinc-800 rounded-2xl rounded-tl-sm px-4 py-3 text-zinc-800 dark:text-zinc-100 text-sm whitespace-pre-wrap leading-relaxed max-w-[85%]">
+      <div className="bg-n-800 rounded-2xl rounded-tl-sm px-4 py-3 text-n-100 text-sm whitespace-pre-wrap leading-relaxed max-w-[85%]">
         {displayText}
       </div>
 
@@ -169,21 +169,21 @@ export function ChatBot({ predictions }: Props) {
           style={{ height: minimised ? "auto" : "560px" }}
         >
           {/* Header */}
-          <div className="flex items-center gap-3 px-4 py-3 bg-zinc-50 dark:bg-zinc-800/60 border-b border-zinc-100 dark:border-zinc-800 shrink-0">
+          <div className="flex items-center gap-3 px-4 py-3 bg-surface-sunken border-b border-n-800 shrink-0">
             <img src="/logo.svg" alt="" className="w-7 h-7 rounded-lg" />
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-bold text-zinc-900 dark:text-white leading-none">BetIQ Assistant</p>
+              <p className="text-sm font-bold text-n-0 dark:text-white leading-none">BetIQ Assistant</p>
               <p className="text-[10px] text-brand-600 dark:text-brand-400 mt-0.5 font-medium">AI · SportyBet booking</p>
             </div>
             <button
               onClick={() => setMinimised(!minimised)}
-              className="p-1 hover:bg-zinc-200/60 dark:hover:bg-zinc-700 rounded-lg text-zinc-400 transition-colors"
+              className="p-1 hover:bg-n-700/60 rounded-lg text-n-500 transition-colors"
             >
               <ChevronDown size={14} className={clsx("transition-transform", minimised && "rotate-180")} />
             </button>
             <button
               onClick={() => { setOpen(false); setMinimised(false); }}
-              className="p-1 hover:bg-zinc-200/60 dark:hover:bg-zinc-700 rounded-lg text-zinc-400 transition-colors"
+              className="p-1 hover:bg-n-700/60 rounded-lg text-n-500 transition-colors"
             >
               <X size={14} />
             </button>
@@ -206,7 +206,7 @@ export function ChatBot({ predictions }: Props) {
                 )}
 
                 {loading && (
-                  <div className="flex gap-2 items-center text-zinc-400 dark:text-zinc-500 text-sm">
+                  <div className="flex gap-2 items-center text-n-500 text-sm">
                     <Loader2 size={14} className="animate-spin" />
                     Picking games…
                   </div>
@@ -219,7 +219,7 @@ export function ChatBot({ predictions }: Props) {
                       <button
                         key={s}
                         onClick={() => send(s)}
-                        className="text-xs px-3 py-1.5 bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-700 border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 rounded-full transition-colors"
+                        className="chip chip-idle !text-xs"
                       >
                         {s}
                       </button>
@@ -231,7 +231,7 @@ export function ChatBot({ predictions }: Props) {
               </div>
 
               {/* Input */}
-              <div className="p-3 border-t border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/60 shrink-0">
+              <div className="p-3 border-t border-n-800 bg-surface-sunken shrink-0">
                 <div className="flex gap-2">
                   <input
                     value={input}
@@ -239,7 +239,7 @@ export function ChatBot({ predictions }: Props) {
                     onKeyDown={handleKey}
                     placeholder="Ask for picks…"
                     disabled={loading}
-                    className="flex-1 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 text-sm rounded-xl px-3 py-2 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all disabled:opacity-50"
+                    className="flex-1 bg-surface border border-n-800 text-n-0 placeholder:text-n-500 text-base sm:text-sm rounded-xl px-3 py-2 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-[border-color,box-shadow] duration-150 disabled:opacity-50"
                   />
                   <button
                     onClick={() => send()}
@@ -249,7 +249,7 @@ export function ChatBot({ predictions }: Props) {
                     <Send size={15} />
                   </button>
                 </div>
-                <p className="text-center text-[10px] text-zinc-400 dark:text-zinc-600 mt-2">
+                <p className="text-center text-[10px] text-n-500 mt-2">
                   Powered by BetIQ
                 </p>
               </div>

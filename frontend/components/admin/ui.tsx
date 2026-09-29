@@ -111,7 +111,7 @@ export function Toggle({ on, onChange, busy, label, hint }: {
     <button type="button" role="switch" aria-checked={!!on} onClick={onChange} disabled={busy || on === null}
       className="flex items-center gap-3 rounded-xl bg-surface-sunken px-3 py-2.5 text-left w-full disabled:opacity-60">
       <span className={clsx("relative h-5 w-9 rounded-full transition-colors shrink-0", on ? "bg-brand-400" : "bg-n-700")}>
-        <span className={clsx("absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all", on ? "left-[18px]" : "left-0.5")} />
+        <span className={clsx("absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-[left] duration-150 ease-[cubic-bezier(0.2,0,0,1)]", on ? "left-[18px]" : "left-0.5")} />
       </span>
       <span className="min-w-0">
         <span className="block text-sm font-semibold text-n-0">{label}</span>

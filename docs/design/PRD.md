@@ -1,6 +1,6 @@
 # BetIQ redesign — product & design brief
 
-Status: in progress · Owner: BetIQ · Skills: `better-ui`, `better-typography`,
+Status: shipped (phases 1–4) · Owner: BetIQ · Skills: `better-ui`, `better-typography`,
 `better-colors`, `better-layout`, `better-accessibility`, `better-writing`,
 `shadcn` (installed in `.claude/skills`)
 

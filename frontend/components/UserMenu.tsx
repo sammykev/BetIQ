@@ -30,7 +30,7 @@ export function UserMenu({ onUpgrade }: Props) {
   }, []);
 
   if (!isLoaded)
-    return <div className="w-8 h-8 rounded-full bg-zinc-200 dark:bg-zinc-800 animate-pulse" />;
+    return <div className="w-8 h-8 rounded-full bg-n-700 animate-pulse" />;
 
   if (!user) {
     return (
@@ -46,7 +46,7 @@ export function UserMenu({ onUpgrade }: Props) {
     <div className="relative" ref={ref}>
       <button
         onClick={() => setOpen(o => !o)}
-        className="flex items-center gap-1.5 p-1 rounded-full hover:ring-2 hover:ring-zinc-200 dark:hover:ring-zinc-700 transition-all"
+        className="flex items-center gap-1.5 p-1 rounded-full hover:ring-2 hover:ring-n-700 transition-[box-shadow] duration-150"
       >
         {user.imageUrl ? (
           <img src={user.imageUrl} alt="" className="w-8 h-8 rounded-full object-cover" />
@@ -60,11 +60,11 @@ export function UserMenu({ onUpgrade }: Props) {
 
       {open && (
         <div className="absolute right-0 top-full mt-2 w-60 card !rounded-xl shadow-pop z-50 overflow-hidden animate-scale-in origin-top-right">
-          <div className="px-4 py-3 border-b border-zinc-100 dark:border-zinc-800">
-            <p className="text-sm font-semibold text-zinc-900 dark:text-white truncate">
+          <div className="px-4 py-3 border-b border-n-800">
+            <p className="text-sm font-semibold text-n-0 dark:text-white truncate">
               {user.fullName || user.emailAddresses[0]?.emailAddress}
             </p>
-            <p className="text-xs text-zinc-500 truncate">
+            <p className="text-xs text-n-400 truncate">
               {user.emailAddresses[0]?.emailAddress}
             </p>
             <div className="mt-2">
@@ -78,7 +78,7 @@ export function UserMenu({ onUpgrade }: Props) {
                   )}
                 </span>
               ) : (
-                <span className="inline-flex items-center gap-1 text-[10px] bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 px-2 py-0.5 rounded-full font-medium">
+                <span className="inline-flex items-center gap-1 text-[10px] bg-n-800 text-n-400 px-2 py-0.5 rounded-full font-medium">
                   Free plan
                 </span>
               )}
@@ -86,14 +86,14 @@ export function UserMenu({ onUpgrade }: Props) {
           </div>
 
           <Link href="/dashboard" onClick={() => setOpen(false)}
-            className="w-full flex items-center gap-2.5 px-4 py-3 text-sm text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors border-b border-zinc-100 dark:border-zinc-800">
+            className="w-full flex items-center gap-2.5 px-4 py-3 text-sm text-n-300 hover:bg-n-800/40 transition-colors border-b border-n-800">
             <LayoutDashboard size={15} /> My Dashboard
           </Link>
 
           {tier !== "premium" && (
             <button
               onClick={() => { setOpen(false); onUpgrade(); }}
-              className="w-full flex items-center gap-2.5 px-4 py-3 text-sm text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-500/10 transition-colors border-b border-zinc-100 dark:border-zinc-800 font-semibold"
+              className="w-full flex items-center gap-2.5 px-4 py-3 text-sm text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-500/10 transition-colors border-b border-n-800 font-semibold"
             >
               <Crown size={15} /> {tier === "lite" ? "Upgrade to Premium" : "See plans"}
             </button>
@@ -101,7 +101,7 @@ export function UserMenu({ onUpgrade }: Props) {
 
           <button
             onClick={() => signOut()}
-            className="w-full flex items-center gap-2.5 px-4 py-3 text-sm text-zinc-500 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors"
+            className="w-full flex items-center gap-2.5 px-4 py-3 text-sm text-n-400 hover:bg-n-800/40 transition-colors"
           >
             <LogOut size={15} /> Sign out
           </button>

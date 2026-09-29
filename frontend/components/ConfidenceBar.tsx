@@ -28,11 +28,11 @@ export function ConfidenceBar({ value, label, color = "green" }: Props) {
     <div className="space-y-1">
       {label && (
         <div className="flex justify-between text-xs">
-          <span className="text-zinc-400 dark:text-zinc-500">{label}</span>
-          <span className="tnum text-zinc-800 dark:text-zinc-200 font-medium">{pct}%</span>
+          <span className="text-n-500">{label}</span>
+          <span className="tnum text-n-100 font-medium">{pct}%</span>
         </div>
       )}
-      <div className="h-1.5 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden">
+      <div className="h-1.5 bg-n-800 rounded-full overflow-hidden">
         <div
           className={`h-full rounded-full transition-all duration-500 ${barColor}`}
           style={{ width: `${pct}%` }}

@@ -62,12 +62,12 @@ const CONFIDENCE_FILTERS = [
 const headlineProb = (p: Prediction) => headlinePick(p).prob ?? 0;
 
 const FEATURES = [
-  { icon: Brain,        title: "AI predictions",  desc: "XGBoost + Elo ratings across 9 leagues, retrained on every refresh." },
-  { icon: BarChart3,    title: "Match analysis",  desc: "xG, 11 betting markets, an Elo gauge and correct-score odds for every game." },
-  { icon: Bot,          title: "AI assistant",    desc: "Chat to build accumulators and get instant picks." },
-  { icon: Ticket,       title: "Booking codes",   desc: "One-tap SportyBet booking code generation." },
-  { icon: CalendarDays, title: "Track record",    desc: "Every prediction graded against the final score, market by market." },
-  { icon: Globe,        title: "Live team news",  desc: "Injury and lineup context pulled from the web before kick-off." },
+  { icon: Brain,        title: "Four sports",     desc: "Football, basketball, tennis and table tennis, each with its own model trained on years of results." },
+  { icon: BarChart3,    title: "Every market",    desc: "Goals, corners, cards, shots, handicaps, totals and set scores, each with our chance next to the price." },
+  { icon: Ticket,       title: "Booking codes",   desc: "Turn your picks into a SportyBet or football.com code in one tap." },
+  { icon: CalendarDays, title: "Honest record",   desc: "Every prediction graded against the final score, so you can see how often we're right." },
+  { icon: Bot,          title: "Slip optimizer",  desc: "Pick the odds you want and get the slip most likely to land, or paste a code to improve it." },
+  { icon: Globe,        title: "Live scores",     desc: "Follow today's matches as they happen and watch each pick settle." },
 ];
 
 // Static example for the signed-out landing page — rendered with the real card.
@@ -151,7 +151,7 @@ function AuthGate() {
       {/* Nav */}
       <header className="px-5 sm:px-8 h-16 flex items-center justify-between max-w-6xl mx-auto w-full">
         <div className="flex items-center gap-2.5">
-          <img src="/logo.svg" alt="" className="w-8 h-8 rounded-lg ring-1 ring-n-800" />
+          <img src="/logo.svg" alt="" className="w-8 h-8 rounded-lg img-outline" />
           <Wordmark className="text-[26px]" />
         </div>
         <div className="flex items-center gap-2">
@@ -164,19 +164,23 @@ function AuthGate() {
 
       <main className="flex-1 w-full max-w-6xl mx-auto px-5 sm:px-8">
         {/* Hero */}
+        <EnterGroup>
         <section className="grid lg:grid-cols-[1.3fr_1fr] gap-12 lg:gap-14 items-center pt-10 pb-16 sm:pt-16 lg:pt-20 lg:pb-24">
           <div>
+            <Enter i={0}>
             <p className="inline-flex items-center gap-2 text-xs font-semibold text-n-300 bg-surface [box-shadow:var(--ring-control)] rounded-full pl-2.5 pr-3 py-1.5">
-              <LiveDot /> XGBoost + Elo model · 9 leagues · updated every 6h
+              <LiveDot /> Football · basketball · tennis · table tennis
             </p>
-            <h1 className="display text-[52px] sm:text-7xl lg:text-[76px] text-n-0 mt-6">
-              Football predictions,
-              <br />
-              <span className="text-accent sm:whitespace-nowrap">engineered by AI.</span>
+            </Enter>
+            <Enter i={1}>
+            <h1 className="heading text-[40px] sm:text-6xl lg:text-[64px] mt-6 tracking-[-0.035em]">
+              Honest chances for <span className="text-accent">every match you back.</span>
             </h1>
-            <p className="text-n-400 text-lg leading-relaxed max-w-lg mt-6">
-              Machine-learned probabilities across 9 leagues and 11 markets.
-              Chat to build your slip and get a SportyBet booking code in one tap.
+            </Enter>
+            <Enter i={2}>
+            <p className="text-n-400 text-lg leading-relaxed max-w-lg mt-6 text-pretty">
+              Models trained on years of results price every market, then grade themselves against every final.
+              Pick what you like and book it on SportyBet or football.com in one tap.
             </p>
             <div className="flex flex-col sm:flex-row gap-3 mt-8">
               <SignUpButton mode="modal">
@@ -189,24 +193,27 @@ function AuthGate() {
               </SignInButton>
             </div>
             <p className="text-n-500 text-xs mt-4">{trialLine ? `${trialLine} when you sign up` : "Free to sign up"} · No card required · 18+ only</p>
+            </Enter>
           </div>
 
           {/* Product preview: the real prediction card */}
-          <div className="relative max-w-md w-full mx-auto lg:mx-0">
+          <Enter i={3} className="relative max-w-md w-full mx-auto lg:mx-0">
             <div className="absolute -inset-8 bg-brand-400/10 blur-3xl rounded-full" aria-hidden="true" />
             <div className="relative pointer-events-none select-none">
               <PredictionCard prediction={SAMPLE} />
             </div>
             <p className="relative text-center text-[11px] text-n-500 mt-3">Example prediction card</p>
-          </div>
+          </Enter>
         </section>
+
+        </EnterGroup>
 
         {/* Stat strip */}
         <section className="grid grid-cols-3 border-y border-n-900 divide-x divide-n-900">
           {[
-            { value: "9", label: "Leagues covered" },
-            { value: "11+", label: "Betting markets" },
-            { value: "6h", label: "Refresh cycle" },
+            { value: "4", label: "Sports" },
+            { value: "2", label: "Bookmakers" },
+            { value: "1 min", label: "Live score refresh" },
           ].map(({ value, label }) => (
             <div key={label} className="py-6 sm:py-8 text-center">
               <p className="font-display font-extrabold text-4xl sm:text-5xl text-n-0 tnum">{value}</p>
@@ -221,11 +228,11 @@ function AuthGate() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-8">
             {FEATURES.map(({ icon: Icon, title, desc }) => (
               <div key={title} className="card p-5">
-                <span className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-brand-400/10 text-accent ring-1 ring-brand-400/20">
+                <span className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-brand-400/10 text-accent [box-shadow:inset_0_0_0_1px_rgb(var(--accent)/0.2)]">
                   <Icon size={19} />
                 </span>
                 <p className="heading text-lg mt-4">{title}</p>
-                <p className="text-n-400 text-sm leading-relaxed mt-1">{desc}</p>
+                <p className="text-n-400 text-sm leading-relaxed mt-1 text-pretty">{desc}</p>
               </div>
             ))}
           </div>
@@ -233,7 +240,7 @@ function AuthGate() {
       </main>
 
       <footer className="border-t border-n-900 py-6 text-center text-xs text-n-500">
-        BetIQ · AI football predictions · 18+ · Gamble responsibly · For educational use only
+        BetIQ · Sports predictions · 18+ · Gamble responsibly · For educational use only
       </footer>
     </div>
   );
@@ -843,7 +850,7 @@ export default function HomePage() {
 
         {/* Footer note */}
         <p className="text-center text-xs text-n-500 pt-8">
-          Powered by XGBoost + Elo ratings · football-data.org · Updated every 6 hours · 18+ · Gamble responsibly
+          Probabilities from our models, graded against every final · 18+ · Gamble responsibly
         </p>
       </div>
 
