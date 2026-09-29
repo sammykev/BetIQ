@@ -13,7 +13,7 @@ import time
 import glob
 import json
 from datetime import datetime, date, timedelta, timezone
-from typing import List, Dict, Any, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import httpx
 import numpy as np
@@ -3479,7 +3479,11 @@ def _settle_tickets(r) -> Dict[str, int]:
     days: Dict[str, Dict] = {}
     report = {"accounts": len(uids), "settled": 0, "legs": 0}
 
+    bb_days: Dict[str, Dict] = {}
+
     def result_for(leg: Dict) -> Optional[Dict]:
+        if str(leg.get("market") or "").startswith("bb_"):
+            return _bb_result_for(r, leg, bb_days)
         e = _md_entry_for(r, leg, days)
         return e.get("result") if e else None
 
@@ -4615,6 +4619,9 @@ ADMIN_JOBS = {
     "fd_referees": ("Collect past referees (football-data.org)", lambda: _collect_fd_referees("manual")),
     "football_sync": ("Download league results (football-data.co.uk)", lambda: _manual_football_sync()),
     "matchday_sweep": ("Scores and grades for the last 7 days", lambda: _refresh_matchdays(MD_DAYS_BACK, "manual")),
+    "bb_collect": ("Basketball: collect results from SportyBet (and older days)", lambda: _bb_collect()),
+    "bb_fit": ("Basketball: rate every league from the results", lambda: _bb_fit()),
+    "bb_refresh": ("Basketball: price SportyBet's matches now", lambda: _bb_refresh()),
     "daily_slips": ("Remake today's daily odds slips (new booking codes)", lambda: _build_daily(__import__("daily_slips").today(), force=True)),
     "shot_blend": ("Score our shot lines against SportyBet's", lambda: _shot_blend_job()),
     "market_review": ("Weekly accuracy review (pause markets falling short)", lambda: _review_job()),
@@ -4948,7 +4955,9 @@ async def get_sport_predictions(sport: str, request: Request):
             return drop_started_events(cached_entry[0])
 
     if sport == "basketball":
-        data = await fetch_basketball_predictions()
+        data = [_bb_slim(p) for p in (_bb_upcoming() or await _bb_refresh())]
+        if not data:
+            data = await fetch_basketball_predictions()
     elif sport == "tennis":
         data = await fetch_tennis_predictions()
     elif sport == "table-tennis":
@@ -4966,6 +4975,206 @@ async def get_sport_predictions(sport: str, request: Request):
         _sports_memory_cache[sport] = (data, _time.monotonic())
 
     return drop_started_events(data)
+
+
+# ── Basketball (basketball_data / _model / _markets / _predictions) ─────────
+# Results from SportyBet (every league it covers) → each league's ratings →
+# every line SportyBet offers on its listed matches, priced, with its ids.
+BB_MODEL_KEY = "betiq:bb:model"             # the rated leagues (encoded)
+BB_PREDICTIONS_KEY = "betiq:bb:predictions"  # every listed match, every priced line (encoded)
+BB_STATUS_KEY = "betiq:bb:status"
+BB_SLIM_LINES = 8                           # lines per match in the list (the rest: the match's own endpoint)
+_bb_leagues: Dict[str, Any] = {}
+_bb_predictions: List[Dict] = []
+_bb_status: Dict[str, Any] = {}
+
+
+def _bb_save_status(**kw) -> None:
+    _bb_status.update(kw, at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    r = _get_redis()
+    if r:
+        try:
+            r.set(BB_STATUS_KEY, json.dumps(_bb_status, default=str))
+        except Exception:
+            pass
+
+
+def _bb_results(r, days: Optional[Iterable[str]] = None) -> List[Dict]:
+    """Stored results: every day's, or the given days'."""
+    import basketball_data as bd
+    if not r:
+        return []
+    try:
+        if days is None:
+            raw = r.hgetall(bd.RESULTS_KEY) or {}
+            blobs = list(raw.values())
+        else:
+            blobs = r.hmget(bd.RESULTS_KEY, list(days)) or []
+    except Exception as e:
+        print(f"[Basketball] couldn't read results: {e}")
+        return []
+    out: List[Dict] = []
+    for b in blobs:
+        try:
+            out += bd.decode(b)
+        except Exception:
+            continue
+    return out
+
+
+async def _bb_collect() -> Dict[str, Any]:
+    """Yesterday's and today's results, and a few older days (the backfill)."""
+    import basketball_data as bd
+    r = _get_redis()
+    if not r:
+        return {"error": "no database"}
+    have = [k.decode() if isinstance(k, bytes) else k for k in (r.hkeys(bd.RESULTS_KEY) or [])]
+    today = date.today()
+    fetched, games, failed = 0, 0, 0
+    for day in bd.days_to_collect(have, today):
+        try:
+            found = await bd.fetch_results_day(day)
+        except Exception as e:
+            failed += 1
+            print(f"[Basketball] results for {day}: {e}")
+            continue
+        # A past day with nothing (older than SportyBet keeps) is stored too, so it isn't asked again
+        r.hset(bd.RESULTS_KEY, day, bd.encode(found))
+        fetched += 1
+        games += len(found)
+        await asyncio.sleep(0.5)
+    total_days = r.hlen(bd.RESULTS_KEY)
+    _bb_save_status(collected={"days": fetched, "games": games, "failed": failed, "days_stored": total_days})
+    print(f"[Basketball] results: {fetched} days, {games} games ({total_days} days stored)")
+    if games:
+        await _bb_fit()
+    return {"days": fetched, "games": games, "failed": failed}
+
+
+def _bb_fit_sync() -> Dict[str, Any]:
+    import basketball_data as bd
+    r = _get_redis()
+    results = _bb_results(r)
+    try:
+        backtest = json.loads(r.get("betiq:bb:backtest") or "null") if r else None   # backtest_basketball.py
+    except Exception:
+        backtest = None
+    leagues = bd.fit_all(results, backtest=backtest)
+    _bb_leagues.clear()
+    _bb_leagues.update(leagues)
+    if r and leagues:
+        r.set(BB_MODEL_KEY, bd.encode([lg.to_json() for lg in leagues.values()]))
+    return {"games": len(results), "leagues": len(leagues),
+            "teams": sum(len(lg.attack) for lg in leagues.values())}
+
+
+async def _bb_fit() -> Dict[str, Any]:
+    """Rate every league from the stored results."""
+    try:
+        got = await asyncio.to_thread(_bb_fit_sync)
+    except Exception as e:
+        print(f"[Basketball] rating failed: {e}")
+        return {"error": str(e)}
+    _bb_save_status(model=got)
+    print(f"[Basketball] rated {got['leagues']} leagues ({got['teams']} teams) from {got['games']} games")
+    return got
+
+
+def _bb_load() -> None:
+    """At startup: the rated leagues and the last predictions, from Redis."""
+    import basketball_data as bd
+    import basketball_model as bm
+    r = _get_redis()
+    if not r:
+        return
+    try:
+        for d in bd.decode(r.get(BB_MODEL_KEY)):
+            lg = bm.League.from_json(d)
+            _bb_leagues[lg.name] = lg
+        _bb_predictions[:] = bd.decode(r.get(BB_PREDICTIONS_KEY))
+        _bb_status.update(json.loads(r.get(BB_STATUS_KEY) or "{}"))
+    except Exception as e:
+        print(f"[Basketball] couldn't load: {e}")
+    print(f"[Basketball] loaded {len(_bb_leagues)} rated leagues, {len(_bb_predictions)} predictions")
+
+
+def _bb_slim(p: Dict) -> Dict:
+    """A prediction for the list: its likeliest lines (at useful prices) and
+    the middle handicap and total; the rest from /api/basketball/match."""
+    lines = p.get("bb_markets") or []
+    useful = [x for x in lines if x["odds"] >= 1.15 and x["market"] != "bb_overtime"]
+    top = sorted(useful, key=lambda x: -x["prob"])[:BB_SLIM_LINES]
+    return {**{k: v for k, v in p.items() if k != "bb_markets"}, "top_lines": top, "lines": len(lines)}
+
+
+async def _bb_refresh() -> List[Dict]:
+    """Price every basketball match SportyBet lists."""
+    import basketball_data as bd
+    import basketball_predictions as bp
+    try:
+        events, report = await bd.fetch_upcoming()
+    except Exception as e:
+        print(f"[Basketball] listing failed: {e}")
+        events, report = [], [str(e)]
+    preds = await asyncio.to_thread(bp.build, events, dict(_bb_leagues))
+    if not preds and not events:
+        _bb_save_status(listing={"events": 0, "report": report})
+        return _bb_predictions
+    _bb_predictions[:] = preds
+    r = _get_redis()
+    if r:
+        try:
+            r.set(BB_PREDICTIONS_KEY, bd.encode(preds), ex=6 * 3600)
+            r.setex("betiq:sports:basketball", 3600, json.dumps([_bb_slim(p) for p in preds]))
+        except Exception as e:
+            print(f"[Basketball] couldn't save predictions: {e}")
+    rated = sum(1 for p in preds if p.get("rated"))
+    _bb_save_status(listing={"events": len(events), "predictions": len(preds), "rated": rated, "report": report})
+    print(f"[Basketball] {len(preds)} matches priced ({rated} with both teams rated) · {' · '.join(report)}")
+    return preds
+
+
+def _bb_upcoming() -> List[Dict]:
+    """The priced matches not started yet (full lines)."""
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+    return [p for p in _bb_predictions if f"{p['date']} {p['time']}" > now]
+
+
+@app.get("/api/basketball/match")
+async def get_basketball_match(request: Request, event: str = Query(..., max_length=40)):
+    """One basketball match: every line SportyBet offers on it that we priced."""
+    await _check_sport_access(request, "basketball")
+    p = next((x for x in _bb_predictions if x.get("sportybet_event_id") == event), None)
+    if not p:
+        raise HTTPException(status_code=404, detail="Match not found")
+    return p
+
+
+@app.get("/api/basketball/status")
+async def get_basketball_status(_admin: str = Depends(require_admin)):
+    """Admin: results stored, leagues rated, the last listing."""
+    import basketball_data as bd
+    r = _get_redis()
+    leagues = sorted(((lg.name, lg.n, len(lg.attack), round(lg.home_court, 1), round(lg.sigma["margin"], 1))
+                      for lg in _bb_leagues.values()), key=lambda t: -t[1])
+    return {**_bb_status, "days_stored": r.hlen(bd.RESULTS_KEY) if r else 0,
+            "leagues": [{"league": n, "games": g, "teams": t, "home_court": hc, "margin_sd": sd}
+                        for n, g, t, hc, sd in leagues]}
+
+
+def _bb_result_for(r, leg: Dict, cache: Dict[str, Dict]) -> Optional[Dict]:
+    """A basketball ticket leg's result, by the SportyBet event it was booked on."""
+    import basketball_data as bd
+    try:
+        d0 = date.fromisoformat(leg.get("date") or "")
+    except ValueError:
+        return None
+    days = [(d0 + timedelta(days=i)).isoformat() for i in (-1, 0, 1)]
+    for d in days:
+        if d not in cache:
+            cache[d] = {g["id"]: g for g in _bb_results(r, [d])}
+    games = {k: v for d in days for k, v in cache[d].items()}
+    return bd.result_for(games, leg)
 
 
 @app.get("/api/team-logo")
@@ -6462,13 +6671,16 @@ def _explain_empty(reasons: List[Dict], matches: int, days: int, min_prob: float
 
 
 @app.post("/api/optimizer")
-async def optimize_slip(body: Dict[str, Any], _access=Depends(require_feature("optimizer"))):
+async def optimize_slip(request: Request, body: Dict[str, Any], _access=Depends(require_feature("optimizer"))):
     """
     Build the slip with the best win chance whose total odds land in a target
     range (optimizer.py). Body: {min_odds, max_odds, max_games?, min_prob?,
     days?, leagues?: [codes], markets?: [ids], codes?: {market: [option
-    codes]} (e.g. only some goal lines), bookable_only?}.
+    codes]} (e.g. only some goal lines), bookable_only?, sport?: football |
+    basketball | all, bb_markets?: [basketball families]}.
     """
+    if str((body or {}).get("sport") or "football") in ("basketball", "all"):
+        await _check_sport_access(request, "basketball")   # switched off, or for testers only
     return await _optimize_request(body)
 
 
@@ -6498,6 +6710,12 @@ async def _optimize_request(body: Dict[str, Any],
     if not isinstance(codes, dict):
         raise HTTPException(status_code=400, detail="codes must be {market: [codes]}")
     only = {str(m): {str(c) for c in (cs or [])} for m, cs in codes.items() if isinstance(cs, list) and cs}
+    # football (default), basketball, or all: basketball picks are the lines
+    # SportyBet offers on its listed matches (_bb_predictions), all bookable
+    sport = str(body.get("sport") or "football")
+    if sport not in ("football", "basketball", "all"):
+        raise HTTPException(status_code=400, detail="sport must be football, basketball or all")
+    bb_families = {str(m) for m in body.get("bb_markets") or []} or None
 
     now = datetime.now(timezone.utc)
     today, last = now.date().isoformat(), (now.date() + timedelta(days=days - 1)).isoformat()
@@ -6509,7 +6727,7 @@ async def _optimize_request(body: Dict[str, Any],
             return False
         return max(window[0], now) < k < window[1]
 
-    upcoming = [p for p in _predictions_cache
+    upcoming = [p for p in (_predictions_cache if sport != "basketball" else [])
                 if p.get("sport") in (None, "football")
                 and (in_window(p) if window else
                      today <= p.get("date", "") <= last
@@ -6520,7 +6738,11 @@ async def _optimize_request(body: Dict[str, Any],
     # predictions (flags and all) minutes before the next linking run.
     linked = {id(p): _linked_event(p) for p in upcoming}
     preds = [p for p in upcoming if not bookable_only or linked[id(p)]]
-    if bookable_only and upcoming and not preds:
+    bb_preds = [] if sport == "football" else [
+        p for p in _bb_upcoming()
+        if (in_window(p) if window else today <= p["date"] <= last) and not (leagues and sport == "basketball"
+                                                                              and p.get("league") not in leagues)]
+    if bookable_only and upcoming and not preds and sport == "football":
         return {"error": (f"SportyBet hasn't listed any of the {len(upcoming)} matches in the next {days} "
                           f"day{'s' if days != 1 else ''} yet (or we haven't linked them since the last restart). "
                           "Untick \"Only matches SportyBet lists\", or pick more days."),
@@ -6530,7 +6752,7 @@ async def _optimize_request(body: Dict[str, Any],
     bookable = _bookable_markets() if bookable_only else None
     # Markets the weekly accuracy review paused (or the admin switched off)
     paused = _paused_markets()
-    if markets and markets <= paused:
+    if markets and markets <= paused and sport == "football":
         import market_review
         return {"error": (f"{market_review.names(sorted(markets))} {'is' if len(markets) == 1 else 'are'} paused: "
                           "recent picks came in less often than we said, so we're not using "
@@ -6547,6 +6769,10 @@ async def _optimize_request(body: Dict[str, Any],
     pairs = [(_with_priced_set_pieces(p, linked[id(p)]), linked[id(p)]) for p in preds]
     preds = [p for p, _ in pairs]
     groups = [optimizer.candidates(p, ev, min_prob, markets, allowed) for p, ev in pairs]
+    if bb_preds:
+        import basketball_predictions
+        groups += [basketball_predictions.options(p, min_prob, bb_families, lambda m, c: m not in paused)
+                   for p in bb_preds]
     if max_leg:
         groups = [[o for o in g if o.odds < max_leg] for g in groups]
     if bookable_only:
@@ -6554,6 +6780,13 @@ async def _optimize_request(body: Dict[str, Any],
         groups = [[o for o in g if o.market not in booking_slip.LISTED_ONLY or o.odds_source == "sportybet"]
                   for g in groups]
     considered = sum(1 for g in groups if g)
+    if considered == 0 and sport == "basketball":
+        return {"error": (f"None of the {len(bb_preds)} basketball matches in the next {days} day{'s' if days != 1 else ''} "
+                          f"has a line our model rates {min_prob:.0%} or more"
+                          + (" in the markets you chose" if bb_families else "")
+                          + ". Lower the minimum confidence, add markets or pick more days."
+                          if bb_preds else "No basketball matches listed on SportyBet in those days yet."),
+                "matches_considered": 0, "target": [lo, hi], "target_odds": target}
     if considered == 0:
         reasons = optimizer.why_empty(preds, markets, min_prob, bookable, only)
         return {"error": _explain_empty(reasons, len(preds), days, min_prob), "reasons": reasons,
@@ -6577,6 +6810,9 @@ async def _optimize_request(body: Dict[str, Any],
     ok = bookable or _bookable_markets()
     events = {(p["home"], p["away"], p.get("date")): ev for p, ev in pairs}
     for pick in result.get("picks") or []:
+        if pick.get("sb"):   # basketball: a line SportyBet offers, with its ids
+            pick["bookable"] = True
+            continue
         pick["bookable"] = (bool(events.get((pick["home"], pick["away"], pick["date"]))) and ok(pick["market"], pick["code"])
                             and (pick["market"] not in booking_slip.LISTED_ONLY or pick["odds_source"] == "sportybet"))
     result["bookable_picks"] = sum(1 for pick in result.get("picks") or [] if pick["bookable"])
@@ -7266,6 +7502,7 @@ async def startup():
     _load_hidden()
     _load_h2h_cache()
     _load_predictions_cache()   # serve cached predictions instantly while pipeline rebuilds
+    _bb_load()
     asyncio.create_task(_link_on_startup())  # every deploy re-links to SportyBet straight away
     asyncio.create_task(_run_pipeline())
     asyncio.create_task(_load_fbref_data())
@@ -7288,6 +7525,13 @@ async def startup():
     # Sundays 22:30 UTC (23:30 Lagos), before Monday's daily slips are made (23:50 Lagos)
     scheduler.add_job(_review_job, "cron", day_of_week="sun", hour=22, minute=30, id="market_review",
                       max_instances=1, coalesce=True)
+    # Basketball: results (and the backfill) every half hour, ratings after new
+    # results and every 6 hours, SportyBet's matches priced every 15 minutes
+    scheduler.add_job(_bb_collect, "interval", minutes=30, id="bb_collect", max_instances=1, coalesce=True,
+                      next_run_time=datetime.now() + timedelta(minutes=2))
+    scheduler.add_job(_bb_fit, "interval", hours=6, id="bb_fit", max_instances=1, coalesce=True)
+    scheduler.add_job(_bb_refresh, "interval", minutes=15, id="bb_refresh", max_instances=1, coalesce=True,
+                      next_run_time=datetime.now() + timedelta(minutes=1))
     scheduler.add_job(_shot_blend_job, "interval", hours=6, id="shot_blend",
                       next_run_time=datetime.now() + timedelta(minutes=15))
     scheduler.start()

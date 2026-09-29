@@ -52,6 +52,9 @@ class Option:
     prob: float
     odds: float
     odds_source: str   # "sportybet" | "bookmaker" | "estimated"
+    # SportyBet's own ids for the pick (basketball: every line is one SportyBet offers)
+    sb: Optional[Dict[str, str]] = None
+    sport: str = "football"
 
 
 def _line(stat: str, line: str, over: bool):

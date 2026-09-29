@@ -1,25 +1,38 @@
-# Basketball data (backend/probe_basketball.py): what SportyBet lists and
-# which history sources answer from here. Run by hand while basketball is
-# being built; the nightly collection joins this workflow once it exists.
+# Basketball data:
+# - Nightly: the walk-forward check (backend/backtest_basketball.py) on the
+#   results the API server collects from SportyBet into Upstash Redis. Its
+#   per-league spread correction is picked up by the server's next rating.
+# - By hand: the probe (backend/probe_basketball.py) — what SportyBet lists
+#   and which history sources answer from here.
+# Needs the UPSTASH_REDIS_URL secret (same as the server).
 name: Basketball data
 
 on:
+  schedule:
+    - cron: "10 3 * * *"   # daily
   workflow_dispatch:
     inputs:
+      job:
+        description: "backtest or probe"
+        default: "backtest"
       pages:
-        description: "SportyBet match pages to read for markets"
+        description: "Probe: SportyBet match pages to read for markets"
         default: "10"
       parts:
-        description: "Only these parts (comma-separated; empty: all)"
+        description: "Probe: only these parts (comma-separated; empty: all)"
         default: ""
+
+concurrency:
+  group: basketball-data
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
-  probe:
+  run:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
     defaults:
       run:
         working-directory: backend
@@ -31,10 +44,18 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r requirements.txt
+
+      - name: Walk-forward check
+        if: github.event_name == 'schedule' || github.event.inputs.job == 'backtest'
+        env:
+          UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
+        run: python backtest_basketball.py
+
       - name: Probe
+        if: github.event.inputs.job == 'probe'
         run: python probe_basketball.py --pages ${{ github.event.inputs.pages || '10' }} --parts "${{ github.event.inputs.parts }}"
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: github.event.inputs.job == 'probe'
         with:
           name: basketball-probe
           path: backend/basketball_probe.json

@@ -39,7 +39,11 @@ def _over_under(code: str, total: Optional[float]) -> Optional[str]:
 
 def grade_leg(market: str, code: str, result: Optional[Dict]) -> str:
     """Settle one leg from a matchday result ({"status", "hg", "ag",
-    "corners", "bookings", "shots", "sot", "aet"})."""
+    "corners", "bookings", "shots", "sot", "aet"}); basketball legs (bb_…)
+    from a basketball result (basketball_markets.settle)."""
+    if market.startswith("bb_"):
+        import basketball_markets
+        return basketball_markets.settle(market, code, result)
     if not result:
         return "pending"
     status = result.get("status")
@@ -125,6 +129,10 @@ def new_ticket(code: str, selections: List[Dict], picks: List[Dict], source: str
         # markets we may not model: they're shown, but can't be settled here
         leg["odds"] = p.get("odds")
         leg["status"] = "unknown" if s.get("market") == "sportybet" else "pending"
+        if str(s.get("market") or "").startswith("bb_"):
+            # Basketball: settled from the SportyBet event it was booked on
+            leg["sport"] = "basketball"
+            leg["event_id"] = (s.get("sb") or {}).get("eventId")
         legs.append(leg)
     return {"code": code, "created_at": created_at, "source": source, "share_url": share_url,
             "legs": legs, "total_odds": total_odds, "status": "pending", "settled_at": None}

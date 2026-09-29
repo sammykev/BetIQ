@@ -1,0 +1,400 @@
+"""
+Basketball: each team's attack and defence in points, per league, and the
+chance of any line from them.
+
+Ratings (fit): every game says two things,
+    home points = league average + home court + home attack - away defence
+    away points = league average + away attack - home defence
+solved by ridge least squares, recent games counting more (HALF_LIFE_DAYS).
+Ridge pulls teams with few games to the league average, so a new or
+promoted team starts average and moves as it plays.
+
+Spread (sigma): how far results land from those expectations, measured on
+the league's own games — the margin's, the total's and one team's points,
+and, where quarter scores exist, the first half's and a quarter's.
+
+Probabilities (Match.prob): margin and total are taken as normal around the
+expectations, on whole points — so a tie at the end of regulation (and
+overtime) gets its own chance, and every half-point line (handicap, total,
+team total, halves, quarters) has one.
+
+Blending with SportyBet (blend): its winner, main handicap and main total
+prices carry the market's expected margin and total. Where we know both
+teams, ours and the market's are mixed (MODEL_WEIGHT, from the backtest);
+where we don't, the market's are used as they are, still giving a price for
+every other line.
+"""
+
+from dataclasses import dataclass, field
+from datetime import date
+from math import exp, log
+from statistics import NormalDist
+from typing import Dict, Iterable, List, Optional, Tuple
+
+import numpy as np
+
+HALF_LIFE_DAYS = 90      # a game's weight halves every this many days
+RIDGE = 8.0              # pull towards the league average, in games' worth
+MIN_GAMES = 8            # a team needs this many (weighted) games to be "known"
+SIGMA_FLOOR = {"margin": 9.0, "total": 11.0, "team": 7.5}
+# Where a league has no games to measure from: typical of professional leagues
+DEFAULT_SIGMA = {"margin": 12.0, "total": 17.0, "team": 10.5,
+                 "h1_margin": 8.4, "h1_total": 11.0, "q_margin": 6.0, "q_total": 7.6}
+OT_HOME = 0.5            # who wins overtime: even (it's short and near random)
+OT_SHARE = 0.11          # an overtime's points, as a share of a game's (5 minutes of 40–48)
+_N = NormalDist()
+
+
+@dataclass
+class Game:
+    date: str                   # YYYY-MM-DD
+    home: str
+    away: str
+    hs: int                     # final score, overtime included
+    as_: int
+    periods: Optional[List[Tuple[int, int]]] = None   # (home, away) per quarter / half, regulation only
+    neutral: bool = False
+    ot: bool = False
+
+
+@dataclass
+class League:
+    name: str
+    avg: float                  # points per team per game
+    home_court: float
+    attack: Dict[str, float]
+    defence: Dict[str, float]
+    games: Dict[str, float]     # weighted games per team
+    sigma: Dict[str, float]
+    h1_share: float = 0.5       # share of the points scored in the first half
+    n: int = 0
+    as_of: str = ""
+    q_shares: Tuple[float, float, float, float] = (0.25, 0.25, 0.25, 0.25)
+
+    def known(self, team: str) -> bool:
+        return self.games.get(team, 0.0) >= MIN_GAMES
+
+    def expect(self, home: str, away: str, neutral: bool = False) -> Tuple[float, float]:
+        hc = 0.0 if neutral else self.home_court
+        h = self.avg + hc + self.attack.get(home, 0.0) - self.defence.get(away, 0.0)
+        a = self.avg + self.attack.get(away, 0.0) - self.defence.get(home, 0.0)
+        return h, a
+
+    def to_json(self) -> Dict:
+        return {k: getattr(self, k) for k in ("name", "avg", "home_court", "attack", "defence", "games",
+                                              "sigma", "h1_share", "n", "as_of", "q_shares")}
+
+    @classmethod
+    def from_json(cls, d: Dict) -> "League":
+        return cls(**{k: d[k] for k in ("name", "avg", "home_court", "attack", "defence", "games", "sigma")},
+                   h1_share=d.get("h1_share", 0.5), n=d.get("n", 0), as_of=d.get("as_of", ""),
+                   q_shares=tuple(d.get("q_shares") or (0.25,) * 4))
+
+
+def _weights(games: List[Game], as_of: date) -> np.ndarray:
+    return np.array([0.5 ** (max(0, (as_of - date.fromisoformat(g.date)).days) / HALF_LIFE_DAYS) for g in games])
+
+
+def fit(name: str, games: Iterable[Game], as_of: Optional[date] = None) -> Optional[League]:
+    """Ratings from a league's games before `as_of` (all of them if None)."""
+    games = sorted((g for g in games if as_of is None or g.date < as_of.isoformat()), key=lambda g: g.date)
+    if len(games) < 20:
+        return None
+    as_of = as_of or date.fromisoformat(games[-1].date)
+    teams = sorted({g.home for g in games} | {g.away for g in games})
+    idx = {t: i for i, t in enumerate(teams)}
+    T = len(teams)
+    w = _weights(games, as_of)
+    # Columns: [average, home court, attack x T, defence x T]; two rows a game
+    rows, cols, vals, y, rw = [], [], [], [], []
+    for k, g in enumerate(games):
+        h, a = idx[g.home], idx[g.away]
+        for r_, (scorer, other, pts, home) in enumerate(((h, a, g.hs, not g.neutral), (a, h, g.as_, False))):
+            r = 2 * k + r_
+            rows += [r, r, r] + ([r] if home else [])
+            cols += [0, 2 + scorer, 2 + T + other] + ([1] if home else [])
+            vals += [1.0, 1.0, -1.0] + ([1.0] if home else [])
+            y.append(float(pts))
+            rw.append(w[k])
+    X = np.zeros((len(y), 2 + 2 * T))
+    X[rows, cols] = vals
+    y_, rw_ = np.array(y), np.sqrt(np.array(rw))
+    Xw, yw = X * rw_[:, None], y_ * rw_
+    # Ridge on the teams only (not on the average or home court)
+    pen = np.r_[0.0, 0.0, np.full(2 * T, RIDGE)]
+    beta = np.linalg.solve(Xw.T @ Xw + np.diag(pen), Xw.T @ yw)
+    avg, hc = float(beta[0]), float(beta[1])
+    att = {t: float(beta[2 + i]) for t, i in idx.items()}
+    dfn = {t: float(beta[2 + T + i]) for t, i in idx.items()}
+    played: Dict[str, float] = {}
+    for k, g in enumerate(games):
+        played[g.home] = played.get(g.home, 0.0) + w[k]
+        played[g.away] = played.get(g.away, 0.0) + w[k]
+    lg = League(name, avg, hc, att, dfn, played, dict(DEFAULT_SIGMA), n=len(games), as_of=as_of.isoformat())
+    lg.sigma, lg.h1_share, lg.q_shares = _spread(lg, games, w)
+    return lg
+
+
+def _wstd(x: List[float], w: List[float]) -> float:
+    x_, w_ = np.array(x), np.array(w)
+    return float(np.sqrt(np.sum(w_ * x_ ** 2) / np.sum(w_)))
+
+
+def _spread(lg: League, games: List[Game], w: np.ndarray) -> Tuple[Dict[str, float], float, Tuple]:
+    """How far the league's results land from our expectations (in-sample,
+    so widened a little: out of sample they land further)."""
+    dm, dt, dteam, ww = [], [], [], []
+    h1m, h1t, qm, qt, qw, shares, qsh = [], [], [], [], [], [], []
+    for k, g in enumerate(games):
+        eh, ea = lg.expect(g.home, g.away, g.neutral)
+        # Regulation only: overtime adds points a normal game doesn't have
+        rh, ra = (sum(p[0] for p in g.periods), sum(p[1] for p in g.periods)) if g.periods else (g.hs, g.as_)
+        if g.ot and not g.periods:
+            continue
+        dm.append((rh - ra) - (eh - ea))
+        dt.append((rh + ra) - (eh + ea))
+        dteam += [rh - eh, ra - ea]
+        ww.append(w[k])
+        if g.periods and len(g.periods) == 4:
+            first = g.periods[0][0] + g.periods[1][0], g.periods[0][1] + g.periods[1][1]
+            tot = rh + ra
+            if tot:
+                shares.append(sum(first) / tot)
+                qsh.append([(ph + pa) / tot for ph, pa in g.periods])
+            h1m.append((first[0] - first[1]) - 0.5 * (eh - ea))
+            h1t.append(sum(first) - 0.5 * (eh + ea))
+            for ph, pa in g.periods:
+                qm.append((ph - pa) - 0.25 * (eh - ea))
+                qt.append((ph + pa) - 0.25 * (eh + ea))
+            qw.append(w[k])
+    s = dict(DEFAULT_SIGMA)
+    if len(dm) >= 20:
+        widen = 1.04
+        s["margin"] = max(SIGMA_FLOOR["margin"], widen * _wstd(dm, ww))
+        s["total"] = max(SIGMA_FLOOR["total"], widen * _wstd(dt, ww))
+        s["team"] = max(SIGMA_FLOOR["team"], widen * _wstd(dteam, [x for x in ww for _ in (0, 1)]))
+        # Halves and quarters scale from the whole game where there are no quarter scores
+        s["h1_margin"], s["h1_total"] = s["margin"] * 0.70, s["total"] * 0.66
+        s["q_margin"], s["q_total"] = s["margin"] * 0.50, s["total"] * 0.45
+    if len(h1m) >= 20:
+        s["h1_margin"], s["h1_total"] = 1.04 * _wstd(h1m, qw), 1.04 * _wstd(h1t, qw)
+        s["q_margin"] = 1.04 * _wstd(qm, [x for x in qw for _ in range(4)])
+        s["q_total"] = 1.04 * _wstd(qt, [x for x in qw for _ in range(4)])
+    share = float(np.mean(shares)) if len(shares) >= 20 else 0.5
+    qs = tuple(float(x) for x in np.mean(np.array(qsh), axis=0)) if len(qsh) >= 20 else (0.25,) * 4
+    return s, share, qs
+
+
+# ── Probabilities for one match ────────────────────────────────────────────
+
+def _over(mean: float, sd: float, line: float) -> float:
+    """P(value > line) for a whole-number value around `mean` (continuity-corrected)."""
+    return 1.0 - _N.cdf((line + 0.5 - mean) / sd) if line == int(line) else 1.0 - _N.cdf((line - mean) / sd)
+
+
+@dataclass
+class Match:
+    """Expected points for each team (regulation) and the spreads around them."""
+    home_pts: float
+    away_pts: float
+    sigma: Dict[str, float]
+    h1_share: float = 0.5
+    source: str = "model"             # model | market | blend
+    detail: Dict[str, float] = field(default_factory=dict)
+    q_shares: Tuple[float, float, float, float] = (0.25, 0.25, 0.25, 0.25)
+
+    @property
+    def margin(self) -> float:
+        return self.home_pts - self.away_pts
+
+    @property
+    def total(self) -> float:
+        return self.home_pts + self.away_pts
+
+    def p_tie(self) -> float:
+        """Level at the end of regulation (so overtime)."""
+        sd = self.sigma["margin"]
+        return _N.cdf((0.5 - self.margin) / sd) - _N.cdf((-0.5 - self.margin) / sd)
+
+    def p_win(self, home: bool = True) -> float:
+        """Winner, overtime included (SportyBet's basketball "Winner")."""
+        sd = self.sigma["margin"]
+        p_reg = 1.0 - _N.cdf((0.5 - self.margin) / sd)
+        p_home = p_reg + self.p_tie() * OT_HOME
+        return p_home if home else 1.0 - p_home
+
+    def p_3way(self, side: str) -> float:
+        """Regulation result: "1", "X" or "2"."""
+        sd = self.sigma["margin"]
+        if side == "X":
+            return self.p_tie()
+        p1 = 1.0 - _N.cdf((0.5 - self.margin) / sd)
+        return p1 if side == "1" else 1.0 - p1 - self.p_tie()
+
+    def p_handicap(self, home: bool, line: float) -> float:
+        """The team's points + line beat the other's (a half-point line: no push).
+        Overtime counts, as on SportyBet: it barely moves a margin."""
+        m = self.margin if home else -self.margin
+        return _over(m, self.sigma["margin"], -line)
+
+    def p_total(self, line: float, over: bool = True) -> float:
+        p = _over(self.total, self.sigma["total"], line)
+        return p if over else 1.0 - p
+
+    def p_team_total(self, home: bool, line: float, over: bool = True) -> float:
+        p = _over(self.home_pts if home else self.away_pts, self.sigma["team"], line)
+        return p if over else 1.0 - p
+
+    def p_half(self, kind: str, line: float = 0.0, home: bool = True, over: bool = True) -> float:
+        """First half: "handicap" (line for the side) or "total"."""
+        if kind == "total":
+            p = _over(self.h1_share * self.total, self.sigma["h1_total"], line)
+            return p if over else 1.0 - p
+        m = self.h1_share * self.margin * (1 if home else -1)
+        return _over(m, self.sigma["h1_margin"], -line)
+
+    def p_half_3way(self, side: str) -> float:
+        return self.period("h1").p_3way(side)
+
+    # ── Any part of the game: "full" (regulation), "h1", "h2", "q1".."q4" ──
+
+    def period(self, part: str) -> "Part":
+        if part == "full":
+            return Part(self.home_pts, self.away_pts, self.sigma["margin"], self.sigma["total"], self.sigma["team"])
+        if part in ("h1", "h2"):
+            share = self.h1_share if part == "h1" else 1.0 - self.h1_share
+            sm, st = self.sigma["h1_margin"], self.sigma["h1_total"]
+        else:
+            share = self.q_shares[int(part[1]) - 1]
+            sm, st = self.sigma["q_margin"], self.sigma["q_total"]
+        # One team's points in a part: spread from the part's total, as for the game
+        team = self.sigma["team"] * st / self.sigma["total"]
+        return Part(self.home_pts * share, self.away_pts * share, sm, st, team)
+
+    # ── Overtime included (SportyBet's full-game winner, handicap and totals) ──
+
+    def _ot_margin_sd(self) -> float:
+        return self.sigma["margin"] * OT_SHARE ** 0.5
+
+    def p_handicap_ot(self, home: bool, line: float) -> float:
+        """Handicap with overtime counted: a regulation tie is decided by the
+        overtime margin (even, with its own small spread)."""
+        m = self.margin if home else -self.margin
+        sd = self.sigma["margin"]
+        p = _over(m, sd, -line)              # regulation margin + line > 0
+        tie = self.p_tie()
+        if line > 0:                         # a tie counted as a win here: overtime decides it
+            p -= tie
+        p += tie * (1.0 - _N.cdf(-line / self._ot_margin_sd()))
+        return min(1.0, max(0.0, p))
+
+    def _mixture(self, mean: float, sd: float, line: float, extra: float) -> float:
+        tie = self.p_tie()
+        return (1 - tie) * _over(mean, sd, line) + tie * _over(mean + extra, sd, line)
+
+    def p_total_ot(self, line: float, over: bool = True) -> float:
+        p = self._mixture(self.total, self.sigma["total"], line, OT_SHARE * self.total)
+        return p if over else 1.0 - p
+
+    def p_team_total_ot(self, home: bool, line: float, over: bool = True) -> float:
+        pts = self.home_pts if home else self.away_pts
+        p = self._mixture(pts, self.sigma["team"], line, OT_SHARE * self.total / 2)
+        return p if over else 1.0 - p
+
+
+@dataclass
+class Part:
+    """Expected points in one part of a game (regulation, a half, a quarter)."""
+    home: float
+    away: float
+    sd_margin: float
+    sd_total: float
+    sd_team: float
+
+    def p_3way(self, side: str) -> float:
+        m, sd = self.home - self.away, self.sd_margin
+        tie = _N.cdf((0.5 - m) / sd) - _N.cdf((-0.5 - m) / sd)
+        if side == "X":
+            return tie
+        p1 = 1.0 - _N.cdf((0.5 - m) / sd)
+        return p1 if side == "1" else max(0.0, 1.0 - p1 - tie)
+
+    def p_handicap(self, home: bool, line: float) -> float:
+        m = (self.home - self.away) * (1 if home else -1)
+        return _over(m, self.sd_margin, -line)
+
+    def p_total(self, line: float, over: bool = True) -> float:
+        p = _over(self.home + self.away, self.sd_total, line)
+        return p if over else 1.0 - p
+
+    def p_team_total(self, home: bool, line: float, over: bool = True) -> float:
+        p = _over(self.home if home else self.away, self.sd_team, line)
+        return p if over else 1.0 - p
+
+
+def expect(lg: League, home: str, away: str, neutral: bool = False) -> Optional[Match]:
+    """Our expectation for a match, or None when either team is unknown."""
+    if not (lg.known(home) and lg.known(away)):
+        return None
+    h, a = lg.expect(home, away, neutral)
+    return Match(h, a, dict(lg.sigma), lg.h1_share, "model",
+                 {"games_home": round(lg.games.get(home, 0), 1), "games_away": round(lg.games.get(away, 0), 1)},
+                 tuple(lg.q_shares))
+
+
+# ── The market's expectation, from SportyBet prices ───────────────────────
+
+def _fair(odds: List[float]) -> List[float]:
+    inv = [1 / o for o in odds]
+    return [x / sum(inv) for x in inv]
+
+
+def market_margin(sigma: float, winner: Optional[Tuple[float, float]] = None,
+                  handicap: Optional[Tuple[float, float, float]] = None) -> Optional[float]:
+    """The margin the market expects: from the main handicap (line for the
+    home side, home odds, away odds) if there is one, else the winner prices."""
+    if handicap:
+        line, oh, oa = handicap
+        p = min(0.98, max(0.02, _fair([oh, oa])[0]))
+        # P(margin + line > 0) = p  =>  margin mean = -line + sigma * z(p)
+        return -line + sigma * _N.inv_cdf(p)
+    if winner:
+        p = min(0.98, max(0.02, _fair(list(winner))[0]))
+        return sigma * _N.inv_cdf(p)
+    return None
+
+
+def market_total(sigma: float, total: Optional[Tuple[float, float, float]]) -> Optional[float]:
+    """The total the market expects, from the main total (line, over odds, under odds)."""
+    if not total:
+        return None
+    line, oo, ou = total
+    p = min(0.98, max(0.02, _fair([oo, ou])[0]))
+    return line + sigma * _N.inv_cdf(p)
+
+
+def blend(ours: Optional[Match], sigma: Dict[str, float], margin: Optional[float], total: Optional[float],
+          model_weight: float, h1_share: float = 0.5,
+          q_shares: Tuple[float, float, float, float] = (0.25,) * 4) -> Optional[Match]:
+    """Our expectation mixed with the market's (weight on ours), or the
+    market's alone where we have none, or ours alone where it has none."""
+    if margin is None and total is None:
+        return ours
+    if ours is None:
+        if margin is None or total is None:
+            return None
+        return Match((total + margin) / 2, (total - margin) / 2, dict(sigma), h1_share, "market",
+                     {"market_margin": round(margin, 2), "market_total": round(total, 2)}, tuple(q_shares))
+    w = model_weight
+    m = ours.margin if margin is None else w * ours.margin + (1 - w) * margin
+    t = ours.total if total is None else w * ours.total + (1 - w) * total
+    return Match((t + m) / 2, (t - m) / 2, ours.sigma, ours.h1_share, "blend",
+                 {**ours.detail, "model_margin": round(ours.margin, 2), "model_total": round(ours.total, 2),
+                  **({"market_margin": round(margin, 2)} if margin is not None else {}),
+                  **({"market_total": round(total, 2)} if total is not None else {}), "model_weight": w},
+                 ours.q_shares)
+
+
+def log_loss(p: float, hit: bool) -> float:
+    p = min(1 - 1e-6, max(1e-6, p))
+    return -log(p if hit else 1 - p)
