@@ -178,6 +178,12 @@ def run(results: List[Dict], min_games: int = MIN_GAMES) -> Dict:
                   f"x{got['sigma_scale']['total']} total; 80-90%: "
                   + ", ".join(f"{m} {r['came_in']:.0%} of {r['n']}" for m, rows in got["calibration"].items()
                               for r in rows if r["bucket"] == "80-90%"))
+            c = got.get("constants")
+            if c:
+                print(f"    constants ({c['n']} games with quarters): overtime x{c['tie_factor']} "
+                      f"(ties {c['ties'][0]} seen vs {c['ties'][1]} from the spread alone), "
+                      f"margin shares H1 {c['margin_shares'][0]:.2f} Q {' '.join(f'{x:.2f}' for x in c['margin_shares'][1:])}, "
+                      f"points shares Q {' '.join(f'{x:.3f}' for x in c['q_shares'])}")
     # Overall, weighting each league by its tested games
     rows: Dict[str, Dict] = {}
     for lg in report["leagues"].values():
