@@ -5,6 +5,7 @@ import clsx from "clsx";
 import { Info, Loader2, X } from "lucide-react";
 import { CompetitionBadge } from "./CompetitionBadge";
 import { Crest, LineRow, leagueTitle } from "./BasketballCard";
+import { BasketballFacts } from "./BasketballFacts";
 import { kickoff } from "@/lib/matchTime";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
 import { FAMILIES, MODEL_NOTE, type BasketballPrediction } from "@/lib/basketball";
@@ -18,6 +19,8 @@ export function BasketballModal({ p, onClose }: { p: BasketballPrediction; onClo
   const [error, setError] = useState(false);
   const [family, setFamily] = useState<string>("all");
   const [minPct, setMinPct] = useState(70);
+  // Form, averages and head to head (like football's match page), or every line
+  const [view, setView] = useState<"form" | "lines">("form");
 
   useEffect(() => {
     authFetch(`${API}/api/basketball/match?event=${encodeURIComponent(p.sportybet_event_id)}`)
@@ -75,6 +78,20 @@ export function BasketballModal({ p, onClose }: { p: BasketballPrediction; onClo
           </p>
         </div>
 
+        <div role="tablist" aria-label="Match view" className="flex gap-6 px-5 sm:px-6 border-b border-n-800">
+          {([["form", "Form & stats"], ["lines", "All lines"]] as const).map(([id, label]) => (
+            <button key={id} role="tab" aria-selected={view === id} onClick={() => setView(id)}
+              className={clsx("relative py-3 font-display font-bold text-[15px] uppercase tracking-[0.06em] transition-colors",
+                view === id ? "text-n-0" : "text-n-500 hover:text-n-300")}>
+              {label}
+              {view === id && <span className="absolute left-0 right-0 -bottom-px h-[2px] bg-accent rounded-full" />}
+            </button>
+          ))}
+        </div>
+
+        {view === "form" ? (
+          <div className="p-5"><BasketballFacts p={d} /></div>
+        ) : (
         <div className="p-5 space-y-4">
           <div className="flex gap-1.5 overflow-x-auto [scrollbar-width:none] -mx-1 px-1">
             {[{ id: "all", name: "All" }, ...present].map(f => (
@@ -120,6 +137,7 @@ export function BasketballModal({ p, onClose }: { p: BasketballPrediction; onClo
             Tap a line to add it to your slip; it books on SportyBet as it is. 18+ · Bet responsibly.
           </p>
         </div>
+        )}
       </div>
     </div>
   );

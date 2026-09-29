@@ -29,6 +29,18 @@ export function Crest({ src, name, size = 30 }: { src?: string | null; name: str
   );
 }
 
+/** A team's last results, oldest to newest: small W/L marks under its name. */
+function FormDots({ form }: { form: string }) {
+  return (
+    <span className="mt-1 flex gap-[3px]" title={`Last ${form.length}: ${form.split("").join(" ")} (oldest to newest)`}>
+      {form.split("").map((r, i) => (
+        <span key={i} className={clsx("w-[14px] h-[14px] rounded-[3px] text-[9px] font-bold leading-[14px] text-center",
+          r === "W" ? "bg-brand-400 text-ink" : "bg-rose-500 text-white")}>{r}</span>
+      ))}
+    </span>
+  );
+}
+
 /** One line: our chance, SportyBet's price, and a tap to add it to the slip. */
 export function LineRow({ p, l, compact = false }: { p: BasketballPrediction; l: BBLine; compact?: boolean }) {
   const { items, toggle } = useBetSlip();
@@ -75,11 +87,14 @@ export function BasketballCard({ p, onOpen }: { p: BasketballPrediction; onOpen:
 
       <div className="flex-1 flex flex-col px-4 pt-3.5 pb-4 gap-3">
         <div className="space-y-2.5">
-          {[{ name: p.home, logo: p.home_logo, prob: p.p_home, odds: p.odds_home, pts: p.exp_home_pts, fav: homeFav },
-            { name: p.away, logo: p.away_logo, prob: p.p_away, odds: p.odds_away, pts: p.exp_away_pts, fav: !homeFav }].map(t => (
+          {[{ name: p.home, logo: p.home_logo, prob: p.p_home, odds: p.odds_home, pts: p.exp_home_pts, fav: homeFav, form: p.home_form },
+            { name: p.away, logo: p.away_logo, prob: p.p_away, odds: p.odds_away, pts: p.exp_away_pts, fav: !homeFav, form: p.away_form }].map(t => (
             <div key={t.name} className="flex items-center gap-3 min-w-0">
               <Crest src={t.logo} name={t.name} />
-              <span className={clsx("flex-1 truncate text-[15px]", t.fav ? "font-bold text-n-0" : "font-semibold text-n-400")}>{t.name}</span>
+              <span className="flex-1 min-w-0">
+                <span className={clsx("block truncate text-[15px] leading-tight", t.fav ? "font-bold text-n-0" : "font-semibold text-n-400")}>{t.name}</span>
+                {t.form && <FormDots form={t.form} />}
+              </span>
               {t.odds ? <span className="font-mono text-[11px] text-n-500 shrink-0" title="SportyBet's price">{t.odds.toFixed(2)}</span> : null}
               <span className={clsx("font-display font-extrabold text-[26px] leading-none w-[3rem] text-right shrink-0 tnum",
                 t.fav ? "text-n-0" : "text-n-500")}>

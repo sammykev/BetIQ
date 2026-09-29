@@ -34,6 +34,8 @@ export interface BasketballPrediction {
   top_lines?: BBLine[];   // the list: its likeliest lines
   lines?: number;         // how many lines were priced
   bb_markets?: BBLine[];  // one match (/api/basketball/match): every line
+  /** Each team's last 5, oldest to newest ("WWLWL") */
+  home_form?: string; away_form?: string;
 }
 
 export const FAMILIES: { id: string; name: string }[] = [
@@ -99,6 +101,33 @@ export async function fetchBBStrip(f: Fetcher, signal?: AbortSignal): Promise<BB
 
 export async function fetchBBMatchday(f: Fetcher, date: string, signal?: AbortSignal): Promise<BBMatchdayResponse> {
   const r = await f(`${API_URL}/api/basketball/matchday?date=${encodeURIComponent(date)}`, { signal });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+
+// ── Match facts (backend basketball_facts.py): form, head to head, averages ──
+export interface BBFormRow { date: string; opponent: string; venue: "H" | "A"; for: number; against: number;
+  outcome: "W" | "L"; ot: boolean; comp: string }
+export interface BBMeeting { date: string; home: string; away: string; hs: number; as: number; ot: boolean; comp: string }
+export interface BBAverages {
+  played: number;
+  points: { for: number | null; against: number | null; total: number | null; margin: number | null };
+  results: { won: number; lost: number };
+  overtime: number;
+  home_points: number | null; away_points: number | null;
+  halves: { first_for: number | null; first_against: number | null; second_for: number | null; second_against: number | null; matches: number };
+  quarters: { for: (number | null)[]; against: (number | null)[]; matches: number };
+  over_line: { line: number; rate: number } | null;
+  cover: { line: number; rate: number } | null;
+}
+export interface BBFacts {
+  home: BBFormRow[]; away: BBFormRow[]; h2h: BBMeeting[];
+  summary: { h2h: { won: number; lost: number; avg_total: number; avg_margin: number } | null };
+  averages: { n: number; home: BBAverages | null; away: BBAverages | null };
+}
+
+export async function fetchBBFacts(f: Fetcher, event: string, signal?: AbortSignal): Promise<BBFacts> {
+  const r = await f(`${API_URL}/api/basketball/facts?event=${encodeURIComponent(event)}`, { signal });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 }

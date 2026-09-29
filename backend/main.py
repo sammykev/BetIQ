@@ -5067,6 +5067,25 @@ async def _bb_collect() -> Dict[str, Any]:
     return {"days": fetched, "games": games, "failed": failed}
 
 
+_bb_team_games: Dict[str, List] = {}      # basketball_facts index: team -> its games, newest first
+
+
+def _bb_index_set(results: List[Dict]) -> None:
+    import basketball_facts as bf
+    idx = bf.build_index(results)
+    _bb_team_games.clear()
+    _bb_team_games.update(idx)
+
+
+async def _bb_index() -> Dict[str, List]:
+    """The team index; built from the stored results the first time it's asked for."""
+    if not _bb_team_games:
+        r = _get_redis()
+        if r:
+            await asyncio.to_thread(lambda: _bb_index_set(_bb_results(r)))
+    return _bb_team_games
+
+
 def _bb_fit_sync() -> Dict[str, Any]:
     import basketball_data as bd
     r = _get_redis()
@@ -5078,6 +5097,7 @@ def _bb_fit_sync() -> Dict[str, Any]:
     leagues = bd.fit_all(results, backtest=backtest)
     _bb_leagues.clear()
     _bb_leagues.update(leagues)
+    _bb_index_set(results)
     if r and leagues:
         r.set(BB_MODEL_KEY, bd.encode([lg.to_json() for lg in leagues.values()]))
     return {"games": len(results), "leagues": len(leagues),
@@ -5120,7 +5140,12 @@ def _bb_slim(p: Dict) -> Dict:
     lines = p.get("bb_markets") or []
     useful = [x for x in lines if x["odds"] >= 1.15 and x["market"] != "bb_overtime"]
     top = sorted(useful, key=lambda x: -x["prob"])[:BB_SLIM_LINES]
-    return {**{k: v for k, v in p.items() if k != "bb_markets"}, "top_lines": top, "lines": len(lines)}
+    out = {**{k: v for k, v in p.items() if k != "bb_markets"}, "top_lines": top, "lines": len(lines)}
+    if _bb_team_games:
+        import basketball_facts as bf
+        out["home_form"] = bf.form_string(_bb_team_games, p["home"])
+        out["away_form"] = bf.form_string(_bb_team_games, p["away"])
+    return out
 
 
 async def _bb_refresh() -> List[Dict]:
@@ -5133,6 +5158,10 @@ async def _bb_refresh() -> List[Dict]:
         print(f"[Basketball] listing failed: {e}")
         events, report = [], [str(e)]
     preds = await asyncio.to_thread(bp.build, events, dict(_bb_leagues))
+    try:
+        await _bb_index()          # each team's recent games, for the form on the list
+    except Exception as e:
+        print(f"[Basketball] couldn't index teams: {e}")
     try:
         props = await _bb_add_props(preds)
     except Exception as e:
@@ -5175,6 +5204,19 @@ async def get_basketball_match(request: Request, event: str = Query(..., max_len
     if not p:
         raise HTTPException(status_code=404, detail="Match not found")
     return p
+
+
+@app.get("/api/basketball/facts")
+async def get_basketball_facts(request: Request, event: str = Query(..., max_length=40)):
+    """One match's form: each team's last 5, their meetings, and each team's
+    averages over its last 10 (basketball_facts.py), like football's match page."""
+    import basketball_facts as bf
+    await _check_sport_access(request, "basketball")
+    p = next((x for x in _bb_predictions if x.get("sportybet_event_id") == event), None)
+    if not p:
+        raise HTTPException(status_code=404, detail="Match not found")
+    idx = await _bb_index()
+    return bf.facts(idx, p)
 
 
 # ── Basketball match days (basketball_matchday.py): the date strip, live, history ──
