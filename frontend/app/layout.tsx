@@ -7,6 +7,7 @@ import { themeInitScript } from "@/lib/theme";
 import { ThemeSync } from "@/components/ThemeToggle";
 import { BetSlipProvider } from "@/lib/useBetSlip";
 import { TrafficBeacon } from "@/components/TrafficBeacon";
+import { MotionProvider } from "@/components/ui/motion-provider";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -108,7 +109,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <body className="antialiased">
           <ThemeSync />
           <TrafficBeacon />
-          <BetSlipProvider>{children}</BetSlipProvider>
+          <MotionProvider>
+            <BetSlipProvider>{children}</BetSlipProvider>
+          </MotionProvider>
           <Script id="sw-register" strategy="afterInteractive">{`
             if ('serviceWorker' in navigator) {
               navigator.serviceWorker.register('/sw.js');

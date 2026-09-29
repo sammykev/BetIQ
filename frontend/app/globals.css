@@ -35,9 +35,13 @@
   --chart-1: 77 124 15;   /* #4d7c0f */
   --chart-2: 3 105 161;   /* #0369a1 */
 
-  --shadow-card: 0 1px 2px 0 rgb(15 23 41 / 0.05), 0 1px 3px -1px rgb(15 23 41 / 0.08);
-  --shadow-card-hover: 0 4px 8px -2px rgb(15 23 41 / 0.08), 0 16px 32px -12px rgb(15 23 41 / 0.18);
-  --shadow-pop: 0 24px 64px -16px rgb(15 23 41 / 0.3), 0 0 0 1px rgb(15 23 41 / 0.06);
+  /* Depth from light, not lines (better-ui): a 1px ring, lift, ambient */
+  --shadow-card: 0 0 0 1px oklch(0 0 0 / 0.06), 0 1px 2px -1px oklch(0 0 0 / 0.06), 0 2px 4px 0 oklch(0 0 0 / 0.04);
+  --shadow-card-hover: 0 0 0 1px oklch(0 0 0 / 0.08), 0 1px 2px -1px oklch(0 0 0 / 0.08), 0 8px 24px -8px oklch(0 0 0 / 0.12);
+  --shadow-pop: 0 0 0 1px oklch(0 0 0 / 0.06), 0 24px 64px -16px rgb(15 23 41 / 0.3);
+  --ring-control: 0 0 0 1px oklch(0 0 0 / 0.08);
+  --ring-control-hover: 0 0 0 1px oklch(0 0 0 / 0.14);
+  --img-outline: oklch(0 0 0 / 0.1);
   --shimmer: rgb(255 255 255 / 0.7);
   --floodlight: rgb(132 204 22 / 0.08);
   --scrollbar: 199 207 221;
@@ -70,9 +74,13 @@ html.dark {
   --chart-1: 101 163 13;  /* #65a30d */
   --chart-2: 57 135 229;  /* #3987e5 */
 
-  --shadow-card: inset 0 1px 0 0 rgb(255 255 255 / 0.03), 0 1px 2px 0 rgb(0 0 0 / 0.4);
-  --shadow-card-hover: inset 0 1px 0 0 rgb(255 255 255 / 0.05), 0 12px 32px -12px rgb(0 0 0 / 0.7);
-  --shadow-pop: 0 24px 64px -16px rgb(0 0 0 / 0.8), 0 0 0 1px rgb(255 255 255 / 0.04);
+  /* Dark: one white ring (layered depth shadows vanish on dark) */
+  --shadow-card: 0 0 0 1px oklch(1 0 0 / 0.08);
+  --shadow-card-hover: 0 0 0 1px oklch(1 0 0 / 0.13), 0 12px 32px -12px rgb(0 0 0 / 0.6);
+  --shadow-pop: 0 0 0 1px oklch(1 0 0 / 0.1), 0 24px 64px -16px rgb(0 0 0 / 0.8);
+  --ring-control: 0 0 0 1px oklch(1 0 0 / 0.08);
+  --ring-control-hover: 0 0 0 1px oklch(1 0 0 / 0.16);
+  --img-outline: oklch(1 0 0 / 0.1);
   --shimmer: rgb(255 255 255 / 0.06);
   --floodlight: rgb(184 245 61 / 0.06);
   --scrollbar: 39 51 75;
@@ -89,6 +97,7 @@ body {
     Roboto, sans-serif;
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
   /* A faint floodlight at the top of every page — depth without a busy background */
   background-image: radial-gradient(
@@ -146,41 +155,63 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: rgb(var(--n-600));
 }
+/* Horizontal rows (tabs, date strips) that scroll without a bar */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
 
 @layer components {
-  /* Standard elevated card surface */
+  /* Elevated surface: a shadow ring, no border (better-ui) */
   .card {
-    @apply bg-surface border border-n-800 rounded-2xl shadow-card;
+    @apply bg-surface rounded-2xl shadow-card;
   }
 
-  /* Interactive card */
+  /* Interactive card: the ring brightens and lifts; a light press */
   .card-interactive {
-    @apply card transition-all duration-200 hover:shadow-card-hover hover:-translate-y-0.5 hover:border-n-700 hover:bg-surface-raised cursor-pointer active:translate-y-0 active:shadow-card;
+    @apply card cursor-pointer hover:shadow-card-hover hover:bg-surface-raised active:scale-[0.99];
+    transition-property: box-shadow, background-color, scale, transform;
+    transition-duration: 150ms;
+    transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
   }
 
-  /* Filter chip — squared-off like a sportsbook market button */
+  /* Filter chip: a pill with a ring; filled lime when chosen */
   .chip {
-    @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-semibold border transition-all whitespace-nowrap;
+    @apply inline-flex items-center gap-1.5 px-3 py-1.5 min-h-[34px] rounded-full text-[13px] font-medium whitespace-nowrap active:scale-[0.96];
+    transition-property: color, background-color, box-shadow, scale, transform;
+    transition-duration: 150ms;
+    transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
   }
   .chip-active {
-    @apply bg-brand-400 text-ink border-brand-400;
+    @apply bg-brand-400 text-ink font-semibold;
+    box-shadow: 0 0 0 1px rgb(184 245 61);
   }
   .chip-idle {
-    @apply bg-surface text-n-300 border-n-800 hover:border-n-700 hover:text-n-0;
+    @apply bg-surface text-n-300 hover:text-n-0;
+    box-shadow: var(--ring-control);
+  }
+  .chip-idle:hover {
+    box-shadow: var(--ring-control-hover);
   }
 
-  /* Small uppercase label above a value ("BEST PICK", "CONFIDENCE") */
+  /* Small label above a value ("Best pick", "Confidence") */
   .eyebrow {
     @apply text-[11px] font-semibold uppercase tracking-[0.08em] text-n-400;
   }
 
-  /* Condensed scoreboard headline */
+  /* Scoreboard numbers and short tags: the condensed face */
   .display {
-    @apply font-display font-extrabold uppercase leading-[0.95] tracking-[0.01em];
+    @apply font-display font-bold uppercase leading-[0.95] tracking-[0.01em];
   }
 
-  /* Loading placeholder — a soft shimmer sweep reads more "premium"
-     than a flat pulse and signals content is coming, not broken. */
+  /* Headings: the body face, sentence case, tight (the calmer voice) */
+  .heading {
+    @apply font-sans font-semibold text-n-0 leading-[1.1] tracking-[-0.02em] text-balance;
+  }
+
+  /* Loading placeholder: a soft shimmer sweep */
   .skeleton {
     @apply relative overflow-hidden bg-n-800/70 rounded-full;
   }
@@ -189,22 +220,40 @@ body {
     position: absolute;
     inset: 0;
     transform: translateX(-100%);
-    background: linear-gradient(
-      90deg,
-      transparent,
-      var(--shimmer),
-      transparent
-    );
+    background: linear-gradient(90deg, transparent, var(--shimmer), transparent);
     animation: shimmer 1.6s ease-in-out infinite;
   }
 
-  /* Primary / secondary buttons */
+  /* Buttons: one filled lime action per view; a tactile 0.96 press */
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 bg-brand-400 hover:bg-brand-300 text-ink font-bold rounded-xl px-5 py-2.5 text-sm transition-all hover:shadow-glow active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none;
+    @apply inline-flex items-center justify-center gap-2 bg-brand-400 hover:bg-brand-300 text-ink font-semibold rounded-xl px-5 py-2.5 min-h-[40px] text-sm active:scale-[0.96] disabled:opacity-50 disabled:pointer-events-none;
+    transition-property: background-color, box-shadow, scale, transform;
+    transition-duration: 150ms;
+    transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
   }
   .btn-secondary {
-    @apply inline-flex items-center justify-center gap-2 bg-surface hover:bg-n-800 text-n-200 hover:text-n-0 font-semibold rounded-xl px-4 py-2 text-sm border border-n-800 hover:border-n-700 transition-all active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none;
+    @apply inline-flex items-center justify-center gap-2 bg-surface hover:bg-surface-raised text-n-200 hover:text-n-0 font-medium rounded-xl px-4 py-2 min-h-[40px] text-sm active:scale-[0.96] disabled:opacity-50 disabled:pointer-events-none;
+    box-shadow: var(--ring-control);
+    transition-property: color, background-color, box-shadow, scale, transform;
+    transition-duration: 150ms;
+    transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
   }
+  .btn-secondary:hover {
+    box-shadow: var(--ring-control-hover);
+  }
+
+  /* Images and crests: a neutral hairline for depth */
+  .img-outline {
+    outline: 1px solid var(--img-outline);
+    outline-offset: -1px;
+  }
+}
+
+/* A theme flip changes every colour at once: no transitions for that frame */
+html.theme-switching *,
+html.theme-switching *::before,
+html.theme-switching *::after {
+  transition: none !important;
 }
 
 @keyframes shimmer {
