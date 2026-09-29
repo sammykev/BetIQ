@@ -65,6 +65,49 @@ function BasketballData() {
   );
 }
 
+const PROP_STATS: Record<string, string> = { pts: "Points", reb: "Rebounds", ast: "Assists", tpm: "3-pointers" };
+
+/** Player props: box scores loaded, and the walk-forward check (said vs came in). */
+function PlayerProps() {
+  const { get, post, flash } = useAdmin();
+  const [st, setSt] = useState<any>(null);
+  useEffect(() => { get("/api/props/status").then(d => setSt(d ?? { error: true })); }, [get]);
+  if (!st) return <Skeleton rows={3} />;
+  if (st.error) return <p className="text-xs text-n-400">Couldn&apos;t load player props&apos; status.</p>;
+  const check = st.check;
+  const row = (rows: any[]) => (rows ?? []).filter((r: any) => r.n >= 30)
+    .map((r: any) => `${r.bucket}: ${Math.round(r.came_in * 100)}% of ${num(r.n)}`).join(" · ");
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-1.5">
+        {Object.entries(st.players ?? {}).map(([k, n]) => <Pill key={k}>{k.replace(/^bb:|^fb:/, "")} · {num(n as number)} players</Pill>)}
+        {!Object.keys(st.players ?? {}).length && <p className="text-xs text-n-400">No box scores yet: the nightly collection fills them in.</p>}
+      </div>
+      {check ? (
+        <div className="space-y-2 text-xs text-n-400 tnum">
+          <p className="text-n-500">Walk-forward check {ago(check.at)}: each game priced from the player&apos;s earlier games only.</p>
+          {Object.entries(check.bb ?? {}).map(([lg, v]: [string, any]) => (
+            <div key={lg}>
+              <p className="font-semibold text-n-200">{lg} · {num(v.players)} players</p>
+              {Object.entries(v.calibration ?? {}).map(([stat, rows]: [string, any]) => (
+                <p key={stat}>{PROP_STATS[stat] ?? stat}: {row(rows)}</p>
+              ))}
+            </div>
+          ))}
+          {Object.entries(check.fb ?? {}).map(([lg, v]: [string, any]) => (
+            <p key={lg}><span className="font-semibold text-n-200">{lg} goalscorers</span> · scale ×{v.scale} · {row(v.calibration)}</p>
+          ))}
+        </div>
+      ) : <p className="text-xs text-n-400">The walk-forward check runs after each night&apos;s collection.</p>}
+      <div className="flex flex-wrap gap-2">
+        <Btn onClick={async () => { await post("/api/admin/jobs/props_load/run"); flash("ok", "Loading box scores…"); }}>Load box scores now</Btn>
+        <Btn onClick={async () => { await post("/api/admin/jobs/fb_props/run"); flash("ok", "Pricing goalscorers…"); }}>Price goalscorers</Btn>
+      </div>
+      <p className="text-[11px] text-n-500">{num(st.football_matches_priced ?? 0)} football matches with goalscorers priced.</p>
+    </div>
+  );
+}
+
 /** One row per stat: used or not, and its score against the average (lower is better). */
 function StatChecks({ scores, use }: { scores: Record<string, any>; use: Record<string, boolean> }) {
   return (
@@ -761,6 +804,11 @@ export function PredictionsSection() {
       <Card title="Basketball data" icon={<Database size={15} />}
         subtitle="SportyBet's results for every league, each league's team ratings, and every line priced">
         <BasketballData />
+      </Card>
+
+      <Card title="Player props" icon={<Star size={15} />}
+        subtitle="Box scores (ESPN, EuroLeague, Understat), the walk-forward check, and SportyBet's player lines priced">
+        <PlayerProps />
       </Card>
 
       <Card title="International corners & cards" icon={<Globe2 size={15} />}

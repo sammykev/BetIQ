@@ -42,7 +42,9 @@ export function LineRow({ p, l, compact = false }: { p: BasketballPrediction; l:
       aria-pressed={inSlip} aria-label={`${inSlip ? "Remove" : "Add"} ${l.label} ${inSlip ? "from" : "to"} the slip`}>
       <span className="min-w-0 flex-1">
         <span className={clsx("block font-semibold text-n-0", compact ? "text-[13px] truncate" : "text-sm line-clamp-2")}>{l.label}</span>
-        {!compact && <span className="block text-[11px] text-n-500 truncate">{l.market_name}</span>}
+        {!compact && <span className="block text-[11px] text-n-500 truncate">
+          {l.market_name}{l.expected != null ? ` · expected ${l.expected} in ~${Math.round(l.minutes ?? 0)} min` : ""}
+        </span>}
       </span>
       <span className="tnum font-display font-extrabold text-accent text-[15px] shrink-0">{Math.round(l.prob * 100)}%</span>
       <span className="tnum font-mono text-[12px] text-n-300 w-10 text-right shrink-0">{l.odds.toFixed(2)}</span>

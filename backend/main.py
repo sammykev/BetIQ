@@ -5319,6 +5319,14 @@ async def _fb_props_refresh() -> Dict[str, int]:
     return {"matches": len(priced), "players": sum(len(v) for v in priced.values())}
 
 
+@app.get("/api/props/status")
+async def get_props_status(_admin: str = Depends(require_admin)):
+    """Admin: players loaded per league, and the walk-forward check's numbers."""
+    return {"players": {f"{s}:{l}": len(v) for (s, l), v in _props_players.items()},
+            "check": _props_calib or None,
+            "football_matches_priced": len(_props_fb)}
+
+
 @app.get("/api/props/football")
 async def get_football_props(home: str = Query(..., max_length=80), away: str = Query(..., max_length=80),
                              date_: str = Query("", alias="date", max_length=10)):

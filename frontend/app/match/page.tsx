@@ -14,6 +14,7 @@ import { bookableOnSportybet, isSelected } from "@/lib/slip";
 import { fetchMatchday, matchKey, type MatchdayMatch } from "@/lib/matchday";
 import { StatusCell } from "@/components/MatchdayList";
 import { LiveStats } from "@/components/LiveStats";
+import { Goalscorers } from "@/components/Goalscorers";
 import { Locked, Unavailable } from "@/components/FeatureGate";
 import { useAccess } from "@/lib/access";
 
@@ -798,6 +799,7 @@ function MatchContent() {
 
           <div className="space-y-4 lg:order-1 min-w-0">
             <AIExplanation explanation={explanation} />
+            <Goalscorers home={home} away={away} date={matchDate} time={prediction?.time} league={prediction?.league_name} />
             <MatchFactsPanels facts={facts} home={home} away={away} />
 
             {analysis.web_adjustment_reason && (

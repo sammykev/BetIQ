@@ -14,6 +14,8 @@ export interface BBLine {
   odds: number;           // SportyBet's price
   edge: number;           // prob × odds − 1
   sb: { eventId: string; marketId: string; specifier: string; outcomeId: string };
+  /** Player props: his expected count tonight, minutes and games behind it */
+  player?: string; expected?: number; minutes?: number; games?: number;
 }
 
 export interface BasketballPrediction {
@@ -36,6 +38,7 @@ export interface BasketballPrediction {
 
 export const FAMILIES: { id: string; name: string }[] = [
   { id: "bb_winner", name: "Winner" },
+  { id: "bb_player", name: "Player props" },
   { id: "bb_handicap", name: "Handicap" },
   { id: "bb_total", name: "Total points" },
   { id: "bb_team_total", name: "Team points" },

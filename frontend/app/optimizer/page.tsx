@@ -73,6 +73,7 @@ const MARKETS: { id: string; label: string; ids: string[]; needs?: string[] }[] 
   { id: "clean_sheet", label: "Clean sheet / to nil", ids: ["clean_sheet", "win_to_nil"],
     needs: ["clean_sheet:H", "clean_sheet:A", "win_to_nil:H", "win_to_nil:A"] },
   { id: "handicap", label: "Handicap", ids: ["handicap"], needs: ["handicap"] },
+  { id: "scorer", label: "Anytime goalscorer", ids: ["anytime_scorer"] },
   { id: "corners", label: "Corners", ids: ["corners_ou"], needs: ["corners_ou"] },
   { id: "team_corners", label: "Team corners", ids: ["home_corners_ou", "away_corners_ou", "corners_1x2"],
     needs: ["home_corners_ou", "away_corners_ou", "corners_1x2"] },
