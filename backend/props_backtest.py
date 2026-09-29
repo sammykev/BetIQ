@@ -32,7 +32,7 @@ WINDOW = 60          # a player's latest games used to project the next (as the 
 
 
 def bb_check(players: Dict[str, Dict], dispersion: Dict[str, float]) -> Tuple[Dict[str, float], Dict[str, List]]:
-    """(measured dispersion per stat, calibration per stat) over one league."""
+    """(measured dispersion per stat, (our chance, came in) rows per stat) over one league."""
     pairs: Dict[str, List[Tuple[float, float]]] = {s: [] for s in pr.BB_STATS}
     rows: Dict[str, List[Tuple[float, bool]]] = {s: [] for s in pr.BB_STATS}
     for stat, (col, *_ ) in pr.BB_STATS.items():
@@ -54,7 +54,20 @@ def bb_check(players: Dict[str, Dict], dispersion: Dict[str, float]) -> Tuple[Di
                     po = proj.p_over(line)
                     rows[stat] += [(po, actual > line), (1 - po, actual < line)]
     disp = {s: pp.fit_dispersion(v) for s, v in pairs.items() if len(v) >= 50}
-    return disp, {s: pp.calibration(v) for s, v in rows.items()}
+    return disp, rows
+
+
+def calibrated(rows: Dict[str, List[Tuple[float, bool]]]) -> Tuple[Dict[str, List], Dict[str, List]]:
+    """Per stat, the map from what we said to what came in
+    (pp.fit_calibration_map), and the calibration with it applied (what the
+    server's chances look like). Fitted on even player-games, checked on
+    odd ones, so the check isn't marking its own homework."""
+    maps, after = {}, {}
+    for s, v in rows.items():
+        fit, test = v[0::4] + v[1::4], v[2::4] + v[3::4]      # pairs (over, under) stay together
+        maps[s] = pp.fit_calibration_map(fit)
+        after[s] = pp.calibration((pp.calibrate(p, maps[s]), w) for p, w in test)
+    return maps, after
 
 
 def fb_check(players: Dict[str, Dict]) -> Tuple[List[Dict], float, int]:
@@ -75,7 +88,9 @@ def fb_check(players: Dict[str, Dict]) -> Tuple[List[Dict], float, int]:
     def loss(k: float) -> float:
         return -sum(log(max(1e-9, (1 - exp(-k * lam)) if hit else exp(-k * lam))) for lam, hit in obs)
     scale = min((0.5 + 0.02 * i for i in range(51)), key=loss)       # 0.5 … 1.5
-    return pp.calibration([(1 - exp(-scale * lam), hit) for lam, hit in obs]), round(scale, 2), len(obs)
+    # Anytime-scorer chances live below 50%
+    buckets = ((0.05, 0.1), (0.1, 0.2), (0.2, 0.3), (0.3, 0.4), (0.4, 0.5), (0.5, 0.7))
+    return pp.calibration([(1 - exp(-scale * lam), hit) for lam, hit in obs], buckets), round(scale, 2), len(obs)
 
 
 def run(r) -> Dict:
@@ -87,12 +102,18 @@ def run(r) -> Dict:
             continue
         # Two passes: measure the spread, then check the chances priced with it
         disp, _ = bb_check(players, {})
-        disp2, cal = bb_check(players, disp)
+        _, rows = bb_check(players, disp)
+        # Points' tails run wider than one spread says (blowouts, foul trouble,
+        # early exits): a map per stat corrects the chances that remain
+        maps, cal = calibrated(rows)
+        raw = {s: pp.calibration(v) for s, v in rows.items()}
         report["bb"][league] = {"players": len(players), "dispersion": {k: round(v, 2) for k, v in disp.items()},
-                                "calibration": cal}
+                                "calibration_map": maps, "calibration": cal, "calibration_raw": raw}
         print(f"{league}: {len(players)} players; dispersion {report['bb'][league]['dispersion']}")
-        for s, rows in cal.items():
-            print(f"  {s}: " + " · ".join(f"{x['bucket']} said {x['said']:.0%} came in {x['came_in']:.0%} ({x['n']})" for x in rows))
+        for s, rs in raw.items():
+            print(f"  {s} before: " + " · ".join(f"{x['bucket']} said {x['said']:.0%} came in {x['came_in']:.0%}" for x in rs))
+        for s, rs in cal.items():
+            print(f"  {s} after:  " + " · ".join(f"{x['bucket']} said {x['said']:.0%} came in {x['came_in']:.0%} ({x['n']})" for x in rs))
     for league in pc.UNDERSTAT.values():
         raw = r.get(pc.PLAYERS_KEY.format(sport="fb", league=league))
         players = bd.decode(raw) if raw else {}

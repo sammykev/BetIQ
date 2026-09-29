@@ -156,3 +156,13 @@ class TestSettle:
         PLAYERS["someone else"] = {"name": "Someone Else", "team": "Paris Basketball", "games": bb_rows(5, 1, 1, 0)[:3]}
         assert main._props_result_for(other) == {"status": "void"}
         del PLAYERS["someone else"]
+
+
+def test_prices_go_through_the_checks_map():
+    plain = {x["code"]: x["prob"] for x in pr.bb_price(EVENT, PLAYERS, {}, today=FRESH)}
+    cal = {"pts": [[0.75, 0.74], [0.85, 0.78], [0.97, 0.92]]}
+    hot = {x["code"]: x["prob"] for x in pr.bb_price(EVENT, PLAYERS, {}, today=FRESH, calibration=cal)}
+    k = pp.name_key("T.J. Warren") + "|9+"
+    assert hot[k] < plain[k]
+    reb = pp.name_key("Frank Ntilikina") + "|O1.5"
+    assert hot[reb] == plain[reb]                     # no map for rebounds: unchanged

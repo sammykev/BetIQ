@@ -150,6 +150,47 @@ def calibration(rows: Iterable[Tuple[float, bool]],
     return out
 
 
+def fit_calibration_map(rows: Iterable[Tuple[float, bool]], width: float = 0.05,
+                        min_n: int = 200) -> List[List[float]]:
+    """How often our chances really came in, as [[said, came in], ...] over
+    bands of `width` from 50% up, made monotone (pool adjacent violators).
+    Rows come in pairs (a line's over and under), so the lower half mirrors
+    the upper. Empty when there's too little to go on."""
+    bands: Dict[int, List[float]] = {}
+    for p, w in rows:
+        if p < 0.5:
+            p, w = 1 - p, not w
+        k = min(int((p - 0.5) / width), int(0.5 / width) - 1)
+        b = bands.setdefault(k, [0.0, 0.0, 0.0])
+        b[0] += p
+        b[1] += 1.0 if w else 0.0
+        b[2] += 1
+    pts = [[b[0] / b[2], b[1] / b[2], b[2]] for k, b in sorted(bands.items()) if b[2] >= min_n]
+    # Pool adjacent violators: what came in never falls as what we said rises
+    blocks: List[List[float]] = []
+    for said, came, n in pts:
+        blocks.append([said * n, came * n, n])
+        while len(blocks) > 1 and blocks[-2][1] / blocks[-2][2] > blocks[-1][1] / blocks[-1][2]:
+            s2, c2, n2 = blocks.pop()
+            blocks[-1] = [blocks[-1][0] + s2, blocks[-1][1] + c2, blocks[-1][2] + n2]
+    return [[round(sm / n, 4), round(max(0.5, cm / n), 4)] for sm, cm, n in blocks]
+
+
+def calibrate(p: float, cal: Optional[List[List[float]]]) -> float:
+    """A chance through the check's map (fit_calibration_map): linear between
+    its points, from (50%, 50%) below the first and to (100%, 100%) above the
+    last. No map: unchanged."""
+    if not cal:
+        return p
+    if p < 0.5:
+        return 1.0 - calibrate(1.0 - p, cal)
+    xs = [(0.5, 0.5)] + [(a, b) for a, b in cal] + [(1.0, 1.0)]
+    for (x0, y0), (x1, y1) in zip(xs, xs[1:]):
+        if x0 <= p <= x1:
+            return y0 if x1 == x0 else y0 + (y1 - y0) * (p - x0) / (x1 - x0)
+    return p
+
+
 def name_key(name: str) -> str:
     """A player's name in a form both SportyBet ("Shengelia, Tornike") and box
     scores ("Tornike Shengelia") reduce to: the words, lower case, sorted."""

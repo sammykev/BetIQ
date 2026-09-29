@@ -85,3 +85,30 @@ def test_names_from_both_sides_match():
     assert pp.name_key("Shengelia, Tornike") == pp.name_key("Tornike Shengelia")
     assert pp.name_key("Mbappé, Kylian") == pp.name_key("Kylian Mbappe")
     assert pp.name_key("Jaren Jackson Jr.") == pp.name_key("Jackson, Jaren")
+
+
+class TestCalibrationMap:
+    """The walk-forward check's correction: what we said -> what came in."""
+
+    def rows(self, n=40000, seed=4):
+        import random
+        rng = random.Random(seed)
+        out = []
+        for _ in range(n):
+            said = rng.uniform(0.5, 0.995)
+            # Hot at the top: above 80% only 60% of the gap to 100% is real
+            real = said if said < 0.8 else 0.8 + (said - 0.8) * 0.6
+            hit = rng.random() < real
+            out += [(said, hit), (1 - said, not hit)]
+        return out
+
+    def test_fixes_the_hot_tail_and_leaves_the_middle(self):
+        cal = pp.fit_calibration_map(self.rows())
+        assert all(b[1] >= a[1] for a, b in zip(cal, cal[1:]))            # monotone
+        assert pp.calibrate(0.65, cal) == pytest.approx(0.65, abs=0.02)
+        assert pp.calibrate(0.95, cal) == pytest.approx(0.89, abs=0.025)
+        assert pp.calibrate(0.05, cal) == pytest.approx(1 - pp.calibrate(0.95, cal))   # mirrored
+        assert pp.calibrate(0.9, None) == 0.9 and pp.calibrate(0.9, []) == 0.9
+
+    def test_too_little_to_go_on(self):
+        assert pp.fit_calibration_map(self.rows(n=50)) == []

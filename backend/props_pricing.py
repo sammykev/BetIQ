@@ -167,9 +167,11 @@ def market_means(offers: List[Dict], dispersion: Dict[str, float]) -> Dict[Tuple
 
 def bb_price(ev: Dict, players: Dict[str, Dict], team_factor: Dict[str, float],
              dispersion: Optional[Dict[str, float]] = None, priors: Optional[Dict[str, float]] = None,
-             teams: Tuple[str, str] = ("", ""), today: Optional[date] = None) -> List[Dict]:
+             teams: Tuple[str, str] = ("", ""), today: Optional[date] = None,
+             calibration: Optional[Dict[str, List]] = None) -> List[Dict]:
     """Our chance of each of SportyBet's player lines on an event.
     team_factor: {team name: tonight's expected points / its usual};
+    calibration: {stat: the walk-forward check's map} (pp.calibrate);
     teams: the event's two teams (a player on neither has moved: SportyBet's
     line knows his new role better than his old box scores)."""
     import sportybet
@@ -199,6 +201,8 @@ def bb_price(ev: Dict, players: Dict[str, Dict], team_factor: Dict[str, float],
         if proj is None:
             continue
         prob = proj.p_over(o["line"]) if o["side"] == "O" else 1.0 - proj.p_over(o["line"])
+        # The walk-forward check's correction (points' chances run hot at the tails)
+        prob = pp.calibrate(prob, (calibration or {}).get(o["stat"]))
         if not MIN_PROB <= prob <= MAX_PROB:
             continue
         stat_name = BB_STATS[o["stat"]][3]

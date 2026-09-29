@@ -5396,10 +5396,10 @@ def _bb_prop_lines(pred: Dict, page: Dict) -> List[Dict]:
                 for t in {p["team"] for p in players.values()}:
                     if sportybet.team_similarity(t, name) >= 0.75:
                         factor[t] = exp_pts / usual
-    disp = {}
-    for stat, d in (((_props_calib.get("bb") or {}).get(league) or {}).get("dispersion") or {}).items():
-        disp[stat] = d
-    return pr.bb_price(page, players, factor, disp, teams=(pred["home"], pred["away"]))
+    calib = (_props_calib.get("bb") or {}).get(league) or {}
+    disp = dict(calib.get("dispersion") or {})
+    return pr.bb_price(page, players, factor, disp, teams=(pred["home"], pred["away"]),
+                       calibration=calib.get("calibration_map") or {})
 
 
 async def _bb_add_props(preds: List[Dict]) -> int:

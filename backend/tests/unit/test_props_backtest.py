@@ -4,6 +4,7 @@ the truth, chances that come in as often as they say, a scorer scale near 1."""
 import random
 from math import exp
 
+import player_props as pp
 import props_backtest as pb
 
 
@@ -30,7 +31,8 @@ def test_basketball_check():
     players = simulated_bb()
     disp, _ = pb.bb_check(players, {})
     assert 4 < disp["pts"] < 20
-    _, cal = pb.bb_check(players, disp)
+    _, rows = pb.bb_check(players, disp)
+    cal = {s: pp.calibration(v) for s, v in rows.items()}
     for s in ("pts", "reb"):
         for row in cal[s]:
             if row["n"] > 300 and row["bucket"] in ("60-70%", "70-80%", "80-90%"):
@@ -53,3 +55,15 @@ def test_scorer_check():
     for row in cal:
         if row["n"] > 200:
             assert abs(row["came_in"] - row["said"]) < 0.07, row
+
+
+def test_calibration_map_checked_on_held_out_games():
+    players = simulated_bb()
+    disp, _ = pb.bb_check(players, {})
+    _, rows = pb.bb_check(players, disp)
+    maps, after = pb.calibrated(rows)
+    assert set(maps) == {"pts", "reb", "ast", "tpm"}
+    for s in ("pts", "reb"):
+        for row in after[s]:
+            if row["n"] > 300:
+                assert abs(row["came_in"] - row["said"]) < 0.06, (s, row)
