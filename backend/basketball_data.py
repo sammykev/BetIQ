@@ -90,6 +90,73 @@ def parse_result(ev: Dict) -> Optional[Dict[str, Any]]:
             "a": ev["awayTeamName"], "ko": int(k.timestamp()), "hs": final[0], "as": final[1], "q": q, "ot": ot}
 
 
+_ENDED = re.compile(r"ended|finished|^ft$|after overtime|aet|cancel|abandon|postpon|interrupt", re.I)
+_NOT_STARTED = re.compile(r"not started|^$", re.I)
+
+
+def parse_live(ev: Dict) -> Optional[Dict[str, Any]]:
+    """An in-play game from a SportyBet live event: {id, score, periods,
+    minute}; None when it isn't in play (not started, or over)."""
+    status = str(ev.get("matchStatus") or "").strip()
+    score = _pair(ev.get("setScore"))
+    # SportyBet event status: 0 not started, 1 in play, 4 over
+    if not score or _ENDED.search(status) or _NOT_STARTED.search(status) or ev.get("status") in (0, 4):
+        return None
+    periods = [list(p) for p in (_pair(x) for x in ev.get("gameScore") or []) if p]
+    clock = str(ev.get("remainingTimeInPeriod") or "").strip()
+    minute = f"{status} {clock}".strip() if clock and clock not in ("00:00", "0:00") else status
+    return {"id": str(ev.get("eventId") or ""), "score": list(score), "periods": periods or None,
+            "minute": _short_period(minute)}
+
+
+def _short_period(s: str) -> str:
+    """ "1st quarter 04:12" -> "Q1 04:12"; "Halftime" -> "HT"; "Overtime" -> "OT"."""
+    s = re.sub(r"(\d)(?:st|nd|rd|th)\s+quarter", r"Q\1", s, flags=re.I)
+    s = re.sub(r"(\d)(?:st|nd|rd|th)\s+half", r"H\1", s, flags=re.I)
+    s = re.sub(r"half\s*time|halftime|pause", "HT", s, flags=re.I)
+    return re.sub(r"overtime", "OT", s, flags=re.I)
+
+
+LIVE_LISTS = (("/factsCenter/liveOrPrematchEvents", {"sportId": BASKETBALL}),
+              ("/factsCenter/wapConfigurableIndexLiveEvents", {"sportId": BASKETBALL}))
+
+
+async def fetch_live(started_ids: List[str], session=None,
+                     per_event_max: int = 40) -> Tuple[Dict[str, Dict], str, set]:
+    """In-play scores for the games we priced that have tipped off:
+    ({event id: live}, how they were read, the ids actually checked).
+    SportyBet's live listing if it answers, else each game's own page
+    (productId 1: live)."""
+    import sportybet
+    session = session or sportybet.shared_session()
+    wanted = set(started_ids)
+    for path, params in LIVE_LISTS:
+        try:
+            data = await sportybet._request(session, "GET", path, params={**params, "_t": sportybet._now_ms()})
+        except Exception:
+            continue
+        found: List[Dict] = []
+        sportybet._collect_events(data.get("data"), found)
+        if found:
+            live = {x["id"]: x for x in (parse_live(e) for e in found) if x and x["id"] in wanted}
+            return live, f"{path}: {len(found)} events", wanted
+    out: Dict[str, Dict] = {}
+    checked: set = set()
+    errors = 0
+    for eid in list(wanted)[:per_event_max]:
+        try:
+            data = await sportybet._request(session, "GET", "/factsCenter/event", params={"eventId": eid, "productId": 1})
+        except Exception:
+            errors += 1
+            continue
+        checked.add(eid)
+        x = parse_live(data.get("data") or {})
+        if x:
+            out[eid] = x
+    return out, (f"event pages: {len(out)} live of {min(len(wanted), per_event_max)}"
+                 + (f", {errors} failed" if errors else "")), checked
+
+
 def encode(games: List[Dict]) -> str:
     return base64.b64encode(zlib.compress(json.dumps(games, separators=(",", ":")).encode(), 9)).decode()
 

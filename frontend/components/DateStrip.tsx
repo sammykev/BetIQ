@@ -10,7 +10,7 @@ import type { StripDay } from "@/lib/matchday";
  * number of matches we predict.
  */
 export function DateStrip({ days, today, selected, onSelect }: {
-  days: StripDay[]; today: string; selected: string; onSelect: (date: string) => void;
+  days: Pick<StripDay, "date" | "total" | "live" | "tip">[]; today: string; selected: string; onSelect: (date: string) => void;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
 

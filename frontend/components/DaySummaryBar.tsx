@@ -5,12 +5,18 @@ import clsx from "clsx";
 import { ArrowRight } from "lucide-react";
 import type { DaySummary } from "@/lib/matchday";
 
-/** How the day's picks did: our tips, goals tips, the most likely result. */
-export function DaySummaryBar({ summary, label }: { summary: DaySummary; label: string }) {
-  const items = [
+type Counts = Pick<DaySummary, "total" | "finished" | "live" | "tip">;
+
+/** How the day's picks did: our tips, goals tips, the most likely result
+ * (football), or the picks given in `items` (basketball). */
+export function DaySummaryBar({ summary, label, items: given, link = true }: {
+  summary: Counts & Partial<DaySummary>; label: string;
+  items?: { name: string; v: [number, number] }[]; link?: boolean;
+}) {
+  const items = given ?? [
     { name: "Our tips", v: summary.tip },
-    { name: "Goals tips", v: summary.goals },
-    { name: "Most likely result", v: summary.favourite },
+    { name: "Goals tips", v: summary.goals ?? [0, 0] },
+    { name: "Most likely result", v: summary.favourite ?? [0, 0] },
   ];
   const settled = summary.tip[0] + summary.tip[1];
   return (
@@ -36,7 +42,7 @@ export function DaySummaryBar({ summary, label }: { summary: DaySummary; label: 
           </div>
         );
       })}
-      {settled > 0 && (
+      {link && settled > 0 && (
         <Link href="/history" className="ml-auto text-xs font-semibold text-accent inline-flex items-center gap-1 hover:underline">
           Track record <ArrowRight size={12} />
         </Link>

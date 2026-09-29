@@ -4635,6 +4635,7 @@ ADMIN_JOBS = {
     "bb_collect": ("Basketball: collect results from SportyBet (and older days)", lambda: _bb_collect()),
     "bb_fit": ("Basketball: rate every league from the results", lambda: _bb_fit()),
     "bb_refresh": ("Basketball: price SportyBet's matches now", lambda: _bb_refresh()),
+    "bb_live": ("Basketball: live scores and finals for games under way", lambda: _bb_live_tick()),
     "props_load": ("Player props: load box scores and the check's numbers", lambda: _props_load()),
     "fb_props": ("Player props: price goalscorers now", lambda: _fb_props_refresh()),
     "daily_slips": ("Remake today's daily odds slips (new booking codes)", lambda: _build_daily(__import__("daily_slips").today(), force=True)),
@@ -5148,6 +5149,11 @@ async def _bb_refresh() -> List[Dict]:
             r.setex("betiq:sports:basketball", 3600, json.dumps([_bb_slim(p) for p in preds]))
         except Exception as e:
             print(f"[Basketball] couldn't save predictions: {e}")
+    try:
+        if _bbmd_merge(preds):
+            _bb_strip_cache.clear()
+    except Exception as e:
+        print(f"[Basketball] couldn't keep the match days: {e}")
     rated = sum(1 for p in preds if p.get("rated"))
     _bb_save_status(listing={"events": len(events), "predictions": len(preds), "rated": rated, "report": report,
                              "player_lines": props})
@@ -5171,6 +5177,141 @@ async def get_basketball_match(request: Request, event: str = Query(..., max_len
     return p
 
 
+# ── Basketball match days (basketball_matchday.py): the date strip, live, history ──
+_bbmd_status: Dict[str, Any] = {}
+_bbmd_results_at: List[float] = [0.0]
+BBMD_RESULTS_EVERY = 600      # seconds: today's results re-read at most this often while games are on
+
+
+def _bbmd_load(r, d: str) -> Dict[str, Dict]:
+    import basketball_matchday as bbmd
+    try:
+        raw = r.get(bbmd.KEY.format(d)) if r else None
+        return json.loads(raw) if raw else {}
+    except Exception:
+        return {}
+
+
+def _bbmd_save(r, d: str, day: Dict[str, Dict]) -> None:
+    import basketball_matchday as bbmd
+    if r:
+        r.set(bbmd.KEY.format(d), json.dumps(day, separators=(",", ":")), ex=bbmd.TTL)
+
+
+def _bbmd_merge(preds: List[Dict]) -> int:
+    """Keep each priced match's prediction in its day (until tip-off)."""
+    import basketball_matchday as bbmd
+    r = _get_redis()
+    if not r:
+        return 0
+    now, changed = datetime.now(timezone.utc), 0
+    for d, day_preds in bbmd.by_date(preds).items():
+        day = _bbmd_load(r, d)
+        if bbmd.merge_predictions(day, day_preds, now):
+            _bbmd_save(r, d, day)
+            changed += 1
+    return changed
+
+
+async def _bb_live_tick() -> Dict[str, Any]:
+    """Live scores for games under way, and finals (graded) from SportyBet's results."""
+    import basketball_data as bd
+    import basketball_matchday as bbmd
+    r = _get_redis()
+    if not r:
+        return {"skipped": "no Redis"}
+    now = datetime.now(timezone.utc)
+    dates = [(now.date() - timedelta(days=i)).isoformat() for i in (2, 1, 0)]
+    days = {d: _bbmd_load(r, d) for d in dates}
+    open_ = {e["id"]: (d, e) for d, day in days.items() for e in day.values() if bbmd.needs_result(e, now)}
+    if not open_:
+        return {"open": 0}
+    changed = set()
+    # Finals: stored results, re-read from SportyBet at most every BBMD_RESULTS_EVERY
+    if time.time() - _bbmd_results_at[0] > BBMD_RESULTS_EVERY:
+        _bbmd_results_at[0] = time.time()
+        for d in sorted({d for d, _ in open_.values()} | {now.date().isoformat()}):
+            try:
+                found = await bd.fetch_results_day(d)
+                if found:
+                    r.hset(bd.RESULTS_KEY, d, bd.encode(found))
+            except Exception as e:
+                print(f"[Basketball] live tick: results for {d}: {e}")
+    finals = {g["id"]: g for g in _bb_results(r, dates + [(now.date() + timedelta(days=1)).isoformat()])}
+    for eid, (d, e) in open_.items():
+        if eid in finals and bbmd.apply_result(e, finals[eid]):
+            changed.add(d)
+    # In play: the rest that have tipped off
+    playing = [eid for eid, (d, e) in open_.items() if (e.get("result") or {}).get("status") != bbmd.FINISHED
+               and now - (bbmd.kickoff(e) or now) < timedelta(hours=4)]
+    how = "none started"
+    if playing:
+        try:
+            live, how, checked = await bd.fetch_live(playing)
+        except Exception as e:
+            live, how, checked = {}, f"failed: {e}", set()
+        for eid in playing:
+            d, e = open_[eid]
+            if (eid in live and bbmd.apply_live(e, live[eid])) or bbmd.stale_live(e, live, checked):
+                changed.add(d)
+    for d in changed:
+        _bbmd_save(r, d, days[d])
+    if changed:
+        _bb_strip_cache.clear()
+    _bbmd_status.update(at=now.isoformat(timespec="seconds"), open=len(open_), playing=len(playing), live_source=how)
+    return dict(_bbmd_status)
+
+
+_bb_strip_cache: Dict[str, Tuple[float, Any]] = {}
+
+
+@app.get("/api/basketball/matchday/strip")
+async def get_basketball_strip(request: Request):
+    """The basketball date strip: 7 days back to 14 ahead, like football's."""
+    import basketball_matchday as bbmd
+    await _check_sport_access(request, "basketball")
+    today = date.today()
+    hit = _bb_strip_cache.get("strip")
+    if hit and time.time() - hit[0] < 60 and hit[1]["today"] == today.isoformat():
+        return hit[1]
+    dates = [(today + timedelta(days=o)).isoformat() for o in range(-MD_DAYS_BACK, MD_DAYS_AHEAD + 1)]
+    r = _get_redis()
+    upcoming: Dict[str, int] = {}
+    for p in _bb_upcoming():
+        upcoming[p["date"]] = upcoming.get(p["date"], 0) + 1
+    raws = r.mget([bbmd.KEY.format(d) for d in dates]) if r else [None] * len(dates)
+    days = []
+    for d, raw in zip(dates, raws):
+        try:
+            entries = json.loads(raw).values() if raw else []
+        except Exception:
+            entries = []
+        s = bbmd.day_summary(entries)
+        if d >= today.isoformat():
+            s["total"] = max(s["total"], upcoming.get(d, 0))
+        days.append({"date": d, **s})
+    out = {"today": today.isoformat(), "days": days}
+    _bb_strip_cache["strip"] = (time.time(), out)
+    return out
+
+
+@app.get("/api/basketball/matchday")
+async def get_basketball_matchday(request: Request, date_: str = Query("", alias="date")):
+    """One day's basketball: each game's prediction from before tip-off, its
+    live or final score, and how our picks did."""
+    import basketball_matchday as bbmd
+    await _check_sport_access(request, "basketball")
+    today = date.today()
+    d = _date_param(date_ or today.isoformat())
+    if not (today - timedelta(days=90) <= d <= today + timedelta(days=MD_DAYS_AHEAD + 1)):
+        raise HTTPException(status_code=400, detail="date out of range")
+    day = _bbmd_load(_get_redis(), d.isoformat())
+    matches = sorted((bbmd.public(e) for e in day.values()),
+                     key=lambda m: (m.get("league_name") or "", m.get("time") or "", m.get("home") or ""))
+    return {"date": d.isoformat(), "today": today.isoformat(), "matches": matches,
+            "summary": bbmd.day_summary(day.values()), "updated": _bbmd_status.get("at")}
+
+
 @app.get("/api/basketball/status")
 async def get_basketball_status(_admin: str = Depends(require_admin)):
     """Admin: results stored, leagues rated, the last listing."""
@@ -5182,7 +5323,7 @@ async def get_basketball_status(_admin: str = Depends(require_admin)):
         bt = json.loads(r.get("betiq:bb:backtest") or "null") if r else None
     except Exception:
         bt = None
-    return {**_bb_status, "days_stored": r.hlen(bd.RESULTS_KEY) if r else 0, "result_days": bd.RESULT_DAYS,
+    return {**_bb_status, "matchday": dict(_bbmd_status), "days_stored": r.hlen(bd.RESULTS_KEY) if r else 0, "result_days": bd.RESULT_DAYS,
             "leagues": [{"league": n, "games": g, "teams": t, "home_court": hc, "margin_sd": sd}
                         for n, g, t, hc, sd in leagues],
             "backtest": {"at": bt.get("at"), "overall": bt.get("overall"), "leagues": len(bt.get("leagues") or {})}
@@ -7753,6 +7894,9 @@ async def startup():
     scheduler.add_job(_bb_collect, "interval", minutes=30, id="bb_collect", max_instances=1, coalesce=True,
                       next_run_time=datetime.now() + timedelta(minutes=2))
     scheduler.add_job(_bb_fit, "interval", hours=6, id="bb_fit", max_instances=1, coalesce=True)
+    # Basketball games under way: live scores, and finals graded as they come in
+    scheduler.add_job(_bb_live_tick, "interval", minutes=2, id="bb_live", max_instances=1, coalesce=True,
+                      next_run_time=datetime.now() + timedelta(minutes=4))
     # Player props: box scores and the check's numbers (nightly in Actions), goalscorers priced
     scheduler.add_job(_props_load, "interval", hours=3, id="props_load", max_instances=1, coalesce=True)
     scheduler.add_job(_fb_props_refresh, "interval", minutes=45, id="fb_props", max_instances=1, coalesce=True,

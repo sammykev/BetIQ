@@ -59,3 +59,46 @@ export function lineSelection(p: Pick<BasketballPrediction, "home" | "away" | "d
   return { home: p.home, away: p.away, date: p.date, time: p.time, league: p.league_name,
            market: l.market, marketName: l.market_name, code: l.code, label: l.label, prob: l.prob, sb: l.sb };
 }
+
+// ── Match days (backend basketball_matchday.py): the date strip, live, history ──
+export interface BBGrade { pick: string; prob: number | null; odds?: number | null; verdict: "won" | "lost" }
+export interface BBMatchdayMatch {
+  key: string; id: string; home: string; away: string; date: string; time: string;
+  league: string; league_name: string; flag: string; home_logo?: string | null; away_logo?: string | null;
+  status: "scheduled" | "live" | "finished" | "postponed"; minute: string | null;
+  /** Went to overtime */
+  aet: boolean;
+  score: [number, number] | null;
+  /** Quarter scores (regulation) */
+  periods: [number, number][] | null;
+  pred: {
+    p_home?: number; p_away?: number; tip_1x2?: string; tip_code?: string; tip_confidence?: number | null;
+    tip_goals?: string; goals_confidence?: number | null; total_line?: number | null; handicap_line?: number | null;
+    exp_home_pts?: number; exp_away_pts?: number; model?: BasketballPrediction["model"];
+  };
+  best: { market: string; market_name: string; code: string; label: string; prob: number; odds: number } | null;
+  grades: Partial<Record<"tip" | "points" | "best", BBGrade>> | null;
+  locked: boolean;
+}
+export interface BBDaySummary { total: number; finished: number; live: number;
+  tip: [number, number]; points: [number, number]; best: [number, number] }
+export interface BBMatchdayResponse { date: string; today: string; matches: BBMatchdayMatch[]; summary: BBDaySummary; updated: string | null }
+export interface BBStripDay extends BBDaySummary { date: string }
+export interface BBStripResponse { today: string; days: BBStripDay[] }
+
+export const BB_GRADE_LABELS: Record<string, string> = { tip: "Our tip", points: "Total points", best: "Best line" };
+
+type Fetcher = (url: string, init?: RequestInit) => Promise<Response>;
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
+
+export async function fetchBBStrip(f: Fetcher, signal?: AbortSignal): Promise<BBStripResponse> {
+  const r = await f(`${API_URL}/api/basketball/matchday/strip`, { signal });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+
+export async function fetchBBMatchday(f: Fetcher, date: string, signal?: AbortSignal): Promise<BBMatchdayResponse> {
+  const r = await f(`${API_URL}/api/basketball/matchday?date=${encodeURIComponent(date)}`, { signal });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
