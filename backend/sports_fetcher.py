@@ -8,6 +8,7 @@ Uses implied bookmaker odds as model probabilities (very accurate for these spor
 
 import os
 import asyncio
+import re
 import httpx
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
@@ -542,12 +543,22 @@ def _betsapi_to_prediction(ev: Dict, flag: str, sport: str) -> Optional[Dict]:
     }
 
 
+# Whole words only ("halle" is in "Challenger", "rio" in "Ontario")
+_GRASS = re.compile(r"\b(wimbledon|halle|queen'?s|grass|eastbourne|s-hertogenbosch|hertogenbosch|mallorca|newport|"
+                    r"stuttgart|nottingham|ilkley|surbiton|birmingham|bad homburg)\b")
+_CLAY = re.compile(r"\b(roland|french open|clay|barcelona|monte carlo|monte-carlo|madrid|rome|roma|hamburg|gstaad|umag|"
+                   r"kitzbuhel|bastad|estoril|buenos aires|rio de janeiro|santiago|sevilla|seville|genova|genoa|firenze|"
+                   r"florence|todi|perugia|braunschweig|prague|praha|bucharest|iasi|sibiu|tigre|lima|cordoba|sao paulo|"
+                   r"bogota|curitiba|asuncion|campinas|montevideo|guayaquil|marrakech|houston|charleston|bogota|"
+                   r"parma|palermo|lyon|geneva|munich|strasbourg|rabat|portoroz|poznan|szczecin|trieste|verona|"
+                   r"san marino|cagliari|oeiras|mauthausen|tunis|antalya|varna|split|zadar|como|bergamo)\b")
+
+
 def _surface(tournament: str) -> str:
-    t = tournament.lower()
-    if any(x in t for x in ("wimbledon", "halle", "queen", "grass", "eastbourne", "s-hertogenbosch", "mallorca")):
+    t = (tournament or "").lower()
+    if _GRASS.search(t):
         return "Grass"
-    if any(x in t for x in ("roland", "french", "clay", "barcelona", "monte", "madrid", "rome", "hamburg", "gstaad",
-                            "umag", "kitzbuhel", "bastad", "estoril", "buenos aires", "rio", "santiago")):
+    if _CLAY.search(t):
         return "Clay"
     return "Hard"
 

@@ -8475,22 +8475,24 @@ async def startup():
                       next_run_time=datetime.now() + timedelta(minutes=2))
     scheduler.add_job(_bb_fit, "interval", hours=6, id="bb_fit", max_instances=1, coalesce=True)
     # Tennis results for form and head-to-head (yesterday, today, and the backfill)
-    scheduler.add_job(_tennis_collect, "interval", minutes=30, id="tennis_collect", max_instances=1, coalesce=True,
+    scheduler.add_job(_tennis_collect, "interval", minutes=30, id="tennis_collect", max_instances=1, misfire_grace_time=300, coalesce=True,
                       next_run_time=datetime.now() + timedelta(minutes=5))
-    scheduler.add_job(_table_tennis_collect, "interval", minutes=30, id="table_tennis_collect", max_instances=1,
+    scheduler.add_job(_table_tennis_collect, "interval", minutes=30, id="table_tennis_collect", max_instances=1, misfire_grace_time=300,
                       coalesce=True, next_run_time=datetime.now() + timedelta(minutes=8))
     # Once after each deploy: what football.com and SportyBet's racket sports look like from here
-    scheduler.add_job(_web_probe, "date", run_date=datetime.now() + timedelta(seconds=75), id="web_probe")
+    # (a one-off "date" job is dropped if the loop is busy at that second: startup is busy)
+    scheduler.add_job(_web_probe, "interval", hours=24, id="web_probe", max_instances=1, coalesce=True,
+                      misfire_grace_time=900, next_run_time=datetime.now() + timedelta(seconds=75))
     # Tennis and table tennis: the nightly ratings, SportyBet's matches priced, live scores and finals
-    scheduler.add_job(_rk_load_models, "interval", hours=3, id="racket_models", max_instances=1, coalesce=True,
+    scheduler.add_job(_rk_load_models, "interval", hours=3, id="racket_models", max_instances=1, misfire_grace_time=300, coalesce=True,
                       next_run_time=datetime.now() + timedelta(seconds=30))
-    scheduler.add_job(_tennis_refresh, "interval", minutes=15, id="tennis_refresh", max_instances=1, coalesce=True,
+    scheduler.add_job(_tennis_refresh, "interval", minutes=15, id="tennis_refresh", max_instances=1, misfire_grace_time=300, coalesce=True,
                       next_run_time=datetime.now() + timedelta(minutes=2))
-    scheduler.add_job(_table_tennis_refresh, "interval", minutes=10, id="table_tennis_refresh", max_instances=1,
+    scheduler.add_job(_table_tennis_refresh, "interval", minutes=10, id="table_tennis_refresh", max_instances=1, misfire_grace_time=300,
                       coalesce=True, next_run_time=datetime.now() + timedelta(minutes=3))
-    scheduler.add_job(_tennis_live_tick, "interval", minutes=2, id="tennis_live", max_instances=1, coalesce=True,
+    scheduler.add_job(_tennis_live_tick, "interval", minutes=2, id="tennis_live", max_instances=1, misfire_grace_time=300, coalesce=True,
                       next_run_time=datetime.now() + timedelta(minutes=4))
-    scheduler.add_job(_table_tennis_live_tick, "interval", minutes=2, id="table_tennis_live", max_instances=1,
+    scheduler.add_job(_table_tennis_live_tick, "interval", minutes=2, id="table_tennis_live", max_instances=1, misfire_grace_time=300,
                       coalesce=True, next_run_time=datetime.now() + timedelta(minutes=5))
     # Basketball games under way: live scores, and finals graded as they come in
     scheduler.add_job(_bb_live_tick, "interval", minutes=2, id="bb_live", max_instances=1, coalesce=True,
