@@ -14,7 +14,7 @@ Reported per league and overall:
 
 Saved to Redis (BACKTEST_KEY) for the server and the admin page.
 
-    python backtest_basketball.py            # from the stored results (UPSTASH_REDIS_URL)
+    python backtest_basketball.py            # SportyBet's results + the older seasons (bb_history.py)
     python backtest_basketball.py --min 150  # leagues with at least this many games
 """
 
@@ -200,10 +200,13 @@ def main() -> None:
     r = model_store._client()
     if r is None:
         raise SystemExit("UPSTASH_REDIS_URL isn't set")
+    import bb_history
     results: List[Dict] = []
     for blob in (r.hgetall(bd.RESULTS_KEY) or {}).values():
         results += bd.decode(blob)
-    print(f"{len(results)} results stored")
+    history = bb_history.load(r)
+    print(f"{len(results)} SportyBet results, {len(history)} older games (bb_history.py)")
+    results = bb_history.combine(results, history)
     report = run(results, args.min)
     r.set(BACKTEST_KEY, json.dumps(report))
     print(f"Saved: {len(report['leagues'])} leagues")

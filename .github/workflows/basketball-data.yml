@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       job:
-        description: "backtest, props (player box scores), props_sample, or probe"
+        description: "backtest, history (10 seasons of games), history_sample, props, props_sample, or probe"
         default: "backtest"
       minutes:
         description: "props: minutes of collection"
@@ -65,8 +65,19 @@ jobs:
           UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
         run: python props_collect.py --sample
 
+      # Ten seasons of games from before SportyBet's results (bb_history.py); resumes each run
+      - name: Basketball history
+        if: github.event.inputs.job == 'history'
+        env:
+          UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
+          APIFOOTBALL_KEY: ${{ secrets.APIFOOTBALL_KEY }}
+        run: python bb_history.py --minutes ${{ github.event.inputs.minutes || '100' }}
+      - name: Basketball history (sample, saves nothing)
+        if: github.event.inputs.job == 'history_sample'
+        run: python bb_history.py --sample
+
       - name: Walk-forward check
-        if: github.event_name == 'schedule' || github.event.inputs.job == 'backtest'
+        if: github.event_name == 'schedule' || github.event.inputs.job == 'backtest' || github.event.inputs.job == 'history'
         env:
           UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
         run: python backtest_basketball.py
