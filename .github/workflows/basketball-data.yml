@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       job:
-        description: "backtest, history (10 seasons of games), history_sample, props, props_sample, or probe"
+        description: "backtest, history (10 seasons of games), history_sample, props, props_sample, probe, or read_probe (the server's web probe)"
         default: "backtest"
       minutes:
         description: "props: minutes of collection"
@@ -81,6 +81,27 @@ jobs:
         env:
           UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
         run: python backtest_basketball.py
+
+      # The production server's own probe (web_probe.py), read back from Redis
+      - name: Read the server's probe
+        if: github.event.inputs.job == 'read_probe'
+        env:
+          UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
+        run: |
+          python - <<'PY'
+          import json, os, redis
+          r = redis.from_url(os.environ["UPSTASH_REDIS_URL"])
+          raw = r.get("betiq:probe:web")
+          print(json.dumps(json.loads(raw), indent=1)[:200000] if raw else "No probe saved yet")
+          import basketball_data as bd
+          for key in ("betiq:tennis:results", "betiq:table_tennis:results"):
+              days = sorted(k.decode() for k in r.hkeys(key))
+              total = sum(len(bd.decode(r.hget(key, d))) for d in days[-3:]) if days else 0
+              print(f"\n{key}: {len(days)} days stored ({days[:1]}..{days[-1:]}); last 3 days {total} matches")
+              if days:
+                  for m in bd.decode(r.hget(key, days[-2] if len(days) > 1 else days[-1]))[:5]:
+                      print("  ", m)
+          PY
 
       - name: Probe
         if: github.event.inputs.job == 'probe'

@@ -4637,6 +4637,8 @@ ADMIN_JOBS = {
     "bb_refresh": ("Basketball: price SportyBet's matches now", lambda: _bb_refresh()),
     "bb_live": ("Basketball: live scores and finals for games under way", lambda: _bb_live_tick()),
     "tennis_collect": ("Tennis: collect results from SportyBet (form and head-to-head)", lambda: _tennis_collect()),
+    "web_probe": ("Probe football.com and SportyBet tennis/table tennis from this server (to Redis)",
+                  lambda: _web_probe()),
     "table_tennis_collect": ("Table tennis: collect results from SportyBet (form and head-to-head)",
                              lambda: _table_tennis_collect()),
     "props_load": ("Player props: load box scores and the check's numbers", lambda: _props_load()),
@@ -5276,6 +5278,17 @@ async def _racket_collect(sport: str) -> Dict[str, Any]:
     print(f"[{sport}] results: {fetched} days, {matches} matches "
           f"({_racket_status[sport]['days_stored']} days stored, {players} players)")
     return dict(_racket_status[sport])
+
+
+async def _web_probe() -> Dict[str, Any]:
+    """What this server can reach (web_probe.py), saved for the read_probe workflow job."""
+    import web_probe
+    report = await web_probe.run()
+    r = _get_redis()
+    if r:
+        r.set(web_probe.PROBE_KEY, json.dumps(report, default=str)[:900_000], ex=7 * 86400)
+    print(f"[Probe] done: {list(report)}")
+    return report
 
 
 async def _tennis_collect() -> Dict[str, Any]:
@@ -8068,6 +8081,8 @@ async def startup():
                       next_run_time=datetime.now() + timedelta(minutes=5))
     scheduler.add_job(_table_tennis_collect, "interval", minutes=30, id="table_tennis_collect", max_instances=1,
                       coalesce=True, next_run_time=datetime.now() + timedelta(minutes=8))
+    # Once after each deploy: what football.com and SportyBet's racket sports look like from here
+    scheduler.add_job(_web_probe, "date", run_date=datetime.now() + timedelta(minutes=3), id="web_probe")
     # Basketball games under way: live scores, and finals graded as they come in
     scheduler.add_job(_bb_live_tick, "interval", minutes=2, id="bb_live", max_instances=1, coalesce=True,
                       next_run_time=datetime.now() + timedelta(minutes=4))
