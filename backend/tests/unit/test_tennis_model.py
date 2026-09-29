@@ -62,3 +62,10 @@ def test_predict_uses_ratings_and_market():
     assert tm.predict(players, {}, "Nobody", "Else", "Hard") is None
     assert tm.predict(players, {}, "Nobody", "Else", "Hard", market_p1=0.6).p_win == pytest.approx(0.6, abs=0.01)
     assert tm.tour_of("WTA Wuhan") == "WTA" and tm.tour_of("ITF Women Cairo") == "WTA" and tm.tour_of("ATP Shanghai") == "ATP"
+
+
+def test_shrink_pulls_toward_even():
+    assert tm.shrink(0.5, 0.8) == pytest.approx(0.5)
+    assert 0.5 < tm.shrink(0.8, 0.8) < 0.8
+    assert tm.shrink(0.8, 1.0) == pytest.approx(0.8)
+    assert tm.shrink(0.2, 0.8) == pytest.approx(1 - tm.shrink(0.8, 0.8))

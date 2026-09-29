@@ -177,8 +177,15 @@ def elo_p(ra: float, rb: float) -> float:
     return 1.0 / (1.0 + 10 ** ((rb - ra) / 400.0))
 
 
-def k_factor(n: int) -> float:
-    return K_BASE / (n + K_OFFSET) ** K_SHAPE
+def k_factor(n: int, mult: float = 1.0) -> float:
+    return mult * K_BASE / (n + K_OFFSET) ** K_SHAPE
+
+
+def shrink(p: float, s: float) -> float:
+    """p pulled toward even on the logit scale (s < 1): Elo's chances run
+    overconfident (ratings are estimates); tennis_fit fits s."""
+    p = min(max(p, 1e-6), 1 - 1e-6)
+    return 1.0 / (1.0 + ((1 - p) / p) ** s)
 
 
 @dataclass
@@ -194,9 +201,10 @@ class Player:
     sv: List[float] = field(default_factory=lambda: [0.0, 0.0])
     rt: List[float] = field(default_factory=lambda: [0.0, 0.0])
 
-    def rating(self, surface: str) -> float:
+    def rating(self, surface: str, weight: Optional[float] = None) -> float:
         s = surface if surface in SURFACES else "Hard"
-        return (1 - SURFACE_WEIGHT) * self.elo + SURFACE_WEIGHT * self.surf[s]
+        w = SURFACE_WEIGHT if weight is None else weight
+        return (1 - w) * self.elo + w * self.surf[s]
 
     def to_json(self) -> list:
         return [self.name, self.tour, round(self.elo, 1), self.n, [round(self.surf[s], 1) for s in SURFACES],
@@ -235,7 +243,7 @@ def tour_of(tournament: str) -> str:
 
 def predict(players: Dict[str, Player], avg: Dict[str, float], p1: str, p2: str, surface: str,
             best_of: int = 3, market_p1: Optional[float] = None, model_weight: float = 0.5,
-            tour: str = "ATP") -> Optional[MatchDist]:
+            tour: str = "ATP", shrink_s: float = 1.0, surface_weight: Optional[float] = None) -> Optional[MatchDist]:
     """A match's distribution: Elo level blended with the market's, shaped
     by serve and return. None when neither player is known and there's no
     market price."""
@@ -245,7 +253,7 @@ def predict(players: Dict[str, Player], avg: Dict[str, float], p1: str, p2: str,
     a, b = find(p1), find(p2)
     known = a is not None and b is not None and a.n >= 5 and b.n >= 5
     if known:
-        p_elo = elo_p(a.rating(surface), b.rating(surface))
+        p_elo = shrink(elo_p(a.rating(surface, surface_weight), b.rating(surface, surface_weight)), shrink_s)
         level = p_elo if market_p1 is None else model_weight * p_elo + (1 - model_weight) * market_p1
     elif market_p1 is not None:
         level = market_p1

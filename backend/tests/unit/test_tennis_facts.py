@@ -102,8 +102,8 @@ def test_table_tennis_window():
     today = datetime(2026, 9, 29).date()
     days = tf.days_to_collect([], today, "table_tennis")
     assert days[:2] == ["2026-09-28", "2026-09-29"] and len(days) == 2 + tf.SPORTS["table_tennis"]["backfill"]
-    assert tf.stale_days(["2026-07-01", "2026-09-20"], today, "table_tennis") == ["2026-07-01"]
-    assert tf.stale_days(["2026-07-01"], today, "tennis") == []
+    assert tf.stale_days(["2026-05-01", "2026-09-20"], today, "table_tennis") == ["2026-05-01"]
+    assert tf.stale_days(["2026-05-01"], today, "tennis") == []
 
 
 def test_table_tennis_endpoint(monkeypatch):

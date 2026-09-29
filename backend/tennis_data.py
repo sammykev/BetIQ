@@ -20,16 +20,28 @@ import re
 from datetime import date
 from typing import Dict, Iterable, List, Optional, Tuple
 
-# Jeff Sackmann's archives are gone (404 since 2026); Tennismylife's TML
-# database carries on the ATP tour-level file in the same columns, and a
-# Hugging Face mirror keeps Sackmann's ATP files.
+# Jeff Sackmann's repositories are gone (404 since 2026). A full copy of
+# them (ATP and WTA: tour, Challenger/qualifying, Futures/ITF) carries on at
+# Aneeshers/tennis-sackmann-archive; Tennismylife's TML database (ATP tour
+# level, same columns) and a Hugging Face mirror are the fallbacks.
 RAW = "https://raw.githubusercontent.com/{repo}/{branch}/{file}"
 HF = "https://huggingface.co/datasets/{repo}/resolve/main/{file}"
+ARCHIVE = "Aneeshers/tennis-sackmann-archive"
+
+
+def _archive(file: str) -> str:
+    return RAW.format(repo=ARCHIVE, branch="main", file=file)
+
+
 # (url template with {y}, tour, level of play); the first that answers per tour/level wins
 FILES = (
+    (_archive("atp/atp_matches_{y}.csv"), "ATP", "tour"),
     (RAW.format(repo="Tennismylife/TML-Database", branch="master", file="{y}.csv"), "ATP", "tour"),
     (HF.format(repo="davidtadediji/tennis-atp", file="atp_matches_{y}.csv"), "ATP", "tour"),
-    (RAW.format(repo="JeffSackmann/tennis_wta", branch="master", file="wta_matches_{y}.csv"), "WTA", "tour"),
+    (_archive("atp/atp_matches_qual_chall_{y}.csv"), "ATP", "challenger"),
+    (_archive("atp/atp_matches_futures_{y}.csv"), "ATP", "itf"),
+    (_archive("wta/wta_matches_{y}.csv"), "WTA", "tour"),
+    (_archive("wta/wta_matches_qual_itf_{y}.csv"), "WTA", "itf"),
 )
 
 _SCORE_SET = re.compile(r"^(\d+)-(\d+)(?:\((\d+)\))?$")
@@ -65,8 +77,8 @@ def parse_rows(text: str, tour: str, level: str) -> List[Dict]:
         if not sc or len(d) != 8 or not r.get("winner_name") or not r.get("loser_name"):
             continue
         row = {"date": f"{d[:4]}-{d[4:6]}-{d[6:]}", "tour": tour, "level": level,
-               "surface": (r.get("surface") or "Hard").strip() or "Hard", "tourney": r.get("tourney_name") or "",
-               "tlevel": r.get("tourney_level") or "", "round": r.get("round") or "", "best_of": int(_num(r.get("best_of")) or 3),
+               "surface": (r.get("surface") or "Hard").strip() or "Hard", "tlevel": r.get("tourney_level") or "",
+               "best_of": int(_num(r.get("best_of")) or 3),
                "w": r["winner_name"].strip(), "l": r["loser_name"].strip(), "sets": sc["sets"], "ret": sc["ret"]}
         # Serve points played and won by each (for serve/return rates)
         w_sv, l_sv = _num(r.get("w_svpt")), _num(r.get("l_svpt"))
@@ -146,8 +158,7 @@ async def probe() -> None:
                     f"{x.get('default_branch')})" for x in items))
             except Exception as e:
                 print(f"GitHub '{q}': {e}")
-        for repo in ("Aneeshers/tennis-sackmann-archive", "sorukumar/tennis-analytics", "DanielTomaro13/Tennis-Modelling",
-                     "homebackend/live-tennis"):
+        for repo in (ARCHIVE,):
             try:
                 r = await client.get(f"https://api.github.com/repos/{repo}", headers=gh)
                 if r.status_code != 200:
@@ -158,10 +169,10 @@ async def probe() -> None:
                                      headers=gh)
                 tree = t.json().get("tree", []) if t.status_code == 200 else []
                 data = [x for x in tree if x.get("type") == "blob" and x["path"].lower().endswith((".csv", ".parquet", ".csv.gz", ".json"))]
-                wta = [x for x in data if "wta" in x["path"].lower()]
+                wta = [x for x in data if "matches" in x["path"].lower() and "20" in x["path"]]
                 print(f"{repo} ({branch}): {len(tree)} paths, {len(data)} data files, {len(wta)} WTA: "
                       + ", ".join(f"{x['path']}({x.get('size')})" for x in sorted(wta or data, key=lambda x: x['path'])[-60:]))
-                for x in sorted(wta, key=lambda x: -(x.get("size") or 0))[:2]:
+                for x in sorted(wta, key=lambda x: x["path"])[-2:]:
                     if x["path"].endswith(".csv"):
                         fr = await client.get(RAW.format(repo=repo, branch=branch, file=x["path"]))
                         lines = (fr.text or "").splitlines()

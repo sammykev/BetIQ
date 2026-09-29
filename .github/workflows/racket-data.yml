@@ -1,7 +1,9 @@
 # Tennis and table tennis data:
-# - Nightly: the tennis model fitted on every match since 2005 (tennis_fit.py:
-#   TML-Database ATP archive plus SportyBet's stored results) and its
-#   walk-forward check; the ratings go to Upstash Redis for the server.
+# - Nightly: the tennis model fitted on every match since 2010 (tennis_fit.py:
+#   the Sackmann ATP/WTA archive — tour, Challenger, ITF — plus SportyBet's
+#   stored results) and the table tennis model (table_tennis_fit.py:
+#   SportyBet's stored results), each with its walk-forward check; the
+#   ratings go to Upstash Redis for the server.
 # - By hand: probe (which sources answer), fit.
 # Needs the UPSTASH_REDIS_URL secret (same as the server).
 name: Racket data
@@ -12,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       job:
-        description: "tennis_probe, tennis_fit, or tennis_sample"
+        description: "tennis_probe, tennis_fit, tennis_sample, or tt_fit (table tennis)"
         default: "tennis_fit"
 
 concurrency:
@@ -50,6 +52,13 @@ jobs:
         env:
           UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
         run: python tennis_fit.py
+
+      - name: Table tennis model fit and walk-forward check
+        if: (github.event_name == 'schedule' || github.event.inputs.job == 'tt_fit') && hashFiles('backend/table_tennis_fit.py') != ''
+        continue-on-error: true
+        env:
+          UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
+        run: python table_tennis_fit.py
 
       - name: Tennis model (sample, saves nothing)
         if: github.event.inputs.job == 'tennis_sample' && hashFiles('backend/tennis_fit.py') != ''

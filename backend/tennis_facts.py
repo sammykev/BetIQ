@@ -22,7 +22,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 TENNIS = "sr:sport:5"
 SPORTS = {
     "tennis": {"id": TENNIS, "key": "betiq:tennis:results", "days": 300, "backfill": 30, "pages": 60},
-    "table_tennis": {"id": "sr:sport:20", "key": "betiq:table_tennis:results", "days": 45, "backfill": 15, "pages": 120},
+    "table_tennis": {"id": "sr:sport:20", "key": "betiq:table_tennis:results", "days": 120, "backfill": 20, "pages": 120},
 }
 RESULTS_KEY = SPORTS["tennis"]["key"]
 RESULT_DAYS = SPORTS["tennis"]["days"]
