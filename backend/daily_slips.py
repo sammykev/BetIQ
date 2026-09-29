@@ -9,14 +9,19 @@ Every pick being 80%+ doesn't make the slip 80%: the chances multiply, so a
 honest combined chance (the optimizer's win_chance), and every slip is kept
 and graded, so the record shows how they really do.
 
-The slips are made once a day, in the morning, and the server books each on
-SportyBet straight away: everyone gets the same booking code with the slip.
-A slip SportyBet couldn't book then is tried again every RETRY_MINUTES
-until its matches start.
+A day is a Lagos day (midnight to midnight, WAT). Its slips are made just
+before it starts (BUILD_EARLY_MINUTES before midnight), so they're out by
+12am, and the server books each on SportyBet straight away: everyone gets the
+same booking code with the slip. A slip SportyBet couldn't book then is tried
+again every RETRY_MINUTES until its matches start.
+
+When a slip is cut (a pick loses), a new slip for the same target is made
+from that day's matches that haven't kicked off, and booked; the cut slip is
+kept, and both count in the record. At most MAX_REMAKES a slip a day.
 """
 
-from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional
+from datetime import date, datetime, timedelta, timezone
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import tickets
 
@@ -25,8 +30,10 @@ MIN_PROB = 0.80
 MAX_LEG_ODDS = 2.0      # every pick priced under this
 SPREAD = 0.07          # total odds within ±7% of the target
 KEEP_DAYS = 120
-BUILD_AT = (6, 5)       # UTC (07:05 in Lagos): the day's slips are made then
+TZ = timezone(timedelta(hours=1))   # Lagos (WAT: no daylight saving)
+BUILD_EARLY_MINUTES = 10  # the next day's slips are made this long before midnight: out by 12am
 RETRY_MINUTES = 15      # a slip without a booking code is tried again after this
+MAX_REMAKES = 3         # new slips for one target in a day, after cuts
 
 # Today's matches only. Tried in order until one gives a slip: the ones
 # SportyBet lists first (so the slip can be booked), then all of today's
@@ -128,9 +135,53 @@ def needs_booking(s: Dict[str, Any], now: datetime) -> bool:
         return True
 
 
-def due(now: datetime) -> bool:
-    """Whether today's slips should exist by now."""
-    return (now.hour, now.minute) >= BUILD_AT
+def today(now: Optional[datetime] = None) -> str:
+    """The Lagos date: whose slips are shown as today's."""
+    return (now or now_utc()).astimezone(TZ).date().isoformat()
+
+
+def window(day: str) -> Tuple[datetime, datetime]:
+    """The UTC start and end of a Lagos day: the kick-offs its slips take."""
+    start = datetime.combine(date.fromisoformat(day), datetime.min.time(), TZ)
+    return start.astimezone(timezone.utc), (start + timedelta(days=1)).astimezone(timezone.utc)
+
+
+def days_to_run(now: datetime) -> List[str]:
+    """Today, and tomorrow from BUILD_EARLY_MINUTES before midnight: the
+    days whose slips should exist (and be booked, graded, remade) by now."""
+    days = [today(now)]
+    nxt = today(now + timedelta(minutes=BUILD_EARLY_MINUTES))
+    return days + [nxt] if nxt != days[0] else days
+
+
+def cut_by(s: Dict[str, Any]) -> Optional[str]:
+    """The match that cut a slip (its first lost pick)."""
+    p = next((p for p in s.get("picks") or [] if p.get("status") == "lost"), None)
+    return f"{p['home']} v {p['away']}" if p else None
+
+
+def needs_remake(doc: Dict[str, Any], s: Dict[str, Any]) -> bool:
+    """A cut slip not yet dealt with, whose target hasn't had MAX_REMAKES."""
+    if s.get("status") != "lost" or s.get("remade"):
+        return False
+    return sum(1 for c in doc.get("cut") or [] if c.get("target") == s.get("target")) < MAX_REMAKES
+
+
+def remake(doc: Dict[str, Any], i: int, new: Dict[str, Any], at: str) -> bool:
+    """Put `new` in place of the cut slip doc["slips"][i] (kept in doc["cut"]).
+    Without a new slip (no matches left), the cut slip stays, marked. True if
+    a new slip went in."""
+    old = doc["slips"][i]
+    if new.get("status") == "none":
+        old["remade"] = "none"
+        return False
+    old["remade"] = at
+    doc.setdefault("cut", []).append(old)
+    new["replaces"] = {"code": (old.get("booking") or {}).get("code"), "cut_by": cut_by(old),
+                       "total_odds": old.get("total_odds")}
+    new["made_at"] = at
+    doc["slips"][i] = new
+    return True
 
 
 def ticket_legs(s: Dict[str, Any]):

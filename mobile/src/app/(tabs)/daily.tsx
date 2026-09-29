@@ -56,8 +56,8 @@ export default function Daily() {
       </ScrollView>
 
       {data.slips.length === 0 ? (
-        <Empty icon="flame-outline" title={isToday ? "Coming this morning" : "No slips that day"}
-          body={isToday ? `Today's slips and booking codes come out at ${publishAt} each morning.` : "No slips were made that day."} />
+        <Empty icon="flame-outline" title={isToday ? "Coming soon" : "No slips that day"}
+          body={isToday ? `The day’s slips and booking codes come out at ${publishAt} (midnight in Lagos).` : "No slips were made that day."} />
       ) : (
         <>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabs}>
@@ -75,19 +75,27 @@ export default function Daily() {
               );
             })}
           </ScrollView>
-          {s && <SlipView key={`${data.date}-${s.target}`} s={s} isToday={isToday} date={data.date}
-            retry={data.retry_minutes ?? 15} minProb={data.min_prob} />}
+          {s && <SlipView key={`${data.date}-${s.target}-${s.booking?.code ?? ""}`} s={s} isToday={isToday} date={data.date}
+            retry={data.retry_minutes ?? 15} minProb={data.min_prob} cut={(data.cut ?? []).filter(c => c.target === s.target)} />}
         </>
       )}
       <Muted style={styles.footer}>
-        Picks our model rates {pct(data.min_prob)} or more, from that day’s matches. A slip needs every pick to land.
-        18+ · Bet responsibly.
+        Picks our model rates {pct(data.min_prob)} or more, from that day’s matches, out at midnight (Lagos). A slip
+        needs every pick to land; when one is cut, a new slip is made from the matches still to play. 18+ · Bet responsibly.
       </Muted>
     </ScrollView>
   );
 }
 
-function SlipView({ s, isToday, date, retry, minProb }: { s: Slip; isToday: boolean; date: string; retry: number; minProb: number }) {
+/** The match that cut a slip: its first lost pick. */
+const cutBy = (s: Slip) => {
+  const p = s.picks.find(x => x.status === "lost");
+  return p ? `${p.home} v ${p.away}` : null;
+};
+
+function SlipView({ s, isToday, date, retry, minProb, cut }: {
+  s: Slip; isToday: boolean; date: string; retry: number; minProb: number; cut: Slip[];
+}) {
   const { signedIn, getToken, userId } = useSession();
   const [copied, setCopied] = useState(false);
   const [tracking, setTracking] = useState<"idle" | "busy" | "done" | string>("idle");
@@ -139,6 +147,18 @@ function SlipView({ s, isToday, date, retry, minProb }: { s: Slip; isToday: bool
         </View>
       </View>
 
+      {s.replaces ? (
+        <Text style={styles.note}>
+          <Ionicons name="refresh" size={12} color={colors.accent} /> New slip: the earlier {s.target}x
+          {s.replaces.code ? ` (${s.replaces.code})` : ""} was cut{s.replaces.cut_by ? ` by ${s.replaces.cut_by}` : ""}, so
+          this one is from the matches still to play.
+        </Text>
+      ) : null}
+      {s.status === "lost" && s.remade === "none" ? (
+        <Muted style={{ fontSize: 12, marginBottom: space.sm }}>
+          Cut{cutBy(s) ? ` by ${cutBy(s)}` : ""}. No new slip: not enough matches left to play {isToday ? "today" : "that day"}.
+        </Muted>
+      ) : null}
       <View style={styles.code}>
         <Eyebrow>SportyBet booking code</Eyebrow>
         {b?.code ? (
@@ -191,6 +211,16 @@ function SlipView({ s, isToday, date, retry, minProb }: { s: Slip; isToday: bool
       {s.picks.map((p, i) => (
         <LegRow key={i} leg={{ ...p, pick: `${p.market_name ? `${p.market_name}: ` : ""}${p.label || p.code}` }} />
       ))}
+      {cut.length > 0 ? (
+        <View style={styles.cut}>
+          <Eyebrow>Cut earlier {isToday ? "today" : "that day"}</Eyebrow>
+          {cut.map((c, i) => (
+            <Muted key={i} style={{ fontSize: 12 }}>
+              {c.booking?.code || "No code"} · {odds(c.total_odds)}x{cutBy(c) ? ` · cut by ${cutBy(c)}` : ""}
+            </Muted>
+          ))}
+        </View>
+      ) : null}
     </Card>
   );
 }
@@ -216,5 +246,7 @@ const styles = StyleSheet.create({
   codeText: { color: colors.text, fontSize: 30, fontWeight: "800", letterSpacing: 4, fontFamily: "monospace" },
   actions: { flexDirection: "row", gap: space.sm },
   warn: { color: colors.warn, fontSize: 12 },
+  note: { color: colors.text2, fontSize: 12, marginBottom: space.md },
+  cut: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, paddingTop: space.md, marginTop: space.xs, gap: 4 },
   footer: { textAlign: "center", padding: space.xl, fontSize: 11 },
 });

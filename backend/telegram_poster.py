@@ -1,7 +1,7 @@
 """
 Posting the daily odds to a Telegram channel.
 
-Each morning, once the day's slips are made and booked (daily_slips.py),
+Just after midnight (Lagos), once the day's slips are made and booked (daily_slips.py),
 one message goes to the channel: each slip's odds and SportyBet booking
 code, and a link to the site. The picks themselves stay on the site. The Bot API is free. It needs, in .env:
 

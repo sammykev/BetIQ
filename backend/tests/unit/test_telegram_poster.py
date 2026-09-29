@@ -10,6 +10,7 @@ from datetime import date
 import pytest
 from fastapi.testclient import TestClient
 
+import daily_slips
 import main
 import telegram_poster as tg
 from tests.unit.test_user_endpoints import FakeRedis
@@ -77,7 +78,7 @@ def site(monkeypatch):
     async def identity(request):
         return "secret", None
     monkeypatch.setattr(main, "_admin_identity", identity)
-    today = date.today().isoformat()
+    today = daily_slips.today()
     fake.kv[main.DAILY_KEY.format(today)] = json.dumps({**DOC, "date": today})
     return fake, sent
 

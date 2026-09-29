@@ -13,7 +13,7 @@ const CHANNEL_SETUP: Record<string, string> = {
   telegram: "A bot from @BotFather, added to your channel as an administrator",
 };
 
-/** Posting the day's 10 / 15 / 20 odds slips to one channel each morning
+/** Posting the day's 10 to 100 odds slips to one channel once they're out (midnight, Lagos)
  * (backend x_poster.py / telegram_poster.py). */
 function DailyPost({ ch, name }: { ch: "x" | "telegram"; name: string }) {
   const { get, flash, adminFetch } = useAdmin();
@@ -36,7 +36,7 @@ function DailyPost({ ch, name }: { ch: "x" | "telegram"; name: string }) {
   };
   const toggle = async () => {
     const d = await call("PUT", `/api/admin/post/${ch}`, { enabled: !x.enabled }, "toggle");
-    if (d) { setX(d); flash("ok", d.enabled ? `The daily odds will be posted on ${name} each morning` : `Posting on ${name} is off`); }
+    if (d) { setX(d); flash("ok", d.enabled ? `The daily odds will be posted on ${name} each night, once they're out` : `Posting on ${name} is off`); }
   };
   const postNow = async () => {
     const again = x?.today?.status === "posted";
@@ -58,8 +58,8 @@ function DailyPost({ ch, name }: { ch: "x" | "telegram"; name: string }) {
         </p>
       )}
       <div className="grid gap-2 grid-cols-1 sm:grid-cols-2">
-        <Toggle on={!!x.enabled} busy={busy === "toggle"} onChange={toggle} label={x.enabled ? "Posting each morning" : "Posting off"}
-          hint={`Once the slips have their codes (07:05), by ${lagos(x.post_by_utc)} at the latest (Lagos)`} />
+        <Toggle on={!!x.enabled} busy={busy === "toggle"} onChange={toggle} label={x.enabled ? "Posting daily" : "Posting off"}
+          hint={`Once the slips have their codes (just after midnight), by ${lagos(x.post_by_utc)} at the latest (Lagos)`} />
         <div className="flex items-center justify-between gap-3 rounded-xl bg-surface-sunken px-3 py-2.5">
           <div className="min-w-0 text-sm">
             <span className="block font-semibold text-n-0">Today</span>
@@ -127,11 +127,11 @@ export function MessagingSection() {
 
   return (
     <div className="space-y-4">
-      <Card title="Daily odds on Telegram" icon={<Send size={15} />} subtitle="Post the day's slips (10 to 100 odds) with their booking codes to your Telegram channel every morning">
+      <Card title="Daily odds on Telegram" icon={<Send size={15} />} subtitle="Post the day's slips (10 to 100 odds) with their booking codes to your Telegram channel when they come out at midnight">
         <DailyPost ch="telegram" name="Telegram" />
       </Card>
 
-      <Card title="Daily odds on X" icon={<Send size={15} />} subtitle="Post the day's slips (10 to 100 odds) with their booking codes on X every morning">
+      <Card title="Daily odds on X" icon={<Send size={15} />} subtitle="Post the day's slips (10 to 100 odds) with their booking codes on X when they come out at midnight">
         <DailyPost ch="x" name="X" />
       </Card>
 

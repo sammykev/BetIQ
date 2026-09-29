@@ -10,6 +10,7 @@ from datetime import date, datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 
+import daily_slips
 import main
 import x_poster
 from tests.unit.test_user_endpoints import FakeRedis
@@ -82,7 +83,7 @@ def site(monkeypatch):
     async def identity(request):
         return "secret", None
     monkeypatch.setattr(main, "_admin_identity", identity)
-    today = date.today().isoformat()
+    today = daily_slips.today()
     fake.kv[main.DAILY_KEY.format(today)] = json.dumps({**DOC, "date": today})
     return fake, posts, post
 
@@ -109,12 +110,13 @@ def test_posts_once_a_day_when_switched_on(site, monkeypatch):
 
 
 def test_waits_for_the_codes_until_the_deadline():
-    now = datetime(2026, 9, 28, 6, 30, tzinfo=timezone.utc)
+    # The 28th in Lagos starts 23:00 UTC on the 27th; the deadline is an hour in
+    now = datetime(2026, 9, 27, 23, 30, tzinfo=timezone.utc)
     later = {"home": "A", "away": "B", "date": "2026-09-28", "time": "18:00", "status": "pending"}
-    waiting = {"slips": [{"status": "pending", "picks": [later], "booking": None}]}
+    waiting = {"date": "2026-09-28", "slips": [{"status": "pending", "picks": [later], "booking": None}]}
     assert not main._post_ready(waiting, now)
-    assert main._post_ready(waiting, now.replace(hour=8))
-    booked = {"slips": [{"status": "pending", "picks": [later], "booking": {"code": "X1"}}]}
+    assert main._post_ready(waiting, now + timedelta(minutes=main.POST_GRACE_MINUTES - 30))
+    booked = {"date": "2026-09-28", "slips": [{"status": "pending", "picks": [later], "booking": {"code": "X1"}}]}
     assert main._post_ready(booked, now)
 
 

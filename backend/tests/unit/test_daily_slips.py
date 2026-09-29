@@ -1,6 +1,6 @@
 """
-Daily odds (daily_slips.py): three slips a day from the day's 80%+ picks, none at 2.0 odds or more, built once,
-graded from the results, and counted in the record once each.
+Daily odds (daily_slips.py): five slips a day from the day's 80%+ picks, none at 2.0 odds or more, made just
+before midnight in Lagos, graded from the results, remade when cut, and counted in the record once each.
 """
 
 import json
@@ -46,8 +46,13 @@ class TestSlips:
         assert daily_slips.status([{"status": "won"}, {"status": "pending"}]) == "pending"
 
 
+# Mid-morning: the Lagos day and the UTC date agree
+NOW = datetime.combine(date.today(), datetime.min.time(), timezone.utc) + timedelta(hours=10)
+
+
 @pytest.fixture
 def api(monkeypatch):
+    monkeypatch.setattr(daily_slips, "now_utc", lambda: NOW)
     fake = FakeRedis()
     monkeypatch.setattr(main, "_get_redis", lambda: fake)
     monkeypatch.setattr(main, "_paywall_enabled", lambda: False)
@@ -79,7 +84,7 @@ def test_built_once_booked_graded_and_recorded(api, monkeypatch, sportybet):
     monkeypatch.setattr(main, "_predictions_cache", [pred(d=today)])
     calls = []
 
-    async def optimize(body):
+    async def optimize(body, window=None):
         calls.append(body)
         if body["target_odds"] >= 20:
             return {"error": "Not enough 80% picks for 20x"}
@@ -87,7 +92,7 @@ def test_built_once_booked_graded_and_recorded(api, monkeypatch, sportybet):
     monkeypatch.setattr(main, "_optimize_request", optimize)
 
     c = TestClient(main.app)
-    # Visitors never make the slips: before the morning job there are none
+    # Visitors never make the slips: before the tick makes them there are none
     assert c.get("/api/daily-slips").json()["slips"] == [] and calls == []
 
     asyncio.run(main._build_daily(today))
@@ -100,10 +105,9 @@ def test_built_once_booked_graded_and_recorded(api, monkeypatch, sportybet):
     assert ten["booking"]["code"] == "CODE1" and fifteen["booking"]["code"] == "CODE2"
     assert (ten["booking"]["booked"], ten["booking"]["of"]) == (1, 1) and "on_code" not in ten["booking"]
     assert "booking" not in twenty and len(sportybet[1]) == 2
-    # Kept: asking again (or the job running again) doesn't rebuild or rebook
+    # Kept: asking again (or the tick running again) doesn't rebuild or rebook
     n = len(calls)
     c.get("/api/daily-slips")
-    asyncio.run(main._daily_job())
     asyncio.run(main._daily_tick())
     assert len(calls) == n and len(sportybet[1]) == 2
 
@@ -128,7 +132,7 @@ def test_a_slip_sportybet_refused_is_tried_again_later(api, monkeypatch, sportyb
     tomorrow = (date.today() + timedelta(days=1)).isoformat()
     monkeypatch.setattr(main, "_predictions_cache", [pred(d=tomorrow)])
 
-    async def optimize(body):
+    async def optimize(body, window=None):
         return result(body["target_odds"], [("Arsenal", "Chelsea", tomorrow, "goals_ou", "O15")])
     monkeypatch.setattr(main, "_optimize_request", optimize)
     today = date.today().isoformat()
@@ -151,20 +155,54 @@ def test_a_slip_sportybet_refused_is_tried_again_later(api, monkeypatch, sportyb
     assert all(s["booking"]["code"] for s in slips) and len(calls) == 10
 
 
-def test_missed_morning_job_is_made_up_by_the_tick(api, monkeypatch, sportybet):
+class TestLagosDay:
+    def at(self, hhmm, d="2026-09-29"):
+        return datetime.fromisoformat(f"{d}T{hhmm}:00+00:00")
+
+    def test_the_day_turns_at_midnight_in_lagos(self):
+        assert daily_slips.today(self.at("22:59")) == "2026-09-29"
+        assert daily_slips.today(self.at("23:00")) == "2026-09-30"    # 00:00 in Lagos
+
+    def test_a_days_window_is_its_lagos_midnight_to_midnight(self):
+        assert daily_slips.window("2026-09-30") == (self.at("23:00"), self.at("23:00", "2026-09-30"))
+
+    def test_tomorrows_slips_are_made_ten_minutes_before_midnight(self):
+        assert daily_slips.days_to_run(self.at("22:49")) == ["2026-09-29"]
+        assert daily_slips.days_to_run(self.at("22:50")) == ["2026-09-29", "2026-09-30"]
+        assert daily_slips.days_to_run(self.at("23:00")) == ["2026-09-30"]
+
+
+def test_the_tick_makes_tomorrows_slips_by_midnight(api, monkeypatch):
     import asyncio
-    monkeypatch.setattr(main, "_predictions_cache", [pred()])
     made = []
 
     async def build(day, force=False):
         made.append(day)
     monkeypatch.setattr(main, "_build_daily", build)
-    monkeypatch.setattr(daily_slips, "due", lambda now: False)
+    today = NOW.date()
+    monkeypatch.setattr(daily_slips, "now_utc", lambda: NOW.replace(hour=22, minute=49))
     asyncio.run(main._daily_tick())
-    assert made == []
-    monkeypatch.setattr(daily_slips, "due", lambda now: True)
+    assert made == [today.isoformat()]                     # today's, if missing: not tomorrow's yet
+    monkeypatch.setattr(daily_slips, "now_utc", lambda: NOW.replace(hour=22, minute=51))
     asyncio.run(main._daily_tick())
-    assert made == [date.today().isoformat()]
+    assert made[1:] == [today.isoformat(), (today + timedelta(days=1)).isoformat()]
+
+
+def test_the_optimizer_takes_only_the_windows_kickoffs(monkeypatch):
+    import asyncio
+    day = "2030-06-15"
+    times = {"A": ("2030-06-14", "22:30"),   # 23:30 Lagos the day before: out
+             "B": ("2030-06-14", "23:30"),   # 00:30 Lagos: in
+             "C": ("2030-06-15", "18:00"),   # in
+             "D": ("2030-06-15", "23:15")}   # 00:15 Lagos the next day: out
+    monkeypatch.setattr(main, "_predictions_cache", [
+        {**pred(home=h, away=h + "2", d=d, t=t), "sport": "football"} for h, (d, t) in times.items()])
+    monkeypatch.setattr(main, "_get_redis", lambda: None)
+    seen = []
+    monkeypatch.setattr(main, "_linked_event", lambda p: seen.append(p["home"]) or None)
+    asyncio.run(main._optimize_request({"min_odds": 2, "max_odds": 3, "bookable_only": True},
+                                       window=daily_slips.window(day)))
+    assert sorted(seen) == ["B", "C"]
 
 
 def test_booking_leaves_out_started_and_settled_picks():
@@ -185,7 +223,7 @@ def test_an_account_can_track_the_slip(api, monkeypatch, sportybet):
     tomorrow = (date.today() + timedelta(days=1)).isoformat()
     monkeypatch.setattr(main, "_predictions_cache", [pred(d=tomorrow)])
 
-    async def optimize(body):
+    async def optimize(body, window=None):
         return result(body["target_odds"], [("Arsenal", "Chelsea", tomorrow, "goals_ou", "O15")])
     monkeypatch.setattr(main, "_optimize_request", optimize)
     monkeypatch.setattr(auth, "auth_enforced", lambda: False)
@@ -216,3 +254,72 @@ def test_past_days_and_premium_only(api, monkeypatch):
     monkeypatch.setattr(auth, "user_tier", lite)
     r = c.get("/api/daily-slips?date=2026-01-01")
     assert (r.status_code, r.json()["detail"]) == (402, "premium_required")
+
+
+class TestCut:
+    """A slip whose pick loses is cut: a new one for the same target is made
+    from the day's matches not kicked off yet, and booked."""
+
+    @pytest.fixture
+    def day(self, api, monkeypatch, sportybet):
+        import asyncio
+        today = NOW.date().isoformat()
+        monkeypatch.setattr(main, "_predictions_cache", [pred(d=today)])
+        self.next = [("Arsenal", "Chelsea", today, "goals_ou", "O15")]
+        self.windows = []
+
+        async def optimize(body, window=None):
+            self.windows.append(window)
+            if body["target_odds"] != 10:
+                return {"error": "Not enough picks"}
+            if not self.next:
+                return {"error": "No matches left today"}
+            return result(10, self.next, time="23:59")
+        monkeypatch.setattr(main, "_optimize_request", optimize)
+        asyncio.run(main._build_daily(today))
+        self.today, self.api = today, api
+        return today
+
+    def cut(self):
+        """Arsenal v Chelsea ends 0-0: over 1.5 loses, the 10x slip is cut."""
+        d = {}
+        matchday.merge_predictions(d, [pred(d=self.today, t="00:00")], NOW - timedelta(days=1))
+        matchday.apply_result(d["arsenal|chelsea"], finished(0, 0))
+        main._md_save(self.api, self.today, d)
+
+    def test_a_cut_slip_is_remade_and_booked(self, day, sportybet):
+        import asyncio
+        self.next = [("Spurs", "Leeds", day, "1x2", "1X")]
+        self.cut()
+        asyncio.run(main._daily_tick())
+        got = TestClient(main.app).get("/api/daily-slips").json()
+        ten = got["slips"][0]
+        assert (ten["status"], ten["picks"][0]["home"], ten["booking"]["code"]) == ("pending", "Spurs", "CODE2")
+        assert ten["replaces"] == {"code": "CODE1", "cut_by": "Arsenal v Chelsea", "total_odds": 10}
+        [old] = got["cut"]
+        assert (old["status"], old["booking"]["code"]) == ("lost", "CODE1")
+        assert got["record"]["10"] == {"won": 0, "lost": 1}          # the cut slip counts
+        assert self.windows[-1] == daily_slips.window(day)          # the same Lagos day
+        # Settled once: another tick doesn't remake or rebook it
+        asyncio.run(main._daily_tick())
+        assert len(TestClient(main.app).get("/api/daily-slips").json()["cut"]) == 1 and len(sportybet[1]) == 2
+
+    def test_no_matches_left_keeps_the_cut_slip(self, day, sportybet):
+        import asyncio
+        self.next = []
+        self.cut()
+        built = len(self.windows)
+        asyncio.run(main._daily_tick())
+        asyncio.run(main._daily_tick())
+        got = TestClient(main.app).get("/api/daily-slips").json()
+        assert got["cut"] == [] and got["slips"][0]["status"] == "lost" and got["slips"][0]["remade"] == "none"
+        assert len(self.windows) - built == len(daily_slips.ATTEMPTS)   # tried once, not every tick
+
+
+def test_at_most_max_remakes_a_day():
+    doc = {"date": "2026-09-29", "slips": [{"target": 10, "status": "lost", "picks": []}],
+           "cut": [{"target": 10}] * daily_slips.MAX_REMAKES}
+    assert not daily_slips.needs_remake(doc, doc["slips"][0])
+    doc["cut"] = doc["cut"][:-1]
+    assert daily_slips.needs_remake(doc, doc["slips"][0])
+    assert not daily_slips.needs_remake(doc, {"target": 10, "status": "won", "picks": []})

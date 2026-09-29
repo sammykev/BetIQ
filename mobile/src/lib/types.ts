@@ -57,11 +57,17 @@ export interface Slip {
   target: number; status: "pending" | "won" | "lost" | "void" | "none"; error?: string;
   total_odds?: number; win_chance?: number; games?: number; picks: Pick[];
   bookable?: boolean; within_target?: boolean; days?: number;
+  /** Made in place of a cut slip */
+  replaces?: { code: string | null; cut_by: string | null; total_odds?: number | null };
+  /** On a cut slip: "none" when no new slip could be made */
+  remade?: string;
   booking?: { code: string | null; share_url: string | null; booked: number; of: number; error?: string | null } | null;
 }
 export interface DailyResponse {
   date: string; today: string; slips: Slip[]; record: Record<string, { won: number; lost: number }>;
   min_prob: number; publish_at_utc?: string; retry_minutes?: number;
+  /** The day's cut slips, each replaced by a new one */
+  cut?: Slip[];
 }
 
 export interface TicketLeg {

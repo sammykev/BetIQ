@@ -1,7 +1,7 @@
 """
 Posting the daily odds on X (Twitter).
 
-Each morning, once the day's slips are made and booked (daily_slips.py),
+Just after midnight (Lagos), once the day's slips are made and booked (daily_slips.py),
 one post gives each slip's total odds and SportyBet booking code, with a
 link to the picks. It posts as the account whose keys are in .env:
 

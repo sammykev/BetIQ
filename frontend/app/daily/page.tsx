@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import clsx from "clsx";
 import { useUser } from "@clerk/nextjs";
-import { Check, Copy, ExternalLink, Info, Loader2, Ticket } from "lucide-react";
+import { Check, Copy, ExternalLink, Info, Loader2, RefreshCw, Ticket } from "lucide-react";
 import { AppShell } from "@/components/shell/AppShell";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { FeatureGate, Locked, Unavailable } from "@/components/FeatureGate";
@@ -11,11 +11,13 @@ import { LegRow, nextRefresh } from "@/components/TicketsList";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
 import { API, type LegLive, type LegStatus } from "@/lib/matchday";
 
-// Daily odds (backend daily_slips.py): three slips a day at about 10x, 15x
-// and 20x from the day's own matches, only from picks the model rates 80%+
-// and priced under 2.0 each, each slip with its honest chance.
-// The server makes them once each morning and books each on SportyBet: every
-// visitor gets the same slips and booking codes.
+// Daily odds (backend daily_slips.py): five slips a day at about 10x to 100x
+// from the day's own matches, only from picks the model rates 80%+ and
+// priced under 2.0 each, each slip with its honest chance.
+// The server makes them just before midnight (Lagos) and books each on
+// SportyBet: every visitor gets the same slips and booking codes. When a slip
+// is cut (a pick loses), the server makes and books a new one from the
+// matches still to play; the cut one is kept.
 
 interface Pick {
   home: string; away: string; date: string; time?: string; league?: string;
@@ -31,10 +33,15 @@ interface Slip {
   target: number; status: "pending" | "won" | "lost" | "void" | "none"; error?: string;
   total_odds?: number; win_chance?: number; games?: number; within_target?: boolean;
   days?: number; bookable?: boolean; picks: Pick[]; booking?: Booking;
+  /** Made in place of a cut slip */
+  replaces?: { code: string | null; cut_by: string | null; total_odds?: number | null };
+  /** On a cut slip: "none" when no new slip could be made (no matches left) */
+  remade?: string;
 }
 interface DailyResponse {
   date: string; today: string; built_at: string | null; slips: Slip[];
   record: Record<string, { won: number; lost: number }>; min_prob: number; targets: number[];
+  cut?: Slip[];
   publish_at_utc?: string; retry_minutes?: number;
 }
 /** Still to play: not settled, and kick-off (UTC date + time) hasn't passed. */
@@ -42,7 +49,8 @@ const notStarted = (p: Pick) => p.status === "pending" && !p.live &&
   !(Date.parse(`${p.date}T${p.time || "23:59"}:00Z`) <= Date.now());
 
 const PERKS = [
-  "Five slips every morning, at about 10, 15, 20, 50 and 100 odds",
+  "Five slips out at midnight every day, at about 10, 15, 20, 50 and 100 odds",
+  "A new slip and code when one is cut",
   "Today's matches only, every pick rated 80% or more and under 2.0 odds",
   "A ready SportyBet booking code with every slip",
   "Every slip graded, with a public record",
@@ -64,7 +72,15 @@ function daysBefore(iso: string, n: number): string[] {
 const dayName = (iso: string, today: string) =>
   iso === today ? "Today" : new Date(`${iso}T12:00:00Z`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
 
-function SlipView({ s, isToday, date, retry, minProb }: { s: Slip; isToday: boolean; date: string; retry: number; minProb: number }) {
+/** The match that cut a slip: its first lost pick. */
+const cutBy = (s: Slip) => {
+  const p = s.picks.find(x => x.status === "lost");
+  return p ? `${p.home} v ${p.away}` : null;
+};
+
+function SlipView({ s, isToday, date, retry, minProb, cut }: {
+  s: Slip; isToday: boolean; date: string; retry: number; minProb: number; cut: Slip[];
+}) {
   const { user } = useUser();
   const authFetch = useAuthedFetch();
   const [copied, setCopied] = useState(false);
@@ -110,6 +126,17 @@ function SlipView({ s, isToday, date, retry, minProb }: { s: Slip; isToday: bool
         </div>
       </header>
 
+      {s.replaces && (
+        <p className="mx-4 sm:mx-5 mb-3 text-xs text-n-300 flex items-start gap-1.5">
+          <RefreshCw size={12} className="text-accent shrink-0 mt-0.5" />
+          <span>New slip: the earlier {s.target}x{s.replaces.code ? ` (${s.replaces.code})` : ""} was cut
+            {s.replaces.cut_by ? ` by ${s.replaces.cut_by}` : ""}, so we made this one from the matches still to play.</span>
+        </p>
+      )}
+      {s.status === "lost" && s.remade === "none" && (
+        <p className="mx-4 sm:mx-5 mb-3 text-xs text-n-400">Cut{cutBy(s) ? ` by ${cutBy(s)}` : ""}. No new slip: not enough matches
+          left to play {isToday ? "today" : "that day"}.</p>
+      )}
       <section className="mx-4 sm:mx-5 mb-4 rounded-xl border border-n-800 bg-surface-sunken p-3 sm:p-4 space-y-2">
         <p className="eyebrow flex items-center gap-1.5"><Ticket size={12} /> SportyBet booking code</p>
         {b?.code ? (
@@ -164,6 +191,18 @@ function SlipView({ s, isToday, date, retry, minProb }: { s: Slip; isToday: bool
           <LegRow key={i} showProb leg={{ ...p, marketName: p.market_name, status: p.status }} />
         ))}
       </ul>
+      {cut.length > 0 && (
+        <div className="px-4 sm:px-5 py-3 border-t border-n-800 space-y-1">
+          <p className="eyebrow">Cut earlier {isToday ? "today" : "that day"}</p>
+          {cut.map((c, i) => (
+            <p key={i} className="text-xs text-n-400 flex flex-wrap gap-x-2">
+              <span className="font-mono font-bold text-n-300">{c.booking?.code || "No code"}</span>
+              <span className="tnum">{c.total_odds?.toFixed(2)}x</span>
+              {cutBy(c) && <span>cut by {cutBy(c)}</span>}
+            </p>
+          ))}
+        </div>
+      )}
     </article>
   );
 }
@@ -204,7 +243,7 @@ function Daily() {
 
   const isToday = data.date === data.today;
   const s = data.slips[pick];
-  // When the morning job makes them, in the visitor's own time
+  // Midnight in Lagos (when a day's slips are out), in the visitor's own time
   const publishAt = new Date(`${data.today}T${data.publish_at_utc ?? "06:05"}:00Z`)
     .toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   return (
@@ -218,7 +257,7 @@ function Daily() {
 
       {data.slips.length === 0 ? (
         <p className="card p-6 text-center text-sm text-n-400">{isToday
-          ? `Today's slips and booking codes come out at ${publishAt} each morning. Check back then, or look at yesterday's.`
+          ? `The day's slips and booking codes come out at ${publishAt} (midnight in Lagos). Check back soon, or look at yesterday's.`
           : "No slips were made that day."}</p>
       ) : (
         <>
@@ -239,15 +278,17 @@ function Daily() {
               );
             })}
           </div>
-          {s && <SlipView key={`${data.date}-${s.target}`} s={s} isToday={isToday} date={data.date} retry={data.retry_minutes ?? 15} minProb={data.min_prob} />}
+          {s && <SlipView key={`${data.date}-${s.target}-${s.booking?.code ?? ""}`} s={s} isToday={isToday} date={data.date}
+            retry={data.retry_minutes ?? 15} minProb={data.min_prob} cut={(data.cut ?? []).filter(c => c.target === s.target)} />}
         </>
       )}
 
       <div className="rounded-xl border border-n-800 bg-surface-sunken px-4 py-3 text-xs text-n-400 flex gap-2.5">
         <Info size={14} className="text-n-500 shrink-0 mt-0.5" />
         <p>Every pick is one our model rates {pct(data.min_prob)} or more, but a slip only wins if all of them do, so its
-          own chance is much lower. That&apos;s the percentage on each slip. Slips are made once each morning, booked on
-          SportyBet for you, and graded at full time; the record counts every one. 18+ · Bet responsibly.</p>
+          own chance is much lower. That&apos;s the percentage on each slip. Slips come out at midnight (Lagos), booked on
+          SportyBet for you, and graded at full time. When one is cut, we make a new one from the matches still to play;
+          the record counts every slip, cut ones too. 18+ · Bet responsibly.</p>
       </div>
     </div>
   );
@@ -257,7 +298,7 @@ export default function DailyPage() {
   return (
     <AppShell>
       <div className="space-y-6 animate-fade-in">
-        <PageHeader eyebrow="Every morning" title="Daily odds"
+        <PageHeader eyebrow="Out at midnight" title="Daily odds"
           description="Five slips a day at about 10, 15, 20, 50 and 100 odds, from that day's matches only and picks our model rates 80% or more (none at 2.0 odds or more), each with its SportyBet booking code." />
         <FeatureGate feature="daily_slips" title="Daily odds" perks={PERKS}>
           <Daily />
