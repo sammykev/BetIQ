@@ -4636,6 +4636,7 @@ ADMIN_JOBS = {
     "bb_fit": ("Basketball: rate every league from the results", lambda: _bb_fit()),
     "bb_refresh": ("Basketball: price SportyBet's matches now", lambda: _bb_refresh()),
     "bb_live": ("Basketball: live scores and finals for games under way", lambda: _bb_live_tick()),
+    "tennis_collect": ("Tennis: collect results from SportyBet (form and head-to-head)", lambda: _tennis_collect()),
     "props_load": ("Player props: load box scores and the check's numbers", lambda: _props_load()),
     "fb_props": ("Player props: price goalscorers now", lambda: _fb_props_refresh()),
     "daily_slips": ("Remake today's daily odds slips (new booking codes)", lambda: _build_daily(__import__("daily_slips").today(), force=True)),
@@ -4958,7 +4959,8 @@ async def get_sport_predictions(sport: str, request: Request):
         try:
             cached = r.get(cache_key)
             if cached:
-                return drop_started_events(_json.loads(cached))
+                out = drop_started_events(_json.loads(cached))
+                return _with_tennis_form(out) if sport == "tennis" else out
         except Exception:
             pass
     else:
@@ -4968,7 +4970,8 @@ async def get_sport_predictions(sport: str, request: Request):
         # API call, burning the free 500/month quota within hours.
         cached_entry = _sports_memory_cache.get(sport)
         if cached_entry and (_time.monotonic() - cached_entry[1]) < CACHE_TTL:
-            return drop_started_events(cached_entry[0])
+            out = drop_started_events(cached_entry[0])
+            return _with_tennis_form(out) if sport == "tennis" else out
 
     if sport == "basketball":
         data = [_bb_slim(p) for p in (_bb_upcoming() or await _bb_refresh())]
@@ -4990,7 +4993,8 @@ async def get_sport_predictions(sport: str, request: Request):
     elif data:
         _sports_memory_cache[sport] = (data, _time.monotonic())
 
-    return drop_started_events(data)
+    out = drop_started_events(data)
+    return _with_tennis_form(out) if sport == "tennis" else out
 
 
 # ── Basketball (basketball_data / _model / _markets / _predictions) ─────────
@@ -5204,6 +5208,88 @@ async def get_basketball_match(request: Request, event: str = Query(..., max_len
     if not p:
         raise HTTPException(status_code=404, detail="Match not found")
     return p
+
+
+# ── Tennis form and head-to-head (tennis_facts.py) ──────────────────────────
+_tennis_players: Dict[str, List] = {}      # player -> his matches, newest first
+_tennis_status: Dict[str, Any] = {}
+
+
+def _tennis_results(r) -> List[Dict]:
+    import basketball_data as bd
+    import tennis_facts as tf
+    out: List[Dict] = []
+    for blob in (r.hgetall(tf.RESULTS_KEY) or {}).values() if r else []:
+        try:
+            out += bd.decode(blob)
+        except Exception:
+            continue
+    return out
+
+
+def _tennis_index_build() -> int:
+    import tennis_facts as tf
+    idx = tf.build_index(_tennis_results(_get_redis()))
+    _tennis_players.clear()
+    _tennis_players.update(idx)
+    return len(idx)
+
+
+async def _tennis_collect() -> Dict[str, Any]:
+    """Yesterday's and today's tennis results, and a few older days (the backfill)."""
+    import basketball_data as bd
+    import tennis_facts as tf
+    r = _get_redis()
+    if not r:
+        return {"error": "no database"}
+    have = [k.decode() if isinstance(k, bytes) else k for k in (r.hkeys(tf.RESULTS_KEY) or [])]
+    fetched, matches, failed = 0, 0, 0
+    for day in tf.days_to_collect(have, date.today()):
+        try:
+            found = await tf.fetch_results_day(day)
+        except Exception as e:
+            failed += 1
+            print(f"[Tennis] results for {day}: {e}")
+            continue
+        r.hset(tf.RESULTS_KEY, day, bd.encode(found))
+        fetched += 1
+        matches += len(found)
+        await asyncio.sleep(0.5)
+    players = await asyncio.to_thread(_tennis_index_build)
+    _tennis_status.update(at=datetime.now(timezone.utc).isoformat(timespec="seconds"), days=fetched,
+                          matches=matches, failed=failed, days_stored=r.hlen(tf.RESULTS_KEY), players=players)
+    print(f"[Tennis] results: {fetched} days, {matches} matches ({_tennis_status['days_stored']} days stored, {players} players)")
+    return dict(_tennis_status)
+
+
+async def _tennis_index() -> Dict[str, List]:
+    if not _tennis_players:
+        await asyncio.to_thread(_tennis_index_build)
+    return _tennis_players
+
+
+def _with_tennis_form(preds: List[Dict]) -> List[Dict]:
+    """Each player's last 5 on the list (for the cards), where we have his results."""
+    if not _tennis_players:
+        return preds
+    import tennis_facts as tf
+    return [{**p, "home_form": tf.form_string(_tennis_players, p.get("home") or ""),
+             "away_form": tf.form_string(_tennis_players, p.get("away") or "")} for p in preds]
+
+
+@app.get("/api/tennis/facts")
+async def get_tennis_facts(request: Request, home: str = Query(..., max_length=80), away: str = Query(..., max_length=80),
+                           date_: str = Query(..., alias="date"), time_: str = Query("", alias="time", max_length=5),
+                           league: str = Query("", max_length=120)):
+    """One tennis match's form: each player's last 5, their meetings, and
+    each player's numbers over his last 20 matches (tennis_facts.py)."""
+    import tennis_facts as tf
+    await _check_sport_access(request, "tennis")
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_) or (time_ and not re.fullmatch(r"\d{2}:\d{2}", time_)):
+        raise HTTPException(status_code=400, detail="Invalid match")
+    idx = await _tennis_index()
+    return {**tf.facts(idx, {"home": home, "away": away, "date": date_, "time": time_ or "12:00", "league": league}),
+            "results_days": _tennis_status.get("days_stored")}
 
 
 @app.get("/api/basketball/facts")
@@ -7936,6 +8022,9 @@ async def startup():
     scheduler.add_job(_bb_collect, "interval", minutes=30, id="bb_collect", max_instances=1, coalesce=True,
                       next_run_time=datetime.now() + timedelta(minutes=2))
     scheduler.add_job(_bb_fit, "interval", hours=6, id="bb_fit", max_instances=1, coalesce=True)
+    # Tennis results for form and head-to-head (yesterday, today, and the backfill)
+    scheduler.add_job(_tennis_collect, "interval", minutes=30, id="tennis_collect", max_instances=1, coalesce=True,
+                      next_run_time=datetime.now() + timedelta(minutes=5))
     # Basketball games under way: live scores, and finals graded as they come in
     scheduler.add_job(_bb_live_tick, "interval", minutes=2, id="bb_live", max_instances=1, coalesce=True,
                       next_run_time=datetime.now() + timedelta(minutes=4))

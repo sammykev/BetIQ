@@ -7,6 +7,7 @@ import { getSportAssets, sportDbSport } from "@/lib/sportsAssets";
 import { useTeamLogo } from "@/lib/useTeamLogo";
 import { CompetitionBadge } from "./CompetitionBadge";
 import type { SportPrediction } from "./SportCard";
+import { TennisFacts } from "./TennisFacts";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
 
@@ -111,6 +112,9 @@ export function SportModal({ prediction: p, onClose }: Props) {
   const [detail, setDetail]   = useState<EventDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState(false);
+  // Tennis: form, player numbers and head to head (like football's match page), or the markets
+  const hasFacts = p.sport === "tennis";
+  const [view, setView] = useState<"form" | "markets">(hasFacts ? "form" : "markets");
 
   const assets = getSportAssets(p.home, p.away, p.sport);
 
@@ -180,7 +184,25 @@ export function SportModal({ prediction: p, onClose }: Props) {
           </div>
         </div>
 
-        {/* Body */}
+        {hasFacts && (
+          <div role="tablist" aria-label="Match view" className="flex gap-6 px-5 sm:px-6 border-b border-n-800">
+            {([["form", "Form & stats"], ["markets", "Markets"]] as const).map(([id, label]) => (
+              <button key={id} role="tab" aria-selected={view === id} onClick={() => setView(id)}
+                className={clsx("relative py-3 font-display font-bold text-[15px] uppercase tracking-[0.06em] transition-colors",
+                  view === id ? "text-n-0" : "text-n-500 hover:text-n-300")}>
+                {label}
+                {view === id && <span className="absolute left-0 right-0 -bottom-px h-[2px] bg-accent rounded-full" />}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {view === "form" ? (
+          <div className="p-5">
+            <TennisFacts m={{ home: p.home, away: p.away, date: p.date, time: p.time, league: p.league_name }} />
+          </div>
+        ) : (
+        /* Body */
         <div className="p-5 space-y-5">
 
           {/* Best pick banner */}
@@ -260,6 +282,7 @@ export function SportModal({ prediction: p, onClose }: Props) {
             Odds sourced from The Odds API · Best available across EU bookmakers · Always verify before betting
           </p>
         </div>
+        )}
       </div>
     </div>
   );

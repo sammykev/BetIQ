@@ -30,7 +30,7 @@ export function Crest({ src, name, size = 30 }: { src?: string | null; name: str
 }
 
 /** A team's last results, oldest to newest: small W/L marks under its name. */
-function FormDots({ form }: { form: string }) {
+export function FormDots({ form }: { form: string }) {
   return (
     <span className="mt-1 flex gap-[3px]" title={`Last ${form.length}: ${form.split("").join(" ")} (oldest to newest)`}>
       {form.split("").map((r, i) => (

@@ -6,6 +6,7 @@ import { useTeamLogo } from "@/lib/useTeamLogo";
 import { CompetitionBadge } from "./CompetitionBadge";
 import { kickoff } from "@/lib/matchTime";
 import clsx from "clsx";
+import { FormDots } from "./BasketballCard";
 
 interface SpreadLine {
   point: number | null;
@@ -35,6 +36,8 @@ export interface SportPrediction {
   /** "safe": model backs the market favorite with real conviction.
    *  "upset": model picks the market's underdog to win outright. */
   pick_type?: "safe" | "upset" | null;
+  /** Tennis: each player's last 5, oldest to newest ("WWLWL") */
+  home_form?: string; away_form?: string;
 }
 
 function spreadLabel(name: string, spread: SpreadLine): string {
@@ -120,13 +123,16 @@ export function SportCard({ prediction: p, onClick }: Props) {
         {/* Competitors */}
         <div className="space-y-2.5">
           {[
-            { name: p.home, prob: p.p_home, odds: p.odds_home, image: assets.homeImage, color: assets.homeColor, fav: homeStronger },
-            { name: p.away, prob: p.p_away, odds: p.odds_away, image: assets.awayImage, color: assets.awayColor, fav: !homeStronger },
-          ].map(({ name, prob, odds, image, color, fav }) => (
+            { name: p.home, prob: p.p_home, odds: p.odds_home, image: assets.homeImage, color: assets.homeColor, fav: homeStronger, form: p.home_form },
+            { name: p.away, prob: p.p_away, odds: p.odds_away, image: assets.awayImage, color: assets.awayColor, fav: !homeStronger, form: p.away_form },
+          ].map(({ name, prob, odds, image, color, fav, form }) => (
             <div key={name} className="flex items-center gap-3 min-w-0">
               <Avatar staticImage={image} color={color} name={name} face={assets.isPlayerFace} sport={p.sport} />
-              <span className={clsx("flex-1 truncate text-[15px]", fav ? "font-bold text-n-0" : "font-semibold text-n-400")}>
-                {name}
+              <span className="flex-1 min-w-0">
+                <span className={clsx("block truncate text-[15px] leading-tight", fav ? "font-bold text-n-0" : "font-semibold text-n-400")}>
+                  {name}
+                </span>
+                {form && <FormDots form={form} />}
               </span>
               {odds ? <span className="font-mono text-[11px] text-n-500 shrink-0" title="Bookmaker odds">{odds.toFixed(2)}</span> : null}
               <span className={clsx(
