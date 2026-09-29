@@ -57,6 +57,8 @@ class TestOffers:
         assert bmk.label(by[("bb_handicap", "A+5.5")], "Lakers", "Celtics") == "Celtics +5.5"
         assert bmk.label(by[("bb_q3_total", "O40.5")], "Lakers", "Celtics") == "3rd quarter: Over 40.5 points"
         assert bmk.label(by[("bb_home_total", "U83.5")], "Lakers", "Celtics") == "Lakers under 83.5 points"
+        assert bmk.label(by[("bb_1x2", "1")], "Lakers", "Celtics") == "Lakers win in regulation"
+        assert bmk.label(by[("bb_winner", "1")], "Lakers", "Celtics") == "Lakers win"
         assert bmk.market_name("bb_q1_handicap") == "1st quarter Handicap"
         assert bmk.market_name("bb_total") == "Total Points"
 

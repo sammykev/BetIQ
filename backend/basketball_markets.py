@@ -133,8 +133,13 @@ def label(o: Dict, home: str, away: str) -> str:
     """How a pick reads: "Lakers -5.5", "Over 160.5 points", "1st quarter: Over 40.5"…"""
     kind, code, part = o["kind"], o["code"], o["part"]
     pre = f"{PART_NAMES[part]}: " if part != "full" else ""
-    if kind in ("winner", "1x2"):
+    if kind == "winner":
+        body = {"1": f"{home} win", "2": f"{away} win"}[code]
+    elif kind == "1x2":
+        # Regulation only (a tie goes to overtime): said so on the full game
         body = {"1": f"{home} win", "2": f"{away} win", "X": "Draw"}[code]
+        if part == "full":
+            body += " in regulation" if code != "X" else " after regulation"
     elif kind == "handicap":
         body = f"{home if code[0] == 'H' else away} {code[1:]}"
     elif kind == "total":

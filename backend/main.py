@@ -5157,9 +5157,15 @@ async def get_basketball_status(_admin: str = Depends(require_admin)):
     r = _get_redis()
     leagues = sorted(((lg.name, lg.n, len(lg.attack), round(lg.home_court, 1), round(lg.sigma["margin"], 1))
                       for lg in _bb_leagues.values()), key=lambda t: -t[1])
-    return {**_bb_status, "days_stored": r.hlen(bd.RESULTS_KEY) if r else 0,
+    try:
+        bt = json.loads(r.get("betiq:bb:backtest") or "null") if r else None
+    except Exception:
+        bt = None
+    return {**_bb_status, "days_stored": r.hlen(bd.RESULTS_KEY) if r else 0, "result_days": bd.RESULT_DAYS,
             "leagues": [{"league": n, "games": g, "teams": t, "home_court": hc, "margin_sd": sd}
-                        for n, g, t, hc, sd in leagues]}
+                        for n, g, t, hc, sd in leagues],
+            "backtest": {"at": bt.get("at"), "overall": bt.get("overall"), "leagues": len(bt.get("leagues") or {})}
+            if bt else None}
 
 
 def _bb_result_for(r, leg: Dict, cache: Dict[str, Dict]) -> Optional[Dict]:

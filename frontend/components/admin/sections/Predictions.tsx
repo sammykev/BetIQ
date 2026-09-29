@@ -18,6 +18,53 @@ const STAT_NAMES: Record<string, string> = {
   sot_home: "Home team shots on target", sot_away: "Away team shots on target",
 };
 
+/** Basketball: SportyBet results stored, leagues rated, the last listing, the walk-forward check. */
+function BasketballData() {
+  const { get, post, flash } = useAdmin();
+  const [st, setSt] = useState<any>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const load = () => get("/api/basketball/status").then(d => setSt(d ?? { error: true }));
+  useEffect(() => { load(); }, [get]);
+  const run = async (id: string, what: string) => {
+    setBusy(id);
+    try { await post(`/api/admin/jobs/${id}/run`); flash("ok", `${what}…`); setTimeout(() => { load(); setBusy(null); }, 15_000); }
+    catch { flash("err", `Couldn't start: ${what}`); setBusy(null); }
+  };
+  if (!st) return <Skeleton rows={3} />;
+  if (st.error) return <p className="text-xs text-n-400">Couldn&apos;t load basketball&apos;s status.</p>;
+  const days = st.days_stored ?? 0, of = st.result_days ?? 300;
+  const listing = st.listing ?? {};
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <Stat label="Days of results" value={`${num(days)} / ${of}`} sub={days < of ? "backfilling every 30 min" : "complete"} />
+        <Stat label="Leagues rated" value={num(st.leagues?.length ?? 0)}
+          sub={`${num(st.model?.games ?? 0)} games · ${num(st.model?.teams ?? 0)} teams`} />
+        <Stat label="Matches priced" value={num(listing.predictions ?? 0)} sub={`${num(listing.rated ?? 0)} with both teams rated`} />
+        <Stat label="Walk-forward check" value={st.backtest ? ago(st.backtest.at) : "not yet"}
+          sub={st.backtest ? `${st.backtest.leagues} leagues` : "nightly, once results are in"} />
+      </div>
+      {st.backtest?.overall?.length > 0 && (
+        <p className="text-xs text-n-400 tnum">
+          Picks we rated … came in: {st.backtest.overall.map((b: any) =>
+            `${b.bucket} → ${Math.round(b.came_in * 100)}% (${num(b.n)})`).join(" · ")}
+        </p>
+      )}
+      {st.leagues?.length > 0 && (
+        <BarList max={Math.max(...st.leagues.map((l: any) => l.games))} format={n => `${num(n)} games`}
+          items={st.leagues.slice(0, 12).map((l: any) => ({ key: l.league, label: l.league, value: l.games,
+            sub: `${l.teams} teams · home +${l.home_court} · margin ±${l.margin_sd}` }))} />
+      )}
+      <div className="flex flex-wrap gap-2">
+        <Btn onClick={() => run("bb_collect", "Collecting results")} busy={busy === "bb_collect"}>Collect results now</Btn>
+        <Btn onClick={() => run("bb_fit", "Rating leagues")} busy={busy === "bb_fit"}>Rate leagues</Btn>
+        <Btn onClick={() => run("bb_refresh", "Pricing SportyBet's matches")} busy={busy === "bb_refresh"}>Price matches</Btn>
+      </div>
+      {(listing.report ?? []).length > 0 && <p className="text-[11px] text-n-500">SportyBet: {listing.report.join(" · ")}</p>}
+    </div>
+  );
+}
+
 /** One row per stat: used or not, and its score against the average (lower is better). */
 function StatChecks({ scores, use }: { scores: Record<string, any>; use: Record<string, boolean> }) {
   return (
@@ -710,6 +757,11 @@ export function PredictionsSection() {
       </Card>
 
       <TrackRecord adminFetch={trackFetch} />
+
+      <Card title="Basketball data" icon={<Database size={15} />}
+        subtitle="SportyBet's results for every league, each league's team ratings, and every line priced">
+        <BasketballData />
+      </Card>
 
       <Card title="International corners & cards" icon={<Globe2 size={15} />}
         subtitle="Collected nightly from ESPN, topped up by API-Football; lower score is better">
