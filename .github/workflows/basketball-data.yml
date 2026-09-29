@@ -13,8 +13,11 @@ on:
   workflow_dispatch:
     inputs:
       job:
-        description: "backtest or probe"
+        description: "backtest, props (player box scores), props_sample, or probe"
         default: "backtest"
+      minutes:
+        description: "props: minutes of collection"
+        default: "80"
       pages:
         description: "Probe: SportyBet match pages to read for markets"
         default: "10"
@@ -32,7 +35,7 @@ permissions:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 150
     defaults:
       run:
         working-directory: backend
@@ -44,6 +47,18 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r requirements.txt
+
+      # Player box scores for player props (props_collect.py): new games each night
+      - name: Player box scores
+        if: github.event_name == 'schedule' || github.event.inputs.job == 'props'
+        env:
+          UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
+        run: python props_collect.py --minutes ${{ github.event.inputs.minutes || '60' }}
+      - name: Player box scores (sample, saves nothing)
+        if: github.event.inputs.job == 'props_sample'
+        env:
+          UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
+        run: python props_collect.py --sample
 
       - name: Walk-forward check
         if: github.event_name == 'schedule' || github.event.inputs.job == 'backtest'
