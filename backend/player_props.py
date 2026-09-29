@@ -151,11 +151,13 @@ def calibration(rows: Iterable[Tuple[float, bool]],
 
 
 def fit_calibration_map(rows: Iterable[Tuple[float, bool]], width: float = 0.05,
-                        min_n: int = 200) -> List[List[float]]:
+                        min_n: int = 200, floor: float = 0.5) -> List[List[float]]:
     """How often our chances really came in, as [[said, came in], ...] over
     bands of `width` from 50% up, made monotone (pool adjacent violators).
     Rows come in pairs (a line's over and under), so the lower half mirrors
-    the upper. Empty when there's too little to go on."""
+    the upper. Empty when there's too little to go on. `floor`: what came in
+    is kept at or above it (50%: a favourite stays one; one side of a total
+    fitted on its own may come in less than half the time)."""
     bands: Dict[int, List[float]] = {}
     for p, w in rows:
         if p < 0.5:
@@ -173,7 +175,7 @@ def fit_calibration_map(rows: Iterable[Tuple[float, bool]], width: float = 0.05,
         while len(blocks) > 1 and blocks[-2][1] / blocks[-2][2] > blocks[-1][1] / blocks[-1][2]:
             s2, c2, n2 = blocks.pop()
             blocks[-1] = [blocks[-1][0] + s2, blocks[-1][1] + c2, blocks[-1][2] + n2]
-    return [[round(sm / n, 4), round(max(0.5, cm / n), 4)] for sm, cm, n in blocks]
+    return [[round(sm / n, 4), round(max(floor, cm / n), 4)] for sm, cm, n in blocks]
 
 
 def calibrate(p: float, cal: Optional[List[List[float]]]) -> float:

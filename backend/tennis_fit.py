@@ -208,10 +208,12 @@ def calibration_maps(markets: Iterable[Tuple[str, List[Tuple[float, bool]]]]) ->
     (the two players' sides) are folded at 50%."""
     maps, held_out = {}, {}
     for m, rows in markets:
+        floor = 0.5
         if m[-2:] in (":O", ":U"):
             rows = [(p, w) for p, w in rows if p >= 0.5]
-        maps[m] = pp.fit_calibration_map(rows)
-        half = pp.fit_calibration_map(rows[::2])
+            floor = 0.0
+        maps[m] = pp.fit_calibration_map(rows, floor=floor)
+        half = pp.fit_calibration_map(rows[::2], floor=floor)
         checked = [(pp.calibrate(p, half), w) for p, w in rows[1::2]]
         held_out[m] = calibration([(p, w) if p >= 0.5 else (1 - p, not w) for p, w in checked])
     return maps, held_out
