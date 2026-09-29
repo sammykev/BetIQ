@@ -428,11 +428,49 @@ async def props() -> None:
                 line(f"  {name}: {ex}")
 
 
+async def live() -> None:
+    """Live basketball scores: which listing answers, and its fields."""
+    line("\n=== Live basketball on SportyBet ===")
+    session = sportybet.shared_session()
+    keep = ("eventId", "homeTeamName", "awayTeamName", "estimateStartTime", "status", "matchStatus", "setScore",
+            "gameScore", "playedSeconds", "remainingTimeInPeriod", "period", "pointScore", "ballPossession")
+    OUT["live"] = {}
+    found_any: List[Dict] = []
+    for path, params in (("/factsCenter/liveOrPrematchEvents", {"sportId": BASKETBALL}),
+                         ("/factsCenter/liveOrPrematchEvents", {"sportId": BASKETBALL, "productId": 1}),
+                         ("/factsCenter/wapConfigurableIndexLiveEvents", {"sportId": BASKETBALL}),
+                         ("/factsCenter/pcLiveEvents", {"sportId": BASKETBALL}),
+                         ("/factsCenter/wapConfigurableLiveEvents", {"sportId": BASKETBALL})):
+        try:
+            data = await sportybet._request(session, "GET", path, params={**params, "_t": sportybet._now_ms()})
+        except Exception as e:
+            line(f"  {path} {params}: {e}")
+            continue
+        found: List[Dict] = []
+        sportybet._collect_events(data.get("data"), found)
+        line(f"  {path} {params}: bizCode {data.get('bizCode')} · {len(found)} events")
+        for e in found[:3]:
+            line("    " + json.dumps({k: e.get(k) for k in keep if k in e}, default=str)[:600])
+        OUT["live"][f"{path} {params}"] = {"n": len(found), "sample": [{k: e.get(k) for k in keep if k in e} for e in found[:10]],
+                                          "keys": sorted(found[0].keys()) if found else [],
+                                          "raw": json.dumps(data, default=str)[:3000] if not found else None}
+        found_any = found_any or found
+    # One live event's own page (productId 1: live)
+    for e in found_any[:2]:
+        try:
+            data = await sportybet._request(session, "GET", "/factsCenter/event",
+                                            params={"eventId": e["eventId"], "productId": 1})
+            ev = data.get("data") or {}
+            line(f"  event page {e['eventId']}: " + json.dumps({k: ev.get(k) for k in keep if k in ev}, default=str)[:600])
+        except Exception as ex:
+            line(f"  event page: {ex}")
+
+
 async def main(pages: int, parts: str) -> None:
     every = {"listing": lambda: sportybet_listing(pages), "results": sportybet_results, "espn": espn,
              "others": others, "logos": logos, "depth": results_depth, "espn_debug": espn_debug,
              "crests": crests, "euroleague": euroleague_sample, "pipeline": pipeline,
-             "props": props}
+             "props": props, "live": live}
     chosen = [every[p] for p in parts.split(",")] if parts else list(every.values())
     for part in chosen:
         try:

@@ -241,16 +241,26 @@ export default function OptimizerPage() {
   const [sport, setSport] = useState<"football" | "basketball" | "all">("football");
   const [bbFamilies, setBbFamilies] = useState<string[]>(BB_FAMILIES.map(f => f.id));
   const bbOn = access.shown("sport.basketball");
+  // Markets switched off (admin, or paused by the weekly accuracy review):
+  // not offered at all, rather than offered and then left out
+  const [off, setOff] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    fetch(`${API}/api/market-review/paused`).then(r => (r.ok ? r.json() : null))
+      .then(d => setOff(new Set((d?.paused ?? []).map((p: { market: string }) => p.market)))).catch(() => {});
+  }, []);
+  const shownMarkets = MARKETS.map(m => ({ ...m, ids: m.ids.filter(id => !off.has(id)) })).filter(m => m.ids.length > 0);
+  const chipLines = (id: string) => CHIP_LINES[id]?.filter(l => !off.has(l.market));
+  const bbShown = BB_FAMILIES.filter(f => !off.has(f.id));
   // Every line of every chip that has lines, ticked to start with
   const [lines, setLines] = useState<string[]>(Object.values(CHIP_LINES).flat().map(lineKey));
   // A chip with lines counts as off when none of its lines is ticked
-  const chosen = MARKETS.filter(m => markets.includes(m.id)
-    && (!CHIP_LINES[m.id] || CHIP_LINES[m.id].some(l => lines.includes(lineKey(l)))));
+  const chosen = shownMarkets.filter(m => markets.includes(m.id)
+    && (!chipLines(m.id) || chipLines(m.id)!.some(l => lines.includes(lineKey(l)))));
   // Backend markets and, for chips narrowed to some lines, their option codes
   const request = () => {
     const ids: string[] = [], codes: Record<string, string[]> = {};
     for (const m of chosen) {
-      const ls = CHIP_LINES[m.id];
+      const ls = chipLines(m.id);
       if (!ls) { ids.push(...m.ids); continue; }
       for (const id of m.ids) {
         const mine = ls.filter(l => l.market === id && lines.includes(lineKey(l)));
@@ -266,12 +276,6 @@ export default function OptimizerPage() {
   const confirmed = (m: (typeof MARKETS)[number], s: LinkStatus | null) =>
     !m.needs || !s || m.needs.some(k => s.markets?.[k]);
   const [link, setLink] = useState<LinkStatus | null>(null);
-  // Markets the weekly accuracy review paused: the server leaves them out
-  const [paused, setPaused] = useState<{ market: string; name: string }[]>([]);
-  useEffect(() => {
-    fetch(`${API}/api/market-review/paused`).then(r => (r.ok ? r.json() : null))
-      .then(d => setPaused(d?.paused ?? [])).catch(() => {});
-  }, []);
 
   useEffect(() => {
     fetch(`${API}/api/sportybet/status`)
@@ -284,7 +288,12 @@ export default function OptimizerPage() {
       })
       .catch(() => {});
   }, []);
-  const unconfirmed = MARKETS.filter(m => !confirmed(m, link));
+  const unconfirmed = shownMarkets.filter(m => !confirmed(m, link));
+  const showFootball = !bbOn || sport !== "basketball";
+  const showBasketball = bbOn && sport !== "football";
+  const bbChosen = bbShown.filter(f => bbFamilies.includes(f.id));
+  // At least one market on for each sport in play
+  const marketsPicked = (!showFootball || chosen.length > 0) && (!showBasketball || bbChosen.length > 0);
   // On by default: SportyBet lists many matches only days before kick-off,
   // and codes can only include matches it lists
   const [bookableOnly, setBookableOnly] = useState(true);
@@ -314,7 +323,7 @@ export default function OptimizerPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ target_odds: targetOdds, min_odds: lo, max_odds: hi, min_prob: minProb, days, max_games: maxGames,
                                ...request(),
-                               sport: bbOn ? sport : "football", bb_markets: bbFamilies,
+                               sport: bbOn ? sport : "football", bb_markets: bbFamilies.filter(f => !off.has(f)),
                                bookable_only: bookable }),
       });
       if (res.status === 401 || res.status === 402) { setLocked("build"); return; }
@@ -431,77 +440,80 @@ export default function OptimizerPage() {
                 ))}
               </Setting>
             )}
-            {bbOn && sport !== "football" && (
-              <Setting label="Basketball markets">
-                <div className="basis-full flex items-center gap-3 text-xs -mt-0.5 mb-0.5">
-                  <button type="button" className="font-semibold text-accent" onClick={() => setBbFamilies(BB_FAMILIES.map(f => f.id))}>
-                    Select all
-                  </button>
-                  <button type="button" className="text-n-400 hover:text-n-200" onClick={() => setBbFamilies([])}>Clear all</button>
-                </div>
-                {BB_FAMILIES.map(f => (
-                  <Chip key={f.id} active={bbFamilies.includes(f.id)}
-                    onClick={() => setBbFamilies(fs => fs.includes(f.id) ? fs.filter(x => x !== f.id) : [...fs, f.id])}>
-                    {f.name}
-                  </Chip>
-                ))}
-                <p className="basis-full text-[11px] text-n-500">
-                  Every line SportyBet offers on its basketball matches, at its price, rated by our model: always bookable.
-                </p>
-              </Setting>
-            )}
-            {sport !== "basketball" && (
-            <Setting label={sport === "all" ? "Football markets" : "Markets"}>
-              <div className="basis-full flex items-center gap-3 text-xs -mt-0.5 mb-0.5">
-                <button type="button" className="font-semibold text-accent" onClick={() => setMarkets(MARKETS.map(m => m.id))}>
-                  Select all
-                </button>
-                <button type="button" className="text-n-400 hover:text-n-200" onClick={() => setMarkets([])}>Clear all</button>
-                <span className="text-n-500">{chosen.length} of {MARKETS.length} on</span>
-              </div>
-              {MARKETS.map(m => CHIP_LINES[m.id] ? (
-                <LineMenu key={m.id} label={m.label} active={markets.includes(m.id)} lines={CHIP_LINES[m.id]} picked={lines}
-                  onToggle={() => setMarkets(ms => ms.includes(m.id) ? ms.filter(x => x !== m.id) : [...ms, m.id])}
-                  setPicked={keys => {
-                    setLines(keys);
-                    if (CHIP_LINES[m.id].some(l => keys.includes(lineKey(l)))) setMarkets(ms => ms.includes(m.id) ? ms : [...ms, m.id]);
-                  }} />
-              ) : (
-                <Chip key={m.id} active={markets.includes(m.id)}
-                  onClick={() => setMarkets(ms => ms.includes(m.id) ? ms.filter(x => x !== m.id) : [...ms, m.id])}>
-                  {m.label}
-                </Chip>
-              ))}
-              {link?.coverage && (() => {
-                // Markets SportyBet only puts up about a day before kick-off: how many matches have them now
-                const show = MARKETS.filter(m => ["corners", "cards", "shots", "sot"].includes(m.id))
-                  .map(m => [m.label, Math.max(0, ...m.ids.map(id => link.coverage?.[id] ?? 0))] as const);
-                return (
-                  <p className="basis-full text-[11px] text-n-500 tnum">
-                    On SportyBet right now: {show.map(([l, n]) => `${l} ${n}`).join(" · ")} matches.
-                    These appear about a day before kick-off; we re-check every {link.every_minutes ?? 30} minutes.
-                  </p>
-                );
-              })()}
-              {paused.length > 0 && (
-                <p className="basis-full text-[11px] text-warn">
-                  Paused for now: {paused.map(p => p.name).join(", ")}. Recent picks came in less often than we said, so
-                  slips leave {paused.length === 1 ? "it" : "them"} out until our weekly accuracy check clears.
-                </p>
-              )}
-              {unconfirmed.length > 0 && (
-                <p className="basis-full text-[11px] text-n-500">
-                  {unconfirmed.map(m => m.label).join(" & ")}: SportyBet hasn&apos;t confirmed these markets yet, so
-                  codes can&apos;t include them. Untick &quot;Only matches SportyBet lists&quot; to use them anyway.
-                </p>
-              )}
-            </Setting>
-            )}
             <div className="space-y-2">
               <p className="eyebrow">At most {maxGames} games</p>
               <input type="range" min={1} max={30} value={maxGames} onChange={e => setMaxGames(Number(e.target.value))}
                 className="w-full accent-[rgb(var(--accent))]" aria-label="Maximum games" />
             </div>
+          </div>
+
+          {/* Markets: football and basketball side by side */}
+          <div className={clsx("grid gap-4", showFootball && showBasketball && "lg:grid-cols-2")}>
+            {showFootball && (
+              <div className="rounded-xl border border-n-800 bg-surface-sunken/40 p-4">
+                <Setting label={showBasketball ? "Football markets" : "Markets"}>
+                  <div className="basis-full flex items-center gap-3 text-xs -mt-0.5 mb-0.5">
+                    <button type="button" className="font-semibold text-accent" onClick={() => setMarkets(MARKETS.map(m => m.id))}>
+                      Select all
+                    </button>
+                    <button type="button" className="text-n-400 hover:text-n-200" onClick={() => setMarkets([])}>Clear all</button>
+                    <span className="text-n-500">{chosen.length} of {shownMarkets.length} on</span>
+                  </div>
+                  {shownMarkets.map(m => chipLines(m.id) ? (
+                    <LineMenu key={m.id} label={m.label} active={markets.includes(m.id)} lines={chipLines(m.id)!} picked={lines}
+                      onToggle={() => setMarkets(ms => ms.includes(m.id) ? ms.filter(x => x !== m.id) : [...ms, m.id])}
+                      setPicked={keys => {
+                        setLines(keys);
+                        if (chipLines(m.id)!.some(l => keys.includes(lineKey(l)))) setMarkets(ms => ms.includes(m.id) ? ms : [...ms, m.id]);
+                      }} />
+                  ) : (
+                    <Chip key={m.id} active={markets.includes(m.id)}
+                      onClick={() => setMarkets(ms => ms.includes(m.id) ? ms.filter(x => x !== m.id) : [...ms, m.id])}>
+                      {m.label}
+                    </Chip>
+                  ))}
+                  {link?.coverage && (() => {
+                    // Markets SportyBet only puts up about a day before kick-off: how many matches have them now
+                    const show = shownMarkets.filter(m => ["corners", "cards", "shots", "sot"].includes(m.id))
+                      .map(m => [m.label, Math.max(0, ...m.ids.map(id => link.coverage?.[id] ?? 0))] as const);
+                    return show.length > 0 && (
+                      <p className="basis-full text-[11px] text-n-500 tnum">
+                        On SportyBet right now: {show.map(([l, n]) => `${l} ${n}`).join(" · ")} matches.
+                        These appear about a day before kick-off; we re-check every {link.every_minutes ?? 30} minutes.
+                      </p>
+                    );
+                  })()}
+                  {unconfirmed.length > 0 && (
+                    <p className="basis-full text-[11px] text-n-500">
+                      {unconfirmed.map(m => m.label).join(" & ")}: SportyBet hasn&apos;t confirmed these markets yet, so
+                      codes can&apos;t include them. Untick &quot;Only matches SportyBet lists&quot; to use them anyway.
+                    </p>
+                  )}
+                </Setting>
+              </div>
+            )}
+            {showBasketball && (
+              <div className="rounded-xl border border-n-800 bg-surface-sunken/40 p-4">
+                <Setting label={showFootball ? "Basketball markets" : "Markets"}>
+                  <div className="basis-full flex items-center gap-3 text-xs -mt-0.5 mb-0.5">
+                    <button type="button" className="font-semibold text-accent" onClick={() => setBbFamilies(BB_FAMILIES.map(f => f.id))}>
+                      Select all
+                    </button>
+                    <button type="button" className="text-n-400 hover:text-n-200" onClick={() => setBbFamilies([])}>Clear all</button>
+                    <span className="text-n-500">{bbChosen.length} of {bbShown.length} on</span>
+                  </div>
+                  {bbShown.map(f => (
+                    <Chip key={f.id} active={bbFamilies.includes(f.id)}
+                      onClick={() => setBbFamilies(fs => fs.includes(f.id) ? fs.filter(x => x !== f.id) : [...fs, f.id])}>
+                      {f.name}
+                    </Chip>
+                  ))}
+                  <p className="basis-full text-[11px] text-n-500">
+                    Every line SportyBet offers on its basketball matches, at its price, rated by our model: always bookable.
+                  </p>
+                </Setting>
+              </div>
+            )}
           </div>
 
           <label className="flex items-center gap-2 text-sm text-n-300 cursor-pointer select-none">
@@ -519,8 +531,8 @@ export default function OptimizerPage() {
             </p>
           )}
 
-          {chosen.length === 0 && <p className="text-xs text-warn">Pick at least one market.</p>}
-          <button onClick={() => run()} disabled={busy || !validTarget || chosen.length === 0}
+          {!marketsPicked && <p className="text-xs text-warn">Pick at least one market.</p>}
+          <button onClick={() => run()} disabled={busy || !validTarget || !marketsPicked}
             className="w-full sm:w-auto flex items-center justify-center gap-2 rounded-xl bg-brand-400 hover:bg-brand-300 text-ink font-bold px-6 py-3 disabled:opacity-50">
             {busy ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
             {busy ? "Optimizing…" : `Build a ${odds(targetOdds)}x slip`}
