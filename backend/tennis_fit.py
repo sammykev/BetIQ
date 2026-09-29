@@ -168,7 +168,7 @@ class Fit:
         mid = round(mean_total) + 0.5
         for line in (mid - 3, mid, mid + 3):
             po = md.p_total_over(line)
-            lines += [("total_games", po, total > line), ("total_games", 1 - po, total < line)]
+            lines += [("total_games:O", po, total > line), ("total_games:U", 1 - po, total < line)]
         for line in (-4.5, -2.5, 2.5, 4.5):
             ph = md.p_handicap(line)
             lines += [("games_handicap", ph, games_a - games_b + line > 0), ("games_handicap", 1 - ph, games_a - games_b + line < 0)]
@@ -178,12 +178,13 @@ class Fit:
             for line in (-1.5, 1.5):
                 ps = md.p_set_handicap(line)
                 lines += [("set_handicap", ps, sets_a - sets_b + line > 0), ("set_handicap", 1 - ps, sets_a - sets_b + line < 0)]
-            po = sum(v for (x, y), v in md.sets.items() if x + y > r.get("best_of", 3) // 2 + 1.5)
-            lines += [("total_sets", po, len(r["sets"]) > r.get("best_of", 3) // 2 + 1.5)]
+            ts = r.get("best_of", 3) // 2 + 1.5
+            po = sum(v for (x, y), v in md.sets.items() if x + y > ts)
+            lines += [("total_sets:O", po, len(r["sets"]) > ts), ("total_sets:U", 1 - po, len(r["sets"]) < ts)]
         if r["sets"]:
             g1 = r["sets"][0]
             po = md.p_first_set_total_over(9.5)
-            lines += [("set_total", po, g1[0] + g1[1] > 9.5)]
+            lines += [("set_total:O", po, g1[0] + g1[1] > 9.5), ("set_total:U", 1 - po, g1[0] + g1[1] < 9.5)]
         info["lines"] = lines
         self.checked.append((r["date"], group, p_a, a_won, info))
 
@@ -199,6 +200,23 @@ def calibration(rows: List[Tuple[float, bool]]) -> List[Dict]:
     return out
 
 
+def calibration_maps(markets: Iterable[Tuple[str, List[Tuple[float, bool]]]]) -> Tuple[Dict, Dict]:
+    """Per market, the map pricing applies (fitted on every row) and how a
+    map fitted on half the rows did on the other half. A market named
+    "…:O" / "…:U" (a total's over or under) is fitted on its likelier side
+    only (p >= 50%): overs and unders don't mirror each other. Others
+    (the two players' sides) are folded at 50%."""
+    maps, held_out = {}, {}
+    for m, rows in markets:
+        if m[-2:] in (":O", ":U"):
+            rows = [(p, w) for p, w in rows if p >= 0.5]
+        maps[m] = pp.fit_calibration_map(rows)
+        half = pp.fit_calibration_map(rows[::2])
+        checked = [(pp.calibrate(p, half), w) for p, w in rows[1::2]]
+        held_out[m] = calibration([(p, w) if p >= 0.5 else (1 - p, not w) for p, w in checked])
+    return maps, held_out
+
+
 def report(fit: Fit) -> Dict:
     winner = [(max(p, 1 - p), won if p >= 0.5 else not won) for _, _, p, won, _ in fit.checked]
     ll = -sum(log(max(1e-9, p if won else 1 - p)) for _, _, p, won, _ in fit.checked) / max(1, len(fit.checked))
@@ -212,14 +230,7 @@ def report(fit: Fit) -> Dict:
             lines.setdefault(m, []).append((p, w))
     # Calibration maps per market (pricing applies them): fitted on half the
     # checked matches and tried on the other half, then fitted on all
-    maps, held_out = {}, {}
-    for m, rows in [("first_set", [(p, w) for p, w in first])] + list(lines.items()):
-        maps[m] = pp.fit_calibration_map(rows)
-        half = pp.fit_calibration_map(rows[::2])
-        held_out[m] = calibration([(pp.calibrate(p, half), w) for p, w in rows[1::2]
-                                   if pp.calibrate(p, half) >= 0.5] +
-                                  [(1 - pp.calibrate(p, half), not w) for p, w in rows[1::2]
-                                   if pp.calibrate(p, half) < 0.5])
+    maps, held_out = calibration_maps([("first_set", [(p, w) for p, w in first])] + list(lines.items()))
     by_group: Dict[str, List[Tuple[float, bool]]] = {}
     for _, g, p, won, _ in fit.checked:
         by_group.setdefault(g, []).append((max(p, 1 - p), won if p >= 0.5 else not won))

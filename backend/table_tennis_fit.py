@@ -137,30 +137,32 @@ def market_check(checked: List[Tuple[Dict, float]], swing: float) -> Dict[str, L
         mean_total = sum(t * v for t, v in md.total_games.items())
         mid = round(mean_total) + 0.5
         for line in (mid - 4, mid, mid + 4):
-            add("total_points", md.p_total_over(line), total > line)
+            po = md.p_total_over(line)
+            add("total_points:O", po, total > line)
+            add("total_points:U", 1 - po, total < line)
         mean_diff = sum(d * v for d, v in md.games_diff.items())
         for line in (-round(mean_diff) - 3.5, -round(mean_diff) + 0.5, -round(mean_diff) + 3.5):
             add("points_handicap", md.p_handicap(line), diff + line > 0)
         for line in (-1.5, 1.5):
             add("games_handicap", md.p_set_handicap(line), m["sets"][0] - m["sets"][1] + line > 0)
-        add("total_games", md.p_total_sets_over(bo // 2 + 1.5), sum(m["sets"]) > bo // 2 + 1.5)
+        ts = bo // 2 + 1.5
+        po = md.p_total_sets_over(ts)
+        add("total_games:O", po, sum(m["sets"]) > ts)
+        add("total_games:U", 1 - po, sum(m["sets"]) < ts)
         g1 = games[0]
         add("game_winner", md.p_first_set(), g1[0] > g1[1])
-        add("game_points", md.p_first_set_total_over(18.5), g1[0] + g1[1] > 18.5)
+        po = md.p_first_set_total_over(18.5)
+        add("game_points:O", po, g1[0] + g1[1] > 18.5)
+        add("game_points:U", 1 - po, g1[0] + g1[1] < 18.5)
         add("odd_even", md.p_odd_total(), total % 2 == 1)
     return lines
 
 
 def calibration_maps(lines: Dict[str, List[Tuple[float, bool]]]) -> Tuple[Dict, Dict]:
     """Per market: the map pricing applies (fitted on all), and how a map
-    fitted on half did on the other half."""
-    import player_props as pp
-    maps, held_out = {}, {}
-    for m, rows in lines.items():
-        maps[m] = pp.fit_calibration_map(rows)
-        half = pp.fit_calibration_map(rows[::2])
-        held_out[m] = calibration(_even([(pp.calibrate(p, half), w) for p, w in rows[1::2]]))
-    return maps, held_out
+    fitted on half did on the other half (tennis_fit.calibration_maps)."""
+    import tennis_fit
+    return tennis_fit.calibration_maps(lines.items())
 
 
 def run(rows: List[Dict]) -> Tuple[Dict[str, ttm.Player], Dict]:
@@ -191,7 +193,8 @@ def run(rows: List[Dict]) -> Tuple[Dict[str, ttm.Player], Dict]:
            "k_mult": k_mult, "shrink": shrink, "swing": swing,
            "winner": {"accuracy": round(sum(1 for _, w in winner if w) / max(1, len(winner)), 4),
                       "log_loss": round(ll, 4), "calibration": calibration(winner)},
-           "markets": {k: calibration(_even(v)) for k, v in lines.items()},
+           "markets": {k: calibration(_even(v) if k[-2:] not in (":O", ":U") else [x for x in v if x[0] >= 0.5])
+                       for k, v in lines.items()},
            "calibration_maps": maps, "calibrated_held_out": held_out,
            "by_league": {t: {"n": len(v), "accuracy": round(sum(v) / len(v), 4)}
                          for t, v in sorted(by_league.items(), key=lambda kv: -len(kv[1]))[:20]},

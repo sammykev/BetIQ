@@ -22,6 +22,8 @@ import { awaitingScore, fetchMatchday, fetchStrip, matchKey, type MatchdayMatch,
 import { SportCard, type SportPrediction } from "@/components/SportCard";
 import { SportModal } from "@/components/SportModal";
 import { BasketballDays } from "@/components/BasketballDays";
+import { RacketDays } from "@/components/RacketDays";
+import type { RacketPrediction } from "@/lib/racket";
 import { BasketballModal } from "@/components/BasketballModal";
 import type { BasketballPrediction } from "@/lib/basketball";
 import { PaywallModal } from "@/components/PaywallModal";
@@ -635,8 +637,15 @@ export default function HomePage() {
             onOpen={p => p.sportybet_event_id ? setSelectedBB(p) : setSelectedSportMatch(p as unknown as SportPrediction)} />
         )}
 
+        {/* Tennis and table tennis: their own date strip, live & finished, history */}
+        {(activeSport === "tennis" || activeSport === "table-tennis") && (
+          <RacketDays key={activeSport} sport={activeSport === "tennis" ? "tennis" : "table_tennis"}
+            preds={sportPreds as unknown as RacketPrediction[]} loading={sportLoading}
+            onOpen={p => setSelectedSportMatch(p as unknown as SportPrediction)} />
+        )}
+
         {/* Other sports */}
-        {activeSport !== "football" && activeSport !== "basketball" && (
+        {activeSport !== "football" && activeSport !== "basketball" && activeSport !== "tennis" && activeSport !== "table-tennis" && (
           <div className="space-y-4">
             {sportSummary && <p className="text-sm text-n-400">{sportSummary}</p>}
             {sportLoading ? (

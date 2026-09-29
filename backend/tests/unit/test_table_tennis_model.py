@@ -89,7 +89,7 @@ def test_fit_on_simulated_matches():
     players, rep = ttf.run(rows)
     assert rep["winner"]["accuracy"] > 0.6
     assert rep["k_mult"] in ttf.K_MULTS and rep["swing"] in ttf.SWINGS and rep["shrink"] in ttf.SHRINKS
-    assert set(rep["markets"]) >= {"total_points", "points_handicap", "games_handicap", "game_winner"}
+    assert set(rep["markets"]) >= {"total_points:O", "total_points:U", "points_handicap", "games_handicap", "game_winner"}
     for b in rep["winner"]["calibration"]:
         if b["n"] > 150:
             assert abs(b["said"] - b["came_in"]) < 0.08

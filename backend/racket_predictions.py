@@ -42,10 +42,18 @@ CALIBRATED_BY = {
 }
 
 
-def calibrated(p: float, kind: str, sport: str, model: Optional[Dict]) -> float:
+def calibrated(p: float, kind: str, sport: str, model: Optional[Dict], code: str = "") -> float:
+    """Our chance through the check's map for this kind of line. Totals have
+    a map for each side ("…:O", "…:U", each fitted where that side is the
+    likelier): the likelier side is calibrated, the other is what's left."""
     import player_props as pp
     maps = (model or {}).get("calibration") or {}
-    return pp.calibrate(p, maps.get(CALIBRATED_BY.get(sport, {}).get(kind, "")))
+    name = CALIBRATED_BY.get(sport, {}).get(kind, "")
+    if f"{name}:O" in maps and code[:1] in ("O", "U"):
+        over = p if code[0] == "O" else 1 - p
+        cal = pp.calibrate(over, maps[f"{name}:O"]) if over >= 0.5 else 1 - pp.calibrate(1 - over, maps.get(f"{name}:U"))
+        return cal if code[0] == "O" else 1 - cal
+    return pp.calibrate(p, maps.get(name))
 
 
 def family(market: str) -> str:
@@ -112,7 +120,7 @@ def predict(ev: Dict, sport: str, model: Optional[Dict]) -> Optional[Dict[str, A
         p = rkm.probability(md, o)
         if p is None:
             continue
-        p = calibrated(p, o["kind"], sport, model)
+        p = calibrated(p, o["kind"], sport, model, o["code"])
         priced.append({"market": o["market"], "family": family(o["market"]), "market_name": rkm.market_name(o["market"], sport),
                        "code": o["code"], "label": rkm.label(o, home, away, sport), "prob": round(p, 4),
                        "odds": o["odds"], "edge": round(p * o["odds"] - 1, 3), "sb": o["sb"]})
@@ -124,7 +132,8 @@ def predict(ev: Dict, sport: str, model: Optional[Dict]) -> Optional[Dict[str, A
     t = ev.get("_tournament") or ("Tennis" if sport == "tennis" else "Table Tennis")
     lines = rkm.main_lines(offs)
     total_line = lines["total"][0] if lines["total"] else None
-    over_p = calibrated(md.p_total_over(total_line), "total_games", sport, model) if total_line is not None else None
+    over_p = (calibrated(md.p_total_over(total_line), "total_games", sport, model, "O")
+              if total_line is not None else None)
     words = rkm.WORDS[sport]
     out = {
         "sport": sport, "home": home, "away": away,

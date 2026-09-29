@@ -65,6 +65,58 @@ function BasketballData() {
   );
 }
 
+/** Tennis and table tennis: the nightly fits (players rated, walk-forward check), matches priced, live, results. */
+function RacketData() {
+  const { get, post, flash } = useAdmin();
+  const [st, setSt] = useState<any>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const load = () => get("/api/racket/status").then(d => setSt(d ?? { error: true }));
+  useEffect(() => { load(); }, [get]);
+  const run = async (id: string, what: string) => {
+    setBusy(id);
+    try { await post(`/api/admin/jobs/${id}/run`); flash("ok", `${what}…`); setTimeout(() => { load(); setBusy(null); }, 15_000); }
+    catch { flash("err", `Couldn't start: ${what}`); setBusy(null); }
+  };
+  if (!st) return <Skeleton rows={3} />;
+  if (st.error) return <p className="text-xs text-n-400">Couldn&apos;t load the racket sports&apos; status.</p>;
+  return (
+    <div className="space-y-5">
+      {([["tennis", "Tennis", "tennis_refresh", "tennis_collect"], ["table_tennis", "Table tennis", "table_tennis_refresh", "table_tennis_collect"]] as const)
+        .map(([k, name, refresh, collect]) => {
+          const x = st[k] ?? {};
+          const w = x.check?.winner;
+          const listing = x.listing ?? {};
+          return (
+            <div key={k} className="space-y-2">
+              <p className="eyebrow">{name}</p>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <Stat label="Players rated" value={num(x.players ?? 0)} sub={x.as_of ? `fitted ${x.as_of}` : "nightly fit not in yet"} />
+                <Stat label="Winner right" value={w ? `${(w.accuracy * 100).toFixed(1)}%` : "—"}
+                  sub={x.check ? `${num(x.check.checked ?? x.check.matches ?? 0)} matches, walk-forward` : "no check yet"} />
+                <Stat label="Matches priced" value={num(listing.predictions ?? 0)}
+                  sub={`${num(listing.rated ?? 0)} rated · ${num(listing.lines ?? 0)} lines`} />
+                <Stat label="Results stored" value={`${num(x.results?.days_stored ?? 0)} days`}
+                  sub={x.matchday?.at ? `live ${ago(x.matchday.at)} · ${x.matchday.playing ?? 0} playing` : "live not run yet"} />
+              </div>
+              {w?.calibration?.length > 0 && (
+                <p className="text-xs text-n-400 tnum">
+                  Winner picks we rated … came in: {w.calibration.map((b: any) =>
+                    `${b.bucket} → ${Math.round(b.came_in * 100)}% (${num(b.n)})`).join(" · ")}
+                </p>
+              )}
+              <div className="flex flex-wrap gap-2">
+                <Btn onClick={() => run(refresh, `Pricing ${name.toLowerCase()}`)} busy={busy === refresh}>Price matches</Btn>
+                <Btn onClick={() => run(collect, `Collecting ${name.toLowerCase()} results`)} busy={busy === collect}>Collect results</Btn>
+                <Btn onClick={() => run("racket_models", "Loading the ratings")} busy={busy === "racket_models"}>Load ratings</Btn>
+              </div>
+              {(listing.report ?? []).length > 0 && <p className="text-[11px] text-n-500">SportyBet: {listing.report.join(" · ")}</p>}
+            </div>
+          );
+        })}
+    </div>
+  );
+}
+
 const PROP_STATS: Record<string, string> = { pts: "Points", reb: "Rebounds", ast: "Assists", tpm: "3-pointers" };
 
 /** Player props: box scores loaded, and the walk-forward check (said vs came in). */
@@ -804,6 +856,11 @@ export function PredictionsSection() {
       <Card title="Basketball data" icon={<Database size={15} />}
         subtitle="SportyBet's results for every league, each league's team ratings, and every line priced">
         <BasketballData />
+      </Card>
+
+      <Card title="Tennis & table tennis" icon={<Target size={15} />}
+        subtitle="Years of ATP/WTA results and SportyBet's own, each player's rating, and every line priced">
+        <RacketData />
       </Card>
 
       <Card title="Player props" icon={<Star size={15} />}

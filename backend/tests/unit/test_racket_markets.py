@@ -153,3 +153,34 @@ def test_calibration_maps_move_the_lines():
     moved = [k for k in b if k in c and k[0] == "rk_total_games" and abs(b[k] - c[k]) > 1e-3]
     assert moved
     assert all(abs(b[k] - c[k]) < 1e-9 for k in b if k in c and k[0] == "rk_winner")
+
+
+def test_ticket_legs_settle_by_the_sportybet_event():
+    import tickets
+    sel = {"home": "A", "away": "B", "date": "2026-10-01", "time": "12:00", "league": "ATP", "market": "rk_set_handicap",
+           "marketName": "Set Handicap", "code": "H-1.5", "label": "A -1.5 sets", "prob": 0.6,
+           "sb": {"eventId": "sr:match:9", "marketId": "188", "specifier": "hcp=-1.5", "outcomeId": "1714"}}
+    t = tickets.new_ticket("ABC", [sel], [{"status": "booked", "odds": 1.9}], "slip", None, 1.9, "2026-10-01T10:00:00Z")
+    leg = t["legs"][0]
+    assert leg["event_id"] == "sr:match:9" and leg["sport"] == "racket"
+    res = {"status": "finished", "sets": [2, 0], "games": [[6, 1], [6, 2]], "ret": False}
+    assert tickets.grade_leg(leg["market"], leg["code"], res) == "won"
+    assert tickets.grade_leg(leg["market"], leg["code"], None) == "pending"
+
+
+def test_totals_calibrate_each_side_on_its_own_map():
+    model = {"calibration": {"total_games:O": [[0.6, 0.7]], "total_games:U": [[0.6, 0.55]]}}
+    over = rp.calibrated(0.6, "total_games", "tennis", model, "O")
+    under = rp.calibrated(0.4, "total_games", "tennis", model, "U")
+    assert over == pytest.approx(0.7) and under == pytest.approx(0.3)
+    # The under as the likelier side uses the under map; the over is what's left
+    assert rp.calibrated(0.6, "total_games", "tennis", model, "U") == pytest.approx(0.55)
+    assert rp.calibrated(0.4, "total_games", "tennis", model, "O") == pytest.approx(0.45)
+
+
+def test_calibration_maps_fit_totals_on_the_likelier_side():
+    import tennis_fit
+    rows = [(0.65, i % 10 < 8) for i in range(1000)] + [(0.35, i % 10 < 2) for i in range(1000)]
+    maps, held = tennis_fit.calibration_maps([("total_games:O", rows), ("games_handicap", rows)])
+    assert maps["total_games:O"][0][1] == pytest.approx(0.8, abs=0.01)     # only the 65% rows
+    assert maps["games_handicap"][0][1] == pytest.approx(0.8, abs=0.01)    # 35%/20% folded to 65%/80%

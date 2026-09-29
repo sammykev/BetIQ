@@ -11,6 +11,7 @@ import { useBetSlip } from "@/lib/useBetSlip";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
 import { useAccess } from "@/lib/access";
 import { FAMILIES as BB_FAMILIES } from "@/lib/basketball";
+import { RK_FAMILIES } from "@/lib/racket";
 import { FeatureGate, Unavailable } from "@/components/FeatureGate";
 import type { SlipSelection } from "@/lib/slip";
 
@@ -25,7 +26,7 @@ interface OptPick {
   prob: number; odds: number; odds_source: "sportybet" | "bookmaker" | "estimated";
   /** Basketball: SportyBet's own ids for the line */
   sb?: { eventId: string; marketId: string; specifier: string; outcomeId: string } | null;
-  sport?: "football" | "basketball";
+  sport?: "football" | "basketball" | "tennis" | "table_tennis";
   bookable?: boolean;  // a SportyBet code can take it (match listed, market confirmed)
 }
 interface OptResult {
@@ -237,10 +238,17 @@ export default function OptimizerPage() {
   const [days, setDays] = useState(3);
   const [maxGames, setMaxGames] = useState(30);
   const [markets, setMarkets] = useState<string[]>(MARKETS.map(m => m.id));
-  // Football, basketball (every line SportyBet offers, priced by our model) or both
-  const [sport, setSport] = useState<"football" | "basketball" | "all">("football");
+  // Football, basketball, tennis, table tennis (every line SportyBet offers,
+  // priced by our model) or all of them
+  type OptSport = "football" | "basketball" | "tennis" | "table_tennis" | "all";
+  const [sport, setSport] = useState<OptSport>("football");
   const [bbFamilies, setBbFamilies] = useState<string[]>(BB_FAMILIES.map(f => f.id));
+  const [tnFamilies, setTnFamilies] = useState<string[]>(RK_FAMILIES.tennis.map(f => f.id));
+  const [ttFamilies, setTtFamilies] = useState<string[]>(RK_FAMILIES.table_tennis.map(f => f.id));
   const bbOn = access.shown("sport.basketball");
+  const tnOn = access.shown("sport.tennis");
+  const ttOn = access.shown("sport.table_tennis");
+  const otherSports = bbOn || tnOn || ttOn;
   // Markets switched off (admin, or paused by the weekly accuracy review):
   // not offered at all, rather than offered and then left out
   const [off, setOff] = useState<Set<string>>(new Set());
@@ -289,11 +297,17 @@ export default function OptimizerPage() {
       .catch(() => {});
   }, []);
   const unconfirmed = shownMarkets.filter(m => !confirmed(m, link));
-  const showFootball = !bbOn || sport !== "basketball";
-  const showBasketball = bbOn && sport !== "football";
+  const showFootball = !otherSports || sport === "football" || sport === "all";
+  const showBasketball = bbOn && (sport === "basketball" || sport === "all");
+  const showTennis = tnOn && (sport === "tennis" || sport === "all");
+  const showTT = ttOn && (sport === "table_tennis" || sport === "all");
+  const panels = [showFootball, showBasketball, showTennis, showTT].filter(Boolean).length;
   const bbChosen = bbShown.filter(f => bbFamilies.includes(f.id));
+  const tnShown = RK_FAMILIES.tennis.filter(f => !off.has(f.id));
+  const ttShown = RK_FAMILIES.table_tennis.filter(f => !off.has(f.id));
   // At least one market on for each sport in play
-  const marketsPicked = (!showFootball || chosen.length > 0) && (!showBasketball || bbChosen.length > 0);
+  const marketsPicked = (!showFootball || chosen.length > 0) && (!showBasketball || bbChosen.length > 0)
+    && (!showTennis || tnShown.some(f => tnFamilies.includes(f.id))) && (!showTT || ttShown.some(f => ttFamilies.includes(f.id)));
   // On by default: SportyBet lists many matches only days before kick-off,
   // and codes can only include matches it lists
   const [bookableOnly, setBookableOnly] = useState(true);
@@ -323,7 +337,8 @@ export default function OptimizerPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ target_odds: targetOdds, min_odds: lo, max_odds: hi, min_prob: minProb, days, max_games: maxGames,
                                ...request(),
-                               sport: bbOn ? sport : "football", bb_markets: bbFamilies.filter(f => !off.has(f)),
+                               sport: otherSports ? sport : "football", bb_markets: bbFamilies.filter(f => !off.has(f)),
+                               tn_markets: tnFamilies.filter(f => !off.has(f)), tt_markets: ttFamilies.filter(f => !off.has(f)),
                                bookable_only: bookable }),
       });
       if (res.status === 401 || res.status === 402) { setLocked("build"); return; }
@@ -433,11 +448,13 @@ export default function OptimizerPage() {
             <Setting label="Matches from">
               {DAYS.map(d => <Chip key={d.n} active={days === d.n} onClick={() => setDays(d.n)}>{d.label}</Chip>)}
             </Setting>
-            {bbOn && (
+            {otherSports && (
               <Setting label="Sport">
-                {([["football", "Football"], ["basketball", "Basketball"], ["all", "Both"]] as const).map(([k, l]) => (
-                  <Chip key={k} active={sport === k} onClick={() => setSport(k)}>{l}</Chip>
-                ))}
+                {([["football", "Football", true], ["basketball", "Basketball", bbOn], ["tennis", "Tennis", tnOn],
+                   ["table_tennis", "Table tennis", ttOn], ["all", "All", true]] as const)
+                  .filter(([, , on]) => on).map(([k, l]) => (
+                    <Chip key={k} active={sport === k} onClick={() => setSport(k)}>{l}</Chip>
+                  ))}
               </Setting>
             )}
             <div className="space-y-2">
@@ -447,11 +464,11 @@ export default function OptimizerPage() {
             </div>
           </div>
 
-          {/* Markets: football and basketball side by side */}
-          <div className={clsx("grid gap-4", showFootball && showBasketball && "lg:grid-cols-2")}>
+          {/* Markets: each sport in play side by side */}
+          <div className={clsx("grid gap-4", panels > 1 && "lg:grid-cols-2")}>
             {showFootball && (
               <div className="rounded-xl border border-n-800 bg-surface-sunken/40 p-4">
-                <Setting label={showBasketball ? "Football markets" : "Markets"}>
+                <Setting label={panels > 1 ? "Football markets" : "Markets"}>
                   <div className="basis-full flex items-center gap-3 text-xs -mt-0.5 mb-0.5">
                     <button type="button" className="font-semibold text-accent" onClick={() => setMarkets(MARKETS.map(m => m.id))}>
                       Select all
@@ -494,7 +511,7 @@ export default function OptimizerPage() {
             )}
             {showBasketball && (
               <div className="rounded-xl border border-n-800 bg-surface-sunken/40 p-4">
-                <Setting label={showFootball ? "Basketball markets" : "Markets"}>
+                <Setting label={panels > 1 ? "Basketball markets" : "Markets"}>
                   <div className="basis-full flex items-center gap-3 text-xs -mt-0.5 mb-0.5">
                     <button type="button" className="font-semibold text-accent" onClick={() => setBbFamilies(BB_FAMILIES.map(f => f.id))}>
                       Select all
@@ -514,6 +531,30 @@ export default function OptimizerPage() {
                 </Setting>
               </div>
             )}
+            {([["tennis", showTennis, tnShown, tnFamilies, setTnFamilies, "Tennis"],
+               ["table_tennis", showTT, ttShown, ttFamilies, setTtFamilies, "Table tennis"]] as const).map(
+              ([k, show, shown, fams, setFams, name]) => show && (
+              <div key={k} className="rounded-xl border border-n-800 bg-surface-sunken/40 p-4">
+                <Setting label={panels > 1 ? `${name} markets` : "Markets"}>
+                  <div className="basis-full flex items-center gap-3 text-xs -mt-0.5 mb-0.5">
+                    <button type="button" className="font-semibold text-accent" onClick={() => setFams(RK_FAMILIES[k].map(f => f.id))}>
+                      Select all
+                    </button>
+                    <button type="button" className="text-n-400 hover:text-n-200" onClick={() => setFams([])}>Clear all</button>
+                    <span className="text-n-500">{shown.filter(f => fams.includes(f.id)).length} of {shown.length} on</span>
+                  </div>
+                  {shown.map(f => (
+                    <Chip key={f.id} active={fams.includes(f.id)}
+                      onClick={() => setFams(fs => fs.includes(f.id) ? fs.filter(x => x !== f.id) : [...fs, f.id])}>
+                      {f.name}
+                    </Chip>
+                  ))}
+                  <p className="basis-full text-[11px] text-n-500">
+                    Every line SportyBet offers on its {name.toLowerCase()} matches, at its price, rated by our model: always bookable.
+                  </p>
+                </Setting>
+              </div>
+            ))}
           </div>
 
           <label className="flex items-center gap-2 text-sm text-n-300 cursor-pointer select-none">

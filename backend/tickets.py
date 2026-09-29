@@ -164,6 +164,10 @@ def new_ticket(code: str, selections: List[Dict], picks: List[Dict], source: str
             # Basketball: settled from the SportyBet event it was booked on
             leg["sport"] = "basketball"
             leg["event_id"] = (s.get("sb") or {}).get("eventId")
+        elif str(s.get("market") or "").startswith("rk_"):
+            # Tennis and table tennis: the same (either sport's results are searched)
+            leg["sport"] = s.get("sport") if s.get("sport") in ("tennis", "table_tennis") else "racket"
+            leg["event_id"] = (s.get("sb") or {}).get("eventId")
         legs.append(leg)
     return {"code": code, "created_at": created_at, "source": source, "share_url": share_url,
             "legs": legs, "total_odds": total_odds, "status": "pending", "settled_at": None}

@@ -8,6 +8,9 @@ import { useTeamLogo } from "@/lib/useTeamLogo";
 import { CompetitionBadge } from "./CompetitionBadge";
 import type { SportPrediction } from "./SportCard";
 import { TennisFacts } from "./TennisFacts";
+import { RacketLines } from "./RacketLines";
+import type { RacketPrediction } from "@/lib/racket";
+import type { RacketSport } from "@/lib/tennis";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
 
@@ -114,7 +117,11 @@ export function SportModal({ prediction: p, onClose }: Props) {
   const [error, setError]     = useState(false);
   // Tennis and table tennis: form, player numbers and head to head (like football's match page), or the markets
   const hasFacts = p.sport === "tennis" || p.sport === "table_tennis" || p.sport === "table-tennis";
-  const [view, setView] = useState<"form" | "markets">(hasFacts ? "form" : "markets");
+  const racket: RacketSport = p.sport === "tennis" ? "tennis" : "table_tennis";
+  // Priced from SportyBet's listing: every line it offers, with our chance
+  const eventId = (p as SportPrediction & { sportybet_event_id?: string }).sportybet_event_id;
+  const hasLines = hasFacts && !!eventId;
+  const [view, setView] = useState<"form" | "lines" | "markets">(hasFacts ? "form" : "markets");
 
   const assets = getSportAssets(p.home, p.away, p.sport);
 
@@ -186,7 +193,8 @@ export function SportModal({ prediction: p, onClose }: Props) {
 
         {hasFacts && (
           <div role="tablist" aria-label="Match view" className="flex gap-6 px-5 sm:px-6 border-b border-n-800">
-            {([["form", "Form & stats"], ["markets", "Markets"]] as const).map(([id, label]) => (
+            {(hasLines ? [["form", "Form & stats"], ["lines", "All lines"]] as const
+                       : [["form", "Form & stats"], ["markets", "Markets"]] as const).map(([id, label]) => (
               <button key={id} role="tab" aria-selected={view === id} onClick={() => setView(id)}
                 className={clsx("relative py-3 font-display font-bold text-[15px] uppercase tracking-[0.06em] transition-colors",
                   view === id ? "text-n-0" : "text-n-500 hover:text-n-300")}>
@@ -200,7 +208,11 @@ export function SportModal({ prediction: p, onClose }: Props) {
         {view === "form" ? (
           <div className="p-5">
             <TennisFacts m={{ home: p.home, away: p.away, date: p.date, time: p.time, league: p.league_name }}
-              sport={p.sport === "tennis" ? "tennis" : "table_tennis"} />
+              sport={racket} />
+          </div>
+        ) : view === "lines" && eventId ? (
+          <div className="p-5">
+            <RacketLines sport={racket} event={eventId} fallback={p as unknown as RacketPrediction} />
           </div>
         ) : (
         /* Body */
