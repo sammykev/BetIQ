@@ -121,24 +121,26 @@ LIVE_LISTS = (("/factsCenter/liveOrPrematchEvents", {"sportId": BASKETBALL}),
               ("/factsCenter/wapConfigurableIndexLiveEvents", {"sportId": BASKETBALL}))
 
 
-async def fetch_live(started_ids: List[str], session=None,
-                     per_event_max: int = 40) -> Tuple[Dict[str, Dict], str, set]:
+async def fetch_live(started_ids: List[str], session=None, per_event_max: int = 40, sport_id: str = BASKETBALL,
+                     parse=None) -> Tuple[Dict[str, Dict], str, set]:
     """In-play scores for the games we priced that have tipped off:
     ({event id: live}, how they were read, the ids actually checked).
     SportyBet's live listing if it answers, else each game's own page
     (productId 1: live)."""
     import sportybet
     session = session or sportybet.shared_session()
+    parse = parse or parse_live
     wanted = set(started_ids)
     for path, params in LIVE_LISTS:
         try:
-            data = await sportybet._request(session, "GET", path, params={**params, "_t": sportybet._now_ms()})
+            data = await sportybet._request(session, "GET", path,
+                                            params={**params, "sportId": sport_id, "_t": sportybet._now_ms()})
         except Exception:
             continue
         found: List[Dict] = []
         sportybet._collect_events(data.get("data"), found)
         if found:
-            live = {x["id"]: x for x in (parse_live(e) for e in found) if x and x["id"] in wanted}
+            live = {x["id"]: x for x in (parse(e) for e in found) if x and x["id"] in wanted}
             return live, f"{path}: {len(found)} events", wanted
     out: Dict[str, Dict] = {}
     checked: set = set()
@@ -150,7 +152,7 @@ async def fetch_live(started_ids: List[str], session=None,
             errors += 1
             continue
         checked.add(eid)
-        x = parse_live(data.get("data") or {})
+        x = parse(data.get("data") or {})
         if x:
             out[eid] = x
     return out, (f"event pages: {len(out)} live of {min(len(wanted), per_event_max)}"

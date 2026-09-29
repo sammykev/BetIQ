@@ -118,7 +118,7 @@ def _even(pairs: List[Tuple[float, bool]]) -> List[Tuple[float, bool]]:
     return [(p, w) if p >= 0.5 else (1 - p, not w) for p, w in pairs]
 
 
-def market_check(checked: List[Tuple[Dict, float]], swing: float) -> Dict[str, List[Dict]]:
+def market_check(checked: List[Tuple[Dict, float]], swing: float) -> Dict[str, List[Tuple[float, bool]]]:
     """Lines like SportyBet's, around our expectation: total points, points
     handicap, games handicap, total games, a game's winner and its points."""
     lines: Dict[str, List[Tuple[float, bool]]] = {}
@@ -148,7 +148,19 @@ def market_check(checked: List[Tuple[Dict, float]], swing: float) -> Dict[str, L
         add("game_winner", md.p_first_set(), g1[0] > g1[1])
         add("game_points", md.p_first_set_total_over(18.5), g1[0] + g1[1] > 18.5)
         add("odd_even", md.p_odd_total(), total % 2 == 1)
-    return {k: calibration(_even(v)) for k, v in lines.items()}
+    return lines
+
+
+def calibration_maps(lines: Dict[str, List[Tuple[float, bool]]]) -> Tuple[Dict, Dict]:
+    """Per market: the map pricing applies (fitted on all), and how a map
+    fitted on half did on the other half."""
+    import player_props as pp
+    maps, held_out = {}, {}
+    for m, rows in lines.items():
+        maps[m] = pp.fit_calibration_map(rows)
+        half = pp.fit_calibration_map(rows[::2])
+        held_out[m] = calibration(_even([(pp.calibrate(p, half), w) for p, w in rows[1::2]]))
+    return maps, held_out
 
 
 def run(rows: List[Dict]) -> Tuple[Dict[str, ttm.Player], Dict]:
@@ -170,6 +182,8 @@ def run(rows: List[Dict]) -> Tuple[Dict[str, ttm.Player], Dict]:
         print(f"  swing {s}: game scores log chance {swings[s]:.4f}", flush=True)
     swing = max(swings, key=lambda s: swings[s])
     winner = _even([(p, m["sets"][0] > m["sets"][1]) for m, p in checked])
+    lines = market_check(checked, swing)
+    maps, held_out = calibration_maps(lines)
     by_league: Dict[str, List[bool]] = {}
     for m, p in checked:
         by_league.setdefault(m.get("t") or "", []).append((p >= 0.5) == (m["sets"][0] > m["sets"][1]))
@@ -177,7 +191,8 @@ def run(rows: List[Dict]) -> Tuple[Dict[str, ttm.Player], Dict]:
            "k_mult": k_mult, "shrink": shrink, "swing": swing,
            "winner": {"accuracy": round(sum(1 for _, w in winner if w) / max(1, len(winner)), 4),
                       "log_loss": round(ll, 4), "calibration": calibration(winner)},
-           "markets": market_check(checked, swing),
+           "markets": {k: calibration(_even(v)) for k, v in lines.items()},
+           "calibration_maps": maps, "calibrated_held_out": held_out,
            "by_league": {t: {"n": len(v), "accuracy": round(sum(v) / len(v), 4)}
                          for t, v in sorted(by_league.items(), key=lambda kv: -len(kv[1]))[:20]},
            "players": len(players)}
@@ -188,6 +203,7 @@ def save(r, players: Dict[str, ttm.Player], rep: Dict, keep_since: int) -> int:
     import basketball_data as bd
     keep = {k: p.to_json() for k, p in players.items() if p.last >= keep_since}
     r.set(MODEL_KEY, bd.encode([{"players": keep, "swing": rep["swing"], "k_mult": rep["k_mult"], "shrink": rep["shrink"],
+                                 "calibration": rep.get("calibration_maps") or {},
                                  "as_of": date.today().isoformat()}]))
     r.set(REPORT_KEY, json.dumps(rep))
     return len(keep)
@@ -199,7 +215,7 @@ def load_model(blob) -> Dict:
     d = (bd.decode(blob) or [{}])[0]
     return {"players": {k: ttm.Player.from_json(v) for k, v in (d.get("players") or {}).items()},
             "swing": float(d.get("swing", ttm.SWING)), "shrink": float(d.get("shrink", 1.0)),
-            "k_mult": float(d.get("k_mult", 1.0)), "as_of": d.get("as_of", "")}
+            "k_mult": float(d.get("k_mult", 1.0)), "as_of": d.get("as_of", ""), "calibration": d.get("calibration") or {}}
 
 
 def print_report(rep: Dict) -> None:
@@ -211,6 +227,9 @@ def print_report(rep: Dict) -> None:
     for name, rows in rep["markets"].items():
         for b in rows:
             print(f"  {name} {b['bucket']}: said {b['said']:.1%} came in {b['came_in']:.1%} ({b['n']})")
+    for name, rows in (rep.get("calibrated_held_out") or {}).items():
+        for b in rows:
+            print(f"  {name} calibrated (held out) {b['bucket']}: said {b['said']:.1%} came in {b['came_in']:.1%} ({b['n']})")
     for t, v in rep["by_league"].items():
         print(f"  {t}: {v['n']} matches, {v['accuracy']:.1%} right")
 

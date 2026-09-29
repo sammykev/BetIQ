@@ -40,10 +40,12 @@ MAX_REMAKES = 3         # new slips for one target in a day, after cuts
 # SportyBet lists first (so the slip can be booked), then all of today's
 ATTEMPTS = ({"days": 1, "bookable_only": True}, {"days": 1, "bookable_only": False})
 
-# Football and basketball. Basketball's overtime lines are left out (a 1.03
+# Football, basketball, tennis and table tennis. Basketball's overtime lines are left out (a 1.03
 # "no overtime" adds a leg for almost nothing), and player props on either
 # sport until the walk-forward check has measured them
 BB_FAMILIES = ("bb_winner", "bb_1x2", "bb_handicap", "bb_total", "bb_team_total", "bb_halves", "bb_quarters")
+# Tennis and table tennis (where open to everyone): the whole-match lines
+RK_FAMILIES = ("rk_winner", "rk_set_handicap", "rk_games_handicap", "rk_total_games", "rk_total_sets", "rk_to_win_set")
 
 PICK_FIELDS = ("home", "away", "date", "time", "league", "market", "market_name", "code", "label",
                "prob", "odds", "odds_source", "bookable", "sport", "sb")
@@ -53,7 +55,8 @@ def request(target: float, attempt: Dict[str, Any]) -> Dict[str, Any]:
     """The optimizer request for one target."""
     return {"target_odds": target, "min_odds": round(target * (1 - SPREAD), 2),
             "max_odds": round(target * (1 + SPREAD), 2), "min_prob": MIN_PROB, "max_leg_odds": MAX_LEG_ODDS,
-            "max_games": 30, "sport": "all", "bb_markets": list(BB_FAMILIES), "no_props": True, **attempt}
+            "max_games": 30, "sport": "all", "bb_markets": list(BB_FAMILIES), "tn_markets": list(RK_FAMILIES),
+            "tt_markets": list(RK_FAMILIES), "no_props": True, **attempt}
 
 
 def _selection(p: Dict[str, Any]) -> Dict[str, Any]:

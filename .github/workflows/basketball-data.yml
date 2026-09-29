@@ -91,6 +91,9 @@ jobs:
           python - <<'PY'
           import json, os, redis
           r = redis.from_url(os.environ["UPSTASH_REDIS_URL"])
+          print("Server boot:", r.get("betiq:server:boot"))
+          print("Basketball status:", (r.get("betiq:bb:status") or b"")[:300])
+          print("Match-day keys:", sorted(k.decode() for k in r.scan_iter("betiq:*md:*", count=1000))[-12:])
           raw = r.get("betiq:probe:web")
           print(json.dumps(json.loads(raw), indent=1)[:200000] if raw else "No probe saved yet")
           import basketball_data as bd

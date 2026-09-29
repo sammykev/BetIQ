@@ -390,16 +390,18 @@ WINNER_MARKET = "186"  # Betradar "Winner": outcome 4 = first player, 5 = second
 
 
 async def fetch_sport_events(sport: str, session: Optional[AsyncSession] = None,
-                             max_pages: int = 12) -> Tuple[List[Dict], List[str]]:
+                             max_pages: int = 12, markets: Optional[str] = None) -> Tuple[List[Dict], List[str]]:
     """Every upcoming (today included) event SportyBet lists for a sport,
-    with its match-winner prices, and one report line per feed."""
+    with its match-winner prices (or every line of `markets`, comma-separated
+    ids), and one report line per feed."""
     session = session or shared_session()
     merged: Dict[str, Dict] = {}
     report: List[str] = []
     for today in ("true", "false"):
         try:
             events, pages, total = await _paged(session, "/factsCenter/pcUpcomingEvents", {
-                "sportId": SPORT_IDS[sport], "marketId": WINNER_MARKET, "pageSize": 100, "todayGames": today}, max_pages)
+                "sportId": SPORT_IDS[sport], "marketId": markets or WINNER_MARKET, "pageSize": 100, "todayGames": today},
+                max_pages)
         except Exception as e:
             report.append(f"{sport} {'today' if today == 'true' else 'upcoming'}: {e}")
             continue

@@ -3475,8 +3475,9 @@ def _md_entry_for(r, leg: Dict, days: Dict[str, Dict]) -> Optional[Dict]:
 def _leg_results(r, days: Dict[str, Dict]):
     """result_for(leg) for grading a ticket leg or daily pick: player props
     from the box scores, basketball by its SportyBet event, football from
-    the match-day store."""
+    the match-day store; tennis and table tennis by their SportyBet event."""
     bb_days: Dict[str, Dict] = {}
+    rk_days: Dict[Tuple[str, str], Dict] = {}
 
     def result_for(leg: Dict) -> Optional[Dict]:
         m = str(leg.get("market") or "")
@@ -3486,6 +3487,8 @@ def _leg_results(r, days: Dict[str, Dict]):
             if not leg.get("event_id") and leg.get("sb"):   # a daily pick: its SportyBet ids
                 leg = {**leg, "event_id": leg["sb"].get("eventId")}
             return _bb_result_for(r, leg, bb_days)
+        if m.startswith("rk_"):
+            return _rk_result_for(r, leg, rk_days)
         e = _md_entry_for(r, leg, days)
         return e.get("result") if e else None
     return result_for
@@ -4641,6 +4644,11 @@ ADMIN_JOBS = {
                   lambda: _web_probe()),
     "table_tennis_collect": ("Table tennis: collect results from SportyBet (form and head-to-head)",
                              lambda: _table_tennis_collect()),
+    "tennis_refresh": ("Tennis: price SportyBet's matches now", lambda: _tennis_refresh()),
+    "table_tennis_refresh": ("Table tennis: price SportyBet's matches now", lambda: _table_tennis_refresh()),
+    "tennis_live": ("Tennis: live scores and finals for matches under way", lambda: _tennis_live_tick()),
+    "table_tennis_live": ("Table tennis: live scores and finals for matches under way", lambda: _table_tennis_live_tick()),
+    "racket_models": ("Tennis & table tennis: load the nightly ratings", lambda: _rk_load_models()),
     "props_load": ("Player props: load box scores and the check's numbers", lambda: _props_load()),
     "fb_props": ("Player props: price goalscorers now", lambda: _fb_props_refresh()),
     "daily_slips": ("Remake today's daily odds slips (new booking codes)", lambda: _build_daily(__import__("daily_slips").today(), force=True)),
@@ -4981,10 +4989,12 @@ async def get_sport_predictions(sport: str, request: Request):
         data = [_bb_slim(p) for p in (_bb_upcoming() or await _bb_refresh())]
         if not data:
             data = await fetch_basketball_predictions()
-    elif sport == "tennis":
-        data = await fetch_tennis_predictions()
-    elif sport == "table-tennis":
-        data = await fetch_table_tennis_predictions()
+    elif sport in ("tennis", "table-tennis"):
+        rk = "table_tennis" if sport == "table-tennis" else "tennis"
+        # Every SportyBet line priced (racket_predictions); the old path if the listing is down
+        data = [_rk_slim(p) for p in (_rk_upcoming(rk) or await _rk_refresh(rk))]
+        if not data:
+            data = await (fetch_tennis_predictions() if rk == "tennis" else fetch_table_tennis_predictions())
     else:
         raise HTTPException(status_code=400, detail=f"Unknown sport: {sport}")
 
@@ -5344,6 +5354,353 @@ async def get_table_tennis_facts(request: Request, home: str = Query(..., max_le
                                  time_: str = Query("", alias="time", max_length=5), league: str = Query("", max_length=120)):
     """The same for table tennis: games and points in place of sets and games."""
     return await _racket_facts(request, "table_tennis", home, away, date_, time_, league)
+
+
+# ── Tennis and table tennis: every SportyBet line priced, match days, live ──
+# (racket_predictions / _markets / _matchday; the ratings from the nightly
+# "Racket data" fits: tennis_fit.py, table_tennis_fit.py)
+RK_SPORTS = ("tennis", "table_tennis")
+RK_PRED_KEY = "betiq:{sport}:predictions"
+RK_SLIM_LINES = 8
+RKMD_RESULTS_EVERY = 600      # seconds: today's results re-read at most this often while matches are on
+_rk_models: Dict[str, Dict] = {}
+_rk_predictions: Dict[str, List[Dict]] = {"tennis": [], "table_tennis": []}
+_rk_status: Dict[str, Dict[str, Any]] = {"tennis": {}, "table_tennis": {}}
+_rkmd_status: Dict[str, Dict[str, Any]] = {"tennis": {}, "table_tennis": {}}
+_rkmd_results_at: Dict[str, float] = {"tennis": 0.0, "table_tennis": 0.0}
+_rk_strip_cache: Dict[str, Tuple[float, Any]] = {}
+
+
+def _rk_url(sport: str) -> str:
+    """The sport as the site's URLs and access switches name it."""
+    return "table-tennis" if sport == "table_tennis" else sport
+
+
+def _rk_load_models_sync() -> Dict[str, int]:
+    import basketball_data as bd
+    import table_tennis_fit
+    import tennis_fit
+    r = _get_redis()
+    if not r:
+        return {}
+    for sport, mod in (("tennis", tennis_fit), ("table_tennis", table_tennis_fit)):
+        try:
+            raw = r.get(mod.MODEL_KEY)
+            if raw:
+                _rk_models[sport] = mod.load_model(raw)
+        except Exception as e:
+            print(f"[{sport}] couldn't load the model: {e}")
+        try:
+            raw = r.get(RK_PRED_KEY.format(sport=sport))
+            if raw and not _rk_predictions[sport]:
+                _rk_predictions[sport][:] = bd.decode(raw)
+        except Exception:
+            pass
+    return {s: len(m.get("players") or {}) for s, m in _rk_models.items()}
+
+
+async def _rk_load_models() -> Dict[str, int]:
+    """The fitted ratings (nightly, GitHub Actions) from Redis."""
+    got = await asyncio.to_thread(_rk_load_models_sync)
+    print(f"[Racket] models loaded: {got} players")
+    return got
+
+
+def _rk_slim(p: Dict) -> Dict:
+    """A prediction for the list: its likeliest lines at useful prices; the
+    rest from /api/{sport}/match."""
+    lines = p.get("rk_markets") or []
+    top = sorted((x for x in lines if x["odds"] >= 1.15), key=lambda x: -x["prob"])[:RK_SLIM_LINES]
+    return {**{k: v for k, v in p.items() if k != "rk_markets"}, "top_lines": top, "lines": len(lines)}
+
+
+def _rk_upcoming(sport: str) -> List[Dict]:
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+    return [p for p in _rk_predictions[sport] if f"{p['date']} {p['time']}" > now]
+
+
+async def _rk_refresh(sport: str) -> List[Dict]:
+    """Price every match SportyBet lists in the sport (every line of our markets)."""
+    import basketball_data as bd
+    import racket_markets as rkm
+    import racket_predictions as rp
+    import sportybet
+    if not _rk_models:
+        await _rk_load_models()
+    try:
+        events, report = await sportybet.fetch_sport_events(sport, markets=rkm.listing(sport))
+    except Exception as e:
+        print(f"[{sport}] listing failed: {e}")
+        events, report = [], [str(e)]
+    preds = await asyncio.to_thread(rp.build, events, sport, _rk_models.get(sport))
+    if not preds:
+        _rk_status[sport].update(listing={"events": len(events), "predictions": 0, "report": report})
+        return _rk_predictions[sport]
+    _rk_predictions[sport][:] = preds
+    r = _get_redis()
+    if r:
+        try:
+            r.set(RK_PRED_KEY.format(sport=sport), bd.encode(preds), ex=6 * 3600)
+            r.setex(f"betiq:sports:{_rk_url(sport)}", 3600, json.dumps([_rk_slim(p) for p in preds]))
+        except Exception as e:
+            print(f"[{sport}] couldn't save predictions: {e}")
+    try:
+        if _rkmd_merge(sport, preds):
+            _rk_strip_cache.pop(sport, None)
+    except Exception as e:
+        print(f"[{sport}] couldn't keep the match days: {e}")
+    rated = sum(1 for p in preds if p.get("rated"))
+    _rk_status[sport].update(at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                             listing={"events": len(events), "predictions": len(preds), "rated": rated,
+                                      "lines": sum(len(p.get("rk_markets") or []) for p in preds), "report": report})
+    print(f"[{sport}] {len(preds)} matches priced ({rated} with both players rated) · {' · '.join(report)}")
+    return preds
+
+
+async def _tennis_refresh() -> List[Dict]:
+    return await _rk_refresh("tennis")
+
+
+async def _table_tennis_refresh() -> List[Dict]:
+    return await _rk_refresh("table_tennis")
+
+
+def _rkmd_load(r, sport: str, d: str) -> Dict[str, Dict]:
+    import racket_matchday as rmd
+    try:
+        raw = r.get(rmd.key(sport, d)) if r else None
+        return json.loads(raw) if raw else {}
+    except Exception:
+        return {}
+
+
+def _rkmd_save(r, sport: str, d: str, day: Dict[str, Dict]) -> None:
+    import racket_matchday as rmd
+    if r:
+        r.set(rmd.key(sport, d), json.dumps(day, separators=(",", ":")), ex=rmd.TTL)
+
+
+def _rkmd_merge(sport: str, preds: List[Dict]) -> int:
+    import racket_matchday as rmd
+    r = _get_redis()
+    if not r:
+        return 0
+    now, changed = datetime.now(timezone.utc), 0
+    for d, day_preds in rmd.by_date(preds).items():
+        day = _rkmd_load(r, sport, d)
+        if rmd.merge_predictions(day, day_preds, now):
+            _rkmd_save(r, sport, d, day)
+            changed += 1
+    return changed
+
+
+def _rk_results_days(r, sport: str, days: Iterable[str]) -> Dict[str, Dict]:
+    """SportyBet's finished matches on these days (the results store), by event id."""
+    import basketball_data as bd
+    import tennis_facts as tf
+    key = tf.SPORTS[sport]["key"]
+    out: Dict[str, Dict] = {}
+    days = list(days)
+    for raw in (r.hmget(key, days) if r and days else []):
+        if raw:
+            try:
+                out.update({m["id"]: m for m in bd.decode(raw)})
+            except Exception:
+                continue
+    return out
+
+
+async def _rk_live_tick(sport: str) -> Dict[str, Any]:
+    """Live scores for matches under way, and finals (graded) from SportyBet's results."""
+    import basketball_data as bd
+    import racket_matchday as rmd
+    import tennis_facts as tf
+    r = _get_redis()
+    if not r:
+        return {"skipped": "no Redis"}
+    now = datetime.now(timezone.utc)
+    dates = [(now.date() - timedelta(days=i)).isoformat() for i in (2, 1, 0)]
+    days = {d: _rkmd_load(r, sport, d) for d in dates}
+    open_ = {e["id"]: (d, e) for d, day in days.items() for e in day.values() if rmd.needs_result(e, now)}
+    if not open_:
+        _rkmd_status[sport].update(at=now.isoformat(timespec="seconds"), open=0)
+        return {"open": 0}
+    changed = set()
+    if time.time() - _rkmd_results_at[sport] > RKMD_RESULTS_EVERY:
+        _rkmd_results_at[sport] = time.time()
+        for d in sorted({d for d, _ in open_.values()} | {now.date().isoformat()}):
+            try:
+                found = await tf.fetch_results_day(d, sport=sport)
+                if found:
+                    r.hset(tf.SPORTS[sport]["key"], d, bd.encode(found))
+            except Exception as e:
+                print(f"[{sport}] live tick: results for {d}: {e}")
+    finals = _rk_results_days(r, sport, dates + [(now.date() + timedelta(days=1)).isoformat()])
+    for eid, (d, e) in open_.items():
+        if eid in finals and rmd.apply_result(e, finals[eid]):
+            changed.add(d)
+    playing = [eid for eid, (d, e) in open_.items() if (e.get("result") or {}).get("status") != rmd.FINISHED
+               and now - (rmd.kickoff(e) or now) < timedelta(hours=6)]
+    how = "none started"
+    if playing:
+        try:
+            live, how, checked = await bd.fetch_live(playing, sport_id=tf.SPORTS[sport]["id"],
+                                                     parse=lambda ev: rmd.parse_live(ev, sport))
+        except Exception as e:
+            live, how, checked = {}, f"failed: {e}", set()
+        for eid in playing:
+            d, e = open_[eid]
+            if (eid in live and rmd.apply_live(e, live[eid])) or rmd.stale_live(e, live, checked):
+                changed.add(d)
+    for d in changed:
+        _rkmd_save(r, sport, d, days[d])
+    if changed:
+        _rk_strip_cache.pop(sport, None)
+    _rkmd_status[sport].update(at=now.isoformat(timespec="seconds"), open=len(open_), playing=len(playing),
+                               live_source=how)
+    return dict(_rkmd_status[sport])
+
+
+async def _tennis_live_tick() -> Dict[str, Any]:
+    return await _rk_live_tick("tennis")
+
+
+async def _table_tennis_live_tick() -> Dict[str, Any]:
+    return await _rk_live_tick("table_tennis")
+
+
+def _rk_strip(sport: str) -> Dict[str, Any]:
+    import racket_matchday as rmd
+    today = date.today()
+    hit = _rk_strip_cache.get(sport)
+    if hit and time.time() - hit[0] < 60 and hit[1]["today"] == today.isoformat():
+        return hit[1]
+    dates = [(today + timedelta(days=o)).isoformat() for o in range(-MD_DAYS_BACK, MD_DAYS_AHEAD + 1)]
+    r = _get_redis()
+    upcoming: Dict[str, int] = {}
+    for p in _rk_upcoming(sport):
+        upcoming[p["date"]] = upcoming.get(p["date"], 0) + 1
+    raws = r.mget([rmd.key(sport, d) for d in dates]) if r else [None] * len(dates)
+    days = []
+    for d, raw in zip(dates, raws):
+        try:
+            entries = json.loads(raw).values() if raw else []
+        except Exception:
+            entries = []
+        s = rmd.day_summary(entries)
+        if d >= today.isoformat():
+            s["total"] = max(s["total"], upcoming.get(d, 0))
+        days.append({"date": d, **s})
+    out = {"today": today.isoformat(), "days": days}
+    _rk_strip_cache[sport] = (time.time(), out)
+    return out
+
+
+def _rk_day(sport: str, date_: str) -> Dict[str, Any]:
+    import racket_matchday as rmd
+    today = date.today()
+    d = _date_param(date_ or today.isoformat())
+    if not (today - timedelta(days=90) <= d <= today + timedelta(days=MD_DAYS_AHEAD + 1)):
+        raise HTTPException(status_code=400, detail="date out of range")
+    day = _rkmd_load(_get_redis(), sport, d.isoformat())
+    idx = _racket_players.get(sport) or {}
+    matches = []
+    for e in day.values():
+        m = rmd.public(e)
+        if idx:
+            import tennis_facts as tf
+            m["home_form"], m["away_form"] = tf.form_string(idx, m["home"] or ""), tf.form_string(idx, m["away"] or "")
+        matches.append(m)
+    matches.sort(key=lambda m: (m.get("league_name") or "", m.get("time") or "", m.get("home") or ""))
+    return {"date": d.isoformat(), "today": today.isoformat(), "matches": matches,
+            "summary": rmd.day_summary(day.values()), "updated": _rkmd_status[sport].get("at")}
+
+
+def _rk_match(sport: str, event: str) -> Dict:
+    p = next((x for x in _rk_predictions[sport] if x.get("sportybet_event_id") == event), None)
+    if not p:
+        raise HTTPException(status_code=404, detail="Match not found")
+    return p
+
+
+@app.get("/api/tennis/matchday/strip")
+async def get_tennis_strip(request: Request):
+    """The tennis date strip: 7 days back to 14 ahead."""
+    await _check_sport_access(request, "tennis")
+    return _rk_strip("tennis")
+
+
+@app.get("/api/tennis/matchday")
+async def get_tennis_matchday(request: Request, date_: str = Query("", alias="date")):
+    """One day's tennis: each match's prediction from before it started, its
+    live or final score, and how our picks did."""
+    await _check_sport_access(request, "tennis")
+    return _rk_day("tennis", date_)
+
+
+@app.get("/api/tennis/match")
+async def get_tennis_match(request: Request, event: str = Query(..., max_length=40)):
+    """One tennis match: every line SportyBet offers on it that we priced."""
+    await _check_sport_access(request, "tennis")
+    return _rk_match("tennis", event)
+
+
+@app.get("/api/table-tennis/matchday/strip")
+async def get_table_tennis_strip(request: Request):
+    await _check_sport_access(request, "table-tennis")
+    return _rk_strip("table_tennis")
+
+
+@app.get("/api/table-tennis/matchday")
+async def get_table_tennis_matchday(request: Request, date_: str = Query("", alias="date")):
+    await _check_sport_access(request, "table-tennis")
+    return _rk_day("table_tennis", date_)
+
+
+@app.get("/api/table-tennis/match")
+async def get_table_tennis_match(request: Request, event: str = Query(..., max_length=40)):
+    await _check_sport_access(request, "table-tennis")
+    return _rk_match("table_tennis", event)
+
+
+@app.get("/api/racket/status")
+async def get_racket_status(_admin: str = Depends(require_admin)):
+    """Admin: each racket sport's model, listing, match days and results, and the fits' checks."""
+    import table_tennis_fit
+    import tennis_fit
+    r = _get_redis()
+    out: Dict[str, Any] = {}
+    for sport, mod in (("tennis", tennis_fit), ("table_tennis", table_tennis_fit)):
+        try:
+            check = json.loads(r.get(mod.REPORT_KEY) or "null") if r else None
+        except Exception:
+            check = None
+        m = _rk_models.get(sport) or {}
+        out[sport] = {"players": len(m.get("players") or {}), "as_of": m.get("as_of"),
+                      "constants": {k: v for k, v in m.items() if k not in ("players", "avg")},
+                      **_rk_status[sport], "matchday": dict(_rkmd_status[sport]), "results": dict(_racket_status[sport]),
+                      "check": {k: check.get(k) for k in ("at", "matches", "checked", "winner", "k_mult", "shrink",
+                                                           "swing", "surface_weight")} if check else None}
+    return out
+
+
+def _rk_result_for(r, leg: Dict, cache: Dict[str, Dict]) -> Optional[Dict]:
+    """A tennis or table tennis leg's result, by the SportyBet event it was booked on."""
+    sport = "table_tennis" if leg.get("sport") == "table_tennis" else "tennis"
+    try:
+        d0 = date.fromisoformat(leg.get("date") or "")
+    except ValueError:
+        return None
+    eid = str(leg.get("event_id") or (leg.get("sb") or {}).get("eventId") or "")
+    days = [(d0 + timedelta(days=i)).isoformat() for i in (-1, 0, 1)]
+    for s in (sport, "tennis" if sport == "table_tennis" else "table_tennis"):
+        for d in days:
+            if (s, d) not in cache:
+                cache[(s, d)] = _rk_results_days(r, s, [d])
+            m = cache[(s, d)].get(eid)
+            if m:
+                return {"status": "finished", "sets": m["sets"], "games": m.get("games"), "ret": m.get("ret")}
+    return None
 
 
 @app.get("/api/basketball/facts")
@@ -7218,10 +7575,24 @@ async def optimize_slip(request: Request, body: Dict[str, Any], _access=Depends(
     range (optimizer.py). Body: {min_odds, max_odds, max_games?, min_prob?,
     days?, leagues?: [codes], markets?: [ids], codes?: {market: [option
     codes]} (e.g. only some goal lines), bookable_only?, sport?: football |
-    basketball | all, bb_markets?: [basketball families]}.
+    basketball | tennis | table_tennis | all, bb_markets?: [basketball
+    families], tn_markets? / tt_markets?: [tennis / table tennis families]}.
     """
-    if str((body or {}).get("sport") or "football") in ("basketball", "all"):
+    sport = str((body or {}).get("sport") or "football")
+    if sport in ("basketball", "all"):
         await _check_sport_access(request, "basketball")   # switched off, or for testers only
+    if sport in ("tennis", "table_tennis"):
+        await _check_sport_access(request, _rk_url(sport))
+    body = dict(body or {})
+    if sport == "all":
+        # Racket sports switched off (or for testers only) are left out of an "all" slip
+        off = []
+        for rk in RK_SPORTS:
+            try:
+                await _check_sport_access(request, _rk_url(rk))
+            except HTTPException:
+                off.append(rk)
+        body["_rk_off"] = off
     return await _optimize_request(body)
 
 
@@ -7254,9 +7625,13 @@ async def _optimize_request(body: Dict[str, Any],
     # football (default), basketball, or all: basketball picks are the lines
     # SportyBet offers on its listed matches (_bb_predictions), all bookable
     sport = str(body.get("sport") or "football")
-    if sport not in ("football", "basketball", "all"):
-        raise HTTPException(status_code=400, detail="sport must be football, basketball or all")
+    if sport not in ("football", "basketball", "tennis", "table_tennis", "all"):
+        raise HTTPException(status_code=400, detail="sport must be football, basketball, tennis, table_tennis or all")
     bb_families = {str(m) for m in body.get("bb_markets") or []} or None
+    rk_families = {"tennis": {str(m) for m in body.get("tn_markets") or []} or None,
+                   "table_tennis": {str(m) for m in body.get("tt_markets") or []} or None}
+    rk_on = [rk for rk in RK_SPORTS if sport in (rk, "all") and rk not in (body.get("_rk_off") or [])
+             and not (sport == "all" and body.get("no_racket"))]
 
     now = datetime.now(timezone.utc)
     today, last = now.date().isoformat(), (now.date() + timedelta(days=days - 1)).isoformat()
@@ -7268,7 +7643,7 @@ async def _optimize_request(body: Dict[str, Any],
             return False
         return max(window[0], now) < k < window[1]
 
-    upcoming = [p for p in (_predictions_cache if sport != "basketball" else [])
+    upcoming = [p for p in (_predictions_cache if sport in ("football", "all") else [])
                 if p.get("sport") in (None, "football")
                 and (in_window(p) if window else
                      today <= p.get("date", "") <= last
@@ -7279,7 +7654,7 @@ async def _optimize_request(body: Dict[str, Any],
     # predictions (flags and all) minutes before the next linking run.
     linked = {id(p): _linked_event(p) for p in upcoming}
     preds = [p for p in upcoming if not bookable_only or linked[id(p)]]
-    bb_preds = [] if sport == "football" else [
+    bb_preds = [] if sport not in ("basketball", "all") else [
         p for p in _bb_upcoming()
         if (in_window(p) if window else today <= p["date"] <= last) and not (leagues and sport == "basketball"
                                                                               and p.get("league") not in leagues)]
@@ -7322,6 +7697,16 @@ async def _optimize_request(body: Dict[str, Any],
         import basketball_predictions
         groups += [basketball_predictions.options(p, min_prob, bb_families, lambda m, c: m not in paused)
                    for p in bb_preds]
+    rk_preds: List[Dict] = []
+    if rk_on:
+        import racket_predictions
+        for rk in rk_on:
+            ps = [p for p in _rk_upcoming(rk)
+                  if (in_window(p) if window else today <= p["date"] <= last)
+                  and not (leagues and sport == rk and p.get("league") not in leagues)]
+            rk_preds += ps
+            groups += [racket_predictions.options(p, min_prob, rk_families[rk], lambda m, c: m not in paused)
+                       for p in ps]
     if max_leg:
         groups = [[o for o in g if o.odds < max_leg] for g in groups]
     if bookable_only:
@@ -7335,6 +7720,14 @@ async def _optimize_request(body: Dict[str, Any],
                           + (" in the markets you chose" if bb_families else "")
                           + ". Lower the minimum confidence, add markets or pick more days."
                           if bb_preds else "No basketball matches listed on SportyBet in those days yet."),
+                "matches_considered": 0, "target": [lo, hi], "target_odds": target}
+    if considered == 0 and sport in RK_SPORTS:
+        name = "tennis" if sport == "tennis" else "table tennis"
+        return {"error": (f"None of the {len(rk_preds)} {name} matches in the next {days} day{'s' if days != 1 else ''} "
+                          f"has a line our model rates {min_prob:.0%} or more"
+                          + (" in the markets you chose" if rk_families[sport] else "")
+                          + ". Lower the minimum confidence, add markets or pick more days."
+                          if rk_preds else f"No {name} matches listed on SportyBet in those days yet."),
                 "matches_considered": 0, "target": [lo, hi], "target_odds": target}
     if considered == 0:
         reasons = optimizer.why_empty(preds, markets, min_prob, bookable, only)
@@ -7440,7 +7833,12 @@ async def _daily_slip(target: float, day: str) -> Dict[str, Any]:
     built: Dict[str, Any] = {}
     for attempt in daily_slips.ATTEMPTS:
         try:
-            res = await _optimize_request(daily_slips.request(target, attempt), window=daily_slips.window(day))
+            import access
+            feats = _features()
+            # Racket sports not open to everyone stay out of the daily slips
+            off = [rk for rk in RK_SPORTS if feats[access.SPORT_FEATURES[rk]]["state"] != "on"]
+            res = await _optimize_request({**daily_slips.request(target, attempt), "_rk_off": off},
+                                          window=daily_slips.window(day))
         except HTTPException as e:
             res = {"error": str(e.detail)}
         built = daily_slips.slip(target, res, attempt)
@@ -8082,7 +8480,18 @@ async def startup():
     scheduler.add_job(_table_tennis_collect, "interval", minutes=30, id="table_tennis_collect", max_instances=1,
                       coalesce=True, next_run_time=datetime.now() + timedelta(minutes=8))
     # Once after each deploy: what football.com and SportyBet's racket sports look like from here
-    scheduler.add_job(_web_probe, "date", run_date=datetime.now() + timedelta(minutes=3), id="web_probe")
+    scheduler.add_job(_web_probe, "date", run_date=datetime.now() + timedelta(seconds=75), id="web_probe")
+    # Tennis and table tennis: the nightly ratings, SportyBet's matches priced, live scores and finals
+    scheduler.add_job(_rk_load_models, "interval", hours=3, id="racket_models", max_instances=1, coalesce=True,
+                      next_run_time=datetime.now() + timedelta(seconds=30))
+    scheduler.add_job(_tennis_refresh, "interval", minutes=15, id="tennis_refresh", max_instances=1, coalesce=True,
+                      next_run_time=datetime.now() + timedelta(minutes=2))
+    scheduler.add_job(_table_tennis_refresh, "interval", minutes=10, id="table_tennis_refresh", max_instances=1,
+                      coalesce=True, next_run_time=datetime.now() + timedelta(minutes=3))
+    scheduler.add_job(_tennis_live_tick, "interval", minutes=2, id="tennis_live", max_instances=1, coalesce=True,
+                      next_run_time=datetime.now() + timedelta(minutes=4))
+    scheduler.add_job(_table_tennis_live_tick, "interval", minutes=2, id="table_tennis_live", max_instances=1,
+                      coalesce=True, next_run_time=datetime.now() + timedelta(minutes=5))
     # Basketball games under way: live scores, and finals graded as they come in
     scheduler.add_job(_bb_live_tick, "interval", minutes=2, id="bb_live", max_instances=1, coalesce=True,
                       next_run_time=datetime.now() + timedelta(minutes=4))
@@ -8095,6 +8504,13 @@ async def startup():
     scheduler.add_job(_shot_blend_job, "interval", hours=6, id="shot_blend",
                       next_run_time=datetime.now() + timedelta(minutes=15))
     scheduler.start()
+    # Which code this server runs (the "Basketball data" workflow's read_probe job prints it)
+    if r:
+        try:
+            r.set("betiq:server:boot", json.dumps({"at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                                                   "jobs": sorted(j.id for j in scheduler.get_jobs())}), ex=30 * 86400)
+        except Exception as e:
+            print(f"[Boot] couldn't record: {e}")
 
 
 @app.on_event("shutdown")

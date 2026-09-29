@@ -72,6 +72,9 @@ def grade_leg(market: str, code: str, result: Optional[Dict]) -> str:
     if market.startswith("bb_"):
         import basketball_markets
         return basketball_markets.settle(market, code, result)
+    if market.startswith("rk_"):
+        import racket_markets
+        return racket_markets.settle(market, code, result)
     if not result:
         return "pending"
     status = result.get("status")

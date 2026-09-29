@@ -23,6 +23,7 @@ from datetime import date, datetime, timedelta, timezone
 from math import log
 from typing import Dict, Iterable, List, Optional, Tuple
 
+import player_props as pp
 import tennis_model as tm
 
 MODEL_KEY = "betiq:tennis:model"
@@ -171,6 +172,18 @@ class Fit:
         for line in (-4.5, -2.5, 2.5, 4.5):
             ph = md.p_handicap(line)
             lines += [("games_handicap", ph, games_a - games_b + line > 0), ("games_handicap", 1 - ph, games_a - games_b + line < 0)]
+        sets_a = sum(1 for g in r["sets"] if (g[0] > g[1]) == first_is_w)
+        sets_b = len(r["sets"]) - sets_a
+        if len(r["sets"]) >= 2 and max(sets_a, sets_b) == r.get("best_of", 3) // 2 + 1:
+            for line in (-1.5, 1.5):
+                ps = md.p_set_handicap(line)
+                lines += [("set_handicap", ps, sets_a - sets_b + line > 0), ("set_handicap", 1 - ps, sets_a - sets_b + line < 0)]
+            po = sum(v for (x, y), v in md.sets.items() if x + y > r.get("best_of", 3) // 2 + 1.5)
+            lines += [("total_sets", po, len(r["sets"]) > r.get("best_of", 3) // 2 + 1.5)]
+        if r["sets"]:
+            g1 = r["sets"][0]
+            po = md.p_first_set_total_over(9.5)
+            lines += [("set_total", po, g1[0] + g1[1] > 9.5)]
         info["lines"] = lines
         self.checked.append((r["date"], group, p_a, a_won, info))
 
@@ -197,6 +210,16 @@ def report(fit: Fit) -> Dict:
     for i in detailed:
         for m, p, w in i["lines"]:
             lines.setdefault(m, []).append((p, w))
+    # Calibration maps per market (pricing applies them): fitted on half the
+    # checked matches and tried on the other half, then fitted on all
+    maps, held_out = {}, {}
+    for m, rows in [("first_set", [(p, w) for p, w in first])] + list(lines.items()):
+        maps[m] = pp.fit_calibration_map(rows)
+        half = pp.fit_calibration_map(rows[::2])
+        held_out[m] = calibration([(pp.calibrate(p, half), w) for p, w in rows[1::2]
+                                   if pp.calibrate(p, half) >= 0.5] +
+                                  [(1 - pp.calibrate(p, half), not w) for p, w in rows[1::2]
+                                   if pp.calibrate(p, half) < 0.5])
     by_group: Dict[str, List[Tuple[float, bool]]] = {}
     for _, g, p, won, _ in fit.checked:
         by_group.setdefault(g, []).append((max(p, 1 - p), won if p >= 0.5 else not won))
@@ -205,6 +228,7 @@ def report(fit: Fit) -> Dict:
             "winner": {"accuracy": round(acc, 4), "log_loss": round(ll, 4), "calibration": calibration(winner)},
             "first_set": calibration(first),
             "lines": {m: calibration([x for x in v if x[0] >= 0.5]) for m, v in lines.items()},
+            "calibration_maps": maps, "calibrated_held_out": held_out,
             "by_group": {g: {"n": len(v), "accuracy": round(sum(1 for _, w in v if w) / len(v), 4)}
                          for g, v in sorted(by_group.items(), key=lambda kv: -len(kv[1]))},
             "players": len(fit.players), "tour_avg": fit.tour_avg()}
@@ -270,7 +294,8 @@ def save(r, fit: Fit, rep: Dict, today: Optional[date] = None) -> int:
     first = (today - timedelta(days=KEEP_DAYS)).isoformat()
     keep = {k: p.to_json() for k, p in fit.players.items() if p.last >= first}
     r.set(MODEL_KEY, bd.encode([{"players": keep, "avg": fit.tour_avg(), "as_of": today.isoformat(),
-                                 "k_mult": fit.k_mult, "surface_weight": fit.sw, "shrink": fit.shrink}]))
+                                 "k_mult": fit.k_mult, "surface_weight": fit.sw, "shrink": fit.shrink,
+                                 "calibration": rep.get("calibration_maps") or {}}]))
     r.set(REPORT_KEY, json.dumps(rep))
     return len(keep)
 
@@ -282,7 +307,7 @@ def load_model(blob) -> Dict:
     return {"players": {k: tm.Player.from_json(v) for k, v in (d.get("players") or {}).items()},
             "avg": d.get("avg") or dict(tm.DEFAULT_SPW), "as_of": d.get("as_of", ""),
             "k_mult": float(d.get("k_mult", 1.0)), "surface_weight": float(d.get("surface_weight", tm.SURFACE_WEIGHT)),
-            "shrink": float(d.get("shrink", 1.0))}
+            "shrink": float(d.get("shrink", 1.0)), "calibration": d.get("calibration") or {}}
 
 
 async def web_rows(since: int) -> List[Dict]:
@@ -306,6 +331,9 @@ def print_report(rep: Dict) -> None:
     for m, rows in rep["lines"].items():
         for b in rows:
             print(f"  {m} {b['bucket']}: said {b['said']:.1%} came in {b['came_in']:.1%} ({b['n']})")
+    for m, rows in (rep.get("calibrated_held_out") or {}).items():
+        for b in rows:
+            print(f"  {m} calibrated (held out) {b['bucket']}: said {b['said']:.1%} came in {b['came_in']:.1%} ({b['n']})")
     for g, v in list(rep["by_group"].items())[:12]:
         print(f"  {g}: {v['n']} matches, {v['accuracy']:.1%} right")
 
