@@ -91,6 +91,14 @@ export async function fetchAccuracy(days: number, signal?: AbortSignal): Promise
   return r.json();
 }
 
+/** Basketball, tennis or table tennis's record (backend sport_accuracy.py), in the same shape. */
+export async function fetchSportAccuracy(f: (url: string, init?: RequestInit) => Promise<Response>,
+  sport: "basketball" | "tennis" | "table_tennis", days: number, signal?: AbortSignal): Promise<Accuracy> {
+  const r = await f(`${API}/api/accuracy/${sport === "table_tennis" ? "table-tennis" : sport}?days=${days}`, { signal });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+
 // ── Tickets (booking codes) ──
 export type LegStatus = "won" | "lost" | "void" | "pending" | "unknown";
 export interface TicketLeg {

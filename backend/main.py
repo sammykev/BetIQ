@@ -3360,6 +3360,47 @@ async def get_accuracy(days: int = 30):
     return out
 
 
+_sport_accuracy_cache: Dict[Tuple[str, int], Tuple[float, Any]] = {}
+
+
+@app.get("/api/accuracy/{sport}")
+async def get_sport_accuracy(sport: str, request: Request, days: int = 30):
+    """The track record of basketball, tennis or table tennis over the last
+    `days` days, in football's shape (sport_accuracy.py): our tips, the
+    total line, our best line; calibration; the winner Brier score against
+    the bookmaker's; by competition and by day."""
+    import basketball_matchday as bbmd
+    import racket_matchday as rmd
+    import sport_accuracy
+    sport = "table_tennis" if sport == "table-tennis" else sport
+    if sport not in ("basketball", "tennis", "table_tennis"):
+        raise HTTPException(status_code=404, detail="Unknown sport")
+    await _check_sport_access(request, "basketball" if sport == "basketball" else _rk_url(sport))
+    days = max(1, min(int(days), 90))
+    hit = _sport_accuracy_cache.get((sport, days))
+    if hit and time.time() - hit[0] < 600:
+        return hit[1]
+    r = _get_redis()
+    empty = {"days": days, "matches": 0, "markets": {}, "calibration": [], "brier": {}, "leagues": [], "daily": []}
+    if not r:
+        return empty
+    today = date.today()
+    dates = [(today - timedelta(days=i)).isoformat() for i in range(days, -1, -1)]
+    keys = [bbmd.KEY.format(d) if sport == "basketball" else rmd.key(sport, d) for d in dates]
+
+    def load() -> Dict[str, List[Dict]]:
+        out: Dict[str, List[Dict]] = {}
+        for d, raw in zip(dates, r.mget(keys)):
+            try:
+                out[d] = list(json.loads(raw).values()) if raw else []
+            except Exception:
+                out[d] = []
+        return out
+    res = {"days": days, "sport": sport, **sport_accuracy.accuracy(await asyncio.to_thread(load), sport)}
+    _sport_accuracy_cache[(sport, days)] = (time.time(), res)
+    return res
+
+
 @app.get("/api/history")
 async def get_history(date: str):
     """A date's predictions in the old shape (outcome / actual_result / score)."""

@@ -10,9 +10,9 @@ import { PageHeader } from "@/components/shell/PageHeader";
 import { CompetitionBadge } from "@/components/CompetitionBadge";
 import { ColumnChart } from "@/components/admin/charts";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
-import { useAccess } from "@/lib/access";
+import { useAccess, type FeatureId } from "@/lib/access";
 import { Unavailable } from "@/components/FeatureGate";
-import { API, MARKET_LABELS, fetchAccuracy, type Accuracy, type TicketSummary } from "@/lib/matchday";
+import { API, MARKET_LABELS, fetchAccuracy, fetchSportAccuracy, type Accuracy, type TicketSummary } from "@/lib/matchday";
 
 // The model's track record: every pick we published, graded against the
 // final score (backend matchday.py). "We said" is the average probability we
@@ -20,7 +20,14 @@ import { API, MARKET_LABELS, fetchAccuracy, type Accuracy, type TicketSummary } 
 // close the probabilities can be trusted as they're shown.
 
 const PERIODS = [7, 30, 90];
-const MARKET_ORDER = ["tip", "goals", "favourite", "ou25", "btts", "corners", "bookings"];
+const MARKET_ORDER = ["tip", "goals", "favourite", "ou25", "btts", "corners", "bookings", "points", "games", "best"];
+type RecordSport = "football" | "basketball" | "tennis" | "table_tennis";
+const SPORT_TABS: { id: RecordSport; label: string; feature?: FeatureId; total?: string }[] = [
+  { id: "football", label: "Football" },
+  { id: "basketball", label: "Basketball", feature: "sport.basketball", total: "points" },
+  { id: "tennis", label: "Tennis", feature: "sport.tennis", total: "games" },
+  { id: "table_tennis", label: "Table tennis", feature: "sport.table_tennis", total: "games" },
+];
 const pct = (x?: number | null) => (typeof x === "number" ? `${Math.round(x * 100)}%` : "—");
 
 function Tile({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: string }) {
@@ -79,6 +86,10 @@ function MyTickets() {
 
 export default function TrackRecordPage() {
   const access = useAccess();
+  const authFetch = useAuthedFetch();
+  const [sport, setSport] = useState<RecordSport>("football");
+  const tabs = SPORT_TABS.filter(t => !t.feature || access.shown(t.feature));
+  const tab = SPORT_TABS.find(t => t.id === sport)!;
   const [days, setDays] = useState(30);
   const [data, setData] = useState<Accuracy | null>(null);
   const [loading, setLoading] = useState(true);
@@ -87,10 +98,12 @@ export default function TrackRecordPage() {
   useEffect(() => {
     const ctrl = new AbortController();
     setLoading(true); setError(false);
-    fetchAccuracy(days, ctrl.signal).then(setData).catch(e => { if (e?.name !== "AbortError") setError(true); })
+    setData(null);
+    (sport === "football" ? fetchAccuracy(days, ctrl.signal) : fetchSportAccuracy(authFetch, sport, days, ctrl.signal))
+      .then(setData).catch(e => { if (e?.name !== "AbortError") setError(true); })
       .finally(() => setLoading(false));
     return () => ctrl.abort();
-  }, [days]);
+  }, [days, sport, authFetch]);
 
   const m = data?.markets ?? {};
   const vs = data?.brier.vs_bookmaker;
@@ -102,7 +115,7 @@ export default function TrackRecordPage() {
     <AppShell>
       <div className="space-y-6 animate-fade-in">
         <PageHeader eyebrow="Model accountability" title="Track record"
-          description="Every prediction we published, graded against the final score. Browse day by day from the date strip on the home page."
+          description={`Every ${sport === "football" ? "" : tab.label.toLowerCase() + " "}prediction we published, graded against the final score. Browse day by day from the date strip on the home page.`}
           right={
             <div className="flex gap-1.5" role="group" aria-label="Period">
               {PERIODS.map(p => (
@@ -111,6 +124,15 @@ export default function TrackRecordPage() {
               ))}
             </div>
           } />
+
+        {tabs.length > 1 && (
+          <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-4 px-4 sm:mx-0 sm:px-0" role="group" aria-label="Sport">
+            {tabs.map(t => (
+              <button key={t.id} onClick={() => setSport(t.id)} aria-pressed={sport === t.id}
+                className={clsx("chip shrink-0", sport === t.id ? "chip-active" : "chip-idle")}>{t.label}</button>
+            ))}
+          </div>
+        )}
 
         {loading && !data ? (
           <div className="card flex items-center justify-center gap-2 py-16 text-sm text-n-400"><Loader2 size={16} className="animate-spin" /> Loading the record…</div>
@@ -124,16 +146,26 @@ export default function TrackRecordPage() {
         ) : (
           <>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              {sport !== "football" ? <>
+                <Tile label="Our tips" value={pct(m.tip?.hit_rate)} tone="text-accent"
+                  sub={m.tip ? `${m.tip.n} picks · we said ${pct(m.tip.avg_prob)}` : undefined} />
+                <Tile label={m[tab.total!]?.name ?? "Total line"} value={pct(m[tab.total!]?.hit_rate)}
+                  sub={m[tab.total!] ? `${m[tab.total!].n} picks · we said ${pct(m[tab.total!].avg_prob)}` : undefined} />
+                <Tile label="Best lines" value={pct(m.best?.hit_rate)}
+                  sub={m.best ? `${m.best.n} picks · we said ${pct(m.best.avg_prob)}` : undefined} />
+              </> : <>
               <Tile label="Our tips" value={pct(m.tip?.hit_rate)} tone="text-accent"
                 sub={m.tip ? `${m.tip.n} picks · we said ${pct(m.tip.avg_prob)}` : undefined} />
               <Tile label="Goals tips" value={pct(m.goals?.hit_rate)}
                 sub={m.goals ? `${m.goals.n} picks · we said ${pct(m.goals.avg_prob)}` : undefined} />
               <Tile label="Most likely result" value={pct(m.favourite?.hit_rate)}
                 sub={m.favourite ? `${m.favourite.n} matches · we said ${pct(m.favourite.avg_prob)}` : undefined} />
+              </>}
               <Tile label="Brier score"
                 value={vs ? vs.model.toFixed(3) : data.brier.model?.toFixed(3) ?? "—"}
                 tone={vs ? (vs.model <= vs.bookmaker ? "text-accent" : "text-warn") : undefined}
-                sub={vs ? `bookmaker ${vs.bookmaker.toFixed(3)} · ${vs.matches} matches · lower is better` : "1X2 accuracy · lower is better"} />
+                sub={vs ? `bookmaker ${vs.bookmaker.toFixed(3)} · ${vs.matches} matches · lower is better`
+                  : `${sport === "football" ? "1X2" : "Winner"} accuracy · lower is better`} />
             </div>
 
             <section className="card overflow-hidden">
@@ -159,7 +191,7 @@ export default function TrackRecordPage() {
                     {markets.map(k => (
                       <tr key={k}>
                         <td className="px-4 sm:px-5 py-2.5">
-                          <span className="block text-n-0 font-medium">{MARKET_LABELS[k] ?? m[k].name}</span>
+                          <span className="block text-n-0 font-medium">{sport === "football" ? MARKET_LABELS[k] ?? m[k].name : m[k].name}</span>
                           <span className="block sm:hidden text-[11px] text-n-500 tnum">{m[k].n} picks</span>
                         </td>
                         <td className="hidden sm:table-cell px-3 py-2.5 text-right tnum text-n-300">{m[k].n}</td>
@@ -210,7 +242,7 @@ export default function TrackRecordPage() {
               <section className="card overflow-hidden">
                 <header className="px-4 sm:px-5 pt-4 pb-3">
                   <h2 className="font-semibold text-n-0">By competition</h2>
-                  <p className="text-xs text-n-400">How often the most likely result happened.</p>
+                  <p className="text-xs text-n-400">{sport === "football" ? "How often the most likely result happened." : "How often our tip won."}</p>
                 </header>
                 <ul className="divide-y divide-n-800 border-t border-n-800">
                   {data.leagues.slice(0, 12).map(l => (
@@ -228,10 +260,11 @@ export default function TrackRecordPage() {
             {data.daily.length > 1 && (
               <section className="card p-4 sm:p-5 space-y-3">
                 <div>
-                  <h2 className="font-semibold text-n-0">Most likely result, day by day</h2>
-                  <p className="text-xs text-n-400">Share of each day&apos;s matches where our most likely result happened. Hover for the day.</p>
+                  <h2 className="font-semibold text-n-0">{sport === "football" ? "Most likely result" : "Our tips"}, day by day</h2>
+                  <p className="text-xs text-n-400">{sport === "football" ? "Share of each day's matches where our most likely result happened."
+                    : "Share of each day's tips that won."} Hover for the day.</p>
                 </div>
-                <ColumnChart name="Most likely result hit rate"
+                <ColumnChart name={sport === "football" ? "Most likely result hit rate" : "Tip hit rate"}
                   labels={data.daily.map(d => new Date(`${d.date}T12:00:00`).toLocaleDateString(undefined, { day: "numeric", month: "short" }))}
                   values={data.daily.map(d => Math.round(d.favourite_hit * 100))}
                   format={n => `${n}%`} tick={Math.max(1, Math.ceil(data.daily.length / 8))} />
