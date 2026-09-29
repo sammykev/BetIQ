@@ -163,7 +163,7 @@ def test_a_slip_sportybet_refused_is_tried_again_later(api, monkeypatch, sportyb
     # After RETRY_MINUTES the tick books it
     book.fail = False
     doc = json.loads(api.kv[f"betiq:daily:{today}"])
-    old = (datetime.now(timezone.utc) - timedelta(minutes=daily_slips.RETRY_MINUTES + 1)).isoformat(timespec="seconds")
+    old = (daily_slips.now_utc() - timedelta(minutes=daily_slips.RETRY_MINUTES + 1)).isoformat(timespec="seconds")
     for s in doc["slips"]:
         s["booking"]["at"] = old
     api.kv[f"betiq:daily:{today}"] = json.dumps(doc)
