@@ -568,11 +568,104 @@ async def history() -> None:
                 line(f"      {tid} {tname}: {ex}")
 
 
+async def history2() -> None:
+    """Second look at deep-history sources, each with the client it answers."""
+    import os
+    import httpx
+    line("\n=== Deep history, second look ===")
+    OUT["history2"] = {}
+    async with httpx.AsyncClient(timeout=25, follow_redirects=True) as c:
+        # ESPN (plain client): its leagues, finished games on one mid-season day per year
+        r = await c.get("https://sports.core.api.espn.com/v2/sports/basketball/leagues", params={"limit": 300})
+        slugs = []
+        for item in (r.json().get("items") or []) if r.status_code == 200 else []:
+            try:
+                d = (await c.get(item["$ref"].replace("http://", "https://"))).json()
+                slugs.append((d.get("slug"), d.get("name")))
+            except Exception:
+                continue
+        line(f"  ESPN leagues: {slugs}")
+        for slug, name in slugs:
+            per = {}
+            for year in (2015, 2018, 2021, 2024):
+                got = 0
+                for md in ("0120", "0310", "0715", "1120"):
+                    try:
+                        sr = await c.get(f"https://site.api.espn.com/apis/site/v2/sports/basketball/{slug}/scoreboard",
+                                         params={"dates": f"{year}{md}", "limit": 500})
+                        evs = (sr.json().get("events") or []) if sr.status_code == 200 else []
+                    except Exception:
+                        evs = []
+                    got += len(evs)
+                per[year] = got
+            # A week in one request?
+            try:
+                wr = await c.get(f"https://site.api.espn.com/apis/site/v2/sports/basketball/{slug}/scoreboard",
+                                 params={"dates": "20240115-20240121", "limit": 1000})
+                week = len(wr.json().get("events") or []) if wr.status_code == 200 else f"HTTP {wr.status_code}"
+            except Exception as e:
+                week = str(e)[:60]
+            line(f"    {slug:28s} {str(name)[:30]:30s} {per} week-range: {week}")
+            OUT["history2"].setdefault("espn", {})[slug] = {"name": name, "per_year": per, "week": week}
+
+        # EuroLeague / EuroCup: other feeds, paced
+        for url in ("https://api-live.euroleague.net/v2/competitions/E/seasons/E2016/games",
+                    "https://feeds.incrowdsports.com/provider/euroleague-feeds/v2/competitions/E/seasons/E2016/games",
+                    "https://api-live.euroleague.net/v1/results?seasonCode=E2016&gameNumber=1",
+                    "https://api-live.euroleague.net/v2/competitions/U/seasons/U2016/games"):
+            await asyncio.sleep(2)
+            try:
+                rr = await c.get(url, headers={"Accept": "application/json"})
+                body = rr.text or ""
+                n = ""
+                if body.lstrip().startswith("{"):
+                    n = f"{len(rr.json().get('data') or [])} games"
+                line(f"    {url[:95]}: HTTP {rr.status_code} {len(body)}b {n} {body[:120]!r}")
+            except Exception as e:
+                line(f"    {url[:95]}: {e}")
+
+        # API-Basketball (API-Sports: the same account key as API-Football)
+        key = os.environ.get("APIFOOTBALL_KEY", "")
+        if key:
+            h = {"x-apisports-key": key}
+            base = "https://v1.basketball.api-sports.io"
+            try:
+                st = (await c.get(f"{base}/status", headers=h)).json()
+                resp = st.get("response") or {}
+                line(f"    api-basketball status: plan {(resp.get('subscription') or {}).get('plan')}, "
+                     f"requests {(resp.get('requests') or {})}, errors {st.get('errors')}")
+                lg = (await c.get(f"{base}/leagues", headers=h)).json()
+                leagues = lg.get("response") or []
+                line(f"    api-basketball leagues: {len(leagues)}; errors {lg.get('errors')}")
+                OUT["history2"]["apibb_leagues"] = [
+                    {"id": x.get("id"), "name": x.get("name"), "country": (x.get("country") or {}).get("name"),
+                     "seasons": [s.get("season") for s in x.get("seasons") or []]} for x in leagues]
+                for lid, season in ((12, "2015-2016"), (12, "2023-2024"), (117, "2016-2017")):
+                    g = (await c.get(f"{base}/games", headers=h, params={"league": lid, "season": season})).json()
+                    games = g.get("response") or []
+                    sample = games[0].get("scores") if games else None
+                    line(f"    api-basketball games league {lid} {season}: {len(games)}; errors {g.get('errors')}; "
+                         f"sample scores {json.dumps(sample)[:300] if sample else ''}")
+            except Exception as e:
+                line(f"    api-basketball: {e}")
+        else:
+            line("    api-basketball: no APIFOOTBALL_KEY here")
+
+        # FlashScore and SofaScore: answer at all?
+        for name, url, hdr in (("flashscore", "https://d.flashscore.com/x/feed/f_3_-1_3_en_1", {"x-fsign": "SW9D1eZo"}),
+                               ("sofascore", "https://www.sofascore.com/api/v1/sport/basketball/scheduled-events/2025-03-01", {})):
+            try:
+                rr = await c.get(url, headers={**hdr, "User-Agent": "Mozilla/5.0", "Referer": "https://www.flashscore.com/"})
+                line(f"    {name}: HTTP {rr.status_code} {len(rr.text or '')}b {(rr.text or '')[:100]!r}")
+            except Exception as e:
+                line(f"    {name}: {e}")
+
+
 async def main(pages: int, parts: str) -> None:
     every = {"listing": lambda: sportybet_listing(pages), "results": sportybet_results, "espn": espn,
              "others": others, "logos": logos, "depth": results_depth, "espn_debug": espn_debug,
              "crests": crests, "euroleague": euroleague_sample, "pipeline": pipeline,
-             "props": props, "live": live, "history": history}
+             "props": props, "live": live, "history": history, "history2": history2}
     chosen = [every[p] for p in parts.split(",")] if parts else list(every.values())
     for part in chosen:
         try:

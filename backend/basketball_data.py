@@ -236,6 +236,14 @@ def apply_calibration(lg: bm.League, backtest: Optional[Dict]) -> bm.League:
     t = min(1.35, max(0.9, float(scale.get("total") or 1.0)))
     for k in list(lg.sigma):
         lg.sigma[k] *= t if "total" in k or k == "team" else m
+    # League constants measured out of sample over the long history (years of
+    # games, where the league's own recent results are one season at most)
+    c = ((backtest or {}).get("leagues") or {}).get(lg.name, {}).get("constants") or {}
+    if c.get("n", 0) >= 200:
+        lg.margin_shares = tuple(c["margin_shares"])
+        lg.q_shares = tuple(c["q_shares"])
+        lg.h1_share = float(c["h1_share"])
+        lg.tie_factor = float(c["tie_factor"])
     return lg
 
 

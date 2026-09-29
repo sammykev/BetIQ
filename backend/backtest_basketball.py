@@ -63,6 +63,10 @@ def _picks(m: bm.Match, g: bm.Game) -> List[tuple]:
     return out
 
 
+TRAIN_DAYS = 730         # each week's ratings: the two seasons before it (older games weigh ~nothing)
+MIN_CONSTANT_GAMES = 200  # out-of-sample games with quarters before a league's constants are used
+
+
 def league_backtest(name: str, games: List[bm.Game]) -> Optional[Dict]:
     games = sorted(games, key=lambda g: g.date)
     if len(games) < MIN_GAMES:
@@ -71,10 +75,18 @@ def league_backtest(name: str, games: List[bm.Game]) -> Optional[Dict]:
     end = date.fromisoformat(games[-1].date)
     picks: List[tuple] = []
     resid_m, resid_t, fit_sd_m, fit_sd_t = [], [], [], []
+    # League constants, measured out of sample: how the expected margin shows
+    # in each part, each quarter's share of the points, regulation ties
+    mrows: List[tuple] = []
+    qsh, h1sh, ties = [], [], []
     week = start
+    lo = 0
     while week <= end:
         nxt = week + timedelta(days=7)
-        lg = bm.fit(name, games, as_of=week)
+        first = (week - timedelta(days=TRAIN_DAYS)).isoformat()
+        while lo < len(games) and games[lo].date < first:
+            lo += 1
+        lg = bm.fit(name, games[lo:], as_of=week)
         if lg:
             for g in games:
                 if not (week.isoformat() <= g.date < nxt.isoformat()):
@@ -88,15 +100,55 @@ def league_backtest(name: str, games: List[bm.Game]) -> Optional[Dict]:
                     resid_t.append((g.hs + g.as_) - m.total)
                     fit_sd_m.append(lg.sigma["margin"])
                     fit_sd_t.append(lg.sigma["total"])
+                if g.periods and len(g.periods) == 4:
+                    q = g.periods
+                    rh, ra = sum(p[0] for p in q), sum(p[1] for p in q)
+                    mrows.append((m.margin, [q[0][0] + q[1][0] - q[0][1] - q[1][1]] + [p[0] - p[1] for p in q], 1.0))
+                    if rh + ra:
+                        qsh.append([(p[0] + p[1]) / (rh + ra) for p in q])
+                        h1sh.append((q[0][0] + q[0][1] + q[1][0] + q[1][1]) / (rh + ra))
+                    ties.append((m.margin, lg.sigma["margin"], rh == ra))
         week = nxt
     if len(resid_m) < 30:
         return None
     oos_m, oos_t = float(np.std(resid_m)), float(np.std(resid_t))
-    return {"league": name, "games": len(games), "tested": len(resid_m),
-            "sigma_scale": {"margin": round(oos_m / float(np.mean(fit_sd_m)), 3),
-                            "total": round(oos_t / float(np.mean(fit_sd_t)), 3)},
-            "calibration": calibration(picks), "bias": {"margin": round(float(np.mean(resid_m)), 2),
-                                                          "total": round(float(np.mean(resid_t)), 2)}}
+    scale_m = oos_m / float(np.mean(fit_sd_m))
+    out = {"league": name, "games": len(games), "tested": len(resid_m),
+           "first": games[0].date, "last": games[-1].date,
+           "sigma_scale": {"margin": round(scale_m, 3),
+                           "total": round(oos_t / float(np.mean(fit_sd_t)), 3)},
+           "calibration": calibration(picks), "bias": {"margin": round(float(np.mean(resid_m)), 2),
+                                                         "total": round(float(np.mean(resid_t)), 2)}}
+    if len(mrows) >= MIN_CONSTANT_GAMES:
+        # Ties against the spread the server will use (the fit's, widened by the measured scale)
+        seen = sum(1 for _, _, t in ties if t)
+        expected = sum(bm.base_tie(mg, sd * min(1.35, max(0.9, scale_m))) for mg, sd, _ in ties)
+        out["constants"] = {
+            "n": len(mrows),
+            "margin_shares": [round(x, 4) for x in relative_shares(mrows)],
+            "q_shares": [round(float(x), 4) for x in np.mean(np.array(qsh), axis=0)],
+            "h1_share": round(float(np.mean(h1sh)), 4),
+            "tie_factor": round(min(3.0, max(1.0, (seen + bm.PRIOR_TIES * bm.TIE_FACTOR) / (expected + bm.PRIOR_TIES))), 3),
+            "ties": [seen, round(expected, 1)],
+        }
+    return out
+
+
+def relative_shares(rows: List[tuple]) -> List[float]:
+    """Each part's share of the game's margin (first half, quarters 1-4):
+    the slope of the part's margin on our expected margin, over the slope of
+    the whole game's. Out of sample our margins are shrunk, so the raw slopes
+    run over 1; at serve time the margin is the blend with SportyBet's lines,
+    and what matters is how it splits."""
+    em = np.array([r[0] for r in rows])
+    parts = np.array([r[1] for r in rows])
+    den = float(np.sum(em * em))
+    beta = [float(np.sum(em * parts[:, j])) / den for j in range(5)] if den > 1e-9 else [0.5, 0.25, 0.25, 0.25, 0.25]
+    full = sum(beta[1:])
+    if full <= 0.2:
+        return [0.5, 0.25, 0.25, 0.25, 0.25]
+    shares = [b / full for b in beta]
+    return [min(0.7, max(0.3, shares[0]))] + [min(0.4, max(0.05, x)) for x in shares[1:]]
 
 
 def calibration(picks: List[tuple]) -> Dict[str, List[Dict]]:

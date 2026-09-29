@@ -118,24 +118,30 @@ def fit(name: str, games: Iterable[Game], as_of: Optional[date] = None) -> Optio
     idx = {t: i for i, t in enumerate(teams)}
     T = len(teams)
     w = _weights(games, as_of)
-    # Columns: [average, home court, attack x T, defence x T]; two rows a game
-    rows, cols, vals, y, rw = [], [], [], [], []
+    # Columns: [average, home court, attack x T, defence x T]; two rows a game,
+    # each with at most 4 non-zeros: the normal equations are built directly
+    # (no dense design matrix, so years of a big league stay cheap)
+    P = 2 + 2 * T
+    n = len(games)
+    cols = np.zeros((2 * n, 4), dtype=np.int64)
+    vals = np.zeros((2 * n, 4))
+    y = np.zeros(2 * n)
+    rw = np.repeat(w, 2)
     for k, g in enumerate(games):
         h, a = idx[g.home], idx[g.away]
-        for r_, (scorer, other, pts, home) in enumerate(((h, a, g.hs, not g.neutral), (a, h, g.as_, False))):
-            r = 2 * k + r_
-            rows += [r, r, r] + ([r] if home else [])
-            cols += [0, 2 + scorer, 2 + T + other] + ([1] if home else [])
-            vals += [1.0, 1.0, -1.0] + ([1.0] if home else [])
-            y.append(float(pts))
-            rw.append(w[k])
-    X = np.zeros((len(y), 2 + 2 * T))
-    X[rows, cols] = vals
-    y_, rw_ = np.array(y), np.sqrt(np.array(rw))
-    Xw, yw = X * rw_[:, None], y_ * rw_
+        cols[2 * k] = (0, 2 + h, 2 + T + a, 1)
+        vals[2 * k] = (1.0, 1.0, -1.0, 0.0 if g.neutral else 1.0)
+        y[2 * k] = g.hs
+        cols[2 * k + 1] = (0, 2 + a, 2 + T + h, 1)
+        vals[2 * k + 1] = (1.0, 1.0, -1.0, 0.0)
+        y[2 * k + 1] = g.as_
+    XtX = np.zeros((P, P))
+    np.add.at(XtX, (cols[:, :, None], cols[:, None, :]), rw[:, None, None] * vals[:, :, None] * vals[:, None, :])
+    Xty = np.zeros(P)
+    np.add.at(Xty, cols, (rw * y)[:, None] * vals)
     # Ridge on the teams only (not on the average or home court)
     pen = np.r_[0.0, 0.0, np.full(2 * T, RIDGE)]
-    beta = np.linalg.solve(Xw.T @ Xw + np.diag(pen), Xw.T @ yw)
+    beta = np.linalg.solve(XtX + np.diag(pen), Xty)
     avg, hc = float(beta[0]), float(beta[1])
     att = {t: float(beta[2 + i]) for t, i in idx.items()}
     dfn = {t: float(beta[2 + T + i]) for t, i in idx.items()}
