@@ -30,6 +30,24 @@ class TestSlips:
         assert body["min_odds"] < 10 < body["max_odds"]
         assert body["bookable_only"] is True and body["days"] == 1
 
+    def test_basketball_too_but_not_overtime_or_props(self):
+        body = daily_slips.request(10, daily_slips.ATTEMPTS[0])
+        assert body["sport"] == "all" and body["no_props"] is True
+        assert "bb_winner" in body["bb_markets"] and "bb_quarters" in body["bb_markets"]
+        assert "bb_overtime" not in body["bb_markets"] and "bb_player" not in body["bb_markets"]
+
+    def test_basketball_picks_keep_their_sportybet_ids(self):
+        sb = {"eventId": "sr:match:9", "marketId": "225", "specifier": "total=160.5", "outcomeId": "12"}
+        res = result(10.2, [("Real", "Barca", "2026-09-27", "bb_total", "O160.5")], time="18:00")
+        res["picks"][0].update(sb=sb, sport="basketball")
+        s = daily_slips.slip(10, res, daily_slips.ATTEMPTS[0])
+        assert s["picks"][0]["sb"] == sb and s["picks"][0]["sport"] == "basketball"
+        sel = daily_slips.selections(s, datetime(2026, 9, 27, 12, 0, tzinfo=timezone.utc))
+        assert sel[0]["sb"] == sb
+        s["booking"] = {"on_code": [{"home": "Real", "away": "Barca", "market": "bb_total", "code": "O160.5"}]}
+        sels, _ = daily_slips.ticket_legs(s)
+        assert sels[0]["sb"] == sb
+
     def test_five_slips_a_day(self):
         assert daily_slips.TARGETS == (10, 15, 20, 50, 100)
 

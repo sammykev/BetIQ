@@ -3472,13 +3472,10 @@ def _md_entry_for(r, leg: Dict, days: Dict[str, Dict]) -> Optional[Dict]:
     return None
 
 
-def _settle_tickets(r) -> Dict[str, int]:
-    """Grade the legs of every open ticket whose matches have finished."""
-    import tickets
-    uids = [u.decode() if isinstance(u, bytes) else u for u in (r.smembers(TICKETS_OPEN_KEY) or [])]
-    days: Dict[str, Dict] = {}
-    report = {"accounts": len(uids), "settled": 0, "legs": 0}
-
+def _leg_results(r, days: Dict[str, Dict]):
+    """result_for(leg) for grading a ticket leg or daily pick: player props
+    from the box scores, basketball by its SportyBet event, football from
+    the match-day store."""
     bb_days: Dict[str, Dict] = {}
 
     def result_for(leg: Dict) -> Optional[Dict]:
@@ -3486,9 +3483,22 @@ def _settle_tickets(r) -> Dict[str, int]:
         if m.startswith("bb_player_") or m == "anytime_scorer":
             return _props_result_for(leg)
         if m.startswith("bb_"):
+            if not leg.get("event_id") and leg.get("sb"):   # a daily pick: its SportyBet ids
+                leg = {**leg, "event_id": leg["sb"].get("eventId")}
             return _bb_result_for(r, leg, bb_days)
         e = _md_entry_for(r, leg, days)
         return e.get("result") if e else None
+    return result_for
+
+
+def _settle_tickets(r) -> Dict[str, int]:
+    """Grade the legs of every open ticket whose matches have finished."""
+    import tickets
+    uids = [u.decode() if isinstance(u, bytes) else u for u in (r.smembers(TICKETS_OPEN_KEY) or [])]
+    days: Dict[str, Dict] = {}
+    report = {"accounts": len(uids), "settled": 0, "legs": 0}
+
+    result_for = _leg_results(r, days)
 
     for uid in uids:
         key = _ukey(uid, "tickets")
@@ -5248,7 +5258,7 @@ def _bb_prop_lines(pred: Dict, page: Dict) -> List[Dict]:
     disp = {}
     for stat, d in (((_props_calib.get("bb") or {}).get(league) or {}).get("dispersion") or {}).items():
         disp[stat] = d
-    return pr.bb_price(page, players, factor, disp)
+    return pr.bb_price(page, players, factor, disp, teams=(pred["home"], pred["away"]))
 
 
 async def _bb_add_props(preds: List[Dict]) -> int:
@@ -6977,7 +6987,7 @@ async def _optimize_request(body: Dict[str, Any],
     pairs = [(_with_priced_set_pieces(p, linked[id(p)]), linked[id(p)]) for p in preds]
     preds = [p for p, _ in pairs]
     groups = [optimizer.candidates(p, ev, min_prob, markets, allowed) for p, ev in pairs]
-    if not markets or "anytime_scorer" in markets:
+    if (not markets or "anytime_scorer" in markets) and not body.get("no_props"):
         # Anytime goalscorers priced on the match's SportyBet page (_fb_props_refresh)
         for g, (p, ev) in zip(groups, pairs):
             for x in _props_fb.get(str((ev or {}).get("eventId") or ""), []):
@@ -7171,11 +7181,7 @@ def _grade_daily(r, doc: Dict[str, Any]) -> bool:
     import daily_slips
     if not r:
         return False
-    days: Dict[str, Dict] = {}
-
-    def result_for(p: Dict) -> Optional[Dict]:
-        e = _md_entry_for(r, p, days)
-        return e.get("result") if e else None
+    result_for = _leg_results(r, {})
     changed = False
     for s in doc.get("slips") or []:
         before = s.get("status")

@@ -51,7 +51,7 @@ const notStarted = (p: Pick) => p.status === "pending" && !p.live &&
 const PERKS = [
   "Five slips out at midnight every day, at about 10, 15, 20, 50 and 100 odds",
   "A new slip and code when one is cut",
-  "Today's matches only, every pick rated 80% or more and under 2.0 odds",
+  "Today's football and basketball only, every pick rated 80% or more and under 2.0 odds",
   "A ready SportyBet booking code with every slip",
   "Every slip graded, with a public record",
 ];
@@ -299,7 +299,7 @@ export default function DailyPage() {
     <AppShell>
       <div className="space-y-6 animate-fade-in">
         <PageHeader eyebrow="Out at midnight" title="Daily odds"
-          description="Five slips a day at about 10, 15, 20, 50 and 100 odds, from that day's matches only and picks our model rates 80% or more (none at 2.0 odds or more), each with its SportyBet booking code." />
+          description="Five slips a day at about 10, 15, 20, 50 and 100 odds, from that day's football and basketball matches only and picks our model rates 80% or more (none at 2.0 odds or more), each with its SportyBet booking code." />
         <FeatureGate feature="daily_slips" title="Daily odds" perks={PERKS}>
           <Daily />
         </FeatureGate>

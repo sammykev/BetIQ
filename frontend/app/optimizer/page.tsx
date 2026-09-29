@@ -335,11 +335,12 @@ export default function OptimizerPage() {
         body: JSON.stringify({ platform: "sportybet", selections, source: "optimizer", uid: user?.id }),
       });
       const data = await res.json();
-      if (!res.ok || !Array.isArray(data?.picks)) throw new Error();
+      // The server's own reason when it refused the slip (not a generic "try again")
+      if (!res.ok || !Array.isArray(data?.picks)) throw new Error(typeof data?.detail === "string" ? data.detail : "");
       setBooked(data);
-    } catch {
+    } catch (e) {
       setBooked({ code: null, share_url: null, total_odds: null, picks: [],
-                  error: "SportyBet didn't return a code. Try again in a minute." });
+                  error: (e as Error)?.message || "SportyBet didn't return a code. Try again in a minute." });
     } finally { setBooking(false); }
   };
 

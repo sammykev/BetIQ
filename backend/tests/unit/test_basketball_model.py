@@ -149,3 +149,50 @@ def test_parts_and_overtime(league):
     assert m.p_handicap_ot(True, 5.5) + m.p_handicap_ot(False, -5.5) == pytest.approx(1.0, abs=1e-6)
     assert m.p_handicap_ot(True, -0.5) == pytest.approx(m.p_win(True), abs=0.01)
     assert lg.q_shares != (0.25,) * 4 and sum(lg.q_shares) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_margin_shares_are_measured_per_part():
+    # A favourite's edge shows in the first three quarters, a little less in the 4th (leads managed)
+    rng = random.Random(3)
+    rows = []
+    for _ in range(400):
+        em = rng.uniform(-15, 15)
+        q = [0.27 * em, 0.26 * em, 0.26 * em, 0.15 * em]
+        q = [x + rng.gauss(0, 4) for x in q]
+        rows.append((em, [q[0] + q[1]] + q, 1.0))
+    ms = bm._margin_shares(rows)
+    assert ms[0] == pytest.approx(0.53, abs=0.04)
+    assert ms[4] == pytest.approx(0.15, abs=0.04) and ms[4] < ms[1]
+    assert bm._margin_shares(rows[:5]) == (0.5, 0.25, 0.25, 0.25, 0.25)   # too few games: even
+
+
+def test_regulation_ties_measured_and_every_line_stays_consistent(league):
+    lg, *_ = league
+    assert 1.0 <= lg.tie_factor <= 3.0
+    assert bm.League.from_json(lg.to_json()).tie_factor == lg.tie_factor
+    sigma = bm.expect(lg, "T0", "T1").sigma
+    plain = bm.Match(84.0, 80.0, sigma, tie_factor=1.0)
+    real = bm.Match(84.0, 80.0, sigma, tie_factor=2.0)
+    # Twice the ties: "no overtime" is less sure than the smooth spread says
+    assert real.p_tie() == pytest.approx(2 * plain.p_tie())
+    for m in (plain, real):
+        assert m.p_3way("1") + m.p_3way("X") + m.p_3way("2") == pytest.approx(1.0, abs=1e-9)
+        assert m.p_win(True) + m.p_win(False) == pytest.approx(1.0, abs=1e-9)
+        for line in (0.5, 1.5, 2.5, 3.5, 5.5, -0.5, -2.5, -4.5):
+            assert m.p_handicap_ot(True, line) + m.p_handicap_ot(False, -line) == pytest.approx(1.0, abs=1e-9)
+    # The extra ties come from close finishes both ways: the favourite's regulation win is a little less likely
+    assert real.p_3way("1") < plain.p_3way("1") and real.p_3way("2") < plain.p_3way("2")
+    assert real.p_handicap_ot(True, -10.5) == pytest.approx(plain.p_handicap_ot(True, -10.5), abs=1e-3)
+
+
+def test_a_quarters_margin_follows_its_share(league):
+    lg, *_ = league
+    sigma = bm.expect(lg, "T0", "T1").sigma
+    even = bm.Match(90.0, 78.0, sigma, margin_shares=(0.5, 0.25, 0.25, 0.25, 0.25))
+    flat = bm.Match(90.0, 78.0, sigma, margin_shares=(0.5, 0.25, 0.25, 0.25, 0.10))
+    # A smaller 4th-quarter share: the favourite's 4th-quarter win is less likely, the points the same
+    q4_even, q4_flat = even.period("q4"), flat.period("q4")
+    assert q4_even.home - q4_even.away == pytest.approx(3.0)
+    assert q4_flat.home - q4_flat.away == pytest.approx(1.2)
+    assert q4_flat.p_3way("1") < q4_even.p_3way("1")
+    assert q4_flat.home + q4_flat.away == pytest.approx(q4_even.home + q4_even.away)

@@ -16,6 +16,9 @@ import basketball_model as bm
 MODEL_WEIGHT = 0.35      # our expectation's share where we know both teams (the market's lines are sharp)
 KEEP_MIN, KEEP_MAX = 0.50, 0.985   # the lines kept with a prediction, by our chance
 MAX_LINES = 90           # per match, likeliest first
+# Leagues we can't rate (no quarter scores to measure from): a favourite's
+# edge is thinner in the 4th quarter, when leads are managed and starters rest
+DEFAULT_MARGIN_SHARES = (0.52, 0.27, 0.26, 0.25, 0.22)
 
 # Families of markets, as the optimizer and the pages group them
 FAMILIES = {
@@ -52,7 +55,9 @@ def _expectation(ev: Dict, offs: List[Dict], lg: Optional[bm.League]) -> Optiona
     if ours is None and total is None and lg is not None and margin is not None:
         total = 2 * lg.avg
     return bm.blend(ours, sigma, margin, total, MODEL_WEIGHT,
-                    lg.h1_share if lg else 0.5, tuple(lg.q_shares) if lg else (0.25,) * 4)
+                    lg.h1_share if lg else 0.5, tuple(lg.q_shares) if lg else (0.25,) * 4,
+                    tuple(lg.margin_shares) if lg else DEFAULT_MARGIN_SHARES,
+                    lg.tie_factor if lg else bm.TIE_FACTOR)
 
 
 def predict(ev: Dict, lg: Optional[bm.League]) -> Optional[Dict[str, Any]]:

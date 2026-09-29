@@ -3,10 +3,14 @@ Player props priced against SportyBet's own lines (props_pricing.py), in
 the formats the probe saw on its match pages.
 """
 
+from datetime import date
+
 import pytest
 
 import player_props as pp
 import props_pricing as pr
+
+FRESH = date(2026, 2, 1)     # a week or two after the rows' last game
 
 
 def bb_rows(pts, reb, ast, tpm, mins=30, n=20, team="Paris Basketball"):
@@ -40,17 +44,37 @@ class TestBasketball:
         assert all(o["stat"] in ("pts", "reb") for o in offs)       # not the game total
 
     def test_priced_with_his_games(self):
-        lines = {x["code"].split("|")[1] + ":" + x["player"]: x for x in pr.bb_price(EVENT, PLAYERS, {})}
+        lines = {x["code"].split("|")[1] + ":" + x["player"]: x for x in pr.bb_price(EVENT, PLAYERS, {}, today=FRESH)}
         nine = lines["9+:T.J. Warren"]
-        assert nine["prob"] > 0.85 and nine["expected"] == pytest.approx(16, abs=1.5) and nine["sb"]["marketId"] == "768"
+        # His 16 a game, pulled towards SportyBet's ~14 (its even line is 14.5, over at 1.97)
+        assert nine["prob"] > 0.8 and 14 < nine["expected"] < 16 and nine["sb"]["marketId"] == "768"
         assert "25+:T.J. Warren" not in lines            # well under 50%: left out
-        assert lines["O1.5:Frank Ntilikina"]["prob"] > 0.7
+        assert lines["O1.5:Frank Ntilikina"]["prob"] > 0.65
         assert not any("Nobody" in k for k in lines)      # no box scores, no price
         assert nine["label"] == "T.J. Warren 9+ points"
 
+    def test_old_box_scores_or_a_new_team_defer_to_sportybets_line(self):
+        def expected(**kw):
+            return next(x["expected"] for x in pr.bb_price(EVENT, PLAYERS, {}, **kw) if x["code"].endswith("|9+"))
+        fresh = expected(today=FRESH)
+        stale = expected(today=date(2026, 9, 29))                                  # last season's games
+        moved = expected(today=FRESH, teams=("Real Madrid", "Olympiacos"))         # he's on neither team
+        assert stale < fresh and moved < fresh
+        market = pr.market_means(pr.bb_offers(EVENT), pr.DEFAULT_DISPERSION)[(pp.name_key("Warren, T.J."), "pts")]
+        assert stale == pytest.approx(market, abs=0.3)            # ~95% SportyBet's
+
+    def test_freshness(self):
+        assert pr.freshness("2026-01-20", date(2026, 2, 1)) == 1.0
+        assert pr.freshness("2025-05-01", date(2026, 1, 1)) == pr.STALE_FLOOR
+        assert pr.STALE_FLOOR < pr.freshness("2026-01-01", date(2026, 3, 15)) < 1.0
+
+    def test_market_means_take_the_margin_out(self):
+        means = pr.market_means(pr.bb_offers(EVENT), pr.DEFAULT_DISPERSION)
+        assert means[(pp.name_key("Warren, T.J."), "pts")] == pytest.approx(14.3, abs=0.8)
+
     def test_a_faster_game_raises_the_count(self):
-        slow = {x["code"]: x["prob"] for x in pr.bb_price(EVENT, PLAYERS, {"Paris Basketball": 0.9})}
-        fast = {x["code"]: x["prob"] for x in pr.bb_price(EVENT, PLAYERS, {"Paris Basketball": 1.1})}
+        slow = {x["code"]: x["prob"] for x in pr.bb_price(EVENT, PLAYERS, {"Paris Basketball": 0.9}, today=FRESH)}
+        fast = {x["code"]: x["prob"] for x in pr.bb_price(EVENT, PLAYERS, {"Paris Basketball": 1.1}, today=FRESH)}
         k = pp.name_key("T.J. Warren") + "|9+"
         assert fast[k] > slow[k]
 
@@ -76,11 +100,24 @@ class TestScorers:
 
     def test_a_scorer_is_likelier_than_a_defender_and_follows_the_team(self):
         usual = pr.team_xg_per_game(FB_PLAYERS, "Arsenal")
-        got = {x["player"]: x for x in pr.scorer_price(FB_EVENT, FB_PLAYERS, {"Arsenal": usual})}
+        got = {x["player"]: x for x in pr.scorer_price(FB_EVENT, FB_PLAYERS, {"Arsenal": usual}, today=FRESH)}
         assert 0.25 < got["Bukayo Saka"]["prob"] < 0.5 and got["Ben White"]["prob"] < 0.12
-        more = {x["player"]: x for x in pr.scorer_price(FB_EVENT, FB_PLAYERS, {"Arsenal": usual * 1.4})}
+        more = {x["player"]: x for x in pr.scorer_price(FB_EVENT, FB_PLAYERS, {"Arsenal": usual * 1.4}, today=FRESH)}
         assert more["Bukayo Saka"]["prob"] > got["Bukayo Saka"]["prob"]
         assert got["Bukayo Saka"]["label"] == "Bukayo Saka to score"
+
+    def test_blended_with_sportybets_price(self):
+        usual = pr.team_xg_per_game(FB_PLAYERS, "Arsenal")
+        saka = next(x for x in pr.scorer_price(FB_EVENT, FB_PLAYERS, {"Arsenal": usual * 1.4}, today=FRESH)
+                    if x["player"] == "Bukayo Saka")
+        assert saka["weight"] == pr.SCORER_WEIGHT
+        lam = saka["weight"] * saka["ours"] + (1 - saka["weight"]) * saka["market"]
+        assert saka["prob"] == pytest.approx(1 - 2.718281828 ** -lam, abs=1e-3)
+        # 2.60 with ~20% kept: SportyBet's λ ≈ 0.37
+        assert saka["market"] == pytest.approx(0.368, abs=0.01)
+        stale = next(x for x in pr.scorer_price(FB_EVENT, FB_PLAYERS, {"Arsenal": usual * 1.4}, today=date(2026, 9, 29))
+                     if x["player"] == "Bukayo Saka")
+        assert stale["weight"] < saka["weight"]
 
     def test_penalty_takers_get_their_penalties(self):
         taker = {pp.name_key("Bukayo Saka"): {"name": "Bukayo Saka", "team": "Arsenal", "games": fb_rows(25, pens=1)}}

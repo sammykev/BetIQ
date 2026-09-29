@@ -230,7 +230,9 @@ def _event_odds(event: Dict, ids: Dict[str, str]) -> Optional[float]:
 
 
 _SB_FIELDS = {"eventId": re.compile(r"^sr:[a-z_]+:\d{1,12}$"), "marketId": re.compile(r"^\d{1,6}$"),
-              "specifier": re.compile(r"^[\w=.|+:-]{0,80}$"), "outcomeId": re.compile(r"^[\w-]{1,24}$")}
+              # Player props' outcomes are long and have colons ("sr:player:1021607",
+              # "pre:playerprops:73262972:607880:9"), as are their specifiers
+              "specifier": re.compile(r"^[\w=.|+:-]{0,120}$"), "outcomeId": re.compile(r"^[\w:.+-]{1,80}$")}
 
 
 def raw_ids(s: Dict[str, Any]) -> Optional[Dict[str, str]]:

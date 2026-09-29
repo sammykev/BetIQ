@@ -18,10 +18,22 @@ his minutes when he plays.
 """
 
 import re
+from dataclasses import replace
+from datetime import date
 from math import exp, log
 from typing import Any, Dict, List, Optional, Tuple
 
 import player_props as pp
+
+# Our projection's share of the expected count, the rest SportyBet's line
+# (it knows tonight's role, injuries and minutes): where his box scores are
+# fresh; less as they age (freshness); little when he's changed teams.
+MODEL_WEIGHT = 0.35
+MOVED_WEIGHT = 0.10
+FRESH_DAYS, STALE_DAYS, STALE_FLOOR = 30, 150, 0.15
+PLUS_PAYOUT = 0.92          # an "X+" line's price keeps ~8%: its fair chance ≈ 0.92 / odds
+SCORER_PAYOUT = 0.80        # anytime goalscorer prices keep ~20%
+SCORER_WEIGHT = 0.5         # our λ's share against SportyBet's, where his data is fresh
 
 # SportyBet competition -> our box-score league
 BB_LEAGUES = {"International · Euroleague": "Euroleague", "International · Eurocup": "Eurocup",
@@ -99,13 +111,74 @@ def bb_offers(ev: Dict) -> List[Dict[str, Any]]:
     return out
 
 
+def freshness(last_day: str, today: date) -> float:
+    """How much his box scores still say about tonight: 1 within FRESH_DAYS of
+    his last game, falling to STALE_FLOOR by STALE_DAYS (an off-season: new
+    team, new role, new minutes)."""
+    try:
+        days = (today - date.fromisoformat(last_day)).days
+    except (TypeError, ValueError):
+        return STALE_FLOOR
+    if days <= FRESH_DAYS:
+        return 1.0
+    if days >= STALE_DAYS:
+        return STALE_FLOOR
+    return 1.0 - (1.0 - STALE_FLOOR) * (days - FRESH_DAYS) / (STALE_DAYS - FRESH_DAYS)
+
+
+def _solve_mean(p_over: float, line: float, r: float) -> float:
+    """The mean whose negative binomial puts p_over above `line` (bisection)."""
+    lo, hi = 0.02, 120.0
+    for _ in range(60):
+        mid = (lo + hi) / 2
+        if 1.0 - pp.nb_cdf(int(line), mid, r) < p_over:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2
+
+
+def market_means(offers: List[Dict], dispersion: Dict[str, float]) -> Dict[Tuple[str, str], float]:
+    """SportyBet's expected count per (player, stat): from its most even
+    over/under line, margin taken out; else its "X+" ladder near evens."""
+    ou: Dict[Tuple[str, str], Dict[float, Dict[str, float]]] = {}
+    plus: Dict[Tuple[str, str], List[Tuple[float, float]]] = {}
+    for o in offers:
+        k = (o["key"], o["stat"])
+        if o["code"].endswith("+"):
+            plus.setdefault(k, []).append((o["line"], o["odds"]))
+        else:
+            ou.setdefault(k, {}).setdefault(o["line"], {})[o["side"]] = o["odds"]
+    out: Dict[Tuple[str, str], float] = {}
+    for k in set(ou) | set(plus):
+        r = dispersion[k[1]]
+        pairs = [(ln, v["O"], v["U"]) for ln, v in (ou.get(k) or {}).items() if "O" in v and "U" in v]
+        if pairs:
+            ln, oo, uu = min(pairs, key=lambda t: abs(t[1] - t[2]))
+            p = (1 / oo) / (1 / oo + 1 / uu)
+        elif plus.get(k):
+            ln, odds = min(plus[k], key=lambda t: abs(t[1] - 2.0))
+            p = min(0.95, max(0.05, PLUS_PAYOUT / odds))
+        else:
+            continue
+        out[k] = _solve_mean(p, ln, r)
+    return out
+
+
 def bb_price(ev: Dict, players: Dict[str, Dict], team_factor: Dict[str, float],
-             dispersion: Optional[Dict[str, float]] = None, priors: Optional[Dict[str, float]] = None) -> List[Dict]:
+             dispersion: Optional[Dict[str, float]] = None, priors: Optional[Dict[str, float]] = None,
+             teams: Tuple[str, str] = ("", ""), today: Optional[date] = None) -> List[Dict]:
     """Our chance of each of SportyBet's player lines on an event.
-    team_factor: {team name: tonight's expected points / its usual}."""
+    team_factor: {team name: tonight's expected points / its usual};
+    teams: the event's two teams (a player on neither has moved: SportyBet's
+    line knows his new role better than his old box scores)."""
+    import sportybet
     dispersion = {**DEFAULT_DISPERSION, **(dispersion or {})}
+    today = today or date.today()
+    offers = bb_offers(ev)
+    market = market_means(offers, dispersion)
     out, cache = [], {}
-    for o in bb_offers(ev):
+    for o in offers:
         p = players.get(o["key"])
         if not p:
             continue
@@ -114,7 +187,14 @@ def bb_price(ev: Dict, players: Dict[str, Dict], team_factor: Dict[str, float],
         if ck not in cache:
             prior = (priors or {}).get(o["stat"]) or league_rates(players, col)
             factor = max(0.85, min(1.15, team_factor.get(p["team"], 1.0))) ** GAME_EXPONENT[o["stat"]]
-            cache[ck] = pp.project(_rows_to_games(p["games"], col), "x", prior, dispersion[o["stat"]], factor)
+            proj = pp.project(_rows_to_games(p["games"], col), "x", prior, dispersion[o["stat"]], factor)
+            if proj is not None and ck in market:
+                on_team = not any(teams) or max(sportybet.team_similarity(p["team"], t) for t in teams if t) >= 0.6
+                w = (MODEL_WEIGHT if on_team else MOVED_WEIGHT) * freshness(p["games"][-1][0], today)
+                proj = replace(proj, mean=w * proj.mean + (1 - w) * market[ck],
+                               detail={**proj.detail, "ours": round(proj.mean, 1), "market": round(market[ck], 1),
+                                       "weight": round(w, 2)})
+            cache[ck] = proj
         proj = cache[ck]
         if proj is None:
             continue
@@ -212,12 +292,21 @@ def scorer_lambda(p: Dict, team_exp: Optional[float], team_usual: Optional[float
                  "pen_share": round(pen_share, 2), "apps": len(rows)}
 
 
+def market_lambda(odds: float) -> float:
+    """SportyBet's expected goals for a player, from his anytime price (margin out)."""
+    return -log(1 - min(0.95, SCORER_PAYOUT / odds))
+
+
 def scorer_price(ev: Dict, players: Dict[str, Dict], team_exp: Dict[str, Optional[float]],
-                 scale: float = 1.0) -> List[Dict]:
+                 scale: float = 1.0, today: Optional[date] = None) -> List[Dict]:
     """Our chance of each anytime goalscorer SportyBet lists. team_exp:
     {SportyBet team name: our expected goals for it tonight}; scale: the
-    walk-forward check's correction."""
+    walk-forward check's correction. Our λ is blended with SportyBet's (it
+    knows tonight's line-up and role), ours counting less as his data ages
+    or when he's changed teams."""
+    import sportybet
     out = []
+    today = today or date.today()
     prior = league_npxg90(players)
     for o in scorer_offers(ev):
         p = players.get(o["key"])
@@ -229,6 +318,11 @@ def scorer_price(ev: Dict, players: Dict[str, Dict], team_exp: Dict[str, Optiona
         if not got:
             continue
         lam, detail = got
+        on_team = not o["team"] or sportybet.team_similarity(p["team"], o["team"]) >= 0.6
+        w = (SCORER_WEIGHT if on_team else MOVED_WEIGHT) * freshness(p["games"][-1][0], today)
+        mkt = market_lambda(o["odds"])
+        detail = {**detail, "ours": round(lam, 3), "market": round(mkt, 3), "weight": round(w, 2)}
+        lam = w * lam + (1 - w) * mkt
         prob = 1 - exp(-lam)
         out.append({"market": "anytime_scorer", "family": "player", "market_name": "Anytime Goalscorer",
                     "code": o["key"], "label": f"{p['name']} to score", "prob": round(prob, 4), "odds": o["odds"],

@@ -35,14 +35,14 @@ UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/1
 
 # ESPN league slug -> (our league name, season windows)
 ESPN_BB = {
-    "nba": ("NBA", [("2024-10-22", "2025-06-22"), ("2025-10-21", "2026-06-21")]),
+    "nba": ("NBA", [("2024-10-22", "2025-06-22"), ("2025-10-21", "2026-06-21"), ("2026-10-20", "2027-06-20")]),
     "wnba": ("WNBA", [("2025-05-16", "2025-10-15"), ("2026-05-08", "2026-10-15")]),
 }
 EUROLEAGUE = {"E": "Euroleague", "U": "Eurocup"}
-EL_SEASONS = (2024, 2025)
+EL_SEASONS = (2024, 2025, 2026)     # 2026: the season under way (its games as they're played)
 UNDERSTAT = {"EPL": "Premier League", "La_liga": "LaLiga", "Bundesliga": "Bundesliga",
              "Serie_A": "Serie A", "Ligue_1": "Ligue 1"}
-US_SEASONS = (2024, 2025)
+US_SEASONS = (2024, 2025, 2026)     # 2026: 2026-27, the season under way
 
 
 class Store:

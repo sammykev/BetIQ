@@ -1,6 +1,7 @@
 """
 Daily odds: five slips a day at about 10x, 15x, 20x, 50x and 100x, built by the
-optimizer only from the day's own matches, and only from picks the model
+optimizer only from the day's own matches (football and basketball: see
+BB_FAMILIES for basketball's markets), and only from picks the model
 rates 80% or more, none of them priced at 2.0 odds or more (a long price on
 one leg means a riskier slip, whatever the model says).
 
@@ -39,15 +40,31 @@ MAX_REMAKES = 3         # new slips for one target in a day, after cuts
 # SportyBet lists first (so the slip can be booked), then all of today's
 ATTEMPTS = ({"days": 1, "bookable_only": True}, {"days": 1, "bookable_only": False})
 
+# Football and basketball. Basketball's overtime lines are left out (a 1.03
+# "no overtime" adds a leg for almost nothing), and player props on either
+# sport until the walk-forward check has measured them
+BB_FAMILIES = ("bb_winner", "bb_1x2", "bb_handicap", "bb_total", "bb_team_total", "bb_halves", "bb_quarters")
+
 PICK_FIELDS = ("home", "away", "date", "time", "league", "market", "market_name", "code", "label",
-               "prob", "odds", "odds_source", "bookable")
+               "prob", "odds", "odds_source", "bookable", "sport", "sb")
 
 
 def request(target: float, attempt: Dict[str, Any]) -> Dict[str, Any]:
     """The optimizer request for one target."""
     return {"target_odds": target, "min_odds": round(target * (1 - SPREAD), 2),
             "max_odds": round(target * (1 + SPREAD), 2), "min_prob": MIN_PROB, "max_leg_odds": MAX_LEG_ODDS,
-            "max_games": 30, **attempt}
+            "max_games": 30, "sport": "all", "bb_markets": list(BB_FAMILIES), "no_props": True, **attempt}
+
+
+def _selection(p: Dict[str, Any]) -> Dict[str, Any]:
+    """A stored pick as a booking selection (booking_slip.validate's shape);
+    basketball's carries SportyBet's ids, which book it and settle it."""
+    sel = {"home": p["home"], "away": p["away"], "date": p["date"], "time": p.get("time") or "",
+           "league": p.get("league") or "", "market": p["market"], "marketName": p.get("market_name") or "",
+           "code": p["code"], "label": p.get("label") or p["code"], "prob": p.get("prob")}
+    if p.get("sb"):
+        sel["sb"] = p["sb"]
+    return sel
 
 
 def slip(target: float, result: Dict[str, Any], attempt: Dict[str, Any]) -> Dict[str, Any]:
@@ -104,10 +121,7 @@ def open_picks(s: Dict[str, Any], now: datetime) -> List[Dict]:
 
 def selections(s: Dict[str, Any], now: datetime) -> List[Dict[str, Any]]:
     """The booking request (booking_slip.validate's shape) for a slip's open picks."""
-    return [{"home": p["home"], "away": p["away"], "date": p["date"], "time": p.get("time") or "",
-             "league": p.get("league") or "", "market": p["market"], "marketName": p.get("market_name") or "",
-             "code": p["code"], "label": p.get("label") or p["code"], "prob": p.get("prob")}
-            for p in open_picks(s, now)]
+    return [_selection(p) for p in open_picks(s, now)]
 
 
 def booking(result: Dict[str, Any], sent: List[Dict[str, Any]], at: str) -> Dict[str, Any]:
@@ -189,10 +203,7 @@ def ticket_legs(s: Dict[str, Any]):
     code: what tickets.new_ticket takes when an account tracks the slip."""
     on = {(p["home"], p["away"], p["market"], p["code"]) for p in (s.get("booking") or {}).get("on_code") or []}
     picks = [p for p in s.get("picks") or [] if (p["home"], p["away"], p["market"], p["code"]) in on]
-    sels = [{"home": p["home"], "away": p["away"], "date": p["date"], "time": p.get("time") or "",
-             "league": p.get("league") or "", "market": p["market"], "marketName": p.get("market_name") or "",
-             "code": p["code"], "label": p.get("label") or p["code"], "prob": p.get("prob")} for p in picks]
-    return sels, [{"status": "booked", "odds": p.get("odds")} for p in picks]
+    return [_selection(p) for p in picks], [{"status": "booked", "odds": p.get("odds")} for p in picks]
 
 
 def now_utc() -> datetime:
