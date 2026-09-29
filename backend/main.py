@@ -4637,6 +4637,8 @@ ADMIN_JOBS = {
     "bb_refresh": ("Basketball: price SportyBet's matches now", lambda: _bb_refresh()),
     "bb_live": ("Basketball: live scores and finals for games under way", lambda: _bb_live_tick()),
     "tennis_collect": ("Tennis: collect results from SportyBet (form and head-to-head)", lambda: _tennis_collect()),
+    "table_tennis_collect": ("Table tennis: collect results from SportyBet (form and head-to-head)",
+                             lambda: _table_tennis_collect()),
     "props_load": ("Player props: load box scores and the check's numbers", lambda: _props_load()),
     "fb_props": ("Player props: price goalscorers now", lambda: _fb_props_refresh()),
     "daily_slips": ("Remake today's daily odds slips (new booking codes)", lambda: _build_daily(__import__("daily_slips").today(), force=True)),
@@ -4960,7 +4962,7 @@ async def get_sport_predictions(sport: str, request: Request):
             cached = r.get(cache_key)
             if cached:
                 out = drop_started_events(_json.loads(cached))
-                return _with_tennis_form(out) if sport == "tennis" else out
+                return _with_racket_form(out, "table_tennis" if sport == "table-tennis" else sport) if sport in ("tennis", "table-tennis") else out
         except Exception:
             pass
     else:
@@ -4971,7 +4973,7 @@ async def get_sport_predictions(sport: str, request: Request):
         cached_entry = _sports_memory_cache.get(sport)
         if cached_entry and (_time.monotonic() - cached_entry[1]) < CACHE_TTL:
             out = drop_started_events(cached_entry[0])
-            return _with_tennis_form(out) if sport == "tennis" else out
+            return _with_racket_form(out, "table_tennis" if sport == "table-tennis" else sport) if sport in ("tennis", "table-tennis") else out
 
     if sport == "basketball":
         data = [_bb_slim(p) for p in (_bb_upcoming() or await _bb_refresh())]
@@ -4994,7 +4996,7 @@ async def get_sport_predictions(sport: str, request: Request):
         _sports_memory_cache[sport] = (data, _time.monotonic())
 
     out = drop_started_events(data)
-    return _with_tennis_form(out) if sport == "tennis" else out
+    return _with_racket_form(out, "table_tennis" if sport == "table-tennis" else sport) if sport in ("tennis", "table-tennis") else out
 
 
 # ── Basketball (basketball_data / _model / _markets / _predictions) ─────────
@@ -5210,16 +5212,19 @@ async def get_basketball_match(request: Request, event: str = Query(..., max_len
     return p
 
 
-# ── Tennis form and head-to-head (tennis_facts.py) ──────────────────────────
-_tennis_players: Dict[str, List] = {}      # player -> his matches, newest first
-_tennis_status: Dict[str, Any] = {}
+# ── Tennis and table tennis form and head-to-head (tennis_facts.py) ─────────
+# sport: "tennis" | "table_tennis" (tennis_facts.SPORTS)
+_racket_players: Dict[str, Dict[str, List]] = {"tennis": {}, "table_tennis": {}}   # player -> his matches, newest first
+_racket_status: Dict[str, Dict[str, Any]] = {"tennis": {}, "table_tennis": {}}
+_tennis_players = _racket_players["tennis"]          # (the tennis one, by its old name)
+_tennis_status = _racket_status["tennis"]
 
 
-def _tennis_results(r) -> List[Dict]:
+def _racket_results(r, sport: str) -> List[Dict]:
     import basketball_data as bd
     import tennis_facts as tf
     out: List[Dict] = []
-    for blob in (r.hgetall(tf.RESULTS_KEY) or {}).values() if r else []:
+    for blob in (r.hgetall(tf.SPORTS[sport]["key"]) or {}).values() if r else []:
         try:
             out += bd.decode(blob)
         except Exception:
@@ -5227,54 +5232,88 @@ def _tennis_results(r) -> List[Dict]:
     return out
 
 
-def _tennis_index_build() -> int:
+def _tennis_results(r) -> List[Dict]:
+    return _racket_results(r, "tennis")
+
+
+def _racket_index_build(sport: str) -> int:
     import tennis_facts as tf
-    idx = tf.build_index(_tennis_results(_get_redis()))
-    _tennis_players.clear()
-    _tennis_players.update(idx)
+    rows = _tennis_results(_get_redis()) if sport == "tennis" else _racket_results(_get_redis(), sport)
+    idx = tf.build_index(rows)
+    _racket_players[sport].clear()
+    _racket_players[sport].update(idx)
     return len(idx)
 
 
-async def _tennis_collect() -> Dict[str, Any]:
-    """Yesterday's and today's tennis results, and a few older days (the backfill)."""
+async def _racket_collect(sport: str) -> Dict[str, Any]:
+    """Yesterday's and today's results, a few older days (the backfill), and
+    days past the sport's window dropped."""
     import basketball_data as bd
     import tennis_facts as tf
     r = _get_redis()
     if not r:
         return {"error": "no database"}
-    have = [k.decode() if isinstance(k, bytes) else k for k in (r.hkeys(tf.RESULTS_KEY) or [])]
+    key = tf.SPORTS[sport]["key"]
+    have = [k.decode() if isinstance(k, bytes) else k for k in (r.hkeys(key) or [])]
+    old = tf.stale_days(have, date.today(), sport)
+    if old:
+        r.hdel(key, *old)
     fetched, matches, failed = 0, 0, 0
-    for day in tf.days_to_collect(have, date.today()):
+    for day in tf.days_to_collect(have, date.today(), sport):
         try:
-            found = await tf.fetch_results_day(day)
+            found = await tf.fetch_results_day(day, sport=sport)
         except Exception as e:
             failed += 1
-            print(f"[Tennis] results for {day}: {e}")
+            print(f"[{sport}] results for {day}: {e}")
             continue
-        r.hset(tf.RESULTS_KEY, day, bd.encode(found))
+        r.hset(key, day, bd.encode(found))
         fetched += 1
         matches += len(found)
         await asyncio.sleep(0.5)
-    players = await asyncio.to_thread(_tennis_index_build)
-    _tennis_status.update(at=datetime.now(timezone.utc).isoformat(timespec="seconds"), days=fetched,
-                          matches=matches, failed=failed, days_stored=r.hlen(tf.RESULTS_KEY), players=players)
-    print(f"[Tennis] results: {fetched} days, {matches} matches ({_tennis_status['days_stored']} days stored, {players} players)")
-    return dict(_tennis_status)
+    players = await asyncio.to_thread(_racket_index_build, sport)
+    _racket_status[sport].update(at=datetime.now(timezone.utc).isoformat(timespec="seconds"), days=fetched,
+                                 matches=matches, failed=failed, days_stored=r.hlen(key), players=players)
+    print(f"[{sport}] results: {fetched} days, {matches} matches "
+          f"({_racket_status[sport]['days_stored']} days stored, {players} players)")
+    return dict(_racket_status[sport])
 
 
-async def _tennis_index() -> Dict[str, List]:
-    if not _tennis_players:
-        await asyncio.to_thread(_tennis_index_build)
-    return _tennis_players
+async def _tennis_collect() -> Dict[str, Any]:
+    return await _racket_collect("tennis")
+
+
+async def _table_tennis_collect() -> Dict[str, Any]:
+    return await _racket_collect("table_tennis")
+
+
+async def _racket_index(sport: str) -> Dict[str, List]:
+    if not _racket_players[sport]:
+        await asyncio.to_thread(_racket_index_build, sport)
+    return _racket_players[sport]
+
+
+def _with_racket_form(preds: List[Dict], sport: str) -> List[Dict]:
+    """Each player's last 5 on the list (for the cards), where we have his results."""
+    idx = _racket_players.get(sport)
+    if not idx:
+        return preds
+    import tennis_facts as tf
+    return [{**p, "home_form": tf.form_string(idx, p.get("home") or ""),
+             "away_form": tf.form_string(idx, p.get("away") or "")} for p in preds]
 
 
 def _with_tennis_form(preds: List[Dict]) -> List[Dict]:
-    """Each player's last 5 on the list (for the cards), where we have his results."""
-    if not _tennis_players:
-        return preds
+    return _with_racket_form(preds, "tennis")
+
+
+async def _racket_facts(request: Request, sport: str, home: str, away: str, date_: str, time_: str, league: str):
     import tennis_facts as tf
-    return [{**p, "home_form": tf.form_string(_tennis_players, p.get("home") or ""),
-             "away_form": tf.form_string(_tennis_players, p.get("away") or "")} for p in preds]
+    await _check_sport_access(request, "tennis" if sport == "tennis" else "table-tennis")
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_) or (time_ and not re.fullmatch(r"\d{2}:\d{2}", time_)):
+        raise HTTPException(status_code=400, detail="Invalid match")
+    idx = await _racket_index(sport)
+    return {**tf.facts(idx, {"home": home, "away": away, "date": date_, "time": time_ or "12:00", "league": league}, sport),
+            "results_days": _racket_status[sport].get("days_stored")}
 
 
 @app.get("/api/tennis/facts")
@@ -5283,13 +5322,15 @@ async def get_tennis_facts(request: Request, home: str = Query(..., max_length=8
                            league: str = Query("", max_length=120)):
     """One tennis match's form: each player's last 5, their meetings, and
     each player's numbers over his last 20 matches (tennis_facts.py)."""
-    import tennis_facts as tf
-    await _check_sport_access(request, "tennis")
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_) or (time_ and not re.fullmatch(r"\d{2}:\d{2}", time_)):
-        raise HTTPException(status_code=400, detail="Invalid match")
-    idx = await _tennis_index()
-    return {**tf.facts(idx, {"home": home, "away": away, "date": date_, "time": time_ or "12:00", "league": league}),
-            "results_days": _tennis_status.get("days_stored")}
+    return await _racket_facts(request, "tennis", home, away, date_, time_, league)
+
+
+@app.get("/api/table-tennis/facts")
+async def get_table_tennis_facts(request: Request, home: str = Query(..., max_length=80),
+                                 away: str = Query(..., max_length=80), date_: str = Query(..., alias="date"),
+                                 time_: str = Query("", alias="time", max_length=5), league: str = Query("", max_length=120)):
+    """The same for table tennis: games and points in place of sets and games."""
+    return await _racket_facts(request, "table_tennis", home, away, date_, time_, league)
 
 
 @app.get("/api/basketball/facts")
@@ -8025,6 +8066,8 @@ async def startup():
     # Tennis results for form and head-to-head (yesterday, today, and the backfill)
     scheduler.add_job(_tennis_collect, "interval", minutes=30, id="tennis_collect", max_instances=1, coalesce=True,
                       next_run_time=datetime.now() + timedelta(minutes=5))
+    scheduler.add_job(_table_tennis_collect, "interval", minutes=30, id="table_tennis_collect", max_instances=1,
+                      coalesce=True, next_run_time=datetime.now() + timedelta(minutes=8))
     # Basketball games under way: live scores, and finals graded as they come in
     scheduler.add_job(_bb_live_tick, "interval", minutes=2, id="bb_live", max_instances=1, coalesce=True,
                       next_run_time=datetime.now() + timedelta(minutes=4))

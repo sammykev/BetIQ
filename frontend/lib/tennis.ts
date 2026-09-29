@@ -1,13 +1,17 @@
-// Tennis match facts (backend tennis_facts.py): each player's last 5, the
-// head-to-head, and his numbers over recent matches, from SportyBet's results.
+// Tennis and table tennis match facts (backend tennis_facts.py): each
+// player's last 5, the head-to-head, and his numbers over recent matches,
+// from SportyBet's results. Table tennis uses the same shape: its games are
+// "sets" here and its points "games"; a "tiebreak" is a game gone to deuce.
+
+export type RacketSport = "tennis" | "table_tennis";
 
 export interface TFormRow {
   date: string; opponent: string; outcome: "W" | "L"; sets: [number, number]; score: string;
-  retired: boolean; tournament: string; surface: string;
+  retired: boolean; tournament: string; surface: string | null;
 }
 export interface TMeeting {
   date: string; home: string; away: string; sets: [number, number]; score: string;
-  retired: boolean; tournament: string; surface: string;
+  retired: boolean; tournament: string; surface: string | null;
 }
 export interface TAverages {
   played: number; won: number;
@@ -19,7 +23,7 @@ export interface TAverages {
   surface: { name: string; played: number; won: number | null } | null;
 }
 export interface TFacts {
-  home: TFormRow[]; away: TFormRow[]; h2h: TMeeting[]; surface: string;
+  home: TFormRow[]; away: TFormRow[]; h2h: TMeeting[]; surface: string | null; sport?: RacketSport;
   summary: { h2h: { won: number; lost: number } | null };
   averages: { n: number; home: TAverages | null; away: TAverages | null };
   results_days?: number | null;
@@ -28,10 +32,11 @@ export interface TFacts {
 const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
 
 export async function fetchTennisFacts(f: (url: string, init?: RequestInit) => Promise<Response>,
-  m: { home: string; away: string; date: string; time?: string; league?: string }, signal?: AbortSignal): Promise<TFacts> {
+  m: { home: string; away: string; date: string; time?: string; league?: string }, signal?: AbortSignal,
+  sport: RacketSport = "tennis"): Promise<TFacts> {
   const q = new URLSearchParams({ home: m.home, away: m.away, date: m.date,
     ...(m.time && /^\d{2}:\d{2}$/.test(m.time) ? { time: m.time } : {}), ...(m.league ? { league: m.league } : {}) });
-  const r = await f(`${API}/api/tennis/facts?${q}`, { signal });
+  const r = await f(`${API}/api/${sport === "table_tennis" ? "table-tennis" : "tennis"}/facts?${q}`, { signal });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 }

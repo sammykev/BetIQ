@@ -73,3 +73,49 @@ def test_endpoint_and_list_form(monkeypatch):
     listed = main._with_tennis_form([{"home": "Sinner, Jannik", "away": "Nobody"}])
     assert listed[0]["home_form"] == "WWLLW" and listed[0]["away_form"] == ""
     main._tennis_players.clear()
+
+
+# ── Table tennis: games and points, deuce games, no surface ──
+TT = [tf.parse_result(e) for e in (
+    ev(1, "Kowalski, Jan", "Nowak, Piotr", "3:2", ["11:9", "8:11", "12:10", "9:11", "11:7"], t="Poland · TT Elite Series"),
+    ev(2, "Nowak, Piotr", "Kowalski, Jan", "3:0", ["11:5", "11:6", "11:4"], t="Poland · TT Elite Series"),
+    ev(3, "Kowalski, Jan", "Wisniewski, Adam", "3:1", ["11:3", "13:11", "9:11", "11:8"], t="Poland · TT Elite Series"),
+)]
+
+
+def test_table_tennis():
+    idx = tf.build_index(TT)
+    f = tf.facts(idx, {"home": "Kowalski, Jan", "away": "Nowak, Piotr", "date": "2026-09-10", "time": "12:00",
+                       "league": "Poland · TT Elite Series"}, "table_tennis")
+    assert f["sport"] == "table_tennis" and f["surface"] is None
+    assert [r["outcome"] for r in f["home"]] == ["W", "L", "W"] and f["home"][0]["surface"] is None
+    assert f["home"][0]["score"] == "11-3 13-11 9-11 11-8"
+    a = f["averages"]["home"]
+    # Deuce games (both on 10+): 12-10 in the first, 13-11 in the third; none in the second
+    assert a["tiebreak_matches"] == round(2 / 3, 3)
+    assert a["deciding_set"] == {"rate": round(1 / 3, 3), "won": 1.0}          # 3-2
+    assert a["surface"] is None
+    assert f["summary"]["h2h"] == {"won": 1, "lost": 1}
+
+
+def test_table_tennis_window():
+    today = datetime(2026, 9, 29).date()
+    days = tf.days_to_collect([], today, "table_tennis")
+    assert days[:2] == ["2026-09-28", "2026-09-29"] and len(days) == 2 + tf.SPORTS["table_tennis"]["backfill"]
+    assert tf.stale_days(["2026-07-01", "2026-09-20"], today, "table_tennis") == ["2026-07-01"]
+    assert tf.stale_days(["2026-07-01"], today, "tennis") == []
+
+
+def test_table_tennis_endpoint(monkeypatch):
+    async def open_to_all(request, sport):
+        return None
+    monkeypatch.setattr(main, "_check_sport_access", open_to_all)
+    monkeypatch.setattr(main, "_racket_results", lambda r, sport: TT if sport == "table_tennis" else [])
+    main._racket_players["table_tennis"].clear()
+    c = TestClient(main.app)
+    got = c.get("/api/table-tennis/facts", params={"home": "Kowalski, Jan", "away": "Nowak, Piotr",
+                                                    "date": "2026-09-10", "time": "12:00"}).json()
+    assert got["sport"] == "table_tennis" and len(got["home"]) == 3
+    listed = main._with_racket_form([{"home": "Kowalski, Jan", "away": "Nowak, Piotr"}], "table_tennis")
+    assert listed[0]["home_form"] == "WLW" and listed[0]["away_form"] == "LW"
+    main._racket_players["table_tennis"].clear()

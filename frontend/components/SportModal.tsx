@@ -112,8 +112,8 @@ export function SportModal({ prediction: p, onClose }: Props) {
   const [detail, setDetail]   = useState<EventDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState(false);
-  // Tennis: form, player numbers and head to head (like football's match page), or the markets
-  const hasFacts = p.sport === "tennis";
+  // Tennis and table tennis: form, player numbers and head to head (like football's match page), or the markets
+  const hasFacts = p.sport === "tennis" || p.sport === "table_tennis" || p.sport === "table-tennis";
   const [view, setView] = useState<"form" | "markets">(hasFacts ? "form" : "markets");
 
   const assets = getSportAssets(p.home, p.away, p.sport);
@@ -199,7 +199,8 @@ export function SportModal({ prediction: p, onClose }: Props) {
 
         {view === "form" ? (
           <div className="p-5">
-            <TennisFacts m={{ home: p.home, away: p.away, date: p.date, time: p.time, league: p.league_name }} />
+            <TennisFacts m={{ home: p.home, away: p.away, date: p.date, time: p.time, league: p.league_name }}
+              sport={p.sport === "tennis" ? "tennis" : "table_tennis"} />
           </div>
         ) : (
         /* Body */

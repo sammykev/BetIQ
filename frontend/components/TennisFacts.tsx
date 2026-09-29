@@ -5,7 +5,14 @@ import clsx from "clsx";
 import { BarChart3, History, Loader2, Swords } from "lucide-react";
 import { FormChips } from "./BasketballFacts";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
-import { fetchTennisFacts, type TAverages, type TFacts, type TFormRow } from "@/lib/tennis";
+import { fetchTennisFacts, type RacketSport, type TAverages, type TFacts, type TFormRow } from "@/lib/tennis";
+
+// The words each sport uses: tennis sets and games; table tennis games and points
+const WORDS: Record<RacketSport, { set: string; sets: string; game: string; games: string; tie: string; straight: string }> = {
+  tennis: { set: "set", sets: "Sets", game: "game", games: "Games", tie: "Matches with a tiebreak", straight: "Straight-sets wins" },
+  table_tennis: { set: "game", sets: "Games", game: "point", games: "Points", tie: "Matches with a deuce game",
+                  straight: "Wins without dropping a game" },
+};
 
 const shortDate = (iso: string) =>
   new Date(`${iso}T12:00:00Z`).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "2-digit" });
@@ -38,7 +45,7 @@ function FormList({ name, rows }: { name: string; rows: TFormRow[] }) {
                 r.outcome === "W" ? "bg-brand-400 text-ink" : "bg-rose-500 text-white")}>{r.outcome}</span>
               <div className="min-w-0 flex-1">
                 <p className="text-[13px] text-n-200 truncate"><span className="text-n-500 text-[11px] font-bold mr-1.5">vs</span>{r.opponent}</p>
-                <p className="text-[11px] text-n-500 truncate">{shortDate(r.date)} · {r.tournament} · {r.surface}</p>
+                <p className="text-[11px] text-n-500 truncate">{[shortDate(r.date), r.tournament, r.surface].filter(Boolean).join(" · ")}</p>
               </div>
               <span className="text-right shrink-0">
                 <span className="block font-mono font-bold text-sm text-n-0 tnum">{r.sets[0]}-{r.sets[1]}</span>
@@ -54,24 +61,25 @@ function FormList({ name, rows }: { name: string; rows: TFormRow[] }) {
 
 type Row = { label: string; get: (a: TAverages) => number | null | undefined; pct?: boolean; better?: "higher" | "lower"; dp?: number };
 
-function Averages({ f, home, away }: { f: TFacts; home: string; away: string }) {
+function Averages({ f, home, away, sport }: { f: TFacts; home: string; away: string; sport: RacketSport }) {
   const h = f.averages.home, a = f.averages.away;
   if (!h && !a) return null;
+  const w = WORDS[sport];
   const groups: { title: string; rows: Row[] }[] = [
     { title: "Results", rows: [
       { label: "Won", get: x => x.won, pct: true },
-      { label: `Won on ${f.surface.toLowerCase()}`, get: x => x.surface?.won, pct: true },
-      { label: "Straight-sets wins", get: x => x.straight_sets_wins, pct: true },
-      { label: "Went to a deciding set", get: x => x.deciding_set.rate, pct: true },
-      { label: "Won the deciding set", get: x => x.deciding_set.won, pct: true },
+      ...(f.surface ? [{ label: `Won on ${f.surface.toLowerCase()}`, get: (x: TAverages) => x.surface?.won, pct: true } as Row] : []),
+      { label: w.straight, get: x => x.straight_sets_wins, pct: true },
+      { label: `Went to a deciding ${w.set}`, get: x => x.deciding_set.rate, pct: true },
+      { label: `Won the deciding ${w.set}`, get: x => x.deciding_set.won, pct: true },
     ] },
-    { title: "Sets and games (per match)", rows: [
-      { label: "Sets won", get: x => x.sets.for, dp: 2 },
-      { label: "Sets lost", get: x => x.sets.against, dp: 2, better: "lower" },
-      { label: "Games won", get: x => x.games.for },
-      { label: "Games lost", get: x => x.games.against, better: "lower" },
-      { label: "Total games", get: x => x.games.total },
-      { label: "Matches with a tiebreak", get: x => x.tiebreak_matches, pct: true },
+    { title: `${w.sets} and ${w.games.toLowerCase()} (per match)`, rows: [
+      { label: `${w.sets} won`, get: x => x.sets.for, dp: 2 },
+      { label: `${w.sets} lost`, get: x => x.sets.against, dp: 2, better: "lower" },
+      { label: `${w.games} won`, get: x => x.games.for },
+      { label: `${w.games} lost`, get: x => x.games.against, better: "lower" },
+      { label: `Total ${w.games.toLowerCase()}`, get: x => x.games.total },
+      { label: w.tie, get: x => x.tiebreak_matches, pct: true },
     ] },
   ];
   const show = (t: TAverages | null, r: Row) => {
@@ -112,7 +120,7 @@ function Averages({ f, home, away }: { f: TFacts; home: string; away: string }) 
       ))}
       <p className="text-[11px] text-n-500 mt-3">
         Over each player&apos;s last {Math.max(h?.played ?? 0, a?.played ?? 0) || f.averages.n} singles matches on SportyBet
-        {h?.surface || a?.surface ? `; on ${f.surface.toLowerCase()}: ${[h?.surface && `${home} ${h.surface.played}`, a?.surface && `${away} ${a.surface.played}`].filter(Boolean).join(", ")}` : ""}.
+        {f.surface && (h?.surface || a?.surface) ? `; on ${f.surface.toLowerCase()}: ${[h?.surface && `${home} ${h.surface.played}`, a?.surface && `${away} ${a.surface.played}`].filter(Boolean).join(", ")}` : ""}.
         Retirements count as played.
       </p>
     </div>
@@ -140,7 +148,7 @@ function HeadToHead({ f, home, away }: { f: TFacts; home: string; away: string }
             <span className="font-mono font-bold text-sm text-n-0 tnum px-2 py-0.5 rounded bg-n-800/70">{m.sets[0]}-{m.sets[1]}</span>
             <span className={clsx("text-[13px] truncate", m.sets[1] > m.sets[0] ? "text-n-0 font-semibold" : "text-n-400")}>{m.away}</span>
             <span className="col-span-3 text-center text-[11px] text-n-500 -mt-1 tnum">
-              {m.score}{m.retired ? " ret." : ""} · {shortDate(m.date)} · {m.tournament} · {m.surface}
+              {[`${m.score}${m.retired ? " ret." : ""}`, shortDate(m.date), m.tournament, m.surface].filter(Boolean).join(" · ")}
             </span>
           </li>
         ))}
@@ -150,23 +158,25 @@ function HeadToHead({ f, home, away }: { f: TFacts; home: string; away: string }
 }
 
 /** A tennis match's form, player numbers and head to head, like football's and basketball's. */
-export function TennisFacts({ m }: { m: { home: string; away: string; date: string; time?: string; league?: string } }) {
+export function TennisFacts({ m, sport = "tennis" }: {
+  m: { home: string; away: string; date: string; time?: string; league?: string }; sport?: RacketSport;
+}) {
   const authFetch = useAuthedFetch();
   const [f, setF] = useState<TFacts | null>(null);
   const [error, setError] = useState(false);
   useEffect(() => {
     const ctrl = new AbortController();
-    fetchTennisFacts(authFetch, m, ctrl.signal).then(setF).catch(e => { if (e?.name !== "AbortError") setError(true); });
+    fetchTennisFacts(authFetch, m, ctrl.signal, sport).then(setF).catch(e => { if (e?.name !== "AbortError") setError(true); });
     return () => ctrl.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [m.home, m.away, m.date, m.time, m.league, authFetch]);
+  }, [m.home, m.away, m.date, m.time, m.league, sport, authFetch]);
 
   if (error) return <p className="text-center text-sm text-n-400 py-6">Couldn&apos;t load this match&apos;s form. Try again in a moment.</p>;
   if (!f) return <div className="flex items-center justify-center gap-2 py-8 text-n-400 text-sm"><Loader2 size={16} className="animate-spin" /> Loading form…</div>;
   if (!f.home.length && !f.away.length) {
     return (
       <p className="text-center text-sm text-n-400 py-6">
-        No results on record for these players yet{f.results_days ? "" : ": we've only just started collecting tennis results"}.
+        No results on record for these players yet{f.results_days ? "" : `: we've only just started collecting ${sport === "table_tennis" ? "table tennis" : "tennis"} results`}.
       </p>
     );
   }
@@ -178,9 +188,9 @@ export function TennisFacts({ m }: { m: { home: string; away: string; date: stri
           <FormList name={m.home} rows={f.home} />
           <FormList name={m.away} rows={f.away} />
         </div>
-        <p className="text-[11px] text-n-500 mt-3">Sets and games from each player&apos;s side, newest first.</p>
+        <p className="text-[11px] text-n-500 mt-3">{WORDS[sport].sets} and {WORDS[sport].games.toLowerCase()} from each player&apos;s side, newest first.</p>
       </div>
-      <Averages f={f} home={m.home} away={m.away} />
+      <Averages f={f} home={m.home} away={m.away} sport={sport} />
       <HeadToHead f={f} home={m.home} away={m.away} />
     </div>
   );
