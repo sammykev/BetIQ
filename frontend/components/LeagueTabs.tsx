@@ -38,7 +38,7 @@ export function LeagueTabs({ leagues, selected, onSelect, counts }: Props) {
                   className={clsx(
                     "tnum text-[10px] px-1.5 py-0.5 rounded-full font-semibold",
                     active
-                      ? "bg-ink/15 text-ink"
+                      ? "bg-canvas/15 text-canvas"
                       : "bg-n-800 text-n-400"
                   )}
                 >

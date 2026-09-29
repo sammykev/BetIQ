@@ -14,7 +14,7 @@ export function Unavailable({ title = "Not available" }: { title?: string }) {
   return (
     <section className="card p-8 text-center space-y-3 max-w-xl mx-auto">
       <span className="mx-auto w-12 h-12 rounded-full bg-n-800 text-n-400 flex items-center justify-center"><EyeOff size={20} /></span>
-      <p className="font-display font-extrabold text-2xl uppercase tracking-wide text-n-0">{title}</p>
+      <p className="heading text-xl">{title}</p>
       <p className="text-sm text-n-400">This isn&apos;t available right now. Check back soon.</p>
       <Link href="/" className="btn-secondary inline-flex">Back to predictions</Link>
     </section>
@@ -33,7 +33,7 @@ export function Locked({ feature, title, perks }: { feature: FeatureId; title: s
     return (
       <section className="card p-6 sm:p-8 text-center space-y-3 max-w-xl mx-auto">
         <span className="mx-auto w-12 h-12 rounded-full bg-warn/15 text-warn flex items-center justify-center"><Lock size={20} /></span>
-        <p className="font-display font-extrabold text-2xl uppercase tracking-wide text-n-0">{title}</p>
+        <p className="heading text-xl">{title}</p>
         <p className="text-sm text-n-400">Your {TIER_NAMES[mine]} plan includes this, but we couldn&apos;t confirm it just now.
           Try again in a minute; if it keeps happening, contact support and we&apos;ll sort it out.</p>
         <button onClick={() => window.location.reload()} className="btn-secondary">Try again</button>
@@ -44,7 +44,7 @@ export function Locked({ feature, title, perks }: { feature: FeatureId; title: s
     <section className="card p-6 sm:p-8 text-center space-y-5 max-w-xl mx-auto">
       <span className="mx-auto w-12 h-12 rounded-full bg-brand-400/15 text-accent flex items-center justify-center"><Lock size={20} /></span>
       <div>
-        <p className="font-display font-extrabold text-2xl uppercase tracking-wide text-n-0">{title}</p>
+        <p className="heading text-xl">{title}</p>
         <p className="text-sm text-n-400 mt-1">Part of BetIQ {TIER_NAMES[tier]}{tier === "lite" ? " and Premium" : ""}.</p>
       </div>
       {perks.length > 0 && (

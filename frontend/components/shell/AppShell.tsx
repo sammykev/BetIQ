@@ -11,6 +11,7 @@ import { PaywallModal } from "@/components/PaywallModal";
 import { Trial } from "@/components/Trial";
 import { useAccess, type FeatureId } from "@/lib/access";
 import clsx from "clsx";
+import { motion } from "motion/react";
 import type { ReactNode } from "react";
 
 // Each link shows while any of its features is switched on for this visitor
@@ -44,7 +45,7 @@ export function Wordmark({ className }: { className?: string }) {
 function Logo() {
   return (
     <Link href="/" className="flex items-center gap-2.5 min-w-0" aria-label="BetIQ home">
-      <img src="/logo.svg" alt="" className="w-8 h-8 rounded-lg shrink-0 ring-1 ring-n-800" />
+      <img src="/logo.svg" alt="" className="w-8 h-8 rounded-lg shrink-0 img-outline" />
       <Wordmark className="text-[26px]" />
     </Link>
   );
@@ -70,8 +71,7 @@ export function AppShell({ children, actions, banner, onUpgrade }: Props) {
           <Logo />
         </div>
 
-        <nav className="flex-1 px-3 py-4 space-y-1">
-          <p className="eyebrow px-3 pb-2">Menu</p>
+        <nav aria-label="Main" className="flex-1 px-3 py-4 space-y-0.5">
           {nav.map(({ href, label, icon: Icon }) => {
             const active = isActive(href);
             return (
@@ -80,23 +80,27 @@ export function AppShell({ children, actions, banner, onUpgrade }: Props) {
                 href={href}
                 aria-current={active ? "page" : undefined}
                 className={clsx(
-                  "relative flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-colors",
-                  active
-                    ? "bg-surface text-n-0"
-                    : "text-n-400 hover:text-n-0 hover:bg-surface/60"
+                  "relative flex items-center gap-3 px-3 h-10 rounded-xl text-sm font-medium",
+                  "transition-[color,background-color,scale] duration-150 ease-[cubic-bezier(0.2,0,0,1)] active:scale-[0.98]",
+                  active ? "text-n-0" : "text-n-400 hover:text-n-0 hover:bg-n-800/40"
                 )}
               >
-                {active && <span className="absolute left-0 top-2 bottom-2 w-[3px] rounded-r-full bg-accent" />}
-                <Icon size={17} strokeWidth={active ? 2.4 : 2} className={active ? "text-accent" : undefined} />
-                {label}
+                {/* The chosen item's surface slides between items */}
+                {active && (
+                  <motion.span layoutId="side-nav-pill" aria-hidden
+                    className="absolute inset-0 rounded-xl bg-surface [box-shadow:var(--shadow-card)]"
+                    transition={{ type: "spring", duration: 0.35, bounce: 0 }} />
+                )}
+                <Icon size={17} strokeWidth={active ? 2.3 : 2} className={clsx("relative", active && "text-accent")} />
+                <span className="relative">{label}</span>
               </Link>
             );
           })}
         </nav>
 
         <div className="px-5 py-4 border-t border-n-900 flex items-start gap-2.5">
-          <span className="shrink-0 font-display font-bold text-[13px] leading-none text-n-300 border border-n-700 rounded-md px-1.5 py-1">18+</span>
-          <p className="text-[11px] leading-relaxed text-n-500">
+          <span className="shrink-0 font-display font-bold text-[13px] leading-none text-n-300 rounded-md px-1.5 py-1 [box-shadow:var(--ring-control)]">18+</span>
+          <p className="text-[11px] leading-relaxed text-n-500 text-pretty">
             Predictions are probabilities, not guarantees. Gamble responsibly.
           </p>
         </div>
@@ -130,9 +134,9 @@ export function AppShell({ children, actions, banner, onUpgrade }: Props) {
       {plans && <PaywallModal onClose={() => setPlans(false)} onSuccess={() => setPlans(false)} />}
 
       {/* ── Mobile bottom nav ── */}
-      <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 border-t border-n-900 bg-canvas/95 backdrop-blur-md pb-[env(safe-area-inset-bottom)]">
+      <nav aria-label="Main" className="lg:hidden fixed bottom-0 inset-x-0 z-30 border-t border-n-900 bg-canvas/90 backdrop-blur-md pb-[env(safe-area-inset-bottom)]">
         {/* One column per link, so all of them sit on one row */}
-        <div className="grid" style={{ gridTemplateColumns: `repeat(${nav.length}, minmax(0, 1fr))` }}>
+        <div className="grid px-1" style={{ gridTemplateColumns: `repeat(${nav.length}, minmax(0, 1fr))` }}>
           {nav.map(({ href, label, icon: Icon }) => {
             const active = isActive(href);
             return (
@@ -141,13 +145,20 @@ export function AppShell({ children, actions, banner, onUpgrade }: Props) {
                 href={href}
                 aria-current={active ? "page" : undefined}
                 className={clsx(
-                  "relative flex flex-col items-center gap-1 pt-3 pb-2.5 px-0.5 min-w-0 text-[10px] font-semibold transition-colors",
+                  "relative flex flex-col items-center gap-1 pt-2.5 pb-2 px-0.5 min-w-0 min-h-[56px] text-[10px] font-medium",
+                  "transition-[color,scale] duration-150 ease-[cubic-bezier(0.2,0,0,1)] active:scale-[0.96]",
                   active ? "text-n-0" : "text-n-500 hover:text-n-300"
                 )}
               >
-                {active && <span className="absolute top-0 inset-x-4 h-[2px] rounded-b-full bg-accent" />}
-                <Icon size={19} strokeWidth={active ? 2.4 : 2} className={active ? "text-accent" : undefined} />
-                <span className="max-w-full truncate">{label}</span>
+                <span className="relative flex items-center justify-center h-7 w-12">
+                  {active && (
+                    <motion.span layoutId="bottom-nav-pill" aria-hidden
+                      className="absolute inset-0 rounded-full bg-accent/15"
+                      transition={{ type: "spring", duration: 0.35, bounce: 0 }} />
+                  )}
+                  <Icon size={19} strokeWidth={active ? 2.3 : 2} className={clsx("relative", active && "text-accent")} />
+                </span>
+                <span className={clsx("max-w-full truncate", active && "font-semibold")}>{label}</span>
               </Link>
             );
           })}

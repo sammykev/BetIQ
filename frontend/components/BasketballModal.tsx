@@ -9,6 +9,8 @@ import { BasketballFacts } from "./BasketballFacts";
 import { kickoff } from "@/lib/matchTime";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
 import { FAMILIES, MODEL_NOTE, type BasketballPrediction } from "@/lib/basketball";
+import { UnderlineTabs } from "@/components/ui/tabs";
+import { ModalFrame } from "@/components/ui/dialog";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
 
@@ -29,11 +31,6 @@ export function BasketballModal({ p, onClose }: { p: BasketballPrediction; onClo
       .catch(() => setError(true));
   }, [p.sportybet_event_id, authFetch]);
 
-  useEffect(() => {
-    const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", h);
-    return () => window.removeEventListener("keydown", h);
-  }, [onClose]);
 
   const lines = useMemo(() => full?.bb_markets ?? p.top_lines ?? [], [full, p.top_lines]);
   const present = FAMILIES.filter(f => lines.some(l => l.family === f.id));
@@ -41,9 +38,7 @@ export function BasketballModal({ p, onClose }: { p: BasketballPrediction; onClo
   const d = full ?? p;
 
   return (
-    <div className="fixed inset-0 z-50 bg-ink/80 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto"
-      onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="w-full max-w-2xl my-8 card !rounded-3xl shadow-pop overflow-hidden animate-scale-in">
+    <ModalFrame onClose={onClose} title={`${p.home} vs ${p.away}`}>
         <div className="border-b border-n-800 p-5 sm:p-6">
           <div className="flex items-start justify-between gap-3 mb-5">
             <div className="min-w-0">
@@ -53,8 +48,9 @@ export function BasketballModal({ p, onClose }: { p: BasketballPrediction; onClo
               </p>
               <p className="tnum text-[11px] text-n-500 mt-0.5">{kickoff(p.date, p.time)}</p>
             </div>
-            <button onClick={onClose} className="p-2 hover:bg-surface-raised rounded-lg" aria-label="Close">
-              <X size={16} className="text-n-400" />
+            <button onClick={onClose} aria-label="Close"
+              className="inline-flex items-center justify-center h-9 w-9 -mr-2 -mt-1 rounded-lg text-n-400 hover:text-n-0 hover:bg-n-800/60 transition-[color,background-color,scale] duration-150 active:scale-[0.96]">
+              <X size={18} />
             </button>
           </div>
           <div className="flex items-center gap-3 sm:gap-6">
@@ -62,7 +58,7 @@ export function BasketballModal({ p, onClose }: { p: BasketballPrediction; onClo
               { name: p.away, logo: p.away_logo, prob: p.p_away, pts: d.exp_away_pts }].map((t, i) => (
               <div key={t.name} className={clsx("flex-1 flex flex-col items-center text-center gap-2", i === 1 && "order-3")}>
                 <Crest src={t.logo} name={t.name} size={52} />
-                <p className="font-display font-extrabold uppercase text-lg sm:text-xl leading-tight text-n-0">{t.name}</p>
+                <p className="heading text-base sm:text-lg">{t.name}</p>
                 <p className="tnum text-[11px] text-n-400">{Math.round(t.prob * 100)}% to win</p>
               </div>
             ))}
@@ -78,16 +74,9 @@ export function BasketballModal({ p, onClose }: { p: BasketballPrediction; onClo
           </p>
         </div>
 
-        <div role="tablist" aria-label="Match view" className="flex gap-6 px-5 sm:px-6 border-b border-n-800">
-          {([["form", "Form & stats"], ["lines", "All lines"]] as const).map(([id, label]) => (
-            <button key={id} role="tab" aria-selected={view === id} onClick={() => setView(id)}
-              className={clsx("relative py-3 font-display font-bold text-[15px] uppercase tracking-[0.06em] transition-colors",
-                view === id ? "text-n-0" : "text-n-500 hover:text-n-300")}>
-              {label}
-              {view === id && <span className="absolute left-0 right-0 -bottom-px h-[2px] bg-accent rounded-full" />}
-            </button>
-          ))}
-        </div>
+        <UnderlineTabs label="Match view" className="px-5 sm:px-6"
+          items={[{ value: "form" as const, label: "Form & stats" }, { value: "lines" as const, label: "All lines" }]}
+          value={view} onChange={setView} />
 
         {view === "form" ? (
           <div className="p-5"><BasketballFacts p={d} /></div>
@@ -126,7 +115,7 @@ export function BasketballModal({ p, onClose }: { p: BasketballPrediction; onClo
                 if (!rows.length) return null;
                 return (
                   <section key={f.id} className="space-y-1.5">
-                    <h3 className="font-display font-bold text-sm uppercase tracking-[0.06em] text-n-0">{f.name}</h3>
+                    <h3 className="heading text-sm">{f.name}</h3>
                     {rows.map(l => <LineRow key={`${l.market}:${l.code}`} p={d} l={l} />)}
                   </section>
                 );
@@ -138,7 +127,6 @@ export function BasketballModal({ p, onClose }: { p: BasketballPrediction; onClo
           </p>
         </div>
         )}
-      </div>
-    </div>
+    </ModalFrame>
   );
 }

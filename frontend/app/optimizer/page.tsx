@@ -142,7 +142,7 @@ function LineMenu({ label, active, onToggle, lines, picked, setPicked }: {
       </div>
       {open && (
         <div ref={menu} style={{ transform: `translateX(${shift}px)` }}
-          className="absolute z-20 mt-1.5 w-[19rem] max-w-[calc(100vw-1.5rem)] rounded-xl border border-n-700 bg-surface p-2 shadow-xl">
+          className="absolute z-20 mt-1.5 w-[19rem] max-w-[calc(100vw-1.5rem)] rounded-xl bg-surface p-2 [box-shadow:var(--shadow-pop)]">
           <div className="flex justify-between px-1.5 pb-1.5 text-[11px]">
             <button type="button" className="text-accent font-semibold"
               onClick={() => setPicked([...picked.filter(k => !lines.some(l => lineKey(l) === k)), ...lines.map(lineKey)])}>
@@ -471,7 +471,7 @@ export default function OptimizerPage() {
           {/* Markets: each sport in play side by side */}
           <div className={clsx("grid gap-4", panels > 1 && "lg:grid-cols-2")}>
             {showFootball && (
-              <div className="rounded-xl border border-n-800 bg-surface-sunken/40 p-4">
+              <div className="rounded-xl [box-shadow:var(--ring-control)] bg-surface-sunken/40 p-4">
                 <Setting label={panels > 1 ? "Football markets" : "Markets"}>
                   <div className="basis-full flex items-center gap-3 text-xs -mt-0.5 mb-0.5">
                     <button type="button" className="font-semibold text-accent" onClick={() => setMarkets(MARKETS.map(m => m.id))}>
@@ -514,7 +514,7 @@ export default function OptimizerPage() {
               </div>
             )}
             {showBasketball && (
-              <div className="rounded-xl border border-n-800 bg-surface-sunken/40 p-4">
+              <div className="rounded-xl [box-shadow:var(--ring-control)] bg-surface-sunken/40 p-4">
                 <Setting label={panels > 1 ? "Basketball markets" : "Markets"}>
                   <div className="basis-full flex items-center gap-3 text-xs -mt-0.5 mb-0.5">
                     <button type="button" className="font-semibold text-accent" onClick={() => setBbFamilies(BB_FAMILIES.map(f => f.id))}>
@@ -538,7 +538,7 @@ export default function OptimizerPage() {
             {([["tennis", showTennis, tnShown, tnFamilies, setTnFamilies, "Tennis"],
                ["table_tennis", showTT, ttShown, ttFamilies, setTtFamilies, "Table tennis"]] as const).map(
               ([k, show, shown, fams, setFams, name]) => show && (
-              <div key={k} className="rounded-xl border border-n-800 bg-surface-sunken/40 p-4">
+              <div key={k} className="rounded-xl [box-shadow:var(--ring-control)] bg-surface-sunken/40 p-4">
                 <Setting label={panels > 1 ? `${name} markets` : "Markets"}>
                   <div className="basis-full flex items-center gap-3 text-xs -mt-0.5 mb-0.5">
                     <button type="button" className="font-semibold text-accent" onClick={() => setFams(RK_FAMILIES[k].map(f => f.id))}>
@@ -639,12 +639,12 @@ export default function OptimizerPage() {
                     </button>
                     {booked.share_url && (
                       <a href={booked.share_url} target="_blank" rel="noreferrer"
-                        className="flex items-center gap-1.5 rounded-lg border border-n-700 text-n-200 px-4 py-2 text-sm">
+                        className="flex items-center gap-1.5 rounded-lg [box-shadow:var(--ring-control)] text-n-200 px-4 py-2 text-sm">
                         <ExternalLink size={14} /> Open on {bookName}
                       </a>
                     )}
                     <button onClick={() => book(bookOn === "sportybet" ? "football_com" : "sportybet")} disabled={booking}
-                      className="flex items-center gap-1.5 rounded-lg border border-n-700 text-n-300 px-4 py-2 text-sm">
+                      className="flex items-center gap-1.5 rounded-lg [box-shadow:var(--ring-control)] text-n-300 px-4 py-2 text-sm">
                       {booking ? <Loader2 size={14} className="animate-spin" /> : <Ticket size={14} />}
                       Get a {bookOn === "sportybet" ? "football.com" : "SportyBet"} code too
                     </button>
@@ -662,7 +662,7 @@ export default function OptimizerPage() {
                     SportyBet lists&quot; for a slip SportyBet can book.
                   </p>
                   <button onClick={toSlip}
-                    className="w-full rounded-xl border border-n-700 text-n-200 font-semibold px-5 py-3">
+                    className="w-full rounded-xl [box-shadow:var(--ring-control)] text-n-200 font-semibold px-5 py-3">
                     Put in my bet slip
                   </button>
                 </div>
@@ -685,7 +685,7 @@ export default function OptimizerPage() {
                     {booking && bookOn === "football_com" ? "Booking…" : "Get football.com code"}
                   </button>
                   <button onClick={toSlip}
-                    className="flex-1 min-w-[12rem] rounded-xl border border-n-700 text-n-200 font-semibold px-5 py-3">
+                    className="flex-1 min-w-[12rem] rounded-xl [box-shadow:var(--ring-control)] text-n-200 font-semibold px-5 py-3">
                     Put in my bet slip
                   </button>
                 </div>

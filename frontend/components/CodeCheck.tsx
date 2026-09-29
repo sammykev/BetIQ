@@ -135,7 +135,7 @@ function ImprovedSlip({ title, blurb, slip, original }: { title: string; blurb: 
             {booking ? <Loader2 size={15} className="animate-spin" /> : <Ticket size={15} />} Get new code
           </button>
           <button onClick={() => { betSlip.clear(); betSlip.addMany(selections); betSlip.setOpen(true); }}
-            className="flex-1 min-w-[10rem] rounded-xl border border-n-700 text-n-200 font-semibold px-4 py-2.5">Put in my bet slip</button>
+            className="flex-1 min-w-[10rem] rounded-xl [box-shadow:var(--ring-control)] text-n-200 font-semibold px-4 py-2.5">Put in my bet slip</button>
         </div>
       )}
       {code?.error && <p className="text-xs text-danger">{code.error}</p>}

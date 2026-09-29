@@ -69,7 +69,7 @@ export function TrackRecord({ adminFetch }: { adminFetch: (url: string) => Promi
     <section className="card p-5 space-y-5" aria-labelledby="track-record-title">
       <div>
         <p className="eyebrow">Model track record</p>
-        <h2 id="track-record-title" className="font-display font-extrabold uppercase tracking-wide text-2xl leading-tight text-n-0 mt-0.5">
+        <h2 id="track-record-title" className="heading text-2xl mt-0.5">
           Backtest · {monthYear(m.period.from)} – {monthYear(m.period.to)}
         </h2>
         <p className="text-sm text-n-400 mt-1 max-w-2xl">

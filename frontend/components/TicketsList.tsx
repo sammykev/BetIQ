@@ -93,7 +93,7 @@ export function LegRow({ leg, showProb = false }: { leg: TicketLeg; showProb?: b
       ) : <div className="flex items-center gap-2.5 py-2">{body}</div>}
       {open && hasStats && lv && (
         <div className="pb-3">
-          <div className="rounded-xl border border-n-800 bg-surface-sunken px-3 py-3">
+          <div className="rounded-xl [box-shadow:var(--ring-control)] bg-surface-sunken px-3 py-3">
             <p className="eyebrow mb-2 flex items-center gap-1.5">
               {inPlay && <span className="w-1.5 h-1.5 rounded-full bg-danger animate-pulse" />}
               {inPlay ? `Live stats · ${lv.minute || "in play"}` : "Match stats"}
@@ -181,9 +181,9 @@ export function TicketsList({ uid, authFetch }: { uid: string; authFetch: (url: 
 
   if (!tickets.length && !older.length) {
     return (
-      <div className="card border-dashed text-center px-6 py-14 space-y-2">
+      <div className="card text-center px-6 py-14 space-y-2">
         <TicketIcon size={20} className="mx-auto text-n-400" />
-        <p className="font-display font-bold text-xl uppercase tracking-wide text-n-0">No tickets yet</p>
+        <p className="heading text-lg">No tickets yet</p>
         <p className="text-sm text-n-400 max-w-sm mx-auto">Every SportyBet code you generate here (bet slip, optimizer, code check) is saved and settled automatically as the matches finish.</p>
       </div>
     );

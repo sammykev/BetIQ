@@ -35,6 +35,10 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { useUser, SignInButton, SignUpButton } from "@clerk/nextjs";
 import { useTrialConfig } from "@/components/Trial";
 import clsx from "clsx";
+import { motion } from "motion/react";
+import { UnderlineTabs } from "@/components/ui/tabs";
+import { Empty as EmptyState } from "@/components/ui/empty";
+import { Enter, EnterGroup } from "@/components/ui/enter";
 
 // Football is always on; the rest follow their switches (admin → Access)
 const SPORTS: readonly { key: "football" | "basketball" | "tennis" | "table-tennis"; label: string; feature?: FeatureId }[] = [
@@ -98,14 +102,7 @@ function LiveDot() {
 function StatePanel({ icon, title, body, action }: {
   icon: React.ReactNode; title: string; body?: string; action?: React.ReactNode;
 }) {
-  return (
-    <div className="card border-dashed text-center px-6 py-16 space-y-3">
-      <div className="mx-auto w-12 h-12 rounded-2xl bg-n-800/70 flex items-center justify-center text-n-400">{icon}</div>
-      <p className="font-display font-bold text-xl uppercase tracking-wide text-n-0">{title}</p>
-      {body && <p className="text-sm text-n-400 max-w-sm mx-auto">{body}</p>}
-      {action && <div className="pt-2">{action}</div>}
-    </div>
-  );
+  return <EmptyState icon={icon} title={title} body={body} action={action} />;
 }
 
 function WakingUp({ onRetry }: { onRetry: () => void }) {
@@ -169,7 +166,7 @@ function AuthGate() {
         {/* Hero */}
         <section className="grid lg:grid-cols-[1.3fr_1fr] gap-12 lg:gap-14 items-center pt-10 pb-16 sm:pt-16 lg:pt-20 lg:pb-24">
           <div>
-            <p className="inline-flex items-center gap-2 text-xs font-semibold text-n-300 bg-surface border border-n-800 rounded-full pl-2.5 pr-3 py-1.5">
+            <p className="inline-flex items-center gap-2 text-xs font-semibold text-n-300 bg-surface [box-shadow:var(--ring-control)] rounded-full pl-2.5 pr-3 py-1.5">
               <LiveDot /> XGBoost + Elo model · 9 leagues · updated every 6h
             </p>
             <h1 className="display text-[52px] sm:text-7xl lg:text-[76px] text-n-0 mt-6">
@@ -227,7 +224,7 @@ function AuthGate() {
                 <span className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-brand-400/10 text-accent ring-1 ring-brand-400/20">
                   <Icon size={19} />
                 </span>
-                <p className="font-display font-bold text-xl uppercase tracking-wide text-n-0 mt-4">{title}</p>
+                <p className="heading text-lg mt-4">{title}</p>
                 <p className="text-n-400 text-sm leading-relaxed mt-1">{desc}</p>
               </div>
             ))}
@@ -604,31 +601,14 @@ export default function HomePage() {
             <LiveDot />
             {lastUpdated ? <>Model live · updated {ago(lastUpdated)}</> : "AI picks across 9 leagues"}
           </p>
-          <h1 className="display text-5xl sm:text-6xl text-n-0 mt-2">Predictions</h1>
+          <h1 className="heading text-[28px] sm:text-[36px] mt-2">Predictions</h1>
         </div>
 
         {/* Sport tabs */}
         {sports.length > 1 && (
-        <div role="tablist" aria-label="Sport" className="flex gap-6 border-b border-n-800 overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
-          {sports.map(({ key, label }) => {
-            const active = activeSport === key;
-            return (
-              <button
-                key={key}
-                role="tab"
-                aria-selected={active}
-                onClick={() => setActiveSport(key)}
-                className={clsx(
-                  "relative shrink-0 pb-3 font-display font-bold text-[17px] uppercase tracking-[0.06em] transition-colors",
-                  active ? "text-n-0" : "text-n-500 hover:text-n-300"
-                )}
-              >
-                {label}
-                {active && <span className="absolute left-0 right-0 -bottom-px h-[2px] bg-accent rounded-full" />}
-              </button>
-            );
-          })}
-        </div>
+        <UnderlineTabs label="Sport" id="sport" className="-mx-4 px-4 sm:mx-0 sm:px-0"
+          items={sports.map(({ key, label }) => ({ value: key, label }))}
+          value={activeSport} onChange={setActiveSport} />
         )}
 
         {/* Basketball: its own date strip, live & finished, history */}
@@ -660,9 +640,13 @@ export default function HomePage() {
               />
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {sportPreds.map((p, i) => (
-                  <SportCard key={i} prediction={p} onClick={() => setSelectedSportMatch(p)} />
-                ))}
+                <EnterGroup>
+                  {sportPreds.map((p, i) => (
+                    <Enter key={i} i={i} className="flex flex-col [&>*]:flex-1">
+                      <SportCard prediction={p} onClick={() => setSelectedSportMatch(p)} />
+                    </Enter>
+                  ))}
+                </EnterGroup>
               </div>
             )}
           </div>
@@ -696,7 +680,7 @@ export default function HomePage() {
           {playedToday.length > 0 && (
             <section className="space-y-3">
               <div className="flex items-baseline gap-3">
-                <h2 className="font-display font-extrabold text-2xl uppercase tracking-wide text-n-0">Live &amp; finished</h2>
+                <h2 className="heading text-xl">Live &amp; finished</h2>
                 <span className="text-xs font-semibold text-n-500 tnum">{playedToday.length}</span>
                 <span className="flex-1 h-px bg-n-800 self-center" />
               </div>
@@ -706,7 +690,7 @@ export default function HomePage() {
           )}
           {playedToday.length > 0 && dayPredictions.length > 0 && (
             <div className="flex items-baseline gap-3 pt-2">
-              <h2 className="font-display font-extrabold text-2xl uppercase tracking-wide text-n-0">Still to play</h2>
+              <h2 className="heading text-xl">Still to play</h2>
               <span className="text-xs font-semibold text-n-500 tnum">{dayPredictions.length}</span>
               <span className="flex-1 h-px bg-n-800 self-center" />
             </div>
@@ -726,7 +710,7 @@ export default function HomePage() {
                     className={clsx("chip shrink-0", active ? "chip-active" : "chip-idle")}
                   >
                     {label}
-                    <span className={clsx("tnum text-[11px] font-bold", active ? "text-ink/60" : "text-n-500")}>{n}</span>
+                    <span className={clsx("tnum text-[11px] font-bold", active ? "text-canvas/60" : "text-n-500")}>{n}</span>
                   </button>
                 );
               })}
@@ -756,7 +740,7 @@ export default function HomePage() {
               </label>
 
               {/* Sort */}
-              <div className="flex items-center gap-0.5 bg-surface border border-n-800 rounded-lg p-0.5" role="group" aria-label="Sort by">
+              <div className="flex items-center gap-0.5 bg-surface [box-shadow:var(--ring-control)] rounded-lg p-0.5" role="group" aria-label="Sort by">
                 {([
                   { key: "date",       label: "Kick-off",   icon: CalendarDays },
                   { key: "confidence", label: "Confidence", icon: Percent },
@@ -767,14 +751,17 @@ export default function HomePage() {
                     onClick={() => setSortBy(key)}
                     aria-pressed={sortBy === key}
                     className={clsx(
-                      "flex items-center gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-md text-xs font-semibold transition-all",
-                      sortBy === key
-                        ? "bg-n-800 text-n-0"
-                        : "text-n-500 hover:text-n-200"
+                      "relative flex items-center gap-1.5 px-2 sm:px-2.5 h-8 rounded-md text-xs font-semibold",
+                      "transition-[color,scale] duration-150 ease-[cubic-bezier(0.2,0,0,1)] active:scale-[0.96]",
+                      sortBy === key ? "text-n-0" : "text-n-500 hover:text-n-200"
                     )}
                   >
-                    <Icon size={12} className={clsx("hidden sm:block", sortBy === key && "text-accent")} />
-                    {label}
+                    {sortBy === key && (
+                      <motion.span layoutId="sort-pill" aria-hidden className="absolute inset-0 rounded-md bg-n-800"
+                        transition={{ type: "spring", duration: 0.3, bounce: 0 }} />
+                    )}
+                    <Icon size={12} className={clsx("relative hidden sm:block", sortBy === key && "text-accent")} />
+                    <span className="relative">{label}</span>
                   </button>
                 ))}
               </div>
@@ -822,31 +809,34 @@ export default function HomePage() {
               }
             />
           ) : (
+            <EnterGroup>
             <div className="space-y-8">
               {groups.map(({ label, items }) => (
                 <section key={label || "all"} className="space-y-3">
                   {label && (
                     <div className="flex items-baseline gap-3">
-                      <h2 className="font-display font-extrabold text-2xl uppercase tracking-wide text-n-0">{label}</h2>
+                      <h2 className="heading text-xl">{label}</h2>
                       <span className="text-xs font-semibold text-n-500 tnum">{items.length} {items.length === 1 ? "match" : "matches"}</span>
                       <span className="flex-1 h-px bg-n-800 self-center" />
                     </div>
                   )}
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                     {items.map((p, i) => (
-                      <PredictionCard
-                        key={`${p.home}-${p.away}-${p.date}-${i}`}
-                        prediction={p}
-                        savedKeys={savedKeys}
-                        onSaveToggle={onSaveToggle}
-                        showDay={!label}
-                        onClick={() => openMatch(p)}
-                      />
+                      <Enter key={`${p.home}-${p.away}-${p.date}-${i}`} i={i} className="flex flex-col [&>*]:flex-1">
+                        <PredictionCard
+                          prediction={p}
+                          savedKeys={savedKeys}
+                          onSaveToggle={onSaveToggle}
+                          showDay={!label}
+                          onClick={() => openMatch(p)}
+                        />
+                      </Enter>
                     ))}
                   </div>
                 </section>
               ))}
             </div>
+            </EnterGroup>
           )}
           </>}
         </>}

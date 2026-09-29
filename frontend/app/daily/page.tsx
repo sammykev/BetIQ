@@ -139,7 +139,7 @@ function SlipView({ s, isToday, date, retry, minProb, cut }: {
         <p className="mx-4 sm:mx-5 mb-3 text-xs text-n-400">Cut{cutBy(s) ? ` by ${cutBy(s)}` : ""}. No new slip: not enough matches
           left to play {isToday ? "today" : "that day"}.</p>
       )}
-      <section className="mx-4 sm:mx-5 mb-4 rounded-xl border border-n-800 bg-surface-sunken p-3 sm:p-4 space-y-2">
+      <section className="mx-4 sm:mx-5 mb-4 rounded-xl [box-shadow:var(--ring-control)] bg-surface-sunken p-3 sm:p-4 space-y-2">
         <p className="eyebrow flex items-center gap-1.5"><Ticket size={12} /> Booking code{b?.football_com?.code ? "s" : ""}: SportyBet{b?.football_com?.code ? " & football.com" : ""}</p>
         {b?.code ? (
           <>
@@ -298,7 +298,7 @@ function Daily() {
         </>
       )}
 
-      <div className="rounded-xl border border-n-800 bg-surface-sunken px-4 py-3 text-xs text-n-400 flex gap-2.5">
+      <div className="rounded-xl [box-shadow:var(--ring-control)] bg-surface-sunken px-4 py-3 text-xs text-n-400 flex gap-2.5">
         <Info size={14} className="text-n-500 shrink-0 mt-0.5" />
         <p>Every pick is one our model rates {pct(data.min_prob)} or more, but a slip only wins if all of them do, so its
           own chance is much lower. That&apos;s the percentage on each slip. Slips come out at midnight (Lagos), booked on

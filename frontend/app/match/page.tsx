@@ -45,7 +45,7 @@ function refereeNote(factor?: number): string | null {
 function PanelTitle({ children, right }: { children: React.ReactNode; right?: React.ReactNode }) {
   return (
     <div className="flex items-center gap-2 mb-3">
-      <h2 className="font-display font-bold text-lg uppercase tracking-[0.06em] text-n-0">{children}</h2>
+      <h2 className="heading text-[17px]">{children}</h2>
       {right && <div className="ml-auto">{right}</div>}
     </div>
   );
@@ -664,8 +664,8 @@ function MatchContent() {
 
   if (!home || !away) {
     return (
-      <div className="card border-dashed text-center py-16 space-y-4">
-        <p className="font-display font-bold text-xl uppercase text-n-0">No match selected</p>
+      <div className="card text-center py-16 space-y-4">
+        <p className="heading text-lg">No match selected</p>
         <button onClick={() => router.push("/")} className="btn-secondary">
           <ArrowLeft size={14} /> Back to predictions
         </button>
@@ -707,7 +707,7 @@ function MatchContent() {
               <div key={t.side} className="flex flex-col items-center text-center gap-3 min-w-0">
                 <TeamBadge name={t.name} size={64} />
                 <div className="min-w-0 w-full">
-                  <p className="font-display font-extrabold uppercase text-2xl sm:text-4xl leading-none text-n-0 break-words">{t.name}</p>
+                  <p className="heading text-2xl sm:text-4xl break-words">{t.name}</p>
                   <p className="eyebrow mt-1.5">{t.side}</p>
                 </div>
               </div>
@@ -769,8 +769,8 @@ function MatchContent() {
         <Locked feature="match_analysis" title="Full match analysis" perks={ANALYSIS_PERKS} />
       )}
       {error === "failed" && (
-        <div className="card border-dashed text-center py-12 px-6">
-          <p className="font-display font-bold text-xl uppercase text-n-0">Analysis unavailable</p>
+        <div className="card text-center py-12 px-6">
+          <p className="heading text-lg">Analysis unavailable</p>
           <p className="text-sm text-n-400 mt-1">The model couldn&apos;t load this match right now. Try again in a moment.</p>
         </div>
       )}

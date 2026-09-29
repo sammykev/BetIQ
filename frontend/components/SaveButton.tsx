@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import clsx from "clsx";
 import type { Prediction } from "@/lib/api";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
+import { IconSwap } from "@/components/ui/icon-swap";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
 
@@ -63,9 +64,10 @@ export function SaveButton({ prediction, savedKeys, onToggle, size = 14 }: Props
       title={saved ? "Remove from saved" : "Save pick"}
       aria-label={saved ? `Remove ${prediction.home} vs ${prediction.away} from saved` : `Save ${prediction.home} vs ${prediction.away}`}
       aria-pressed={saved}
-      className={clsx("transition-all disabled:opacity-50",
+      className={clsx("inline-flex items-center justify-center h-8 w-8 -m-1.5 rounded-lg hover:bg-n-800/60 disabled:opacity-50",
+        "transition-[color,background-color,scale] duration-150 ease-[cubic-bezier(0.2,0,0,1)] active:scale-[0.9]",
         saved ? "text-amber-500 dark:text-yellow-400" : "text-n-500 hover:text-amber-500 dark:hover:text-yellow-400")}>
-      <Star size={size} fill={saved ? "currentColor" : "none"} />
+      <IconSwap state={saved}><Star size={size} fill={saved ? "currentColor" : "none"} /></IconSwap>
     </button>
   );
 }

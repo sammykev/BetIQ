@@ -130,7 +130,7 @@ export default function AdminPage() {
           <div className="flex items-center gap-3">
             <img src="/logo.svg" alt="" className="w-9 h-9 rounded-xl" />
             <div>
-              <h1 className="font-display font-extrabold text-xl uppercase text-n-0">Control Centre</h1>
+              <h1 className="heading text-lg">Control Centre</h1>
               <p className="text-xs text-n-400">Admins only</p>
             </div>
           </div>
@@ -178,7 +178,7 @@ export default function AdminPage() {
           <div className="max-w-6xl mx-auto px-4 pt-3 flex items-center gap-3">
             <img src="/logo.svg" alt="" className="w-8 h-8 rounded-lg" />
             <div className="min-w-0">
-              <h1 className="font-display font-extrabold text-lg uppercase leading-none text-n-0">Control Centre</h1>
+              <h1 className="heading text-base">Control Centre</h1>
               <p className="text-[11px] text-n-400 truncate">
                 {whoami?.via === "clerk" ? "Signed in as admin" : "Admin secret"}<span className="hidden sm:inline"> · changes apply instantly</span>
               </p>

@@ -11,6 +11,8 @@ import { TennisFacts } from "./TennisFacts";
 import { RacketLines } from "./RacketLines";
 import type { RacketPrediction } from "@/lib/racket";
 import type { RacketSport } from "@/lib/tennis";
+import { UnderlineTabs } from "@/components/ui/tabs";
+import { ModalFrame } from "@/components/ui/dialog";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
 
@@ -136,20 +138,13 @@ export function SportModal({ prediction: p, onClose }: Props) {
       .finally(() => { setLoading(false); clearTimeout(timer); });
   }, [p.home, p.away, p.date, p.sport]);
 
-  useEffect(() => {
-    const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", h);
-    return () => window.removeEventListener("keydown", h);
-  }, [onClose]);
 
   const sportLabel: Record<string, string> = {
     basketball: "Basketball", tennis: "Lawn Tennis", table_tennis: "Table Tennis",
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-ink/80 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto"
-      onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="w-full max-w-2xl my-8 card !rounded-3xl shadow-pop overflow-hidden animate-scale-in">
+    <ModalFrame onClose={onClose} title={`${p.home} vs ${p.away}`}>
 
         {/* Header */}
         <div className="border-b border-zinc-100 dark:border-zinc-800 p-5 sm:p-6">
@@ -166,9 +161,9 @@ export function SportModal({ prediction: p, onClose }: Props) {
                 {p.date}{p.time && p.time !== "TBD" ? ` · ${p.time}` : ""}
               </p>
             </div>
-            <button onClick={onClose}
-              className="p-2 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-lg transition-colors">
-              <X size={16} className="text-zinc-400" />
+            <button onClick={onClose} aria-label="Close"
+              className="inline-flex items-center justify-center h-9 w-9 -mr-2 -mt-1 rounded-lg text-n-400 hover:text-n-0 hover:bg-n-800/60 transition-[color,background-color,scale] duration-150 active:scale-[0.96]">
+              <X size={18} />
             </button>
           </div>
 
@@ -176,7 +171,7 @@ export function SportModal({ prediction: p, onClose }: Props) {
             <div className="flex-1 flex flex-col items-center text-center gap-2">
               <Avatar staticImage={assets.homeImage} color={assets.homeColor} name={p.home} face={assets.isPlayerFace} sport={p.sport} />
               <div>
-                <p className="font-display font-extrabold uppercase text-2xl leading-none text-n-0">{p.home}</p>
+                <p className="heading text-xl">{p.home}</p>
                 <p className="tnum text-[11px] text-zinc-400 dark:text-zinc-500">{Math.round(p.p_home * 100)}% win prob</p>
               </div>
             </div>
@@ -184,7 +179,7 @@ export function SportModal({ prediction: p, onClose }: Props) {
             <div className="flex-1 flex flex-col items-center text-center gap-2">
               <Avatar staticImage={assets.awayImage} color={assets.awayColor} name={p.away} face={assets.isPlayerFace} sport={p.sport} />
               <div>
-                <p className="font-display font-extrabold uppercase text-2xl leading-none text-n-0">{p.away}</p>
+                <p className="heading text-xl">{p.away}</p>
                 <p className="tnum text-[11px] text-zinc-400 dark:text-zinc-500">{Math.round(p.p_away * 100)}% win prob</p>
               </div>
             </div>
@@ -192,17 +187,10 @@ export function SportModal({ prediction: p, onClose }: Props) {
         </div>
 
         {hasFacts && (
-          <div role="tablist" aria-label="Match view" className="flex gap-6 px-5 sm:px-6 border-b border-n-800">
-            {(hasLines ? [["form", "Form & stats"], ["lines", "All lines"]] as const
-                       : [["form", "Form & stats"], ["markets", "Markets"]] as const).map(([id, label]) => (
-              <button key={id} role="tab" aria-selected={view === id} onClick={() => setView(id)}
-                className={clsx("relative py-3 font-display font-bold text-[15px] uppercase tracking-[0.06em] transition-colors",
-                  view === id ? "text-n-0" : "text-n-500 hover:text-n-300")}>
-                {label}
-                {view === id && <span className="absolute left-0 right-0 -bottom-px h-[2px] bg-accent rounded-full" />}
-              </button>
-            ))}
-          </div>
+          <UnderlineTabs label="Match view" className="px-5 sm:px-6"
+            items={(hasLines ? [["form", "Form & stats"], ["lines", "All lines"]] as const
+                             : [["form", "Form & stats"], ["markets", "Markets"]] as const).map(([value, label]) => ({ value, label }))}
+            value={view} onChange={setView} />
         )}
 
         {view === "form" ? (
@@ -279,7 +267,7 @@ export function SportModal({ prediction: p, onClose }: Props) {
             return (
               <div key={market.id} className="space-y-2">
                 <div className="flex items-center gap-2">
-                  <h3 className="font-display font-bold text-lg uppercase tracking-[0.06em] text-n-0">{market.name}</h3>
+                  <h3 className="heading text-[17px]">{market.name}</h3>
                   <span className="ml-auto text-[10px] text-zinc-400 dark:text-zinc-600">Best available odds</span>
                 </div>
                 <div className="space-y-2">
@@ -296,7 +284,6 @@ export function SportModal({ prediction: p, onClose }: Props) {
           </p>
         </div>
         )}
-      </div>
-    </div>
+    </ModalFrame>
   );
 }

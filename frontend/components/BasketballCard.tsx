@@ -8,6 +8,7 @@ import { kickoff } from "@/lib/matchTime";
 import { useBetSlip } from "@/lib/useBetSlip";
 import { isSelected } from "@/lib/slip";
 import { lineSelection, type BasketballPrediction, type BBLine } from "@/lib/basketball";
+import { IconSwap } from "@/components/ui/icon-swap";
 
 /** A team's crest (Sportradar, by SportyBet's team id), or its initials. */
 export function Crest({ src, name, size = 30 }: { src?: string | null; name: string; size?: number }) {
@@ -48,9 +49,9 @@ export function LineRow({ p, l, compact = false }: { p: BasketballPrediction; l:
   const inSlip = isSelected(items, sel);
   return (
     <button type="button" onClick={e => { e.stopPropagation(); toggle(sel); }}
-      className={clsx("w-full flex items-center gap-2.5 rounded-lg border text-left transition-colors",
+      className={clsx("w-full flex items-center gap-2.5 rounded-lg text-left transition-[background-color,box-shadow,scale] duration-150 ease-[cubic-bezier(0.2,0,0,1)] active:scale-[0.98]",
         compact ? "px-2.5 py-1.5" : "px-3 py-2",
-        inSlip ? "border-accent/50 bg-brand-400/10" : "border-n-800 bg-surface-sunken hover:bg-surface-raised")}
+        inSlip ? "bg-brand-400/10 [box-shadow:inset_0_0_0_1px_rgb(var(--accent)/0.45)]" : "bg-surface-sunken hover:bg-surface-raised [box-shadow:var(--ring-control)]")}
       aria-pressed={inSlip} aria-label={`${inSlip ? "Remove" : "Add"} ${l.label} ${inSlip ? "from" : "to"} the slip`}>
       <span className="min-w-0 flex-1">
         <span className={clsx("block font-semibold text-n-0", compact ? "text-[13px] truncate" : "text-sm line-clamp-2")}>{l.label}</span>
@@ -62,7 +63,7 @@ export function LineRow({ p, l, compact = false }: { p: BasketballPrediction; l:
       <span className="tnum font-mono text-[12px] text-n-300 w-10 text-right shrink-0">{l.odds.toFixed(2)}</span>
       <span className={clsx("inline-flex items-center justify-center w-5 h-5 rounded-full shrink-0",
         inSlip ? "bg-accent text-ink" : "bg-n-800 text-n-400")}>
-        {inSlip ? <Check size={12} /> : <Plus size={12} />}
+        <IconSwap state={inSlip}>{inSlip ? <Check size={12} /> : <Plus size={12} />}</IconSwap>
       </span>
     </button>
   );
@@ -76,7 +77,7 @@ export function BasketballCard({ p, onOpen }: { p: BasketballPrediction; onOpen:
   const homeFav = p.p_home >= p.p_away;
   const conf = Math.round(p.tip_confidence * 100);
   return (
-    <article onClick={onOpen} className="card card-interactive overflow-hidden flex flex-col">
+    <article onClick={onOpen} className="card-interactive overflow-hidden flex flex-col">
       <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-n-800/80">
         <div className="flex items-center gap-1.5 min-w-0">
           <CompetitionBadge name={p.league_name} fallbackEmoji={p.flag} size={13} sport="Basketball" />
@@ -123,8 +124,8 @@ export function BasketballCard({ p, onOpen }: { p: BasketballPrediction; onOpen:
         )}
 
         <div className="mt-auto flex items-center justify-between gap-2 pt-1 text-[11px] text-n-500">
-          <span className={clsx("rounded-full border px-2 py-0.5 font-semibold",
-            p.rated ? "border-accent/30 text-accent bg-brand-400/10" : "border-n-700 text-n-400")}>
+          <span className={clsx("rounded-full px-2 py-0.5 font-semibold",
+            p.rated ? "text-accent bg-brand-400/10 [box-shadow:inset_0_0_0_1px_rgb(var(--accent)/0.3)]" : "text-n-400 [box-shadow:var(--ring-control)]")}>
             {p.rated ? "Rated teams" : "SportyBet's lines"}
           </span>
           <span className="flex items-center gap-0.5 font-semibold text-n-300">

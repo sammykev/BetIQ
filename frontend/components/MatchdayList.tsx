@@ -9,6 +9,7 @@ import { localTime } from "@/lib/matchTime";
 import { MARKET_LABELS, awaitingScore, lost, won, type Grade, type MatchdayMatch } from "@/lib/matchday";
 import { LiveStats } from "@/components/LiveStats";
 import { useAccess } from "@/lib/access";
+import { Reveal } from "@/components/ui/reveal";
 
 const pct = (x?: number | null) => (typeof x === "number" ? `${Math.round(x * 100)}%` : "—");
 
@@ -90,7 +91,7 @@ function Detail({ m, onOpen }: { m: MatchdayMatch; onOpen?: (m: MatchdayMatch) =
         </div>
         {facts.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
-            {facts.map(f => <span key={f} className="text-[11px] text-n-300 bg-surface border border-n-800 rounded-md px-2 py-0.5">{f}</span>)}
+            {facts.map(f => <span key={f} className="text-[11px] text-n-300 bg-surface [box-shadow:var(--ring-control)] rounded-md px-2 py-0.5">{f}</span>)}
           </div>
         )}
       </div>
@@ -103,7 +104,7 @@ function Detail({ m, onOpen }: { m: MatchdayMatch; onOpen?: (m: MatchdayMatch) =
           ) : grades.length === 0 ? (
             <p className="text-xs text-n-400">No picks to grade for this match.</p>
           ) : (
-            <ul className="divide-y divide-n-800 rounded-xl border border-n-800 bg-surface">
+            <ul className="divide-y divide-n-800 rounded-xl [box-shadow:var(--ring-control)] bg-surface">
               {grades.map(([market, g]) => (
                 <li key={market} className="flex items-center gap-3 px-3 py-2 text-xs">
                   <span className="w-28 shrink-0 text-n-400">{MARKET_LABELS[market] ?? market}</span>
@@ -115,7 +116,7 @@ function Detail({ m, onOpen }: { m: MatchdayMatch; onOpen?: (m: MatchdayMatch) =
             </ul>
           )}
           {liveStats ? (
-            <div className="rounded-xl border border-n-800 bg-surface px-3 py-3">
+            <div className="rounded-xl [box-shadow:var(--ring-control)] bg-surface px-3 py-3">
               <p className="eyebrow mb-2">Match stats</p>
               <LiveStats m={m} compact />
             </div>
@@ -132,7 +133,7 @@ function Detail({ m, onOpen }: { m: MatchdayMatch; onOpen?: (m: MatchdayMatch) =
       {m.status === "live" && (
         <div className="space-y-2">
           {liveStats && (
-            <div className="rounded-xl border border-n-800 bg-surface px-3 py-3">
+            <div className="rounded-xl [box-shadow:var(--ring-control)] bg-surface px-3 py-3">
               <p className="eyebrow mb-2 flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-danger animate-pulse" /> Live stats · {m.minute || "in play"}
               </p>
@@ -162,7 +163,7 @@ function Row({ m, open, onToggle, onOpen }: {
   return (
     <li>
       <button onClick={onToggle} aria-expanded={open}
-        className="w-full grid grid-cols-[44px_minmax(0,1fr)_auto] items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 text-left hover:bg-surface-raised/60 transition-colors">
+        className="w-full grid grid-cols-[44px_minmax(0,1fr)_auto] items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 text-left hover:bg-surface-raised/60 transition-colors duration-150">
         <span className="text-center"><StatusCell m={m} /></span>
         <span className="min-w-0 space-y-1">
           {[m.home, m.away].map((team, i) => (
@@ -182,11 +183,11 @@ function Row({ m, open, onToggle, onOpen }: {
             <span className="block text-[11px] text-n-500 tnum">{pct(lead.prob)}</span>
           </span>
           {m.status === "finished" && lead.grade ? <VerdictIcon verdict={lead.grade.verdict} /> : (
-            <ChevronDown size={14} className={clsx("text-n-500 shrink-0 transition-transform", open && "rotate-180")} />
+            <ChevronDown size={14} className={clsx("text-n-500 shrink-0 transition-transform duration-200 ease-[cubic-bezier(0.2,0,0,1)]", open && "rotate-180")} />
           )}
         </span>
       </button>
-      {open && <Detail m={m} onOpen={onOpen} />}
+      <Reveal open={open}><Detail m={m} onOpen={onOpen} /></Reveal>
     </li>
   );
 }

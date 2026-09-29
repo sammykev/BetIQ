@@ -5,6 +5,7 @@ import clsx from "clsx";
 import { Check, Plus } from "lucide-react";
 import { useBetSlip } from "@/lib/useBetSlip";
 import { isSelected, type SlipSelection } from "@/lib/slip";
+import { IconSwap } from "@/components/ui/icon-swap";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
 
@@ -37,7 +38,7 @@ export function Goalscorers({ home, away, date, time, league }: {
   return (
     <section className="card p-4 sm:p-5">
       <div className="flex items-center gap-2 mb-1">
-        <h2 className="font-display font-bold text-lg uppercase tracking-[0.06em] text-n-0">Goalscorers</h2>
+        <h2 className="heading text-[17px]">Goalscorers</h2>
         <span className="ml-auto text-[11px] text-n-500">Our chance · SportyBet</span>
       </div>
       <p className="text-[11px] text-n-500 mb-3">
@@ -59,11 +60,11 @@ export function Goalscorers({ home, away, date, time, league }: {
                   {s.pen_share && s.pen_share > 0.3 ? " · takes penalties" : ""}
                 </span>
               </span>
-              {value && <span className="rounded-full border border-accent/30 bg-brand-400/10 px-1.5 text-[10px] font-bold text-accent">Value</span>}
+              {value && <span className="rounded-full bg-brand-400/10 [box-shadow:inset_0_0_0_1px_rgb(var(--accent)/0.3)] px-1.5 text-[10px] font-bold text-accent">Value</span>}
               <span className="tnum font-display font-extrabold text-accent text-[15px] shrink-0">{Math.round(s.prob * 100)}%</span>
               <span className="tnum font-mono text-[12px] text-n-300 w-11 text-right shrink-0">{s.odds.toFixed(2)}</span>
               <span className={clsx("inline-flex items-center justify-center w-5 h-5 rounded-full shrink-0",
-                on ? "bg-accent text-ink" : "bg-n-800 text-n-400")}>{on ? <Check size={12} /> : <Plus size={12} />}</span>
+                on ? "bg-accent text-ink" : "bg-n-800 text-n-400")}><IconSwap state={on}>{on ? <Check size={12} /> : <Plus size={12} />}</IconSwap></span>
             </button>
           );
         })}

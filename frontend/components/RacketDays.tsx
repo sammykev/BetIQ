@@ -13,27 +13,22 @@ import { dayLabel, localDateStr } from "@/lib/matchTime";
 import { fetchRKMatchday, fetchRKStrip, RK_WORDS, type RacketPrediction, type RKDaySummary,
          type RKMatchdayMatch, type RKMatchdayResponse, type RKStripResponse } from "@/lib/racket";
 import type { RacketSport } from "@/lib/tennis";
+import { Empty as EmptyState } from "@/components/ui/empty";
+import { Enter, EnterGroup } from "@/components/ui/enter";
 
 function Empty({ icon, title, body, action }: { icon: React.ReactNode; title: string; body?: string; action?: React.ReactNode }) {
-  return (
-    <div className="card border-dashed text-center px-6 py-16 space-y-3">
-      <div className="mx-auto w-12 h-12 rounded-2xl bg-n-800/70 flex items-center justify-center text-n-400">{icon}</div>
-      <p className="font-display font-bold text-xl uppercase tracking-wide text-n-0">{title}</p>
-      {body && <p className="text-sm text-n-400 max-w-sm mx-auto">{body}</p>}
-      {action && <div className="pt-2">{action}</div>}
-    </div>
-  );
+  return <EmptyState icon={icon} title={title} body={body} action={action} />;
 }
 
 function Count({ n, active }: { n: number; active: boolean }) {
   return <span className={clsx("tnum text-[10px] px-1.5 py-0.5 rounded-full font-semibold",
-    active ? "bg-ink/15 text-ink" : "bg-n-800 text-n-400")}>{n}</span>;
+    active ? "bg-canvas/15 text-canvas" : "bg-n-800 text-n-400")}>{n}</span>;
 }
 
 function Heading({ title, n }: { title: string; n: number }) {
   return (
     <div className="flex items-baseline gap-3">
-      <h2 className="font-display font-extrabold text-2xl uppercase tracking-wide text-n-0">{title}</h2>
+      <h2 className="heading text-xl">{title}</h2>
       <span className="text-xs font-semibold text-n-500 tnum">{n}</span>
       <span className="flex-1 h-px bg-n-800 self-center" />
     </div>
@@ -186,12 +181,15 @@ export function RacketDays({ sport, preds, loading, onOpen }: {
               </div>
             </div>
           )}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {shown.map(p => (
-              <SportCard key={p.sportybet_event_id || `${p.home}-${p.date}`} prediction={p as unknown as SportPrediction}
-                onClick={() => onOpen(p)} />
-            ))}
-          </div>
+          <EnterGroup>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {shown.map((p, i) => (
+                <Enter key={p.sportybet_event_id || `${p.home}-${p.date}`} i={i} className="flex flex-col [&>*]:flex-1">
+                  <SportCard prediction={p as unknown as SportPrediction} onClick={() => onOpen(p)} />
+                </Enter>
+              ))}
+            </div>
+          </EnterGroup>
         </>}
       </>}
     </div>

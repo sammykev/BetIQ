@@ -8,6 +8,7 @@ import { useBetSlip } from "@/lib/useBetSlip";
 import { isSelected } from "@/lib/slip";
 import { fetchRKMatch, rkSelection, RK_FAMILIES, RK_MODEL_NOTE, type RacketPrediction, type RKLine } from "@/lib/racket";
 import type { RacketSport } from "@/lib/tennis";
+import { IconSwap } from "@/components/ui/icon-swap";
 
 /** One line: our chance, SportyBet's price, and a tap to add it to the slip. */
 function Row({ p, l }: { p: RacketPrediction; l: RKLine }) {
@@ -16,8 +17,8 @@ function Row({ p, l }: { p: RacketPrediction; l: RKLine }) {
   const inSlip = isSelected(items, sel);
   return (
     <button type="button" onClick={() => toggle(sel)}
-      className={clsx("w-full flex items-center gap-2.5 rounded-lg border text-left transition-colors px-3 py-2",
-        inSlip ? "border-accent/50 bg-brand-400/10" : "border-n-800 bg-surface-sunken hover:bg-surface-raised")}
+      className={clsx("w-full flex items-center gap-2.5 rounded-lg text-left transition-[background-color,box-shadow,scale] duration-150 ease-[cubic-bezier(0.2,0,0,1)] active:scale-[0.98] px-3 py-2",
+        inSlip ? "bg-brand-400/10 [box-shadow:inset_0_0_0_1px_rgb(var(--accent)/0.45)]" : "bg-surface-sunken hover:bg-surface-raised [box-shadow:var(--ring-control)]")}
       aria-pressed={inSlip} aria-label={`${inSlip ? "Remove" : "Add"} ${l.label} ${inSlip ? "from" : "to"} the slip`}>
       <span className="min-w-0 flex-1">
         <span className="block font-semibold text-n-0 text-sm line-clamp-2">{l.label}</span>
@@ -27,7 +28,7 @@ function Row({ p, l }: { p: RacketPrediction; l: RKLine }) {
       <span className="tnum font-mono text-[12px] text-n-300 w-10 text-right shrink-0">{l.odds.toFixed(2)}</span>
       <span className={clsx("inline-flex items-center justify-center w-5 h-5 rounded-full shrink-0",
         inSlip ? "bg-accent text-ink" : "bg-n-800 text-n-400")}>
-        {inSlip ? <Check size={12} /> : <Plus size={12} />}
+        <IconSwap state={inSlip}>{inSlip ? <Check size={12} /> : <Plus size={12} />}</IconSwap>
       </span>
     </button>
   );
@@ -64,7 +65,7 @@ export function RacketLines({ sport, event, fallback }: { sport: RacketSport; ev
       {d.set_scores && (
         <div className="flex flex-wrap gap-1.5">
           {Object.entries(d.set_scores).slice(0, 6).map(([score, v]) => (
-            <span key={score} className="text-[11px] text-n-300 bg-surface-sunken border border-n-800 rounded-md px-2 py-0.5 tnum">
+            <span key={score} className="text-[11px] text-n-300 bg-surface-sunken [box-shadow:var(--ring-control)] rounded-md px-2 py-0.5 tnum">
               {score} · {Math.round(v * 100)}%
             </span>
           ))}
@@ -102,7 +103,7 @@ export function RacketLines({ sport, event, fallback }: { sport: RacketSport; ev
             if (!rows.length) return null;
             return (
               <section key={f.id} className="space-y-1.5">
-                <h3 className="font-display font-bold text-sm uppercase tracking-[0.06em] text-n-0">{f.name}</h3>
+                <h3 className="heading text-sm">{f.name}</h3>
                 {rows.map(l => <Row key={`${l.market}:${l.code}`} p={d} l={l} />)}
               </section>
             );

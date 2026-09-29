@@ -1,6 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import * as RD from "@radix-ui/react-dialog";
+import { AnimatePresence, motion } from "motion/react";
+import { EASE } from "@/lib/utils";
 import clsx from "clsx";
 import {
   Ticket, X, Trash2, Loader2, Copy, Check, ExternalLink, AlertTriangle, CircleSlash,
@@ -112,6 +115,16 @@ function CopyButton({ text, label, primary }: { text: string; label: string; pri
   );
 }
 
+const WIDE = "(min-width: 640px)";
+/** True from the sm breakpoint up (the drawer slides from the right there). */
+function useWide() {
+  return useSyncExternalStore(
+    cb => { const m = window.matchMedia(WIDE); m.addEventListener("change", cb); return () => m.removeEventListener("change", cb); },
+    () => window.matchMedia(WIDE).matches,
+    () => false,
+  );
+}
+
 /** The slip drawer: picks, combined probability, and booking. */
 export function SlipDrawer() {
   const { items, remove, clear, open, setOpen } = useBetSlip();
@@ -119,23 +132,14 @@ export function SlipDrawer() {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<ConvertResult | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
-  const panel = useRef<HTMLDivElement>(null);
   const { user } = useUser();
+  const wide = useWide();
   const authFetch = useAuthedFetch();
 
   // Any change to the slip makes an old booking code stale
   const signature = items.map(s => `${matchKey(s)}:${s.market}:${s.code}`).join("|");
   useEffect(() => { setResult(null); setFailed(null); }, [signature, platform]);
 
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
-    window.addEventListener("keydown", onKey);
-    panel.current?.focus();
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, setOpen]);
-
-  if (!open) return null;
 
   const prob = combinedProbability(items);
   const byKey = new Map((result?.picks ?? []).map(p => [p.key, p]));
@@ -162,123 +166,140 @@ export function SlipDrawer() {
   };
 
   return (
-    <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-labelledby="slip-title">
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-[2px] animate-fade-in" onClick={() => setOpen(false)} />
-      <div
-        ref={panel}
-        tabIndex={-1}
-        className="absolute inset-x-0 bottom-0 max-h-[88vh] sm:inset-y-0 sm:left-auto sm:right-0 sm:max-h-none sm:w-[420px] flex flex-col bg-surface border-t sm:border-t-0 sm:border-l border-n-800 rounded-t-2xl sm:rounded-none shadow-pop outline-none animate-slide-up"
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-n-800">
-          <div>
-            <p className="eyebrow">Booking cart</p>
-            <h2 id="slip-title" className="font-display font-extrabold uppercase text-2xl leading-none text-n-0 mt-0.5">
-              Bet slip <span className="text-accent tnum">{items.length}</span>
-            </h2>
-          </div>
-          <div className="flex items-center gap-1">
-            {items.length > 0 && (
-              <button onClick={clear} className="inline-flex items-center gap-1 text-xs font-semibold text-n-400 hover:text-danger px-2 py-1.5 rounded-lg transition-colors">
-                <Trash2 size={13} /> Clear
-              </button>
-            )}
-            <button onClick={() => setOpen(false)} aria-label="Close bet slip" className="p-2 rounded-lg text-n-400 hover:text-n-0 hover:bg-n-800 transition-colors">
-              <X size={16} />
-            </button>
-          </div>
-        </div>
-
-        {/* Picks */}
-        <div className="flex-1 overflow-y-auto px-4 py-4">
-          {items.length === 0 ? (
-            <div className="text-center py-14 px-6">
-              <Ticket size={28} className="mx-auto text-n-600" />
-              <p className="font-display font-bold uppercase text-lg text-n-0 mt-3">Your slip is empty</p>
-              <p className="text-sm text-n-400 mt-1">Tap <span className="font-semibold text-n-200">+ Slip</span> on a prediction, or any market on a match page, to add it here.</p>
-            </div>
-          ) : (
-            <ul className="space-y-2">
-              {items.map(s => (
-                <SlipRow key={matchKey(s)} s={s} result={byKey.get(matchKey(s))} onRemove={() => remove(matchKey(s))} />
-              ))}
-            </ul>
-          )}
-        </div>
-
-        {/* Book */}
-        {items.length > 0 && (
-          <div className="border-t border-n-800 px-5 py-4 space-y-3 bg-surface-raised">
-            <div className="flex items-end justify-between gap-3">
-              <div>
-                <p className="eyebrow">All {items.length} win</p>
-                <p className="font-display font-extrabold text-3xl leading-none text-n-0 tnum mt-0.5">
-                  {prob === null ? "–" : `${(prob * 100).toFixed(prob < 0.1 ? 1 : 0)}%`}
-                </p>
-                <p className="text-[10px] text-n-500 mt-0.5">Model estimate, matches treated as independent</p>
-              </div>
-              {result?.total_odds && (
-                <div className="text-right">
-                  <p className="eyebrow">Code odds</p>
-                  <p className="font-display font-extrabold text-3xl leading-none text-accent tnum mt-0.5">{result.total_odds.toFixed(2)}</p>
-                </div>
-              )}
-            </div>
-
-            <div role="radiogroup" aria-label="Bookmaker" className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-surface-sunken">
-              {([["sportybet", "SportyBet"], ["football_com", "football.com"], ["other", "Other"]] as const).map(([id, label]) => (
-                <button key={id} role="radio" aria-checked={platform === id} onClick={() => setPlatform(id)}
-                  className={clsx("rounded-lg py-2 text-sm font-semibold transition-colors",
-                    platform === id ? "bg-surface text-n-0 shadow-sm" : "text-n-400 hover:text-n-200")}>
-                  {label}
-                </button>
-              ))}
-            </div>
-
-            {platform === "other" ? (
-              <div className="space-y-2">
-                <p className="text-xs text-n-400">
-                  Bet9ja, 1xBet, BetKing and others don&apos;t offer booking codes to outside apps yet. Copy your picks and add them in the bookmaker&apos;s app.
-                </p>
-                <CopyButton text={slipAsText(items)} label="Copy picks" primary />
-              </div>
-            ) : result?.code ? (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-2 rounded-xl border border-brand-400/50 bg-brand-400/10 pl-4 pr-2 py-2">
+    <RD.Root open={open} onOpenChange={setOpen}>
+      <AnimatePresence>
+        {open && (
+          <RD.Portal forceMount>
+            <RD.Overlay forceMount asChild>
+              <motion.div className="fixed inset-0 z-50 bg-[rgb(7_11_20/0.5)] backdrop-blur-[2px]"
+                initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, transition: { duration: 0.15 } }}
+                transition={{ duration: 0.2, ease: EASE }} />
+            </RD.Overlay>
+            <RD.Content forceMount asChild aria-describedby={undefined}>
+              <motion.div
+                // Phones: a sheet from the bottom; wider: a panel from the right
+                initial={wide ? { x: 32, opacity: 0 } : { y: 48, opacity: 0 }}
+                animate={{ x: 0, y: 0, opacity: 1 }}
+                exit={wide ? { x: 16, opacity: 0, transition: { duration: 0.15, ease: "easeOut" } }
+                           : { y: 24, opacity: 0, transition: { duration: 0.15, ease: "easeOut" } }}
+                transition={{ duration: 0.3, ease: EASE }}
+                className="fixed z-50 inset-x-0 bottom-0 max-h-[88dvh] sm:inset-y-0 sm:left-auto sm:right-0 sm:max-h-none sm:w-[420px] flex flex-col bg-surface rounded-t-3xl sm:rounded-none [box-shadow:var(--shadow-pop)] outline-none"
+              >
+                {/* Header */}
+                <div className="flex items-center justify-between px-5 py-4 border-b border-n-800">
                   <div>
-                    <p className="eyebrow">{BOOK_NAME[platform]} code</p>
-                    <p className="font-mono font-bold text-xl tracking-[0.18em] text-n-0">{result.code}</p>
+                    <p className="eyebrow">Booking cart</p>
+                    <RD.Title className="heading text-xl mt-0.5">
+                      Bet slip <span className="text-accent tnum">{items.length}</span>
+                    </RD.Title>
                   </div>
-                  <CopyButton text={result.code} label="Copy" primary />
+                  <div className="flex items-center gap-1">
+                    {items.length > 0 && (
+                      <button onClick={clear} className="inline-flex items-center gap-1 text-xs font-semibold text-n-400 hover:text-danger px-2 py-1.5 rounded-lg transition-colors">
+                        <Trash2 size={13} /> Clear
+                      </button>
+                    )}
+                    <RD.Close aria-label="Close bet slip"
+                      className="inline-flex items-center justify-center h-9 w-9 rounded-lg text-n-400 hover:text-n-0 hover:bg-n-800/60 transition-[color,background-color,scale] duration-150 active:scale-[0.96]">
+                      <X size={18} />
+                    </RD.Close>
+                  </div>
                 </div>
-                {result.share_url && (
-                  <a href={result.share_url} target="_blank" rel="noopener noreferrer" className="btn-secondary w-full !text-sm justify-center">
-                    <ExternalLink size={14} /> Open on {BOOK_NAME[platform]}
-                  </a>
+
+                {/* Picks */}
+                <div className="flex-1 overflow-y-auto px-4 py-4">
+                  {items.length === 0 ? (
+                    <div className="text-center py-14 px-6">
+                      <Ticket size={28} className="mx-auto text-n-600" />
+                      <p className="heading text-base mt-3">Your slip is empty</p>
+                      <p className="text-sm text-n-400 mt-1">Tap <span className="font-semibold text-n-200">Add to slip</span> on a prediction, or any market on a match page, to add it here.</p>
+                    </div>
+                  ) : (
+                    <ul className="space-y-2">
+                      {items.map(s => (
+                        <SlipRow key={matchKey(s)} s={s} result={byKey.get(matchKey(s))} onRemove={() => remove(matchKey(s))} />
+                      ))}
+                    </ul>
+                  )}
+                </div>
+
+                {/* Book */}
+                {items.length > 0 && (
+                  <div className="border-t border-n-800 px-5 py-4 space-y-3 bg-surface-raised">
+                    <div className="flex items-end justify-between gap-3">
+                      <div>
+                        <p className="eyebrow">All {items.length} win</p>
+                        <p className="font-display font-extrabold text-3xl leading-none text-n-0 tnum mt-0.5">
+                          {prob === null ? "–" : `${(prob * 100).toFixed(prob < 0.1 ? 1 : 0)}%`}
+                        </p>
+                        <p className="text-[10px] text-n-500 mt-0.5">Model estimate, matches treated as independent</p>
+                      </div>
+                      {result?.total_odds && (
+                        <div className="text-right">
+                          <p className="eyebrow">Code odds</p>
+                          <p className="font-display font-extrabold text-3xl leading-none text-accent tnum mt-0.5">{result.total_odds.toFixed(2)}</p>
+                        </div>
+                      )}
+                    </div>
+
+                    <div role="radiogroup" aria-label="Bookmaker" className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-surface-sunken">
+                      {([["sportybet", "SportyBet"], ["football_com", "football.com"], ["other", "Other"]] as const).map(([id, label]) => (
+                        <button key={id} role="radio" aria-checked={platform === id} onClick={() => setPlatform(id)}
+                          className={clsx("rounded-lg py-2 text-sm font-semibold transition-colors",
+                            platform === id ? "bg-surface text-n-0 shadow-sm" : "text-n-400 hover:text-n-200")}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {platform === "other" ? (
+                      <div className="space-y-2">
+                        <p className="text-xs text-n-400">
+                          Bet9ja, 1xBet, BetKing and others don&apos;t offer booking codes to outside apps yet. Copy your picks and add them in the bookmaker&apos;s app.
+                        </p>
+                        <CopyButton text={slipAsText(items)} label="Copy picks" primary />
+                      </div>
+                    ) : result?.code ? (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-2 rounded-xl border border-brand-400/50 bg-brand-400/10 pl-4 pr-2 py-2">
+                          <div>
+                            <p className="eyebrow">{BOOK_NAME[platform]} code</p>
+                            <p className="font-mono font-bold text-xl tracking-[0.18em] text-n-0">{result.code}</p>
+                          </div>
+                          <CopyButton text={result.code} label="Copy" primary />
+                        </div>
+                        {result.share_url && (
+                          <a href={result.share_url} target="_blank" rel="noopener noreferrer" className="btn-secondary w-full !text-sm justify-center">
+                            <ExternalLink size={14} /> Open on {BOOK_NAME[platform]}
+                          </a>
+                        )}
+                        {result.picks.some(p => p.status !== "booked") && (
+                          <p className="text-[11px] text-warn">Highlighted picks aren&apos;t in this code — add them on {BOOK_NAME[platform]} by hand.</p>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {notBookable > 0 && (
+                          <p className="text-[11px] text-warn flex items-start gap-1.5">
+                            <AlertTriangle size={12} className="mt-px shrink-0" />
+                            {notBookable === 1 ? "1 pick is" : `${notBookable} picks are`} in a market {BOOK_NAME[platform]} codes can&apos;t include; they&apos;ll be left out.
+                          </p>
+                        )}
+                        {(failed || result?.error) && <p className="text-xs text-danger">{failed || result?.error}</p>}
+                        <button onClick={book} disabled={busy || notBookable === items.length} className="btn-primary w-full justify-center">
+                          {busy ? <Loader2 size={15} className="animate-spin" /> : <Ticket size={15} />}
+                          {busy ? `Booking on ${BOOK_NAME[platform]}…` : `Get ${BOOK_NAME[platform]} code`}
+                        </button>
+                      </div>
+                    )}
+                    <p className="text-[10px] text-n-500 text-center">18+ · Odds can change before you place the bet. Bet responsibly.</p>
+                  </div>
                 )}
-                {result.picks.some(p => p.status !== "booked") && (
-                  <p className="text-[11px] text-warn">Highlighted picks aren&apos;t in this code — add them on {BOOK_NAME[platform]} by hand.</p>
-                )}
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {notBookable > 0 && (
-                  <p className="text-[11px] text-warn flex items-start gap-1.5">
-                    <AlertTriangle size={12} className="mt-px shrink-0" />
-                    {notBookable === 1 ? "1 pick is" : `${notBookable} picks are`} in a market {BOOK_NAME[platform]} codes can&apos;t include; they&apos;ll be left out.
-                  </p>
-                )}
-                {(failed || result?.error) && <p className="text-xs text-danger">{failed || result?.error}</p>}
-                <button onClick={book} disabled={busy || notBookable === items.length} className="btn-primary w-full justify-center">
-                  {busy ? <Loader2 size={15} className="animate-spin" /> : <Ticket size={15} />}
-                  {busy ? `Booking on ${BOOK_NAME[platform]}…` : `Get ${BOOK_NAME[platform]} code`}
-                </button>
-              </div>
-            )}
-            <p className="text-[10px] text-n-500 text-center">18+ · Odds can change before you place the bet. Bet responsibly.</p>
-          </div>
+              </motion.div>
+            </RD.Content>
+          </RD.Portal>
         )}
-      </div>
-    </div>
+      </AnimatePresence>
+    </RD.Root>
   );
 }

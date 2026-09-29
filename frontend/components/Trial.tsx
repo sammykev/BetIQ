@@ -6,6 +6,7 @@ import { Crown, Gift, X } from "lucide-react";
 import { refreshAccess, TIER_NAMES } from "@/lib/access";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
 import { tierOf, trialDaysLeft, type TrialConfig } from "@/lib/subscription";
+import { ModalFrame } from "@/components/ui/dialog";
 
 // The free trial for new accounts (settings in admin → Users → Free trial):
 // started by the backend (/api/trial/start, trial.py) on a new account's
@@ -34,10 +35,9 @@ const store = {
 
 function Modal({ children, onClose }: { children: ReactNode; onClose: () => void }) {
   return (
-    <div className="fixed inset-0 z-[60] bg-ink/80 backdrop-blur-sm flex items-center justify-center p-4"
-      onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="card !rounded-3xl max-w-sm w-full p-6 text-center space-y-4 animate-scale-in">{children}</div>
-    </div>
+    <ModalFrame onClose={onClose} title="Your free trial" size="sm" align="center" className="p-6 text-center space-y-4">
+      {children}
+    </ModalFrame>
   );
 }
 

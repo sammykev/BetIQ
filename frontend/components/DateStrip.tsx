@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import clsx from "clsx";
+import { motion } from "motion/react";
 import type { StripDay } from "@/lib/matchday";
 
 /**
@@ -22,7 +23,7 @@ export function DateStrip({ days, today, selected, onSelect }: {
 
   return (
     <div ref={scroller} role="tablist" aria-label="Match day"
-      className="flex gap-1.5 overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0 pb-1 snap-x [scrollbar-width:none]">
+      className="flex gap-1.5 overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0 py-1 snap-x no-scrollbar">
       {days.map(d => {
         const date = new Date(`${d.date}T12:00:00`);
         const active = d.date === selected;
@@ -33,23 +34,29 @@ export function DateStrip({ days, today, selected, onSelect }: {
           <button key={d.date} data-date={d.date} role="tab" aria-selected={active}
             onClick={() => onSelect(d.date)}
             className={clsx(
-              "snap-center shrink-0 w-[58px] rounded-xl border px-1 pt-1.5 pb-2 text-center transition-colors",
-              active ? "bg-brand-400 border-brand-400 text-ink" : "bg-surface border-n-800 hover:border-n-700",
+              "relative snap-center shrink-0 w-[58px] rounded-xl px-1 pt-1.5 pb-2 text-center",
+              "transition-[box-shadow,opacity,scale] duration-150 ease-[cubic-bezier(0.2,0,0,1)] active:scale-[0.96]",
+              active ? "text-canvas" : "bg-surface [box-shadow:var(--ring-control)] hover:[box-shadow:var(--ring-control-hover)]",
               !active && !d.total && "opacity-50",
             )}>
-            <span className={clsx("block text-[10px] font-bold uppercase tracking-[0.08em]",
-              active ? "text-ink/70" : isToday ? "text-accent" : "text-n-500")}>
+            {/* The chosen day's fill slides along the strip */}
+            {active && (
+              <motion.span layoutId="date-strip-pill" aria-hidden className="absolute inset-0 rounded-xl bg-n-0"
+                transition={{ type: "spring", duration: 0.35, bounce: 0 }} />
+            )}
+            <span className={clsx("relative block text-[10px] font-bold uppercase tracking-[0.08em]",
+              active ? "text-canvas/70" : isToday ? "text-accent" : "text-n-500")}>
               {isToday ? "Today" : date.toLocaleDateString(undefined, { weekday: "short" })}
             </span>
-            <span className={clsx("block font-display font-extrabold text-2xl leading-none mt-0.5 tnum",
-              active ? "text-ink" : "text-n-0")}>
+            <span className={clsx("relative block font-display font-extrabold text-2xl leading-none mt-0.5 tnum",
+              active ? "text-canvas" : "text-n-0")}>
               {date.getDate()}
             </span>
-            <span className={clsx("block text-[10px] font-semibold tnum mt-1 h-3 leading-3",
-              active ? "text-ink/70" : "text-n-500")}>
+            <span className={clsx("relative block text-[10px] font-semibold tnum mt-1 h-3 leading-3",
+              active ? "text-canvas/70" : "text-n-500")}>
               {d.live > 0 ? (
-                <span className={clsx("inline-flex items-center gap-1", !active && "text-danger")}>
-                  <span className={clsx("w-1.5 h-1.5 rounded-full animate-pulse", active ? "bg-ink" : "bg-danger")} />
+                <span className={clsx("inline-flex items-center gap-1", active ? "text-canvas" : "text-danger")}>
+                  <span className={clsx("w-1.5 h-1.5 rounded-full animate-pulse", active ? "bg-canvas" : "bg-danger")} />
                   {d.live} live
                 </span>
               ) : past && settled > 0 ? (

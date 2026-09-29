@@ -6,6 +6,7 @@ import { useState } from "react";
 import clsx from "clsx";
 import { PLANS, planKobo, planLabel, type Plan } from "@/lib/pricing";
 import { useAccess, refreshAccess, type FeatureId } from "@/lib/access";
+import { ModalFrame } from "@/components/ui/dialog";
 
 interface Props {
   onClose: () => void;
@@ -80,7 +81,7 @@ export function PaywallModal({ onClose, onSuccess, need }: Props) {
       <div key={plan} className={clsx("rounded-2xl border p-4 flex flex-col gap-3",
         featured ? "border-brand-400/60 bg-brand-400/[0.06]" : "border-n-800 bg-surface-sunken")}>
         <div className="flex items-center justify-between gap-2">
-          <p className="font-display font-extrabold text-xl uppercase tracking-wide text-n-0 inline-flex items-center gap-1.5">
+          <p className="heading text-lg inline-flex items-center gap-1.5">
             {featured ? <Crown size={16} className="text-amber-500" /> : <Zap size={16} className="text-accent" />}
             {PLANS[plan].name}
           </p>
@@ -116,13 +117,11 @@ export function PaywallModal({ onClose, onSuccess, need }: Props) {
   };
 
   return (
-    <div className="fixed inset-0 z-[60] bg-ink/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto"
-      onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="w-full max-w-2xl card !rounded-3xl shadow-pop overflow-hidden animate-scale-in my-auto">
+    <ModalFrame onClose={onClose} title="Choose your plan" align="center" trap={false}>
         <div className="relative px-6 pt-6 pb-4 text-center border-b border-n-800">
           <button onClick={onClose} aria-label="Close"
-            className="absolute top-4 right-4 p-1.5 hover:bg-n-800 rounded-lg text-n-400 transition-colors"><X size={14} /></button>
-          <h2 className="display text-3xl sm:text-4xl text-n-0">Choose your plan</h2>
+            className="absolute top-3 right-3 inline-flex items-center justify-center h-9 w-9 rounded-lg text-n-400 hover:text-n-0 hover:bg-n-800/60 transition-[color,background-color,scale] duration-150 active:scale-[0.96]"><X size={18} /></button>
+          <h2 className="heading text-2xl sm:text-[28px]">Choose your plan</h2>
           <p className="text-n-400 text-sm mt-1">Monthly, paid in naira. Renew any time; days you have left carry over.</p>
         </div>
         <div className="grid sm:grid-cols-2 gap-3 p-4 sm:p-5">
@@ -133,7 +132,6 @@ export function PaywallModal({ onClose, onSuccess, need }: Props) {
           {error && <p className="text-danger text-xs text-center font-medium">{error}</p>}
           <p className="text-center text-[10px] text-n-500">Secured by Paystack · NGN only · 18+ · Bet responsibly</p>
         </div>
-      </div>
-    </div>
+    </ModalFrame>
   );
 }

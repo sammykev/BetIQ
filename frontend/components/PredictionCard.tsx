@@ -12,6 +12,7 @@ import { kickoff, localTime } from "@/lib/matchTime";
 import { confidenceTier, headlinePick, pickProbability, type HeadlinePick } from "@/lib/picks";
 import { Check, Plus, Share2 } from "lucide-react";
 import clsx from "clsx";
+import { IconSwap } from "@/components/ui/icon-swap";
 
 const BASE = "https://predict-withbetiq.vercel.app";
 
@@ -167,7 +168,7 @@ export function TeamBadge({ name, size = 28 }: { name: string; size?: number }) 
   if (image && !broken) {
     return (
       <span
-        className="relative inline-flex items-center justify-center rounded-full bg-n-800 ring-1 ring-n-700/80 overflow-hidden shrink-0"
+        className="relative inline-flex items-center justify-center rounded-full bg-n-800 img-outline overflow-hidden shrink-0"
         style={{ width: size, height: size }}
       >
         <img
@@ -233,12 +234,12 @@ function PickTicket({ pick, edge }: { pick: HeadlinePick; edge?: number | null }
     <div className={clsx(
       "relative flex items-center gap-3 rounded-xl px-3.5 py-3",
       strong ? "bg-brand-400 text-ink"
-        : lean ? "bg-amber-400/[0.06] border border-amber-400/30 text-n-0"
-        : "bg-n-800/60 border border-n-700/60 text-n-0"
+        : lean ? "bg-amber-400/[0.06] [box-shadow:inset_0_0_0_1px_rgb(251_191_36/0.3)] text-n-0"
+        : "bg-n-800/60 text-n-0"
     )}>
       {edge != null && edge > 0.05 && (
-        <span className="absolute -top-2.5 right-3 font-mono text-[10px] font-bold bg-ink text-brand-400 border border-brand-400/70 rounded-md px-1.5 py-0.5">
-          +{Math.round(edge * 100)}% EDGE
+        <span className="absolute -top-2.5 right-3 font-mono text-[10px] font-bold bg-ink text-brand-400 rounded-md px-1.5 py-0.5 [box-shadow:0_0_0_1px_rgb(184_245_61/0.7)]">
+          +{Math.round(edge * 100)}% edge
         </span>
       )}
       <div className="min-w-0 flex-1">
@@ -281,14 +282,15 @@ function SlipToggle({ prediction: p }: { prediction: Prediction }) {
       aria-pressed={inSlip}
       aria-label={inSlip ? `Remove ${sel.label} from slip` : `Add ${sel.label} to slip`}
       className={clsx(
-        "mt-2 w-full inline-flex items-center justify-center gap-1.5 h-8 rounded-lg text-xs font-bold uppercase tracking-wider border transition-colors",
+        "mt-2 w-full inline-flex items-center justify-center gap-1.5 h-9 rounded-lg text-[13px] font-semibold",
+        "transition-[color,background-color,box-shadow,scale] duration-150 ease-[cubic-bezier(0.2,0,0,1)] active:scale-[0.96]",
         inSlip
-          ? "border-brand-400/60 bg-brand-400/10 text-accent"
-          : "border-n-800 text-n-300 hover:text-n-0 hover:border-n-600"
+          ? "bg-brand-400/10 text-accent [box-shadow:inset_0_0_0_1px_rgb(var(--accent)/0.45)]"
+          : "text-n-300 hover:text-n-0 [box-shadow:var(--ring-control)] hover:[box-shadow:var(--ring-control-hover)]"
       )}
     >
-      {inSlip ? <Check size={13} /> : <Plus size={13} />}
-      {inSlip ? "In slip" : "Slip"}
+      <IconSwap state={inSlip}>{inSlip ? <Check size={14} /> : <Plus size={14} />}</IconSwap>
+      {inSlip ? "In slip" : "Add to slip"}
     </button>
   );
 }
@@ -312,12 +314,12 @@ export function PredictionCard({ prediction: p, savedKeys, onClick, showDay = tr
   return (
     <article
       onClick={onClick}
-      className={clsx("card relative overflow-hidden flex flex-col", onClick && "card-interactive")}
+      className={clsx(onClick ? "card-interactive" : "card", "relative overflow-hidden flex flex-col")}
     >
       <MatchBleed home={p.home} away={p.away} />
 
       {/* Header strip: competition + kick-off */}
-      <div className="relative z-10 flex items-center justify-between gap-2 px-4 py-2.5 border-b border-n-800/80">
+      <div className="relative z-10 flex items-center justify-between gap-2 px-4 py-2 border-b border-n-800/80">
         <div className="flex items-center gap-1.5 min-w-0">
           <CompetitionBadge name={p.league_name} fallbackEmoji={p.flag} size={14} className="text-sm" />
           <span className="eyebrow truncate">{p.league_name}</span>
@@ -329,7 +331,7 @@ export function PredictionCard({ prediction: p, savedKeys, onClick, showDay = tr
           <SaveButton prediction={p} savedKeys={savedKeys ?? emptySet} onToggle={onSaveToggle} size={14} />
           <button
             onClick={e => { e.stopPropagation(); shareMatch(p); }}
-            className="text-n-500 hover:text-n-0 transition-colors"
+            className="inline-flex items-center justify-center h-8 w-8 -m-1.5 rounded-lg text-n-500 hover:text-n-0 hover:bg-n-800/60 transition-[color,background-color] duration-150"
             title="Share this pick"
             aria-label={`Share ${p.home} vs ${p.away}`}
           >

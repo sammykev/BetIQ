@@ -96,7 +96,7 @@ export function SportCard({ prediction: p, onClick }: Props) {
   return (
     <article
       onClick={onClick}
-      className={clsx("card overflow-hidden flex flex-col", onClick && "card-interactive")}
+      className={clsx(onClick ? "card-interactive" : "card", "overflow-hidden flex flex-col")}
     >
       {/* Header strip */}
       <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-n-800/80">
@@ -106,12 +106,12 @@ export function SportCard({ prediction: p, onClick }: Props) {
             {p.league_name}{p.surface ? ` · ${p.surface}` : ""}
           </span>
           {p.pick_type === "safe" && (
-            <span className="font-display font-bold text-[11px] uppercase tracking-wider text-accent bg-brand-400/10 border border-brand-400/30 px-1.5 rounded shrink-0">
+            <span className="font-display font-bold text-[11px] uppercase tracking-wider text-accent bg-brand-400/10 [box-shadow:inset_0_0_0_1px_rgb(var(--accent)/0.3)] px-1.5 rounded shrink-0">
               Safe
             </span>
           )}
           {p.pick_type === "upset" && (
-            <span className="font-display font-bold text-[11px] uppercase tracking-wider text-violet-700 dark:text-violet-300 bg-violet-500/10 border border-violet-400/30 px-1.5 rounded shrink-0">
+            <span className="font-display font-bold text-[11px] uppercase tracking-wider text-violet-700 dark:text-violet-300 bg-violet-500/10 [box-shadow:inset_0_0_0_1px_rgb(167_139_250/0.3)] px-1.5 rounded shrink-0">
               Upset
             </span>
           )}
@@ -155,8 +155,8 @@ export function SportCard({ prediction: p, onClick }: Props) {
         <div className={clsx(
           "mt-auto flex items-center gap-3 rounded-xl px-3.5 py-3",
           strong ? "bg-brand-400 text-ink"
-            : lean ? "bg-amber-400/[0.06] border border-amber-400/30 text-n-0"
-            : "bg-n-800/60 border border-n-700/60 text-n-0"
+            : lean ? "bg-amber-400/[0.06] [box-shadow:inset_0_0_0_1px_rgb(251_191_36/0.3)] text-n-0"
+            : "bg-n-800/60 text-n-0"
         )}>
           <div className="min-w-0 flex-1">
             <p className={clsx("font-display font-bold text-[11px] uppercase tracking-[0.14em]", strong ? "text-ink/60" : "text-n-400")}>Best pick</p>

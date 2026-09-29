@@ -20,7 +20,7 @@ const shortDate = (iso: string) =>
 function Title({ icon, children, right }: { icon: React.ReactNode; children: React.ReactNode; right?: React.ReactNode }) {
   return (
     <div className="flex items-center gap-2 mb-3">
-      <h3 className="font-display font-bold text-base uppercase tracking-[0.06em] text-n-0 inline-flex items-center gap-2">
+      <h3 className="heading text-[15px] inline-flex items-center gap-2">
         <span className="text-accent">{icon}</span>{children}
       </h3>
       {right && <div className="ml-auto">{right}</div>}

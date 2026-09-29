@@ -17,6 +17,8 @@ import { Unavailable } from "@/components/FeatureGate";
 import { PaywallModal } from "@/components/PaywallModal";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
 import { TicketsList } from "@/components/TicketsList";
+import { UnderlineTabs } from "@/components/ui/tabs";
+import { Empty } from "@/components/ui/empty";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
 
@@ -64,13 +66,7 @@ function StatCard({ label, value, color = "text-n-0", sub }: { label: string; va
 }
 
 function EmptyState({ icon, title, body }: { icon: React.ReactNode; title: string; body: string }) {
-  return (
-    <div className="card border-dashed text-center py-14 px-6 space-y-2">
-      <div className="mx-auto w-11 h-11 rounded-2xl bg-n-800/70 flex items-center justify-center text-n-400">{icon}</div>
-      <p className="font-display font-bold text-xl uppercase tracking-wide text-n-0 pt-1">{title}</p>
-      <p className="text-sm text-n-400">{body}</p>
-    </div>
-  );
+  return <Empty icon={icon} title={title} body={body} />;
 }
 
 export default function DashboardPage() {
@@ -174,23 +170,9 @@ export default function DashboardPage() {
         />
 
         {/* Tabs */}
-        <div role="tablist" className="flex gap-6 border-b border-n-800 overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
-          {TABS.map(t => {
-            const active = tab === t.id;
-            return (
-              <button key={t.id} role="tab" aria-selected={active} onClick={() => setTab(t.id)}
-                className={clsx(
-                  "relative shrink-0 inline-flex items-center gap-1.5 pb-3 font-display font-bold text-[16px] uppercase tracking-[0.06em] transition-colors",
-                  active ? "text-n-0" : "text-n-500 hover:text-n-300"
-                )}>
-                <span className={active ? "text-accent" : undefined}>{t.icon}</span>
-                {t.label}
-                {t.count != null && t.count > 0 && <span className="font-sans text-[11px] font-bold text-n-500 tnum">{t.count}</span>}
-                {active && <span className="absolute left-0 right-0 -bottom-px h-[2px] bg-accent rounded-full" />}
-              </button>
-            );
-          })}
-        </div>
+        <UnderlineTabs label="Dashboard" id="dashboard" className="-mx-4 px-4 sm:mx-0 sm:px-0"
+          items={TABS.map(t => ({ value: t.id, label: t.label, icon: t.icon, extra: t.count != null && t.count > 0 ? t.count : undefined }))}
+          value={tab} onChange={setTab} />
 
         {/* ── Overview ── */}
         {tab === "overview" && (
@@ -275,7 +257,7 @@ export default function DashboardPage() {
             <div className="card p-4">
               <div className="flex items-center gap-2 mb-2">
                 <Trophy size={15} className="text-warn" />
-                <h2 className="font-display font-bold text-lg uppercase tracking-[0.06em] text-n-0">Top predictors</h2>
+                <h2 className="heading text-[17px]">Top predictors</h2>
               </div>
               {leaderboard.length === 0
                 ? <p className="text-n-400 text-sm py-2">No entries yet. Book codes here while signed in — every winning ticket counts.</p>
@@ -319,7 +301,7 @@ export default function DashboardPage() {
             </div>
             {refStats ? (
               <>
-                <div className="bg-surface-sunken border border-n-800 rounded-xl px-4 py-3">
+                <div className="bg-surface-sunken [box-shadow:var(--ring-control)] rounded-xl px-4 py-3">
                   <p className="eyebrow mb-1">Your referral link</p>
                   <p className="text-accent text-sm font-mono break-all">{refStats.link}</p>
                 </div>
