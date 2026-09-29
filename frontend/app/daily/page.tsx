@@ -116,7 +116,7 @@ function SlipView({ s, isToday, date, retry, minProb, cut }: {
   };
 
   return (
-    <article className={clsx("card overflow-hidden", s.status === "won" && "border-accent/40", s.status === "lost" && "border-danger/30")}>
+    <article className={clsx("card overflow-hidden", s.status === "won" && "card-won", s.status === "lost" && "card-lost")}>
       <header className="p-4 sm:p-5 flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="eyebrow">{s.target}x slip · {s.games} games · {settled}/{s.picks.length} settled</p>
@@ -281,7 +281,8 @@ function Daily() {
               const rec = data.record[String(x.target)];
               return (
                 <button key={x.target} role="tab" aria-selected={pick === i} onClick={() => setPick(i)}
-                  className={clsx("card p-3 sm:p-4 text-left transition-colors", pick === i ? "!border-brand-400/60 bg-brand-400/[0.06]" : "hover:bg-surface-raised/60")}>
+                  className={clsx("card p-3 sm:p-4 text-left transition-[background-color,box-shadow,scale] duration-150 ease-[cubic-bezier(0.2,0,0,1)] active:scale-[0.97]",
+                    pick === i ? "card-selected bg-brand-400/[0.06]" : "hover:bg-surface-raised/60")}>
                   <p className="eyebrow">{x.target}x</p>
                   <p className="font-display font-extrabold text-2xl sm:text-3xl text-n-0 tnum leading-none mt-1">
                     {x.status === "none" ? "—" : `${x.total_odds?.toFixed(2)}x`}</p>

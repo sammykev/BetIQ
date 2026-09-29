@@ -13,6 +13,7 @@ import { useAuthedFetch } from "@/lib/useAuthedFetch";
 import { useAccess, type FeatureId } from "@/lib/access";
 import { Unavailable } from "@/components/FeatureGate";
 import { API, MARKET_LABELS, fetchAccuracy, fetchSportAccuracy, type Accuracy, type TicketSummary } from "@/lib/matchday";
+import { Tabs, UnderlineTabs } from "@/components/ui/tabs";
 
 // The model's track record: every pick we published, graded against the
 // final score (backend matchday.py). "We said" is the average probability we
@@ -117,21 +118,13 @@ export default function TrackRecordPage() {
         <PageHeader eyebrow="Model accountability" title="Track record"
           description={`Every ${sport === "football" ? "" : tab.label.toLowerCase() + " "}prediction we published, graded against the final score. Browse day by day from the date strip on the home page.`}
           right={
-            <div className="flex gap-1.5" role="group" aria-label="Period">
-              {PERIODS.map(p => (
-                <button key={p} onClick={() => setDays(p)} aria-pressed={days === p}
-                  className={clsx("chip", days === p ? "chip-active" : "chip-idle")}>{p} days</button>
-              ))}
-            </div>
+            <Tabs label="Period" id="period" size="sm" value={String(days)} onChange={v => setDays(Number(v) as typeof days)}
+              items={PERIODS.map(p => ({ value: String(p), label: `${p} days` }))} />
           } />
 
         {tabs.length > 1 && (
-          <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-4 px-4 sm:mx-0 sm:px-0" role="group" aria-label="Sport">
-            {tabs.map(t => (
-              <button key={t.id} onClick={() => setSport(t.id)} aria-pressed={sport === t.id}
-                className={clsx("chip shrink-0", sport === t.id ? "chip-active" : "chip-idle")}>{t.label}</button>
-            ))}
-          </div>
+          <UnderlineTabs label="Sport" id="record-sport" className="-mx-4 px-4 sm:mx-0 sm:px-0" value={sport} onChange={setSport}
+            items={tabs.map(t => ({ value: t.id, label: t.label }))} />
         )}
 
         {loading && !data ? (

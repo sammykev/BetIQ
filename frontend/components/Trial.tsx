@@ -89,7 +89,7 @@ function TrialStarter() {
       <Modal onClose={close}>
         <span className="mx-auto w-14 h-14 rounded-full bg-brand-400/15 text-accent flex items-center justify-center"><Gift size={24} /></span>
         <div>
-          <p className="display text-3xl text-n-0">Welcome to BetIQ</p>
+          <p className="heading text-2xl">Welcome to BetIQ</p>
           <p className="text-sm text-n-300 mt-2">
             You&apos;ve got <span className="font-bold text-n-0">{answer.days} days of {TIER_NAMES[answer.tier ?? "premium"]}</span> free:
             every feature is open, no card needed. We&apos;ll remind you here before it ends.
@@ -103,7 +103,7 @@ function TrialStarter() {
     <Modal onClose={close}>
       <span className="mx-auto w-14 h-14 rounded-full bg-n-800 text-n-300 flex items-center justify-center"><Gift size={22} /></span>
       <div>
-        <p className="display text-2xl text-n-0">No free trial</p>
+        <p className="heading text-xl">No free trial</p>
         <p className="text-sm text-n-300 mt-2">{answer.message}</p>
       </div>
       <button onClick={close} className="btn-secondary w-full">OK</button>

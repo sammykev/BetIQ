@@ -145,7 +145,7 @@ export function TicketsList({ uid, authFetch }: { uid: string; authFetch: (url: 
     const done = t.legs.filter(l => l.status !== "pending" && l.status !== "unknown").length;
     const playing = t.legs.filter(l => l.live?.status === "live").length;
     return (
-      <article key={t.code} className={clsx("card overflow-hidden", t.status === "won" && "border-accent/40", t.status === "lost" && "border-danger/30")}>
+      <article key={t.code} className={clsx("card overflow-hidden", t.status === "won" && "card-won", t.status === "lost" && "card-lost")}>
         <header className="flex items-start justify-between gap-3 p-4">
           <div className="min-w-0">
             <p className="font-mono text-2xl font-bold text-n-0 tracking-[0.18em]">{t.code}</p>

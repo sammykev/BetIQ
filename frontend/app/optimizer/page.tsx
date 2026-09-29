@@ -14,6 +14,7 @@ import { FAMILIES as BB_FAMILIES } from "@/lib/basketball";
 import { RK_FAMILIES } from "@/lib/racket";
 import { FeatureGate, Unavailable } from "@/components/FeatureGate";
 import type { SlipSelection } from "@/lib/slip";
+import { Tabs } from "@/components/ui/tabs";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
 
@@ -395,12 +396,8 @@ export default function OptimizerPage() {
 
         {access.ready && modes.length === 0 ? <Unavailable title="Optimizer" /> : <>
         {modes.length > 1 && (
-          <div className="flex gap-1.5" role="tablist" aria-label="Optimizer mode">
-            {modes.map(([id, label]) => (
-              <button key={id} role="tab" aria-selected={active === id} onClick={() => setMode(id)}
-                className={clsx("chip", active === id ? "chip-active" : "chip-idle")}>{label}</button>
-            ))}
-          </div>
+          <Tabs label="Optimizer mode" id="optimizer-mode" value={active} onChange={setMode}
+            items={modes.map(([value, label]) => ({ value, label }))} />
         )}
 
         {active === "code" ? (
@@ -626,7 +623,7 @@ export default function OptimizerPage() {
               </p>
 
               {booked?.code ? (
-                <div className="rounded-xl border border-accent/40 bg-surface-sunken p-4 space-y-3">
+                <div className="rounded-xl bg-surface-sunken p-4 space-y-3 [box-shadow:inset_0_0_0_1px_rgb(var(--accent)/0.4)]">
                   <div className="flex items-center justify-between">
                     <p className="eyebrow">Booking code</p>
                     <span className="text-[11px] font-bold text-accent">{bookName}</span>
@@ -680,7 +677,7 @@ export default function OptimizerPage() {
                     {booking && bookOn === "sportybet" ? "Booking…" : "Get SportyBet code"}
                   </button>
                   <button onClick={() => book("football_com")} disabled={booking}
-                    className="flex-1 min-w-[12rem] flex items-center justify-center gap-2 rounded-xl border border-accent/60 text-n-0 font-bold px-5 py-3 disabled:opacity-50">
+                    className="flex-1 min-w-[12rem] flex items-center justify-center gap-2 rounded-xl text-n-0 font-bold px-5 py-3 disabled:opacity-50 [box-shadow:inset_0_0_0_1px_rgb(var(--accent)/0.6)] hover:bg-brand-400/[0.06] transition-[background-color,scale] duration-150 active:scale-[0.96]">
                     {booking && bookOn === "football_com" ? <Loader2 size={16} className="animate-spin" /> : <Ticket size={16} />}
                     {booking && bookOn === "football_com" ? "Booking…" : "Get football.com code"}
                   </button>

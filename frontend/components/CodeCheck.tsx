@@ -120,7 +120,7 @@ function ImprovedSlip({ title, blurb, slip, original }: { title: string; blurb: 
         ))}
       </ul>
       {code?.code ? (
-        <div className="rounded-xl border border-accent/40 bg-surface-sunken p-3 flex flex-wrap items-center gap-3">
+        <div className="rounded-xl bg-surface-sunken p-3 [box-shadow:inset_0_0_0_1px_rgb(var(--accent)/0.4)] flex flex-wrap items-center gap-3">
           <p className="font-mono text-2xl font-bold tracking-[0.2em] text-n-0">{code.code}</p>
           <button onClick={async () => { try { await navigator.clipboard.writeText(code.code!); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* ignore */ } }}
             className="inline-flex items-center gap-1.5 rounded-lg bg-brand-400 text-ink font-bold px-3 py-1.5 text-sm">
@@ -169,8 +169,8 @@ function Tickets({ tickets, original }: { tickets: NonNullable<Report["tickets"]
           const active = tab === t.id;
           return (
             <button key={t.id} role="tab" aria-selected={active} onClick={() => setTab(t.id)}
-              className={clsx("card min-w-0 px-2 py-3 sm:p-4 text-left transition-colors border",
-                active ? "border-accent/60 bg-surface" : "border-transparent opacity-80 hover:opacity-100")}>
+              className={clsx("card min-w-0 px-2 py-3 sm:p-4 text-left transition-[opacity,box-shadow,scale] duration-150 ease-[cubic-bezier(0.2,0,0,1)] active:scale-[0.97]",
+                active ? "card-selected" : "opacity-80 hover:opacity-100")}>
               <p className={clsx("flex items-center gap-1.5 text-xs sm:text-sm font-bold", t.tone)}>
                 <t.icon size={14} className="shrink-0 hidden sm:block" /> <span className="truncate">{t.name}</span></p>
               <p className="font-display font-extrabold text-xl sm:text-2xl text-n-0 tnum mt-1">{odds(slip.total_odds)}x</p>

@@ -217,7 +217,7 @@ function AuthGate() {
 
         {/* Feature grid */}
         <section className="py-16 sm:py-20">
-          <h2 className="display text-4xl sm:text-5xl text-n-0">Everything on one slip</h2>
+          <h2 className="heading text-3xl sm:text-4xl">Everything on one slip</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-8">
             {FEATURES.map(({ icon: Icon, title, desc }) => (
               <div key={title} className="card p-5">
@@ -548,7 +548,7 @@ export default function HomePage() {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-4 text-center p-6">
         <Wordmark className="text-4xl" />
-        <h1 className="display text-5xl text-n-0 mt-4">Back soon</h1>
+        <h1 className="heading text-4xl mt-4">Back soon</h1>
         <p className="text-n-400 max-w-sm">
           BetIQ is undergoing scheduled maintenance. We&apos;ll be back shortly with fresh predictions.
         </p>

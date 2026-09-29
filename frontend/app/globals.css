@@ -177,6 +177,18 @@ body {
     transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
   }
 
+  /* A chosen tile (slip, ticket): the ring turns lime */
+  .card-selected {
+    box-shadow: 0 0 0 1.5px rgb(var(--accent) / 0.7), 0 8px 24px -12px rgb(var(--accent) / 0.25);
+  }
+  /* A settled slip or ticket: the ring carries the result (the badge says it in words) */
+  .card-won {
+    box-shadow: 0 0 0 1px rgb(var(--accent) / 0.4);
+  }
+  .card-lost {
+    box-shadow: 0 0 0 1px rgb(var(--danger) / 0.3);
+  }
+
   /* Filter chip: a pill with a ring; inverted when chosen (lime is kept for
      the one primary action and for picks) */
   .chip {

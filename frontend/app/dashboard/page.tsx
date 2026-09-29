@@ -163,7 +163,7 @@ export default function DashboardPage() {
           title="Dashboard"
           description="Your record from the SportyBet codes you booked here."
           right={isPremium && (
-            <span className="inline-flex items-center gap-1.5 font-display font-bold text-sm uppercase tracking-wider text-warn bg-amber-400/10 border border-amber-400/30 px-3 py-1 rounded-lg">
+            <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-warn bg-amber-400/10 [box-shadow:inset_0_0_0_1px_rgb(251_191_36/0.3)] px-3 py-1 rounded-full">
               <Crown size={13} /> {tierName}
             </span>
           )}
@@ -294,7 +294,7 @@ export default function DashboardPage() {
               <span className="inline-flex items-center justify-center w-11 h-11 rounded-xl bg-brand-400/10 text-accent ring-1 ring-brand-400/20">
                 <Link2 size={20} />
               </span>
-              <h2 className="display text-4xl text-n-0 mt-4">Invite friends</h2>
+              <h2 className="heading text-2xl mt-4">Invite friends</h2>
               <p className="text-n-400 text-sm mt-2">
                 When a friend signs up and subscribes, you both get <span className="text-accent font-semibold">30 days of premium free</span>.
               </p>
@@ -361,7 +361,7 @@ export default function DashboardPage() {
                 <div className="space-y-3">
                   <p className="font-display font-extrabold text-3xl uppercase text-n-0 leading-none">Free plan</p>
                   <button onClick={() => setPlans(true)}
-                    className="w-full bg-amber-400 hover:bg-amber-300 text-ink font-bold py-2.5 rounded-xl text-sm transition-all flex items-center justify-center gap-2 active:scale-[0.98]">
+                    className="btn-primary w-full">
                     <Crown size={14} /> See plans · from {planLabel("lite")}
                   </button>
                 </div>

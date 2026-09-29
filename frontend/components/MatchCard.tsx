@@ -56,7 +56,7 @@ export function MatchCard({ home, away, date, time, league, flag, children, onCl
   return (
     <div
       onClick={onClick}
-      className={clsx("card relative overflow-hidden", onClick && "card-interactive", className)}
+      className={clsx(onClick ? "card-interactive" : "card", "relative overflow-hidden", className)}
     >
       <MatchBleed home={home} away={away} />
       <div className="relative z-10 px-4 py-3 flex items-center gap-3">

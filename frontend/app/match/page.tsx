@@ -61,7 +61,7 @@ function FormChips({ form }: { form?: string }) {
       {form.split("").map((r, i) => (
         <span key={i} className={clsx(
           "font-display font-bold text-[11px] w-[18px] h-[18px] rounded flex items-center justify-center",
-          r === "W" ? "bg-brand-400 text-ink" : r === "D" ? "bg-zinc-500 text-white" : "bg-rose-500 text-white"
+          r === "W" ? "bg-brand-400 text-ink" : r === "D" ? "bg-n-500 text-white" : "bg-rose-500 text-white"
         )}>{r}</span>
       ))}
     </span>
@@ -110,7 +110,7 @@ function TaleOfTheTape({ analysis, home, away }: { analysis: MatchAnalysis; home
   return (
     <div className="card p-4">
       <PanelTitle
-        right={<span className="text-[11px] font-bold uppercase tracking-wider text-accent bg-brand-400/10 border border-brand-400/25 rounded-md px-2 py-0.5">{elo.label}</span>}
+        right={<span className="text-[11px] font-bold uppercase tracking-wider text-accent bg-brand-400/10 [box-shadow:inset_0_0_0_1px_rgb(var(--accent)/0.25)] rounded-md px-2 py-0.5">{elo.label}</span>}
       >
         Tale of the tape
       </PanelTitle>
@@ -203,11 +203,11 @@ function MarketBlock({
               onClick={() => onToggle?.(opt)}
               onKeyDown={e => { if (canSelect && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); onToggle?.(opt); } }}
               className={clsx(
-                "rounded-lg px-2.5 py-2 transition-all border",
-                canSelect && "cursor-pointer",
+                "rounded-lg px-2.5 py-2 transition-[background-color,box-shadow,scale] duration-150 ease-[cubic-bezier(0.2,0,0,1)]",
+                canSelect && "cursor-pointer active:scale-[0.98]",
                 isSelected
-                  ? "bg-brand-400/10 border-brand-400/50"
-                  : canSelect ? "hover:bg-n-800/60 border-transparent" : "border-transparent"
+                  ? "bg-brand-400/10 [box-shadow:inset_0_0_0_1px_rgb(var(--accent)/0.5)]"
+                  : canSelect && "hover:bg-n-800/60"
               )}
             >
               <div className="flex items-center gap-2">
@@ -231,7 +231,7 @@ function MarketBlock({
                 </span>
               </div>
               <div className="h-1 bg-n-800 rounded-full overflow-hidden mt-1.5">
-                <div className={clsx("h-full rounded-full transition-all duration-500", isBest ? "bg-accent" : "bg-n-600")} style={{ width: `${pct}%` }} />
+                <div className={clsx("h-full rounded-full transition-[width] duration-500 ease-[cubic-bezier(0.2,0,0,1)]", isBest ? "bg-accent" : "bg-n-600")} style={{ width: `${pct}%` }} />
               </div>
             </div>
           );
@@ -266,8 +266,8 @@ function AIExplanation({ explanation }: { explanation: MatchExplanation | null }
       <PanelTitle
         right={
           <span className={clsx(
-            "inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider rounded-md px-2 py-0.5 border",
-            hasWebSearch ? "text-info bg-sky-400/10 border-sky-400/25" : "text-n-400 bg-n-800 border-n-700"
+            "inline-flex items-center gap-1 text-[11px] font-semibold rounded-md px-2 py-0.5",
+            hasWebSearch ? "text-info bg-sky-400/10 [box-shadow:inset_0_0_0_1px_rgb(56_189_248/0.25)]" : "text-n-400 bg-n-800"
           )}>
             {hasWebSearch ? <><Radio size={10} /> Live web search</> : "Stats only"}
           </span>
@@ -331,7 +331,7 @@ function clock(iso: string): string {
 }
 
 const OUTCOME_CLS: Record<FactMatch["outcome"], string> = {
-  W: "bg-brand-400 text-ink", D: "bg-zinc-500 text-white", L: "bg-rose-500 text-white",
+  W: "bg-brand-400 text-ink", D: "bg-n-500 text-white", L: "bg-rose-500 text-white",
 };
 
 function FormList({ name, rows }: { name: string; rows: FactMatch[] }) {
@@ -390,7 +390,7 @@ function HeadToHead({ facts, home, away }: { facts: MatchFacts; home: string; aw
   if (!facts.h2h.length || !s) return null;
   const bar = [
     { n: s.won, cls: "bg-brand-400", label: `${home} wins` },
-    { n: s.drawn, cls: "bg-zinc-500", label: "Draws" },
+    { n: s.drawn, cls: "bg-n-500", label: "Draws" },
     { n: s.lost, cls: "bg-rose-500", label: `${away} wins` },
   ];
   return (
@@ -803,7 +803,7 @@ function MatchContent() {
             <MatchFactsPanels facts={facts} home={home} away={away} />
 
             {analysis.web_adjustment_reason && (
-              <div className="rounded-2xl border border-amber-400/25 bg-amber-400/[0.05] px-4 py-3 flex items-start gap-3">
+              <div className="rounded-2xl bg-amber-400/[0.05] [box-shadow:inset_0_0_0_1px_rgb(251_191_36/0.25)] px-4 py-3 flex items-start gap-3">
                 <Search size={15} className="text-warn mt-0.5 shrink-0" />
                 <div>
                   <p className="text-sm text-warn font-semibold">Team news adjusted this prediction</p>
@@ -811,7 +811,7 @@ function MatchContent() {
                   {analysis.web_adjustment_flags && analysis.web_adjustment_flags.length > 0 && (
                     <div className="flex gap-1.5 flex-wrap mt-2">
                       {analysis.web_adjustment_flags.map(f => (
-                        <span key={f} className="font-mono text-[10px] uppercase text-warn/80 bg-amber-400/10 border border-amber-400/20 px-1.5 py-0.5 rounded">
+                        <span key={f} className="font-mono text-[10px] uppercase text-warn/80 bg-amber-400/10 px-1.5 py-0.5 rounded">
                           {f.replace(/_/g, " ")}
                         </span>
                       ))}
@@ -822,7 +822,7 @@ function MatchContent() {
             )}
 
             {(analysis.live_odds_fetched || sbEvent) && (
-              <div className="rounded-2xl border border-sky-400/20 bg-sky-400/[0.05] px-4 py-3 flex items-center gap-3">
+              <div className="rounded-2xl bg-sky-400/[0.05] [box-shadow:inset_0_0_0_1px_rgb(56_189_248/0.2)] px-4 py-3 flex items-center gap-3">
                 {sbEvent ? <Ticket size={15} className="text-info shrink-0" /> : <Radio size={15} className="text-info shrink-0" />}
                 <p className="text-sm text-n-300">
                   {sbEvent
@@ -834,7 +834,7 @@ function MatchContent() {
 
             {/* Markets */}
             <div>
-              <h2 className="display text-3xl text-n-0 mb-3">Markets</h2>
+              <h2 className="heading text-2xl mb-3">Markets</h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {analysis.markets.map((m) => {
                   // Match our analysis market to SportyBet market
