@@ -21,6 +21,9 @@ import { MatchdayList } from "@/components/MatchdayList";
 import { awaitingScore, fetchMatchday, fetchStrip, matchKey, type MatchdayMatch, type MatchdayResponse, type StripResponse } from "@/lib/matchday";
 import { SportCard, type SportPrediction } from "@/components/SportCard";
 import { SportModal } from "@/components/SportModal";
+import { BasketballCard } from "@/components/BasketballCard";
+import { BasketballModal } from "@/components/BasketballModal";
+import type { BasketballPrediction } from "@/lib/basketball";
 import { PaywallModal } from "@/components/PaywallModal";
 import { useAccess, TIER_NAMES, type FeatureId } from "@/lib/access";
 import type { Plan } from "@/lib/pricing";
@@ -253,6 +256,8 @@ export default function HomePage() {
   const [sportPreds, setSportPreds] = useState<SportPrediction[]>([]);
   const [sportLoading, setSportLoading] = useState(false);
   const [selectedSportMatch, setSelectedSportMatch] = useState<SportPrediction | null>(null);
+  const [selectedBB, setSelectedBB] = useState<BasketballPrediction | null>(null);
+  const [bbLeague, setBbLeague] = useState<string>("");
   const [showPaywall, setShowPaywall] = useState<null | { need?: Plan }>(null);
   const [savedKeys, setSavedKeys] = useState<Set<string>>(new Set());
   const [pushEnabled, setPushEnabled] = useState(false);
@@ -640,11 +645,39 @@ export default function HomePage() {
                 body="The model publishes picks once odds and fixtures are confirmed. Check back closer to game day."
               />
             ) : (
+              activeSport === "basketball" ? (() => {
+                const bb = sportPreds as unknown as BasketballPrediction[];
+                // Competitions with most matches first
+                const counts = new Map<string, number>();
+                bb.forEach(p => counts.set(p.league, (counts.get(p.league) ?? 0) + 1));
+                const leagues = Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
+                const shown = bbLeague ? bb.filter(p => p.league === bbLeague) : bb;
+                return (
+                  <>
+                    <div className="flex gap-1.5 overflow-x-auto [scrollbar-width:none] -mx-1 px-1">
+                      <button onClick={() => setBbLeague("")} className={clsx("chip shrink-0", !bbLeague ? "chip-active" : "chip-idle")}>
+                        All · {bb.length}</button>
+                      {leagues.map(([l, n]) => (
+                        <button key={l} onClick={() => setBbLeague(l)}
+                          className={clsx("chip shrink-0", bbLeague === l ? "chip-active" : "chip-idle")}>
+                          {bb.find(p => p.league === l)?.flag} {bb.find(p => p.league === l)?.league_name} · {n}</button>
+                      ))}
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {shown.map(p => (
+                        <BasketballCard key={p.sportybet_event_id || `${p.home}-${p.date}`} p={p}
+                          onOpen={() => p.sportybet_event_id ? setSelectedBB(p) : setSelectedSportMatch(p as unknown as SportPrediction)} />
+                      ))}
+                    </div>
+                  </>
+                );
+              })() : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {sportPreds.map((p, i) => (
                   <SportCard key={i} prediction={p} onClick={() => setSelectedSportMatch(p)} />
                 ))}
               </div>
+              )
             )}
           </div>
         )}
@@ -839,6 +872,7 @@ export default function HomePage() {
       </div>
 
       {/* Sport analysis modal */}
+      {selectedBB && <BasketballModal p={selectedBB} onClose={() => setSelectedBB(null)} />}
       {selectedSportMatch && (
         <SportModal prediction={selectedSportMatch} onClose={() => setSelectedSportMatch(null)} />
       )}

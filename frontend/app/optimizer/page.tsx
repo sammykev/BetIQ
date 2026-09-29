@@ -10,6 +10,7 @@ import { CodeCheck } from "@/components/CodeCheck";
 import { useBetSlip } from "@/lib/useBetSlip";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
 import { useAccess } from "@/lib/access";
+import { FAMILIES as BB_FAMILIES } from "@/lib/basketball";
 import { FeatureGate, Unavailable } from "@/components/FeatureGate";
 import type { SlipSelection } from "@/lib/slip";
 
@@ -22,6 +23,9 @@ interface OptPick {
   home: string; away: string; date: string; time: string; league: string;
   market: string; market_name: string; code: string; label: string;
   prob: number; odds: number; odds_source: "sportybet" | "bookmaker" | "estimated";
+  /** Basketball: SportyBet's own ids for the line */
+  sb?: { eventId: string; marketId: string; specifier: string; outcomeId: string } | null;
+  sport?: "football" | "basketball";
   bookable?: boolean;  // a SportyBet code can take it (match listed, market confirmed)
 }
 interface OptResult {
@@ -232,6 +236,10 @@ export default function OptimizerPage() {
   const [days, setDays] = useState(3);
   const [maxGames, setMaxGames] = useState(30);
   const [markets, setMarkets] = useState<string[]>(MARKETS.map(m => m.id));
+  // Football, basketball (every line SportyBet offers, priced by our model) or both
+  const [sport, setSport] = useState<"football" | "basketball" | "all">("football");
+  const [bbFamilies, setBbFamilies] = useState<string[]>(BB_FAMILIES.map(f => f.id));
+  const bbOn = access.shown("sport.basketball");
   // Every line of every chip that has lines, ticked to start with
   const [lines, setLines] = useState<string[]>(Object.values(CHIP_LINES).flat().map(lineKey));
   // A chip with lines counts as off when none of its lines is ticked
@@ -294,6 +302,7 @@ export default function OptimizerPage() {
   const selections: SlipSelection[] = (result?.picks ?? []).map(p => ({
     home: p.home, away: p.away, date: p.date, time: p.time, league: p.league,
     market: p.market, marketName: p.market_name, code: p.code, label: p.label, prob: p.prob,
+    ...(p.sb ? { sb: p.sb } : {}),
   }));
 
   const run = async (bookable = bookableOnly) => {
@@ -304,6 +313,7 @@ export default function OptimizerPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ target_odds: targetOdds, min_odds: lo, max_odds: hi, min_prob: minProb, days, max_games: maxGames,
                                ...request(),
+                               sport: bbOn ? sport : "football", bb_markets: bbFamilies,
                                bookable_only: bookable }),
       });
       if (res.status === 401 || res.status === 402) { setLocked("build"); return; }
@@ -412,7 +422,34 @@ export default function OptimizerPage() {
             <Setting label="Matches from">
               {DAYS.map(d => <Chip key={d.n} active={days === d.n} onClick={() => setDays(d.n)}>{d.label}</Chip>)}
             </Setting>
-            <Setting label="Markets">
+            {bbOn && (
+              <Setting label="Sport">
+                {([["football", "Football"], ["basketball", "Basketball"], ["all", "Both"]] as const).map(([k, l]) => (
+                  <Chip key={k} active={sport === k} onClick={() => setSport(k)}>{l}</Chip>
+                ))}
+              </Setting>
+            )}
+            {bbOn && sport !== "football" && (
+              <Setting label="Basketball markets">
+                <div className="basis-full flex items-center gap-3 text-xs -mt-0.5 mb-0.5">
+                  <button type="button" className="font-semibold text-accent" onClick={() => setBbFamilies(BB_FAMILIES.map(f => f.id))}>
+                    Select all
+                  </button>
+                  <button type="button" className="text-n-400 hover:text-n-200" onClick={() => setBbFamilies([])}>Clear all</button>
+                </div>
+                {BB_FAMILIES.map(f => (
+                  <Chip key={f.id} active={bbFamilies.includes(f.id)}
+                    onClick={() => setBbFamilies(fs => fs.includes(f.id) ? fs.filter(x => x !== f.id) : [...fs, f.id])}>
+                    {f.name}
+                  </Chip>
+                ))}
+                <p className="basis-full text-[11px] text-n-500">
+                  Every line SportyBet offers on its basketball matches, at its price, rated by our model: always bookable.
+                </p>
+              </Setting>
+            )}
+            {sport !== "basketball" && (
+            <Setting label={sport === "all" ? "Football markets" : "Markets"}>
               <div className="basis-full flex items-center gap-3 text-xs -mt-0.5 mb-0.5">
                 <button type="button" className="font-semibold text-accent" onClick={() => setMarkets(MARKETS.map(m => m.id))}>
                   Select all
@@ -457,6 +494,7 @@ export default function OptimizerPage() {
                 </p>
               )}
             </Setting>
+            )}
             <div className="space-y-2">
               <p className="eyebrow">At most {maxGames} games</p>
               <input type="range" min={1} max={30} value={maxGames} onChange={e => setMaxGames(Number(e.target.value))}
