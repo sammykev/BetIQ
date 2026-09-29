@@ -124,9 +124,12 @@ def _pair(s: Any) -> Optional[List[int]]:
 
 
 def short_status(s: str, sport: str) -> str:
-    """ "2nd set" -> "S2"; table tennis "3rd game" -> "G3"."""
-    s = re.sub(r"(\d)(?:st|nd|rd|th)\s+set", r"S\1", s, flags=re.I)
-    return re.sub(r"(\d)(?:st|nd|rd|th)\s+game", r"G\1", s, flags=re.I)
+    """SportyBet's stage, short: tennis "set 2" / "2nd set" -> "S2"; table
+    tennis (its games are "sets" there) -> "G2"; "2nd break" -> "Break"."""
+    tag = "G" if sport == "table_tennis" else "S"
+    s = re.sub(r"\bset\s+(\d)\b", lambda m: f"{tag}{m.group(1)}", s, flags=re.I)
+    s = re.sub(r"(\d)(?:st|nd|rd|th)\s+(?:set|game)", lambda m: f"{tag}{m.group(1)}", s, flags=re.I)
+    return re.sub(r"(?:\d(?:st|nd|rd|th)\s+)?break", "Break", s, flags=re.I)
 
 
 def parse_live(ev: Dict, sport: str = "tennis") -> Optional[Dict[str, Any]]:
