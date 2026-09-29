@@ -123,14 +123,17 @@ LIVE_LISTS = (("/factsCenter/liveOrPrematchEvents", {"sportId": BASKETBALL}),
 
 async def fetch_live(started_ids: List[str], session=None, per_event_max: int = 40, sport_id: str = BASKETBALL,
                      parse=None) -> Tuple[Dict[str, Dict], str, set]:
-    """In-play scores for the games we priced that have tipped off:
-    ({event id: live}, how they were read, the ids actually checked).
-    SportyBet's live listing if it answers, else each game's own page
-    (productId 1: live)."""
+    """In-play scores for the games we priced that have started: ({event id:
+    live}, how they were read, the ids actually checked). SportyBet's live
+    listing first; the games it doesn't include (it can leave some out) are
+    read from their own pages (productId 1: live), up to per_event_max."""
     import sportybet
     session = session or sportybet.shared_session()
     parse = parse or parse_live
     wanted = set(started_ids)
+    live: Dict[str, Dict] = {}
+    checked: set = set()
+    how = []
     for path, params in LIVE_LISTS:
         try:
             data = await sportybet._request(session, "GET", path,
@@ -139,13 +142,19 @@ async def fetch_live(started_ids: List[str], session=None, per_event_max: int = 
             continue
         found: List[Dict] = []
         sportybet._collect_events(data.get("data"), found)
-        if found:
-            live = {x["id"]: x for x in (parse(e) for e in found) if x and x["id"] in wanted}
-            return live, f"{path}: {len(found)} events", wanted
-    out: Dict[str, Dict] = {}
-    checked: set = set()
+        if not found:
+            continue
+        seen = {str(e.get("eventId")) for e in found}
+        for x in (parse(e) for e in found):
+            if x and x["id"] in wanted:
+                live[x["id"]] = x
+        checked |= wanted & seen
+        how.append(f"{path}: {len(found)} events, {len(wanted & seen)} of ours")
+        break
+    # Ours the listing didn't have: their own pages (in play, or over)
+    rest = [eid for eid in wanted if eid not in checked][:per_event_max]
     errors = 0
-    for eid in list(wanted)[:per_event_max]:
+    for eid in rest:
         try:
             data = await sportybet._request(session, "GET", "/factsCenter/event", params={"eventId": eid, "productId": 1})
         except Exception:
@@ -154,9 +163,10 @@ async def fetch_live(started_ids: List[str], session=None, per_event_max: int = 
         checked.add(eid)
         x = parse(data.get("data") or {})
         if x:
-            out[eid] = x
-    return out, (f"event pages: {len(out)} live of {min(len(wanted), per_event_max)}"
-                 + (f", {errors} failed" if errors else "")), checked
+            live[eid] = x
+    if rest:
+        how.append(f"event pages: {len(rest) - errors} read" + (f", {errors} failed" if errors else ""))
+    return live, " · ".join(how) or "nothing read", checked
 
 
 def encode(games: List[Dict]) -> str:

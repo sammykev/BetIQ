@@ -147,3 +147,26 @@ def test_tick_grades_finals_and_endpoints_show_them(api, monkeypatch):
     assert days[later["date"]]["total"] == 1
     assert days[started["date"]]["tip"][0] >= 1
     assert c.get("/api/basketball/matchday?date=2020-01-01").status_code == 400
+
+
+def test_live_reads_games_the_listing_left_out(monkeypatch):
+    """SportyBet's live list may leave some of ours out: those are read from
+    their own pages, not taken as over."""
+    import sportybet
+    pages = []
+
+    async def request(session, method, path, **kw):
+        if path == "/factsCenter/event":
+            pages.append(kw["params"]["eventId"])
+            return {"data": {"eventId": kw["params"]["eventId"], "matchStatus": "3rd quarter", "status": 1,
+                             "setScore": "60:58", "gameScore": ["20:18", "22:20", "18:20"]}}
+        return {"data": [{"eventId": "sr:match:1", "homeTeamName": "A", "awayTeamName": "B", "matchStatus": "2nd quarter",
+                          "status": 1, "setScore": "30:25", "gameScore": ["18:12", "12:13"]},
+                         {"eventId": "sr:match:9", "homeTeamName": "C", "awayTeamName": "D", "matchStatus": "1st quarter",
+                          "status": 1, "setScore": "5:4"}]}
+    monkeypatch.setattr(sportybet, "_request", request)
+    monkeypatch.setattr(sportybet, "shared_session", lambda: None)
+    live, how, checked = asyncio.run(bd.fetch_live(["sr:match:1", "sr:match:2"]))
+    assert set(live) == {"sr:match:1", "sr:match:2"} and pages == ["sr:match:2"]
+    assert live["sr:match:2"]["score"] == [60, 58] and checked == {"sr:match:1", "sr:match:2"}
+    assert "1 of ours" in how and "event pages: 1 read" in how

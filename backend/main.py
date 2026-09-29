@@ -5335,11 +5335,43 @@ async def _web_probe() -> Dict[str, Any]:
     """What this server can reach (web_probe.py), saved for the read_probe workflow job."""
     import web_probe
     report = await web_probe.run()
+    try:
+        report["live"] = await _live_probe()
+    except Exception as e:
+        report["live"] = {"error": str(e)[:300]}
     r = _get_redis()
     if r:
         r.set(web_probe.PROBE_KEY, json.dumps(report, default=str)[:900_000], ex=7 * 86400)
     print(f"[Probe] done: {list(report)}")
     return report
+
+
+async def _live_probe() -> Dict[str, Any]:
+    """What SportyBet's live listings return per sport (fields and a few
+    events), and each live job's last run: for the read_probe job."""
+    import basketball_data as bd
+    import sportybet
+    import tennis_facts as tf
+    out: Dict[str, Any] = {"basketball_tick": dict(_bbmd_status),
+                           "racket_ticks": {s: dict(v) for s, v in _rkmd_status.items()}}
+    session = sportybet.shared_session()
+    for name, sid in (("basketball", bd.BASKETBALL), ("tennis", tf.SPORTS["tennis"]["id"]),
+                      ("table_tennis", tf.SPORTS["table_tennis"]["id"])):
+        part = {}
+        for path, params in bd.LIVE_LISTS:
+            try:
+                data = await sportybet._request(session, "GET", path,
+                                                params={**params, "sportId": sid, "_t": sportybet._now_ms()})
+                found: List[Dict] = []
+                sportybet._collect_events(data.get("data"), found)
+                part[path] = {"events": len(found), "sample": [
+                    {k: e.get(k) for k in ("eventId", "homeTeamName", "matchStatus", "status", "setScore", "gameScore",
+                                           "pointScore", "playedSeconds", "remainingTimeInPeriod", "period")}
+                    for e in found[:3]]}
+            except Exception as e:
+                part[path] = {"error": str(e)[:200]}
+        out[name] = part
+    return out
 
 
 async def _tennis_collect() -> Dict[str, Any]:
@@ -5752,9 +5784,27 @@ async def get_basketball_facts(request: Request, event: str = Query(..., max_len
     await _check_sport_access(request, "basketball")
     p = next((x for x in _bb_predictions if x.get("sportybet_event_id") == event), None)
     if not p:
+        # Started or finished: the match-day store keeps it (with the prediction it had)
+        p = _bbmd_find(event)
+    if not p:
         raise HTTPException(status_code=404, detail="Match not found")
     idx = await _bb_index()
     return bf.facts(idx, p)
+
+
+def _bbmd_find(event: str) -> Optional[Dict]:
+    """A basketball match from the last week's match days, in a prediction's shape."""
+    r = _get_redis()
+    if not r:
+        return None
+    today = date.today()
+    for i in range(0, 8):
+        e = _bbmd_load(r, (today - timedelta(days=i)).isoformat()).get(event)
+        if e:
+            pred = e.get("pred") or {}
+            return {"home": e.get("home"), "away": e.get("away"), "date": e.get("date"), "time": e.get("time"),
+                    "total_line": pred.get("total_line"), "handicap_line": pred.get("handicap_line")}
+    return None
 
 
 # ── Basketball match days (basketball_matchday.py): the date strip, live, history ──
@@ -8545,12 +8595,12 @@ async def startup():
                       next_run_time=datetime.now() + timedelta(minutes=2))
     scheduler.add_job(_table_tennis_refresh, "interval", minutes=10, id="table_tennis_refresh", max_instances=1, misfire_grace_time=300,
                       coalesce=True, next_run_time=datetime.now() + timedelta(minutes=3))
-    scheduler.add_job(_tennis_live_tick, "interval", minutes=2, id="tennis_live", max_instances=1, misfire_grace_time=300, coalesce=True,
+    scheduler.add_job(_tennis_live_tick, "interval", minutes=1, id="tennis_live", max_instances=1, misfire_grace_time=300, coalesce=True,
                       next_run_time=datetime.now() + timedelta(minutes=4))
-    scheduler.add_job(_table_tennis_live_tick, "interval", minutes=2, id="table_tennis_live", max_instances=1, misfire_grace_time=300,
+    scheduler.add_job(_table_tennis_live_tick, "interval", minutes=1, id="table_tennis_live", max_instances=1, misfire_grace_time=300,
                       coalesce=True, next_run_time=datetime.now() + timedelta(minutes=5))
-    # Basketball games under way: live scores, and finals graded as they come in
-    scheduler.add_job(_bb_live_tick, "interval", minutes=2, id="bb_live", max_instances=1, coalesce=True,
+    # Basketball games under way: live scores every minute, and finals graded as they come in
+    scheduler.add_job(_bb_live_tick, "interval", minutes=1, id="bb_live", max_instances=1, coalesce=True,
                       next_run_time=datetime.now() + timedelta(minutes=4))
     # Player props: box scores and the check's numbers (nightly in Actions), goalscorers priced
     scheduler.add_job(_props_load, "interval", hours=3, id="props_load", max_instances=1, coalesce=True)

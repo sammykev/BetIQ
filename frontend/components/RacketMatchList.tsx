@@ -7,6 +7,7 @@ import { CompetitionBadge } from "@/components/CompetitionBadge";
 import { FormDots } from "@/components/BasketballCard";
 import { VerdictIcon } from "@/components/MatchdayList";
 import { localTime } from "@/lib/matchTime";
+import { TennisFacts } from "@/components/TennisFacts";
 import { RK_WORDS, type RKMatchdayMatch } from "@/lib/racket";
 import type { RacketSport } from "@/lib/tennis";
 
@@ -60,6 +61,20 @@ const GRADE_LABELS: Record<RacketSport, Record<string, string>> = {
   table_tennis: { tip: "Our tip", games: "Total points", best: "Best line" },
 };
 
+/** Each player's last 5, numbers and meetings (as on the card's modal), on request. */
+function FormAndStats({ m, sport }: { m: RKMatchdayMatch; sport: RacketSport }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="space-y-2">
+      <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open}
+        className="text-xs font-semibold text-accent inline-flex items-center gap-1">
+        {open ? "Hide" : "Show"} form &amp; stats <ChevronDown size={12} className={clsx("transition-transform", open && "rotate-180")} />
+      </button>
+      {open && <TennisFacts m={{ home: m.home, away: m.away, date: m.date, time: m.time, league: m.league }} sport={sport} />}
+    </div>
+  );
+}
+
 function Detail({ m, sport }: { m: RKMatchdayMatch; sport: RacketSport }) {
   const p = m.pred;
   const grades = Object.entries(m.grades ?? {});
@@ -109,7 +124,8 @@ function Detail({ m, sport }: { m: RKMatchdayMatch; sport: RacketSport }) {
           )}
         </div>
       )}
-      {m.status === "live" && <p className="text-xs text-n-400">In play: the score updates every couple of minutes. Picks are graded when the match ends.</p>}
+      {m.status === "live" && <p className="text-xs text-n-400">In play: the score updates every minute. Picks are graded when the match ends.</p>}
+      <FormAndStats m={m} sport={sport} />
       {awaiting(m) && <p className="text-xs text-n-400">Started: waiting for the score from SportyBet.</p>}
     </div>
   );

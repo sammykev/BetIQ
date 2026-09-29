@@ -7,7 +7,8 @@ import { CompetitionBadge } from "@/components/CompetitionBadge";
 import { Crest } from "@/components/BasketballCard";
 import { VerdictIcon } from "@/components/MatchdayList";
 import { localTime } from "@/lib/matchTime";
-import { BB_GRADE_LABELS, type BBMatchdayMatch } from "@/lib/basketball";
+import { BasketballFacts } from "@/components/BasketballFacts";
+import { BB_GRADE_LABELS, type BasketballPrediction, type BBMatchdayMatch } from "@/lib/basketball";
 
 const pct = (x?: number | null) => (typeof x === "number" ? `${Math.round(x * 100)}%` : "—");
 
@@ -48,6 +49,23 @@ function Quarters({ m }: { m: BBMatchdayMatch }) {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+/** The teams' form, averages and meetings (as on the match card's modal), on request. */
+function FormAndStats({ m }: { m: BBMatchdayMatch }) {
+  const [open, setOpen] = useState(false);
+  const p = { ...m.pred, home: m.home, away: m.away, date: m.date, time: m.time, league: m.league,
+              league_name: m.league_name, flag: m.flag, home_logo: m.home_logo, away_logo: m.away_logo,
+              sportybet_event_id: m.id } as unknown as BasketballPrediction;
+  return (
+    <div className="space-y-2">
+      <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open}
+        className="text-xs font-semibold text-accent inline-flex items-center gap-1">
+        {open ? "Hide" : "Show"} form &amp; stats <ChevronDown size={12} className={clsx("transition-transform", open && "rotate-180")} />
+      </button>
+      {open && <BasketballFacts p={p} />}
     </div>
   );
 }
@@ -99,7 +117,8 @@ function Detail({ m }: { m: BBMatchdayMatch }) {
           )}
         </div>
       )}
-      {m.status === "live" && <p className="text-xs text-n-400">In play: the score updates every couple of minutes. Picks are graded at the final buzzer.</p>}
+      {m.status === "live" && <p className="text-xs text-n-400">In play: the score updates every minute. Picks are graded at the final buzzer.</p>}
+      <FormAndStats m={m} />
       {awaiting(m) && <p className="text-xs text-n-400">Tipped off: waiting for the score from SportyBet.</p>}
     </div>
   );

@@ -96,7 +96,7 @@ export function BasketballDays({ preds, loading, onOpen }: {
           if (!alive) return;
           setMd(d);
           const under = d.matches.some(m => m.status === "live" || (m.status === "scheduled" && Date.parse(`${m.date}T${m.time}:00Z`) < Date.now()));
-          if (under) timer = setTimeout(() => load(false), 60_000);
+          if (under) timer = setTimeout(() => load(false), 45_000);
         })
         .catch(() => { if (alive && first) setMdError(true); })
         .finally(() => { if (alive && first) setMdLoading(false); });
