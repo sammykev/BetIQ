@@ -73,6 +73,8 @@ jobs:
 
       - name: Probe
         if: github.event.inputs.job == 'probe'
+        env:
+          UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
         run: python probe_basketball.py --pages ${{ github.event.inputs.pages || '10' }} --parts "${{ github.event.inputs.parts }}"
       - uses: actions/upload-artifact@v4
         if: github.event.inputs.job == 'probe'

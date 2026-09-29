@@ -466,11 +466,113 @@ async def live() -> None:
             line(f"  event page: {ex}")
 
 
+async def history() -> None:
+    """Deep history (10 seasons) for the leagues we price: which sources
+    answer from here, how far back, and whether games carry quarter scores."""
+    import os
+    line("\n=== Deep history sources ===")
+    from curl_cffi.requests import AsyncSession
+    OUT["history"] = {}
+    # The leagues we price now (the server's rated leagues), busiest first
+    ours: List[Any] = []
+    if os.environ.get("UPSTASH_REDIS_URL"):
+        try:
+            import redis
+            import basketball_data as bd
+            r = redis.from_url(os.environ["UPSTASH_REDIS_URL"])
+            ours = sorted(((d["name"], d.get("n", 0)) for d in bd.decode(r.get("betiq:bb:model"))), key=lambda t: -t[1])
+        except Exception as e:
+            line(f"  our leagues: {e}")
+    line(f"  our rated leagues: {len(ours)}")
+    for name, n in ours:
+        line(f"    {name}: {n} games")
+    OUT["history"]["ours"] = ours
+
+    # ESPN: every basketball league it has, one mid-season day per year back to 2015
+    async with AsyncSession(timeout=25) as s:     # a plain client (ESPN answers it)
+        r = await s.get("https://sports.core.api.espn.com/v2/sports/basketball/leagues", params={"limit": 300})
+        slugs = []
+        for item in (r.json().get("items") or []) if r.status_code == 200 else []:
+            try:
+                d = (await s.get(item["$ref"].replace("http://", "https://"))).json()
+                slugs.append((d.get("slug"), d.get("name")))
+            except Exception:
+                continue
+        line(f"  ESPN: {len(slugs)} leagues")
+        OUT["history"]["espn"] = {}
+        for slug, name in slugs:
+            per_year = {}
+            for year in range(2015, 2026):
+                got = 0
+                for md in ("0115", "0315", "0715", "1115"):
+                    try:
+                        sr = await s.get(f"https://site.api.espn.com/apis/site/v2/sports/basketball/{slug}/scoreboard",
+                                         params={"dates": f"{year}{md}", "limit": 500, "groups": 50})
+                        evs = (sr.json().get("events") or []) if sr.status_code == 200 else []
+                    except Exception:
+                        evs = []
+                    got += sum(1 for e in evs if ((e.get("competitions") or [{}])[0].get("status") or {})
+                               .get("type", {}).get("completed"))
+                per_year[year] = got
+            if any(per_year.values()):
+                line(f"    {slug:28s} {str(name)[:34]:34s} " + " ".join(f"{y % 100:02d}:{n}" for y, n in per_year.items()))
+            OUT["history"]["espn"][slug] = {"name": name, "per_year": per_year}
+
+    async with AsyncSession(impersonate="chrome131", timeout=25) as s:
+        # EuroLeague / EuroCup: a season per request
+        OUT["history"]["euroleague"] = {}
+        for comp in ("E", "U"):
+            for year in (2015, 2019, 2024):
+                try:
+                    r = await s.get(f"https://api-live.euroleague.net/v2/competitions/{comp}/seasons/{comp}{year}/games")
+                    games = [g for g in (r.json().get("data") or []) if g.get("played")]
+                    loc = (games[0].get("local") or {}) if games else {}
+                    line(f"    euroleague {comp}{year}: HTTP {r.status_code}, {len(games)} played; local keys {sorted(loc.keys())}")
+                    OUT["history"]["euroleague"][f"{comp}{year}"] = {"played": len(games), "local": loc}
+                except Exception as e:
+                    line(f"    euroleague {comp}{year}: {e}")
+
+        # SofaScore: the other leagues (Spain, Italy, Germany, France, Greece, Turkey, ABA, Australia, China, ...)
+        OUT["history"]["sofascore"] = {}
+        base = "https://api.sofascore.com/api/v1"
+        tournaments: Dict[int, str] = {}
+        for day in ("2025-01-18", "2025-03-01", "2025-11-15"):
+            try:
+                r = await s.get(f"{base}/sport/basketball/scheduled-events/{day}")
+                line(f"    sofascore {day}: HTTP {r.status_code}")
+                for e in (r.json().get("events") or []) if r.status_code == 200 else []:
+                    ut = (e.get("tournament") or {}).get("uniqueTournament") or {}
+                    if ut.get("id"):
+                        cat = ((e.get("tournament") or {}).get("category") or {}).get("name")
+                        tournaments[ut["id"]] = f"{cat} · {ut.get('name')}"
+            except Exception as ex:
+                line(f"    sofascore {day}: {ex}")
+        line(f"    sofascore: {len(tournaments)} tournaments seen")
+        for tid, tname in list(tournaments.items())[:120]:
+            try:
+                r = await s.get(f"{base}/unique-tournament/{tid}/seasons")
+                seasons = (r.json().get("seasons") or []) if r.status_code == 200 else []
+                sample = None
+                if len(seasons) > 8:
+                    old = seasons[min(9, len(seasons) - 1)]
+                    er = await s.get(f"{base}/unique-tournament/{tid}/season/{old['id']}/events/last/0")
+                    evs = (er.json().get("events") or []) if er.status_code == 200 else []
+                    if evs:
+                        hs = evs[0].get("homeScore") or {}
+                        sample = {"season": old.get("year"), "events": len(evs), "quarters": "period4" in hs}
+                line(f"      {tid:6d} {tname[:48]:48s} seasons {len(seasons):3d} "
+                     f"{seasons[-1].get('year') if seasons else ''}..{seasons[0].get('year') if seasons else ''} {sample or ''}")
+                OUT["history"]["sofascore"][tid] = {"name": tname, "seasons": len(seasons), "sample": sample,
+                                                   "years": [x.get("year") for x in seasons[:12]]}
+            except Exception as ex:
+                line(f"      {tid} {tname}: {ex}")
+
+
 async def main(pages: int, parts: str) -> None:
     every = {"listing": lambda: sportybet_listing(pages), "results": sportybet_results, "espn": espn,
              "others": others, "logos": logos, "depth": results_depth, "espn_debug": espn_debug,
              "crests": crests, "euroleague": euroleague_sample, "pipeline": pipeline,
-             "props": props, "live": live}
+             "props": props, "live": live, "history": history}
     chosen = [every[p] for p in parts.split(",")] if parts else list(every.values())
     for part in chosen:
         try:

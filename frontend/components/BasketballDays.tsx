@@ -6,6 +6,7 @@ import { AlertTriangle, ArrowRight, CalendarDays, Loader2, SearchX } from "lucid
 import { DateStrip } from "@/components/DateStrip";
 import { DaySummaryBar } from "@/components/DaySummaryBar";
 import { BasketballCard } from "@/components/BasketballCard";
+import { CompetitionBadge } from "@/components/CompetitionBadge";
 import { BasketballMatchList } from "@/components/BasketballMatchList";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
 import { dayLabel, localDateStr } from "@/lib/matchTime";
@@ -21,6 +22,11 @@ function Empty({ icon, title, body, action }: { icon: React.ReactNode; title: st
       {action && <div className="pt-2">{action}</div>}
     </div>
   );
+}
+
+function Count({ n, active }: { n: number; active: boolean }) {
+  return <span className={clsx("tnum text-[10px] px-1.5 py-0.5 rounded-full font-semibold",
+    active ? "bg-ink/15 text-ink" : "bg-n-800 text-n-400")}>{n}</span>;
 }
 
 function Heading({ title, n }: { title: string; n: number }) {
@@ -160,16 +166,22 @@ export function BasketballDays({ preds, loading, onOpen }: {
           )
         ) : <>
           {leagues.length > 1 && (
-            <div className="flex gap-1.5 overflow-x-auto [scrollbar-width:none] -mx-1 px-1">
-              <button onClick={() => setLeague("")} className={clsx("chip shrink-0", !league ? "chip-active" : "chip-idle")}>
-                All · {dayPreds.length}</button>
-              {leagues.map(([l, n]) => {
-                const p = dayPreds.find(x => x.league === l)!;
-                return (
-                  <button key={l} onClick={() => setLeague(l)} className={clsx("chip shrink-0", league === l ? "chip-active" : "chip-idle")}>
-                    {p.flag} {p.league_name} · {n}</button>
-                );
-              })}
+            // Scrolls sideways with a visible scrollbar, like football's league tabs
+            <div className="overflow-x-auto pb-1 -mx-4 px-4 sm:mx-0 sm:px-0">
+              <div className="flex gap-1.5 min-w-max">
+                <button onClick={() => setLeague("")} className={clsx("chip", !league ? "chip-active" : "chip-idle")}>
+                  <span>🏀</span><span>All leagues</span><Count n={dayPreds.length} active={!league} />
+                </button>
+                {leagues.map(([l, n]) => {
+                  const p = dayPreds.find(x => x.league === l)!;
+                  return (
+                    <button key={l} onClick={() => setLeague(l)} className={clsx("chip", league === l ? "chip-active" : "chip-idle")}>
+                      <CompetitionBadge name={p.league_name} fallbackEmoji={p.flag} size={14} />
+                      <span>{p.league_name}</span><Count n={n} active={league === l} />
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           )}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
