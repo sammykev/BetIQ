@@ -99,12 +99,29 @@ class TestRequireUser:
             run(auth.require_user(request(token(sub="user_alice")), "user_bob"))
         assert e.value.status_code == 403
 
-    def test_legacy_mode_trusts_client_uid(self, monkeypatch):
+    def test_without_an_issuer_nobody_is_trusted(self, monkeypatch):
+        # A uid anyone can type must never open that account (IDOR)
         monkeypatch.setattr(auth, "CLERK_ISSUER", "")
+        monkeypatch.setattr(auth, "ALLOW_UNVERIFIED_UID", False)
+        for tok in (None, token()):
+            with pytest.raises(HTTPException) as e:
+                run(auth.require_user(request(tok), "user_bob"))
+            assert (e.value.status_code, e.value.detail) == (503, "auth_not_configured")
+
+    def test_local_development_can_trust_the_client_uid(self, monkeypatch):
+        monkeypatch.setattr(auth, "CLERK_ISSUER", "")
+        monkeypatch.setattr(auth, "ALLOW_UNVERIFIED_UID", True)
         assert run(auth.require_user(request(None), "user_bob")) == "user_bob"
 
-    def test_legacy_mode_still_needs_a_uid(self, monkeypatch):
+    def test_the_development_switch_does_nothing_once_an_issuer_is_set(self, enforced, monkeypatch):
+        monkeypatch.setattr(auth, "ALLOW_UNVERIFIED_UID", True)
+        with pytest.raises(HTTPException) as e:
+            run(auth.require_user(request(None), "user_bob"))
+        assert e.value.status_code == 401
+
+    def test_local_development_still_needs_a_uid(self, monkeypatch):
         monkeypatch.setattr(auth, "CLERK_ISSUER", "")
+        monkeypatch.setattr(auth, "ALLOW_UNVERIFIED_UID", True)
         with pytest.raises(HTTPException) as e:
             run(auth.require_user(request(None), ""))
         assert e.value.status_code == 400

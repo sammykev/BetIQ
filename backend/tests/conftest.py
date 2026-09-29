@@ -55,3 +55,12 @@ def _fresh_matchday_caches():
     for cache in (main._md_read_cache, main._strip_cache, main._accuracy_cache):
         cache.clear()
     yield
+
+
+@pytest.fixture(autouse=True)
+def _local_development_auth(monkeypatch):
+    """Tests run as local development: without CLERK_ISSUER the client's uid
+    is trusted (ALLOW_UNVERIFIED_UID). Tests of auth itself set both."""
+    import auth
+    monkeypatch.setattr(auth, "ALLOW_UNVERIFIED_UID", True)
+    yield

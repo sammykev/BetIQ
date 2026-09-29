@@ -5493,8 +5493,9 @@ async def get_leaderboard(request: Request, uid: str = ""):
     user endpoints key on); `you` marks the caller's own row when signed in."""
     r = _get_redis()
     if not r: return []
-    # Verified user when auth is enforced; the legacy client uid otherwise
-    me = await optional_user(request) if auth_enforced() else (uid or None)
+    # The verified user; the client's uid only in local development
+    import auth
+    me = (uid or None) if auth.unverified_uid_allowed() else await optional_user(request)
     try:
         entries = r.zrevrange("betiq:leaderboard", 0, 19, withscores=True)
         return [{"name": f"#{uid[-6:]}", "wins": int(score), "you": uid == me} for uid, score in entries]
@@ -7084,7 +7085,7 @@ async def convert_slip(request: Request, body: Dict[str, Any]):
         import auth
         import tickets
         uid = await auth.optional_user(request)
-        if not uid and not auth.auth_enforced():
+        if not uid and auth.unverified_uid_allowed():
             uid = str(body.get("uid") or "")[:64] or None
         # Signed out: kept too, so the admin sees every code the site makes
         source = body.get("source") if body.get("source") in TICKET_SOURCES else "other"

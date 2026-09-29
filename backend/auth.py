@@ -13,9 +13,10 @@ Configuration (Render env vars):
 - CLERK_AUTHORIZED_PARTIES (optional): comma-separated frontend origins the
   token must come from (its `azp` claim), e.g. https://predict-withbetiq.vercel.app
 
-Until CLERK_ISSUER is set, requests fall back to the legacy `uid` the client
-sends (the previous, unauthenticated behaviour) and a warning is logged, so
-deploying this doesn't lock users out before the variable is configured.
+Without CLERK_ISSUER, user endpoints refuse every request (503
+auth_not_configured): trusting a `uid` the client sends would let anyone read
+and write any account. For local development only, ALLOW_UNVERIFIED_UID=1
+brings back that trust (the old, unauthenticated behaviour).
 """
 
 import asyncio
@@ -32,10 +33,17 @@ AUTHORIZED_PARTIES: List[str] = [
 
 _jwks_client: Optional[jwt.PyJWKClient] = None
 _warned_legacy = False
+# Local development only: trust the client's `uid` when CLERK_ISSUER isn't set
+ALLOW_UNVERIFIED_UID = os.getenv("ALLOW_UNVERIFIED_UID", "").strip() == "1"
 
 
 def auth_enforced() -> bool:
     return bool(CLERK_ISSUER)
+
+
+def unverified_uid_allowed() -> bool:
+    """The client's own `uid` is taken on trust (local development only)."""
+    return not auth_enforced() and ALLOW_UNVERIFIED_UID
 
 
 def _jwks() -> jwt.PyJWKClient:
@@ -94,14 +102,21 @@ async def require_user(request: Request, claimed_uid: str = "") -> str:
     """
     The user id this request is allowed to act as.
 
-    Enforced mode: requires a valid token; a `uid` the client also sent must
-    match it (403 otherwise). Legacy mode: returns the client's `uid`.
+    Requires a valid token; a `uid` the client also sent must match it (403
+    otherwise). Without CLERK_ISSUER nobody can be verified, so it refuses
+    (503), unless ALLOW_UNVERIFIED_UID=1 (local development: the client's `uid`).
     """
     global _warned_legacy
     if not auth_enforced():
+        if not ALLOW_UNVERIFIED_UID:
+            if not _warned_legacy:
+                print("[Auth] ERROR: CLERK_ISSUER is not set — user endpoints are refusing "
+                      "requests. Set CLERK_ISSUER to verify signed-in users.")
+                _warned_legacy = True
+            raise HTTPException(status_code=503, detail="auth_not_configured")
         if not _warned_legacy:
-            print("[Auth] WARNING: CLERK_ISSUER is not set — user endpoints trust the "
-                  "client-supplied uid. Set CLERK_ISSUER to enforce authentication.")
+            print("[Auth] WARNING: ALLOW_UNVERIFIED_UID=1 — user endpoints trust the "
+                  "client-supplied uid. Local development only.")
             _warned_legacy = True
         if not claimed_uid:
             raise HTTPException(status_code=400, detail="Missing uid")

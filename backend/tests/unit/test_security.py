@@ -244,3 +244,29 @@ class TestCors:
             "Origin": "https://predict-withbetiq.vercel.app", "Access-Control-Request-Method": method,
             "Access-Control-Request-Headers": "authorization, content-type, x-admin-secret"})
         assert r.status_code == 200 and method in r.headers["access-control-allow-methods"]
+
+
+class TestAccountAccess:
+    """Another account's uid in the request (IDOR) opens nothing when the
+    server can't verify who's asking (no CLERK_ISSUER)."""
+
+    @pytest.fixture(autouse=True)
+    def production_without_issuer(self, monkeypatch):
+        monkeypatch.setattr(auth, "CLERK_ISSUER", "")
+        monkeypatch.setattr(auth, "ALLOW_UNVERIFIED_UID", False)
+
+    def test_reads_are_refused(self, client, redis):
+        victim = "user_victim12345678"
+        for kind in ("bets", "codes", "saves", "tickets", "prefs"):
+            redis.set(f"betiq:user:{victim}:{kind}", json.dumps([{"secret": kind}]))
+        for path in ("bets", "codes", "saves", "stats", "tickets", "prefs"):
+            r = client.get(f"/api/user/{path}?uid={victim}")
+            assert (r.status_code, r.json()["detail"]) == (503, "auth_not_configured"), path
+            assert "secret" not in r.text
+
+    def test_writes_are_refused(self, client, redis):
+        victim = "user_victim12345678"
+        for path, body in (("bets", {"bet": {"result": "won"}}), ("codes", {"entry": {"code": "X"}}),
+                           ("saves", {"prediction": {"home": "A", "away": "B"}}), ("prefs", {"digest": True})):
+            assert client.post(f"/api/user/{path}", json={"uid": victim, **body}).status_code == 503, path
+        assert not [k for k in redis.kv if victim in k]
