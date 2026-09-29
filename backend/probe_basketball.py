@@ -333,10 +333,106 @@ async def pipeline() -> None:
             line(f"  booking test: {e}")
 
 
+_PROP = re.compile(r"player|scorer|score|shot|assist|card|booked|rebound|point|3-point|block|steal|foul|tackle|save|header", re.I)
+
+
+async def _prop_markets(sport_id: str, events: List[Dict], label: str, pages: int = 6) -> None:
+    """Player markets on a spread of big matches' pages: id, name, specifier, outcomes."""
+    session = sportybet.shared_session()
+    seen: Dict[str, Dict] = {}
+    done = 0
+    for e in events:
+        if done >= pages:
+            break
+        try:
+            page = await sportybet.event_page(e["eventId"], session)
+        except Exception as ex:
+            line(f"  page {e['eventId']}: {ex}")
+            continue
+        ms = (page or {}).get("markets") or []
+        props = [m for m in ms if "player" in (m.get("specifier") or "") or "player" in str(m.get("desc")).lower()
+                 or "scorer" in str(m.get("desc")).lower() or "playerprops" in json.dumps(m.get("outcomes") or [])[:400]]
+        line(f"  {label} {e.get('_tournament')}: {e['homeTeamName']} v {e['awayTeamName']}: {len(ms)} markets, {len(props)} player")
+        done += 1
+        for m in props:
+            k = seen.setdefault(str(m.get("id")), {"desc": m.get("desc"), "n": 0, "specs": [], "outs": []})
+            k["n"] += 1
+            if len(k["specs"]) < 3:
+                k["specs"].append(m.get("specifier"))
+            if len(k["outs"]) < 4:
+                k["outs"] += [(o.get("id"), o.get("desc"), o.get("odds")) for o in (m.get("outcomes") or [])[:2]]
+    for mid, k in sorted(seen.items(), key=lambda kv: -kv[1]["n"]):
+        line(f"    {mid:>6} x{k['n']} {k['desc']} | specs {k['specs']} | outs {json.dumps(k['outs'])[:300]}")
+    OUT.setdefault("props", {})[label] = seen
+
+
+async def props() -> None:
+    """Player props: SportyBet's markets (football and basketball), and where
+    per-player match stats come from (ESPN box scores, EuroLeague, Understat)."""
+    line("\n=== 11. Player props ===")
+    session = sportybet.shared_session()
+    fb, _ = await sportybet.fetch_catalog(session)
+    big = re.compile(r"premier league|laliga|serie a|bundesliga|ligue 1|champions league", re.I)
+    fb = [e for e in fb if big.search(e.get("_tournament") or "") and "women" not in (e.get("_tournament") or "").lower()]
+    spread, ts = [], set()
+    for e in fb:
+        if e.get("_tournament") not in ts:
+            spread.append(e)
+            ts.add(e.get("_tournament"))
+    await _prop_markets(sportybet.FOOTBALL, spread + fb, "football", 6)
+    bb, _, _ = await sportybet._paged(session, "/factsCenter/pcUpcomingEvents", {
+        "sportId": BASKETBALL, "marketId": "219", "pageSize": 100, "todayGames": "false"}, 3)
+    top = re.compile(r"nba|euroleague|eurocup|wnba|acb|nbl", re.I)
+    bb = sorted([e for e in bb if top.search(e.get("_tournament") or "")], key=lambda e: -(e.get("totalMarketSize") or 0))
+    await _prop_markets(BASKETBALL, bb, "basketball", 6)
+
+    import httpx
+    async with httpx.AsyncClient(timeout=25) as c:
+        # ESPN box scores: NBA and a football league
+        for sport, slug, day in (("basketball", "nba", "20260301"), ("soccer", "eng.1", "20260301"),
+                                 ("soccer", "esp.1", "20260301"), ("basketball", "wnba", "20250715")):
+            try:
+                sb = (await c.get(f"https://site.api.espn.com/apis/site/v2/sports/{sport}/{slug}/scoreboard",
+                                  params={"dates": day})).json()
+                ev = (sb.get("events") or [None])[0]
+                if not ev:
+                    line(f"  espn {slug} {day}: no events")
+                    continue
+                d = (await c.get(f"https://site.api.espn.com/apis/site/v2/sports/{sport}/{slug}/summary",
+                                 params={"event": ev["id"]})).json()
+                if sport == "basketball":
+                    teams = (d.get("boxscore") or {}).get("players") or []
+                    st = (teams[0].get("statistics") or [{}])[0] if teams else {}
+                    ath = (st.get("athletes") or [{}])[0]
+                    line(f"  espn {slug}: {ev.get('name')}: stat keys {st.get('keys') or st.get('labels')}; "
+                         f"first {(ath.get('athlete') or {}).get('displayName')} {ath.get('stats')}; players "
+                         f"{sum(len((t.get('statistics') or [{}])[0].get('athletes') or []) for t in teams)}")
+                else:
+                    rosters = d.get("rosters") or []
+                    r0 = (rosters[0].get("roster") or [{}]) if rosters else [{}]
+                    p0 = r0[0]
+                    line(f"  espn {slug}: {ev.get('name')}: {len(rosters)} rosters, {sum(len(r.get('roster') or []) for r in rosters)} players; "
+                         f"first {(p0.get('athlete') or {}).get('displayName')} starter={p0.get('starter')} "
+                         f"stats {[(x.get('name'), x.get('value')) for x in p0.get('stats') or []][:20]}")
+            except Exception as ex:
+                line(f"  espn {slug}: {ex}")
+        for name, url in (("euroleague boxscore v1", "https://live.euroleague.net/api/Boxscore?gamecode=1&seasoncode=E2024"),
+                          ("euroleague stats v2", "https://api-live.euroleague.net/v2/competitions/E/seasons/E2024/games/1/stats"),
+                          ("understat EPL", "https://understat.com/league/EPL/2025"),
+                          ("understat match", "https://understat.com/match/28000")):
+            try:
+                r = await c.get(url, headers={"User-Agent": "Mozilla/5.0"})
+                body = r.text
+                line(f"  {name}: HTTP {r.status_code} {len(body)} bytes {body[:220]!r}")
+            except Exception as ex:
+                line(f"  {name}: {ex}")
+
+
 async def main(pages: int, parts: str) -> None:
     every = {"listing": lambda: sportybet_listing(pages), "results": sportybet_results, "espn": espn,
              "others": others, "logos": logos, "depth": results_depth, "espn_debug": espn_debug,
-             "crests": crests, "euroleague": euroleague_sample, "pipeline": pipeline}
+             "crests": crests, "euroleague": euroleague_sample, "pipeline": pipeline,
+             "props": props}
     chosen = [every[p] for p in parts.split(",")] if parts else list(every.values())
     for part in chosen:
         try:
