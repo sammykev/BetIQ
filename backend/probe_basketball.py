@@ -766,11 +766,47 @@ async def livestats() -> None:
                     line("    stats keys: " + json.dumps([[s.get("name") for s in (x.get("statistics") or [])] for x in cs])[:400])
 
 
+async def footballstats() -> None:
+    """Sportradar's stats doc for football: the stat names, on live and
+    finished SportyBet matches (numeric sr:match ids)."""
+    from curl_cffi.requests import AsyncSession
+    line("\n=== Football stats on Sportradar ===")
+    session = sportybet.shared_session()
+    data = await sportybet._request(session, "GET", "/factsCenter/liveOrPrematchEvents",
+                                    params={"sportId": "sr:sport:1", "_t": sportybet._now_ms()})
+    found: List[Dict] = []
+    sportybet._collect_events(data.get("data"), found)
+    ids = [(e["eventId"], e.get("homeTeamName"), e.get("awayTeamName"), e.get("tournament") or "")
+           for e in found if str(e.get("eventId", "")).rsplit(":", 1)[-1].isdigit()][:25]
+    names: Counter = Counter()
+    async with AsyncSession(impersonate="chrome", timeout=20) as hc:
+        with_data = 0
+        for eid, h, a, t in ids:
+            num = eid.rsplit(":", 1)[-1]
+            try:
+                resp = await hc.get(f"https://stats.fn.sportradar.com/common/en/Etc:UTC/gismo/match_detailsextended/{num}")
+                d = (resp.json().get("doc") or [{}])[0].get("data")
+            except Exception as ex:
+                line(f"  {eid}: {ex}")
+                continue
+            if not isinstance(d, dict) or not d.get("values"):
+                line(f"  {eid} {h} v {a}: no stats")
+                continue
+            with_data += 1
+            vals = {v.get("name"): v.get("value") for v in d["values"].values() if isinstance(v, dict)}
+            names.update(vals.keys())
+            if with_data <= 3:
+                line(f"  {eid} {h} v {a}: " + json.dumps(vals, default=str)[:3000])
+            else:
+                line(f"  {eid} {h} v {a}: {len(vals)} stats")
+        line(f"\n  {with_data}/{len(ids)} with stats. Names: " + json.dumps(names.most_common(), default=str))
+
+
 async def main(pages: int, parts: str) -> None:
     every = {"listing": lambda: sportybet_listing(pages), "results": sportybet_results, "espn": espn,
              "others": others, "logos": logos, "depth": results_depth, "espn_debug": espn_debug,
              "crests": crests, "euroleague": euroleague_sample, "pipeline": pipeline,
-             "props": props, "live": live, "livestats": livestats, "history": history, "history2": history2}
+             "props": props, "live": live, "livestats": livestats, "footballstats": footballstats, "history": history, "history2": history2}
     chosen = [every[p] for p in parts.split(",")] if parts else list(every.values())
     for part in chosen:
         try:
