@@ -240,3 +240,21 @@ class TestResultsJobs:
         import inspect
         src = inspect.getsource(main._rk_live_tick) + inspect.getsource(main._bb_live_tick)
         assert "fetch_results_day" not in src
+
+
+def test_event_pages_are_read_several_at_a_time(monkeypatch):
+    import time as t
+
+    async def request(session, method, path, **kw):
+        if path == "/factsCenter/event":
+            await asyncio.sleep(0.1)
+            return {"data": {"eventId": kw["params"]["eventId"], "matchStatus": "set 2", "status": 1,
+                             "setScore": "1:0", "gameScore": ["6:4", "2:1"]}}
+        return {"data": []}
+    monkeypatch.setattr(sportybet, "_request", request)
+    monkeypatch.setattr(sportybet, "shared_session", lambda: None)
+    ids = [f"sr:match:{i}" for i in range(16)]
+    start = t.monotonic()
+    live, how, checked = asyncio.run(bd.fetch_live(ids, sport_id=tf.SPORTS["tennis"]["id"]))
+    assert checked == set(ids) and len(live) == 16
+    assert t.monotonic() - start < 0.6          # 16 pages of 0.1s, 8 at a time: ~0.2s, not 1.6s

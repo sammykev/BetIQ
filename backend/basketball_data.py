@@ -118,13 +118,15 @@ def _short_period(s: str) -> str:
     return re.sub(r"overtime", "OT", s, flags=re.I)
 
 
+PAGE_READS_AT_ONCE = 8
+
 LIVE_LISTS = (("/factsCenter/liveOrPrematchEvents", {"sportId": BASKETBALL}),
               ("/factsCenter/wapConfigurableIndexLiveEvents", {"sportId": BASKETBALL}))
 
 
 async def fetch_live(started_ids: List[str], session=None, per_event_max: int = 40, sport_id: str = BASKETBALL,
                      parse=None, final=None, finals: Optional[Dict[str, Dict]] = None,
-                     timeout: float = 12.0, from_pages: Optional[set] = None) -> Tuple[Dict[str, Dict], str, set]:
+                     timeout: float = 8.0, from_pages: Optional[set] = None) -> Tuple[Dict[str, Dict], str, set]:
     """In-play scores for the games we priced that have started: ({event id:
     live}, how they were read, the ids actually checked). SportyBet's live
     listing first; the games it doesn't include (it can leave some out) are
@@ -161,11 +163,18 @@ async def fetch_live(started_ids: List[str], session=None, per_event_max: int = 
     # Ours the listing didn't have: their own pages (in play, or over)
     rest = [eid for eid in wanted if eid not in checked][:per_event_max]
     errors = 0
-    for eid in rest:
-        try:
-            data = await asyncio.wait_for(sportybet._request(
-                session, "GET", "/factsCenter/event", params={"eventId": eid, "productId": 1}), timeout)
-        except Exception:
+    # Several at a time: one after another, a slow SportyBet made the minute job overrun
+    gate = asyncio.Semaphore(PAGE_READS_AT_ONCE)
+
+    async def page(eid: str):
+        async with gate:
+            try:
+                return eid, await asyncio.wait_for(sportybet._request(
+                    session, "GET", "/factsCenter/event", params={"eventId": eid, "productId": 1}), timeout)
+            except Exception:
+                return eid, None
+    for eid, data in await asyncio.gather(*(page(eid) for eid in rest)):
+        if data is None:
             errors += 1
             continue
         checked.add(eid)
