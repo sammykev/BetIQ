@@ -28,16 +28,27 @@ email if it comes.
 
 ## 2. An SSH key (on your own computer)
 
-Password logins get attacked constantly, so use a key. Windows (PowerShell),
-Mac or Linux:
+Password logins get attacked constantly, so use a key.
+
+**Windows (PowerShell):**
+
+```powershell
+mkdir -Force $HOME\.ssh
+ssh-keygen -t ed25519 -f $HOME\.ssh\contabo
+type $HOME\.ssh\contabo.pub
+```
+
+Press Enter twice when it asks for a passphrase (PowerShell drops an empty
+`-N ""`, so leave `-N` out). Later, log in with `ssh -i $HOME\.ssh\contabo root@NEW-IP`.
+
+**Mac or Linux (Terminal):**
 
 ```bash
 ssh-keygen -t ed25519 -f ~/.ssh/contabo -N ""
 cat ~/.ssh/contabo.pub
 ```
 
-(Windows PowerShell: `$HOME\.ssh\contabo` instead of `~/.ssh/contabo`, and
-`type` instead of `cat`.) Copy the line it prints.
+Copy the line it prints (it starts with `ssh-ed25519`).
 
 ## 3. Log in and lock it down
 

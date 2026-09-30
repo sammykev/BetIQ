@@ -16,15 +16,25 @@ Cloud console <https://console.hetzner.cloud> → **New project** → `BetIQ`.
 
 ## 2. An SSH key (on your own computer)
 
-Windows (PowerShell), Mac or Linux (Terminal):
+**Windows (PowerShell):**
+
+```powershell
+mkdir -Force $HOME\.ssh
+ssh-keygen -t ed25519 -f $HOME\.ssh\hetzner
+type $HOME\.ssh\hetzner.pub
+```
+
+Press Enter twice when it asks for a passphrase (PowerShell drops an empty
+`-N ""`, so leave `-N` out). Later, log in with `ssh -i $HOME\.ssh\hetzner root@NEW-IP`.
+
+**Mac or Linux (Terminal):**
 
 ```bash
 ssh-keygen -t ed25519 -f ~/.ssh/hetzner -N ""
 cat ~/.ssh/hetzner.pub
 ```
 
-(Windows PowerShell: `ssh-keygen -t ed25519 -f $HOME\.ssh\hetzner` and
-`type $HOME\.ssh\hetzner.pub`.) Copy the line it prints.
+Copy the line it prints (it starts with `ssh-ed25519`).
 
 ## 3. Create the server
 
