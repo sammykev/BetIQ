@@ -124,14 +124,16 @@ LIVE_LISTS = (("/factsCenter/liveOrPrematchEvents", {"sportId": BASKETBALL}),
 
 async def fetch_live(started_ids: List[str], session=None, per_event_max: int = 40, sport_id: str = BASKETBALL,
                      parse=None, final=None, finals: Optional[Dict[str, Dict]] = None,
-                     timeout: float = 12.0) -> Tuple[Dict[str, Dict], str, set]:
+                     timeout: float = 12.0, from_pages: Optional[set] = None) -> Tuple[Dict[str, Dict], str, set]:
     """In-play scores for the games we priced that have started: ({event id:
     live}, how they were read, the ids actually checked). SportyBet's live
     listing first; the games it doesn't include (it can leave some out) are
     read from their own pages (productId 1: live), up to per_event_max.
     With `final` (a results parser) and a `finals` dict, a page that shows
     the game over puts its final score in `finals` (the results list can
-    miss games). Every request is given up after `timeout` seconds."""
+    miss games). Every request is given up after `timeout` seconds. The ids
+    whose live score came from their own page go in `from_pages`: a page
+    can keep showing the last in-play score of a game that has ended."""
     import sportybet
     session = session or sportybet.shared_session()
     parse = parse or parse_live
@@ -171,6 +173,8 @@ async def fetch_live(started_ids: List[str], session=None, per_event_max: int = 
         x = parse(ev)
         if x:
             live[eid] = x
+            if from_pages is not None:
+                from_pages.add(eid)
         elif final is not None and finals is not None:
             f = final(ev)
             if f:

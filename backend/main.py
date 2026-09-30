@@ -5525,12 +5525,10 @@ async def get_table_tennis_facts(request: Request, home: str = Query(..., max_le
 RK_SPORTS = ("tennis", "table_tennis")
 RK_PRED_KEY = "betiq:{sport}:predictions"
 RK_SLIM_LINES = 8
-RKMD_RESULTS_EVERY = 600      # seconds: today's results re-read at most this often while matches are on
 _rk_models: Dict[str, Dict] = {}
 _rk_predictions: Dict[str, List[Dict]] = {"tennis": [], "table_tennis": []}
 _rk_status: Dict[str, Dict[str, Any]] = {"tennis": {}, "table_tennis": {}}
 _rkmd_status: Dict[str, Dict[str, Any]] = {"tennis": {}, "table_tennis": {}}
-_rkmd_results_at: Dict[str, float] = {"tennis": 0.0, "table_tennis": 0.0}
 _rk_strip_cache: Dict[str, Tuple[float, Any]] = {}
 
 
@@ -5673,6 +5671,101 @@ def _rk_results_days(r, sport: str, days: Iterable[str]) -> Dict[str, Dict]:
     return out
 
 
+RESULTS_REFRESH_MINUTES = 8  # SportyBet's finals for the live ticks
+PAGE_FROZEN_MINUTES = 20   # a live score read from a match's own page, unchanged this long: taken as over
+
+
+def _apply_live_reading(e: Dict, eid: str, overdue: bool, live: Dict[str, Dict], ended: Dict[str, Dict],
+                        checked: set, paged: set, now: datetime, apply_result, apply_live, stale_live) -> bool:
+    """What one live read means for a started match; True if it changed.
+    A final wins. A match past its live window takes no live score (its page
+    can still show the last in-play one): it waits for its final. A score
+    from the match's own page that hasn't moved in PAGE_FROZEN_MINUTES is
+    taken as a match that has ended."""
+    if eid in ended:
+        return apply_result(e, ended[eid])
+    res = e.get("result") or {}
+
+    def final_soon() -> bool:
+        if res.get("status") != "live":
+            return False
+        e["result"] = {**res, "status": "scheduled", "minute": "Final soon"}
+        return True
+    if overdue:
+        return final_soon()
+    if eid in live:
+        if apply_live(e, live[eid]):
+            return True
+        if eid in paged and _older_than(res.get("at"), now, PAGE_FROZEN_MINUTES):
+            return final_soon()
+        return False
+    return stale_live(e, live, checked)
+
+
+def _older_than(at: Optional[str], now: datetime, minutes: int) -> bool:
+    try:
+        return now - datetime.fromisoformat(at) > timedelta(minutes=minutes)
+    except (TypeError, ValueError):
+        return False
+
+
+async def _rk_results_refresh(sport: str) -> Dict[str, Any]:
+    """SportyBet's finals for the days with matches still open (and today),
+    stored for the live ticks: a separate job, as a day is many pages."""
+    import basketball_data as bd
+    import racket_matchday as rmd
+    import tennis_facts as tf
+    r = _get_redis()
+    if not r:
+        return {"skipped": "no Redis"}
+    now = datetime.now(timezone.utc)
+    dates = [(now.date() - timedelta(days=i)).isoformat() for i in (2, 1, 0)]
+    open_days = {d for d in dates if any(rmd.needs_result(e, now) for e in _rkmd_load(r, sport, d).values())}
+    got = {}
+    for d in sorted(open_days | {now.date().isoformat()}):
+        try:
+            found = await asyncio.wait_for(tf.fetch_results_day(d, sport=sport), 120)
+            if found:
+                r.hset(tf.SPORTS[sport]["key"], d, bd.encode(found))
+            got[d] = len(found)
+        except Exception as e:
+            got[d] = f"{type(e).__name__} {e}"[:120]
+    return {"results": got}
+
+
+async def _bb_results_refresh() -> Dict[str, Any]:
+    import basketball_data as bd
+    import basketball_matchday as bbmd
+    r = _get_redis()
+    if not r:
+        return {"skipped": "no Redis"}
+    now = datetime.now(timezone.utc)
+    dates = [(now.date() - timedelta(days=i)).isoformat() for i in (2, 1, 0)]
+    open_days = {d for d in dates if any(bbmd.needs_result(e, now) for e in _bbmd_load(r, d).values())}
+    got = {}
+    for d in sorted(open_days | {now.date().isoformat()}):
+        try:
+            found = await asyncio.wait_for(bd.fetch_results_day(d), 120)
+            if found:
+                r.hset(bd.RESULTS_KEY, d, bd.encode(found))
+            got[d] = len(found)
+        except Exception as e:
+            got[d] = f"{type(e).__name__} {e}"[:120]
+    return {"results": got}
+
+
+async def _tennis_results_job() -> Dict[str, Any]:
+    return await _guarded_tick("tennis_results", lambda: _rk_results_refresh("tennis"), 400)
+
+
+async def _table_tennis_results_job() -> Dict[str, Any]:
+    return await _guarded_tick("table_tennis_results", lambda: _rk_results_refresh("table_tennis"), 400)
+
+
+async def _bb_results_job() -> Dict[str, Any]:
+    return await _guarded_tick("basketball_results", _bb_results_refresh, 400)
+
+
 OVERDUE_EVERY = 10 * 60   # seconds between reads of one overdue match's page
 OVERDUE_PER_TICK = 15
 _overdue_at: Dict[str, float] = {}
@@ -5706,15 +5799,7 @@ async def _rk_live_tick(sport: str) -> Dict[str, Any]:
         _rkmd_status[sport].update(at=now.isoformat(timespec="seconds"), open=0)
         return {"open": 0}
     changed = set()
-    if time.time() - _rkmd_results_at[sport] > RKMD_RESULTS_EVERY:
-        _rkmd_results_at[sport] = time.time()
-        for d in sorted({d for d, _ in open_.values()} | {now.date().isoformat()}):
-            try:
-                found = await asyncio.wait_for(tf.fetch_results_day(d, sport=sport), 60)
-                if found:
-                    r.hset(tf.SPORTS[sport]["key"], d, bd.encode(found))
-            except Exception as e:
-                print(f"[{sport}] live tick: results for {d}: {type(e).__name__} {e}")
+    # Finals from the stored results (read by _rk_results_refresh every few minutes)
     finals = _rk_results_days(r, sport, dates + [(now.date() + timedelta(days=1)).isoformat()])
     for eid, (d, e) in open_.items():
         if eid in finals and rmd.apply_result(e, finals[eid]):
@@ -5728,17 +5813,17 @@ async def _rk_live_tick(sport: str) -> Dict[str, Any]:
     how = "none started"
     ended: Dict[str, Dict] = {}
     if playing or overdue:
+        paged: set = set()
         try:
             live, how, checked = await bd.fetch_live(playing + overdue, sport_id=tf.SPORTS[sport]["id"],
                                                      parse=lambda ev: rmd.parse_live(ev, sport),
-                                                     final=tf.parse_result, finals=ended)
+                                                     final=tf.parse_result, finals=ended, from_pages=paged)
         except Exception as e:
             live, how, checked = {}, f"failed: {e}", set()
         for eid in playing + overdue:
             d, e = open_[eid]
-            if eid in ended and rmd.apply_result(e, ended[eid]):
-                changed.add(d)
-            elif (eid in live and rmd.apply_live(e, live[eid])) or rmd.stale_live(e, live, checked):
+            if _apply_live_reading(e, eid, eid in overdue, live, ended, checked, paged, now,
+                                   rmd.apply_result, rmd.apply_live, rmd.stale_live):
                 changed.add(d)
     for d in changed:
         _rkmd_save(r, sport, d, days[d])
@@ -5924,8 +6009,6 @@ def _bbmd_find(event: str) -> Optional[Dict]:
 
 # ── Basketball match days (basketball_matchday.py): the date strip, live, history ──
 _bbmd_status: Dict[str, Any] = {}
-_bbmd_results_at: List[float] = [0.0]
-BBMD_RESULTS_EVERY = 600      # seconds: today's results re-read at most this often while games are on
 
 
 def _bbmd_load(r, d: str) -> Dict[str, Dict]:
@@ -5972,16 +6055,7 @@ async def _bb_live_tick() -> Dict[str, Any]:
     if not open_:
         return {"open": 0}
     changed = set()
-    # Finals: stored results, re-read from SportyBet at most every BBMD_RESULTS_EVERY
-    if time.time() - _bbmd_results_at[0] > BBMD_RESULTS_EVERY:
-        _bbmd_results_at[0] = time.time()
-        for d in sorted({d for d, _ in open_.values()} | {now.date().isoformat()}):
-            try:
-                found = await asyncio.wait_for(bd.fetch_results_day(d), 60)
-                if found:
-                    r.hset(bd.RESULTS_KEY, d, bd.encode(found))
-            except Exception as e:
-                print(f"[Basketball] live tick: results for {d}: {type(e).__name__} {e}")
+    # Finals from the stored results (read by _bb_results_refresh every few minutes)
     finals = {g["id"]: g for g in _bb_results(r, dates + [(now.date() + timedelta(days=1)).isoformat()])}
     for eid, (d, e) in open_.items():
         if eid in finals and bbmd.apply_result(e, finals[eid]):
@@ -5994,15 +6068,16 @@ async def _bb_live_tick() -> Dict[str, Any]:
     how = "none started"
     ended: Dict[str, Dict] = {}
     if playing or overdue:
+        paged: set = set()
         try:
-            live, how, checked = await bd.fetch_live(playing + overdue, final=bd.parse_result, finals=ended)
+            live, how, checked = await bd.fetch_live(playing + overdue, final=bd.parse_result, finals=ended,
+                                                     from_pages=paged)
         except Exception as e:
             live, how, checked = {}, f"failed: {e}", set()
         for eid in playing + overdue:
             d, e = open_[eid]
-            if eid in ended and bbmd.apply_result(e, ended[eid]):
-                changed.add(d)
-            elif (eid in live and bbmd.apply_live(e, live[eid])) or bbmd.stale_live(e, live, checked):
+            if _apply_live_reading(e, eid, eid in overdue, live, ended, checked, paged, now,
+                                   bbmd.apply_result, bbmd.apply_live, bbmd.stale_live):
                 changed.add(d)
     for d in changed:
         _bbmd_save(r, d, days[d])
@@ -8725,6 +8800,14 @@ async def startup():
     scheduler.add_job(_table_tennis_live_tick, "interval", minutes=1, id="table_tennis_live", max_instances=1, misfire_grace_time=300,
                       coalesce=True, next_run_time=datetime.now() + timedelta(minutes=5))
     # Basketball games under way: live scores every minute, and finals graded as they come in
+    # Finals for the live ticks (a day's results are many pages: their own jobs)
+    scheduler.add_job(_bb_results_job, "interval", minutes=RESULTS_REFRESH_MINUTES, id="bb_results", max_instances=1,
+                      coalesce=True, misfire_grace_time=300, next_run_time=datetime.now() + timedelta(minutes=3))
+    scheduler.add_job(_tennis_results_job, "interval", minutes=RESULTS_REFRESH_MINUTES, id="tennis_results", max_instances=1,
+                      coalesce=True, misfire_grace_time=300, next_run_time=datetime.now() + timedelta(minutes=4))
+    scheduler.add_job(_table_tennis_results_job, "interval", minutes=RESULTS_REFRESH_MINUTES, id="table_tennis_results",
+                      max_instances=1, coalesce=True, misfire_grace_time=300,
+                      next_run_time=datetime.now() + timedelta(minutes=6))
     scheduler.add_job(_bb_live_guarded, "interval", minutes=1, id="bb_live", max_instances=1, coalesce=True, misfire_grace_time=300,
                       next_run_time=datetime.now() + timedelta(minutes=4))
     # Player props: box scores and the check's numbers (nightly in Actions), goalscorers priced

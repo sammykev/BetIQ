@@ -171,3 +171,72 @@ class TestOverdue:
               "matchStatus": "Ended", "status": 3, "setScore": "2:1", "gameScore": ["6:4", "3:6", "6:2"],
               "estimateStartTime": ms(datetime(2026, 9, 30, tzinfo=timezone.utc))}
         assert tf.parse_result(ev)["sets"] == [2, 1]
+
+
+class TestLiveReadings:
+    """_apply_live_reading: what one live read means for a started match."""
+    NOW = datetime(2026, 9, 30, 5, 30, tzinfo=timezone.utc)
+
+    def entry(self, status="live", minutes_ago=5, minute="Q1 2:26"):
+        at = (self.NOW - timedelta(minutes=minutes_ago)).isoformat(timespec="seconds")
+        return {"id": "sr:match:1", "result": {"status": status, "score": [10, 8], "periods": None,
+                                               "minute": minute, "at": at}}
+
+    def run(self, e, overdue=False, live=None, ended=None, checked=(), paged=()):
+        import basketball_matchday as bbmd
+        return main._apply_live_reading(e, "sr:match:1", overdue, live or {}, ended or {}, set(checked), set(paged),
+                                        self.NOW, bbmd.apply_result, bbmd.apply_live, bbmd.stale_live)
+
+    def test_a_game_past_its_window_takes_no_live_score(self):
+        e = self.entry(minutes_ago=600)
+        same = {"sr:match:1": {"score": [10, 8], "periods": None, "minute": "Q1 2:26"}}
+        assert self.run(e, overdue=True, live=same, checked={"sr:match:1"}, paged={"sr:match:1"})
+        assert e["result"]["status"] == "scheduled" and e["result"]["minute"] == "Final soon"
+
+    def test_a_page_score_frozen_for_20_minutes_is_taken_as_over(self):
+        e = self.entry(minutes_ago=25)
+        same = {"sr:match:1": {"score": [10, 8], "periods": None, "minute": "Q1 2:26"}}
+        assert self.run(e, live=same, checked={"sr:match:1"}, paged={"sr:match:1"})
+        assert e["result"]["minute"] == "Final soon"
+
+    def test_a_moving_page_score_or_a_listing_score_stays_live(self):
+        e = self.entry(minutes_ago=25)
+        moved = {"sr:match:1": {"score": [12, 8], "periods": None, "minute": "Q1 1:40"}}
+        assert self.run(e, live=moved, checked={"sr:match:1"}, paged={"sr:match:1"})
+        assert e["result"]["status"] == "live" and e["result"]["score"] == [12, 8]
+        still = self.entry(minutes_ago=25)
+        same = {"sr:match:1": {"score": [10, 8], "periods": None, "minute": "Q1 2:26"}}
+        assert not self.run(still, live=same, checked={"sr:match:1"})   # from the listing: trusted
+        assert still["result"]["status"] == "live"
+
+    def test_a_final_wins(self):
+        e = self.entry()
+        final = {"sr:match:1": {"hs": 88, "as": 92, "q": None, "ot": False}}
+        assert self.run(e, overdue=True, ended=final)
+        assert e["result"]["status"] == "finished" and e["result"]["score"] == [88, 92]
+
+
+class TestResultsJobs:
+    def test_racket_results_read_for_open_days_and_today(self, redis, monkeypatch):
+        import racket_matchday as rmd
+        now = datetime.now(timezone.utc)
+        yday = (now.date() - timedelta(days=1)).isoformat()
+        day = {"sr:match:1": {"id": "sr:match:1", "home": "A", "away": "B", "date": yday, "time": "14:00",
+                              "result": {"status": "live"}, "locked": True}}
+        monkeypatch.setattr(main, "_rkmd_load", lambda r, sport, d: day if d == yday else {})
+        asked = []
+
+        async def fetch(d, sport="tennis"):
+            asked.append(d)
+            return [{"id": "sr:match:1"}]
+        monkeypatch.setattr(tf, "fetch_results_day", fetch)
+        stored = {}
+        monkeypatch.setattr(redis, "hset", lambda k, f, v: stored.update({f: v}), raising=False)
+        got = asyncio.run(main._rk_results_refresh("tennis"))
+        assert sorted(asked) == sorted({yday, now.date().isoformat()}) and set(stored) == set(asked)
+        assert got["results"][yday] == 1
+
+    def test_the_results_jobs_are_scheduled_apart_from_the_live_ticks(self):
+        import inspect
+        src = inspect.getsource(main._rk_live_tick) + inspect.getsource(main._bb_live_tick)
+        assert "fetch_results_day" not in src
