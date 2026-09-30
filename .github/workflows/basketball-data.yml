@@ -116,6 +116,18 @@ jobs:
               for p in preds:
                   by[p.get("date")] = by.get(p.get("date"), 0) + 1
               print("Predictions cache: updated", json.loads(pc).get("last_updated"), "by date", dict(sorted(by.items())[:6]), "TTL", r.ttl("betiq:predictions"))
+          # Payload sizes: the home page's predictions, and what makes them big
+          import gzip as _gz
+          if pc:
+              print(f"Predictions payload: {len(preds)} predictions, {len(pc)/1e6:.2f} MB raw, {len(_gz.compress(pc))/1e6:.2f} MB gzipped")
+              sizes = {}
+              for p in preds:
+                  for k, v in p.items():
+                      sizes[k] = sizes.get(k, 0) + len(json.dumps(v, separators=(",", ":")))
+              print("Biggest fields:", [(k, f"{n/1e3:.0f} KB") for k, n in sorted(sizes.items(), key=lambda x: -x[1])[:15]])
+          for k in ("betiq:perf",):
+              v = r.get(k)
+              print("Server timings:", v.decode()[:6000] if v else "none yet")
           # Football snapshot dry run on the real predictions (saves nothing): which prediction breaks it
           import matchday, traceback
           if pc:
