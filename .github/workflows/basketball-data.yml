@@ -116,6 +116,19 @@ jobs:
               for p in preds:
                   by[p.get("date")] = by.get(p.get("date"), 0) + 1
               print("Predictions cache: updated", json.loads(pc).get("last_updated"), "by date", dict(sorted(by.items())[:6]), "TTL", r.ttl("betiq:predictions"))
+          # Football snapshot dry run on the real predictions (saves nothing): which prediction breaks it
+          import matchday, traceback
+          if pc:
+              for d in sorted({p.get("date") for p in preds if p.get("date")}):
+                  day = json.loads(r.get(f"betiq:md:{d}") or "{}")
+                  for p in [p for p in preds if p.get("date") == d and p.get("sport") in (None, "football")]:
+                      try:
+                          matchday.merge_predictions(day, [p], now)
+                      except Exception:
+                          print("SNAPSHOT FAILS on", d, p.get("home"), "v", p.get("away"))
+                          print(traceback.format_exc()[-1500:])
+                          print("  keys:", sorted(p)[:60])
+                  print(f"snapshot dry run {d}: {len(day)} entries; stored key exists: {bool(r.exists(f'betiq:md:{d}'))}")
           print("Live job reports:", (r.get("betiq:live:last") or b"none yet")[:3000])
           days = [(now.date() - timedelta(days=i)).isoformat() for i in (2, 1, 0)]
           for sport, fmt in (("football", "betiq:md:{d}"), ("basketball", "betiq:bbmd:{d}"),
