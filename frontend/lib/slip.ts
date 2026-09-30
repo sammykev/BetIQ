@@ -15,6 +15,8 @@ export interface SlipSelection {
   code: string;          // model option code: "1", "1X", "O25", "BTTS-Y", …
   label: string;         // "Arsenal Win", "Over 2.5"
   prob?: number | null;  // model probability of this outcome
+  /** The price BetIQ showed when it was added: booking flags it when SportyBet's has moved */
+  odds?: number | null;
   /** A leg kept from a SportyBet code that we don't model: booked by SportyBet's own ids */
   sb?: { eventId: string; marketId: string; specifier: string; outcomeId: string };
 }

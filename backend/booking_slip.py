@@ -229,6 +229,57 @@ def _event_odds(event: Dict, ids: Dict[str, str]) -> Optional[float]:
     return None
 
 
+OPEN, SUSPENDED, MISSING = "open", "suspended", "missing"
+
+
+def live_state(event: Optional[Dict], ids: Dict[str, str]) -> Tuple[str, Optional[float]]:
+    """A pick on SportyBet's current match page: ("open", price), or
+    ("suspended", None) when its market or outcome is suspended, or
+    ("missing", None) when the page doesn't offer it. A code taking a
+    suspended pick carries it dead, so these are left out before booking."""
+    for m in (event or {}).get("markets") or []:
+        if str(m.get("id")) != ids["marketId"] or (m.get("specifier") or "") != (ids.get("specifier") or ""):
+            continue
+        if not label_ok(ids["marketId"], m.get("desc") or m.get("name")):
+            continue
+        # SportyBet market status: 0 open; anything else suspended, deactivated or settled
+        if m.get("status") not in (None, 0, "0"):
+            return SUSPENDED, None
+        for o in m.get("outcomes") or []:
+            if str(o.get("id")) != ids["outcomeId"]:
+                continue
+            if not o.get("isActive", 1):
+                return SUSPENDED, None
+            try:
+                odds = float(o.get("odds"))
+            except (TypeError, ValueError):
+                return SUSPENDED, None
+            return (OPEN, odds) if odds > 1 else (SUSPENDED, None)
+        return MISSING, None
+    return MISSING, None
+
+
+def pick_ids(pick: Dict[str, Any], event_id: Optional[str],
+             market_map: Optional[Dict[str, Dict[str, Any]]] = None) -> Optional[Dict[str, str]]:
+    """SportyBet's ids for a pick: its own (basketball, tennis, props), else
+    our market's, under the confirmed id for a verified market."""
+    if isinstance(pick.get("sb"), dict):
+        try:
+            return raw_ids(pick)
+        except ValueError:
+            return None
+    ids = sportybet_ids(pick.get("market", ""), pick.get("code", ""))
+    if not ids or not event_id:
+        return None
+    kind = verified_kind(pick["market"], pick["code"])
+    if kind:
+        confirmed = (market_map or {}).get(kind) or {}
+        if not confirmed.get("ok"):
+            return None
+        ids = {**ids, "marketId": str(confirmed["id"])}
+    return {"eventId": str(event_id), **ids}
+
+
 _SB_FIELDS = {"eventId": re.compile(r"^sr:[a-z_]+:\d{1,12}$"), "marketId": re.compile(r"^\d{1,6}$"),
               # Player props' outcomes are long and have colons ("sr:player:1021607",
               # "pre:playerprops:73262972:607880:9"), as are their specifiers
@@ -282,6 +333,7 @@ def _start_seconds(event: Optional[Dict]) -> Optional[float]:
 # SportyBet refuses a whole code when one selection's market isn't open on
 # its match ("19000 invalid event data, no market there")
 MAX_SHARE_TRIES = 24
+CLEAN_TRIES = 2   # re-makes of a code that came back with suspended picks in it
 
 
 def _no_market(e: Exception) -> bool:
@@ -370,6 +422,7 @@ async def to_sportybet(
     only booked once it's confirmed, under the confirmed id.
     """
     picks: List[Dict[str, Any]] = []
+    shown_odds: List[Optional[float]] = []  # each pick's price on BetIQ when it was added
     to_book: List[Tuple[int, Dict[str, str], Dict]] = []  # (pick index, ids, event)
     events_by_date: Dict[str, List[Dict]] = {}
     listing_down = False  # SportyBet always lists football: an empty list means we couldn't load it
@@ -377,6 +430,10 @@ async def to_sportybet(
     for s in selections:
         pick = {"key": selection_key(s), "home": s["home"], "away": s["away"],
                 "label": s.get("label") or s["code"], "odds": None}
+        try:
+            shown_odds.append(float(s["odds"]) if s.get("odds") else None)
+        except (TypeError, ValueError):
+            shown_odds.append(None)
         raw = raw_ids(s)
         if raw:  # booked exactly as SportyBet had it
             to_book.append((len(picks), raw, {"eventId": raw["eventId"], "markets": []}))
@@ -447,6 +504,25 @@ async def to_sportybet(
         result["error"] = "SportyBet doesn't offer any of these picks' markets on these matches right now."
         return result
 
+    # SportyBet makes the code even with suspended picks in it (they sit in it
+    # dead, and the odds it shows differ from ours): make it again without them
+    for _ in range(CLEAN_TRIES):
+        dead = [t for t in to_book if (t[1]["eventId"], t[1]["marketId"], t[1]["outcomeId"]) in share.get("unavailable", set())]
+        if not dead:
+            break
+        for i, _, _ in dead:
+            picks[i].update(status="unavailable", reason="Suspended on SportyBet: left out of the code")
+        to_book = [t for t in to_book if t not in dead]
+        if not to_book:
+            result["error"] = "SportyBet has suspended every pick on this slip. Try again in a few minutes."
+            return result
+        try:
+            share = await post_share([ids for _, ids, _ in to_book])
+        except Exception as e:
+            print(f"[Booking] SportyBet share without suspended picks failed: {e}")
+            result["error"] = "SportyBet didn't return a booking code. Try again in a minute."
+            return result
+
     booked_odds: List[Optional[float]] = []
     for i, ids, event in to_book:
         key = (ids["eventId"], ids["marketId"], ids["outcomeId"])
@@ -455,6 +531,9 @@ async def to_sportybet(
             continue
         picks[i]["status"] = "booked"
         picks[i]["odds"] = share.get("odds", {}).get(key) or _event_odds(event, ids)
+        shown = shown_odds[i]
+        if shown and picks[i]["odds"] and abs(picks[i]["odds"] - shown) >= 0.005:
+            picks[i]["shown_odds"] = shown          # the price had moved since the slip was made
         booked_odds.append(picks[i]["odds"])
 
     if not booked_odds:
@@ -464,5 +543,6 @@ async def to_sportybet(
     for o in booked_odds:
         total *= o or 1.0
     result.update(code=share["code"], share_url=share.get("url"),
-                  total_odds=round(total, 2) if all(booked_odds) else None)
+                  total_odds=round(total, 2) if all(booked_odds) else None,
+                  price_changes=sum(1 for p in picks if p.get("shown_odds")))
     return result

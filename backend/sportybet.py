@@ -660,6 +660,27 @@ async def reset_football_com_session() -> None:
             pass
 
 
+def _share_prices(data: Dict[str, Any]) -> Tuple[Dict[Tuple[str, str, str], float], set]:
+    """A share reply's prices, and the picks it holds that can't be bet:
+    SportyBet's unavailable list, plus outcomes it returns inactive or
+    unpriced (a code keeps those in it, suspended)."""
+    odds: Dict[Tuple[str, str, str], float] = {}
+    unavailable = {key for key, _ in _outcome_keys(data.get("unavailableOutcomes") or [])}
+    for key, o in _outcome_keys(data.get("outcomes") or []):
+        if o.get("isActive", 1) in (0, "0", False):
+            unavailable.add(key)
+            continue
+        try:
+            price = float(o.get("odds"))
+        except (TypeError, ValueError):
+            continue                     # no price given: not a sign it's suspended
+        if price <= 1:
+            unavailable.add(key)
+        else:
+            odds[key] = price
+    return odds, unavailable
+
+
 def share_on(platform: str):
     """The share call for a platform ("sportybet" or "football_com")."""
     if platform == "football_com":
@@ -699,13 +720,7 @@ async def share_selections(selections: List[Dict[str, str]],
     code = data.get("shareCode")
     if not code:
         raise SportyBetError("SportyBet accepted the request but returned no share code")
-    odds: Dict[Tuple[str, str, str], float] = {}
-    for key, o in _outcome_keys(data.get("outcomes") or []):
-        try:
-            odds[key] = float(o.get("odds"))
-        except (TypeError, ValueError):
-            pass
-    unavailable = {key for key, _ in _outcome_keys(data.get("unavailableOutcomes") or [])}
+    odds, unavailable = _share_prices(data)
     return {"code": str(code), "url": data.get("shareURL") or SHARE_URL.format(code=code),
             "odds": odds, "unavailable": unavailable}
 
@@ -728,13 +743,7 @@ async def _share_football_com(selections: List[Dict[str, str]]) -> Dict[str, Any
     code = data.get("shareCode")
     if not code:
         raise SportyBetError("football.com accepted the request but returned no share code")
-    odds: Dict[Tuple[str, str, str], float] = {}
-    for key, o in _outcome_keys(data.get("outcomes") or []):
-        try:
-            odds[key] = float(o.get("odds"))
-        except (TypeError, ValueError):
-            pass
-    unavailable = {key for key, _ in _outcome_keys(data.get("unavailableOutcomes") or [])}
+    odds, unavailable = _share_prices(data)
     url = data.get("shareURL") or FOOTBALL_COM_SHARE_URL.format(code=code)
     return {"code": str(code), "url": url.replace("http://", "https://", 1), "odds": odds, "unavailable": unavailable}
 

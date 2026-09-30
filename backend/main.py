@@ -7887,6 +7887,135 @@ async def optimize_slip(request: Request, body: Dict[str, Any], _access=Depends(
     return await _optimize_request(body)
 
 
+LIVE_CHECK_ROUNDS = 3          # check, drop and re-solve at most this often
+LIVE_PAGE_SECONDS = 60         # a match page read for the check is reused this long
+LIVE_PAGES_AT_ONCE = 8
+LIVE_PAGE_TIMEOUT = 8.0
+_live_pages: Dict[str, Tuple[float, Optional[Dict]]] = {}
+
+
+def asdict_option(o) -> Dict[str, Any]:
+    return {"home": o.home, "away": o.away, "date": o.date, "market": o.market, "code": o.code}
+
+
+def _pick_key(x: Dict[str, Any]) -> Tuple:
+    return (x.get("home"), x.get("away"), x.get("date"), x.get("market"), x.get("code"))
+
+
+async def _live_pages_for(event_ids: Iterable[str]) -> Dict[str, Optional[Dict]]:
+    """Each event's SportyBet match page as it is now (every market and
+    outcome, with their status): None when it couldn't be read in time."""
+    import sportybet
+    now = time.time()
+    out: Dict[str, Optional[Dict]] = {}
+    todo = []
+    for eid in set(event_ids):
+        hit = _live_pages.get(eid)
+        if hit and now - hit[0] < LIVE_PAGE_SECONDS:
+            out[eid] = hit[1]
+        else:
+            todo.append(eid)
+    gate = asyncio.Semaphore(LIVE_PAGES_AT_ONCE)
+
+    async def read(eid: str):
+        async with gate:
+            try:
+                return eid, await asyncio.wait_for(sportybet.event_page(eid), LIVE_PAGE_TIMEOUT)
+            except Exception:
+                return eid, None
+    for eid, page in await asyncio.gather(*(read(e) for e in todo)):
+        out[eid] = page
+        if page is not None:
+            _live_pages[eid] = (time.time(), page)
+    if len(_live_pages) > 2000:
+        for k, (at, _) in list(_live_pages.items()):
+            if now - at > LIVE_PAGE_SECONDS:
+                _live_pages.pop(k, None)
+    return out
+
+
+async def _live_states(picks: List[Dict[str, Any]], events: Dict[Tuple, Optional[Dict]],
+                       market_map: Dict[str, Dict[str, Any]]) -> Dict[Tuple, Tuple[str, Optional[float]]]:
+    """{pick key: (state, SportyBet's price now)} for the picks a code can
+    take: "open" / "suspended" / "missing" / "started", or "unchecked" when
+    the match page couldn't be read (those stay, at the price we had)."""
+    import booking_slip
+    ids_of: Dict[Tuple, Dict[str, str]] = {}
+    for x in picks:
+        ev = events.get((x["home"], x["away"], x.get("date")))
+        ids = booking_slip.pick_ids(x, str((ev or {}).get("eventId") or "") or None, market_map)
+        if ids:
+            ids_of[_pick_key(x)] = ids
+    pages = await _live_pages_for(ids["eventId"] for ids in ids_of.values())
+    now = time.time()
+    out: Dict[Tuple, Tuple[str, Optional[float]]] = {}
+    for k, ids in ids_of.items():
+        page = pages.get(ids["eventId"])
+        if page is None:
+            out[k] = ("unchecked", None)
+            continue
+        start = booking_slip._start_seconds(page)
+        if start is not None and start <= now:
+            out[k] = ("started", None)
+            continue
+        out[k] = booking_slip.live_state(page, ids)
+    return out
+
+
+async def _solve(groups, lo: float, hi: float, target: float, max_games: int) -> Optional[Dict]:
+    """The best slip in [lo, hi]; failing that, the nearest within ±25% of the
+    target, flagged as off target (within_target is False)."""
+    import optimizer
+    res = await asyncio.to_thread(optimizer.optimize, groups, lo, hi, max_games)
+    if res is None and lo <= target <= hi:
+        for spread in (0.1, 0.25):
+            near = await asyncio.to_thread(optimizer.optimize, groups, max(1.01, target * (1 - spread)),
+                                           target * (1 + spread), max_games)
+            if near is not None:
+                return {**near, "within_target": False}
+    return res
+
+
+async def _solve_checked(groups, lo: float, hi: float, target: float, max_games: int,
+                         events: Dict[Tuple, Optional[Dict]],
+                         market_map: Dict[str, Dict[str, Any]]) -> Tuple[Optional[Dict], Dict[str, Any]]:
+    """The slip, with every pick checked on SportyBet's match page as it is
+    now: suspended, withdrawn or started ones are dropped and the slip solved
+    again without them; the rest take SportyBet's current price (solved again
+    when one moved), so the code books at the odds shown. Up to
+    LIVE_CHECK_ROUNDS rounds. Returns (slip or None, what the check did)."""
+    import booking_slip
+    check: Dict[str, Any] = {"checked": 0, "removed": [], "repriced": 0, "unchecked": 0}
+    result = await _solve(groups, lo, hi, target, max_games)
+    for _ in range(LIVE_CHECK_ROUNDS):
+        if not result or not result.get("picks"):
+            break
+        states = await _live_states(result["picks"], events, market_map)
+        check["checked"] = sum(1 for st in states.values() if st[0] != "unchecked")
+        check["unchecked"] = sum(1 for st in states.values() if st[0] == "unchecked")
+        by_key = {_pick_key(x): x for x in result["picks"]}
+        gone = {k for k, (st, _) in states.items() if st in (booking_slip.SUSPENDED, booking_slip.MISSING, "started")}
+        moved = {k: o for k, (st, o) in states.items()
+                 if st == booking_slip.OPEN and o and abs(o - by_key[k]["odds"]) >= 0.005}
+        if not gone and not moved:
+            break
+        for k in gone:
+            x = by_key[k]
+            check["removed"].append({"home": x["home"], "away": x["away"], "label": x["label"],
+                                     "reason": {"started": "Already started",
+                                                booking_slip.MISSING: "No longer offered on SportyBet"}
+                                     .get(states[k][0], "Suspended on SportyBet")})
+        check["repriced"] += len(moved)
+        groups = [[o for o in g if _pick_key(asdict_option(o)) not in gone] for g in groups]
+        for g in groups:
+            for o in g:
+                k = _pick_key(asdict_option(o))
+                if k in moved:
+                    o.odds, o.odds_source = round(moved[k], 2), "sportybet"
+        result = await _solve(groups, lo, hi, target, max_games)
+    return result, check
+
+
 async def _optimize_request(body: Dict[str, Any],
                              window: Optional[Tuple[datetime, datetime]] = None) -> Dict[str, Any]:
     """The optimizer endpoint's work, for the daily slips too. `window` (UTC
@@ -8024,16 +8153,17 @@ async def _optimize_request(body: Dict[str, Any],
         reasons = optimizer.why_empty(preds, markets, min_prob, bookable, only)
         return {"error": _explain_empty(reasons, len(preds), days, min_prob), "reasons": reasons,
                 "matches_considered": 0, "target": [lo, hi], "target_odds": target}
-    result = await asyncio.to_thread(optimizer.optimize, groups, lo, hi, max_games)
-    if result is None and lo <= target <= hi:
-        # Nothing inside the tolerance: the nearest slip within ±25% of the
-        # target, flagged as off target (within_target is False)
-        for spread in (0.1, 0.25):
-            near = await asyncio.to_thread(optimizer.optimize, groups, max(1.01, target * (1 - spread)),
-                                           target * (1 + spread), max_games)
-            if near is not None:
-                result = {**near, "within_target": False}
-                break
+    # Every pick checked on SportyBet's current match page (_solve_checked)
+    events = {(p["home"], p["away"], p.get("date")): ev for p, ev in pairs}
+    if body.get("no_live_check"):
+        result = await _solve(groups, lo, hi, target, max_games)
+        live_check: Dict[str, Any] = {"checked": 0, "removed": [], "repriced": 0, "unchecked": 0}
+    else:
+        result, live_check = await _solve_checked(groups, lo, hi, target, max_games, events, _sb_market_map())
+    if result is None and live_check["removed"]:
+        return {"error": (f"{len(live_check['removed'])} of the picks were suspended on SportyBet and "
+                          "no slip without them reaches the target. Try again in a few minutes, or widen the target."),
+                "live_check": live_check, "matches_considered": considered, "target": [lo, hi], "target_odds": target}
     if result is None:
         return {"error": (f"No slip from {considered} matches gets near {target:,.2f}x. "
                           "Allow more games or days, add markets, or lower the minimum confidence."),
@@ -8041,7 +8171,7 @@ async def _optimize_request(body: Dict[str, Any],
     # Which picks a SportyBet code can take: the match is linked to a SportyBet
     # event and SportyBet confirmed the market (shots, for one, it doesn't offer)
     ok = bookable or _bookable_markets()
-    events = {(p["home"], p["away"], p.get("date")): ev for p, ev in pairs}
+    result["live_check"] = live_check
     for pick in result.get("picks") or []:
         if pick.get("sb"):   # basketball: a line SportyBet offers, with its ids
             pick["bookable"] = True

@@ -144,7 +144,7 @@ class TestToSportybet:
     def test_everything_rejected_means_no_code(self):
         share = {"code": "C3", "url": "u", "odds": {}, "unavailable": {("sr:match:111", "1", "1")}}
         result, _, _ = run([sel()], share=share)
-        assert result["code"] is None and "rejected" in result["error"]
+        assert result["code"] is None and "suspended every pick" in result["error"]
 
     def test_total_odds_unknown_when_a_price_is_missing(self):
         result, _, _ = run([sel(market="goals_ou", code="U25")])  # suspended in the listing

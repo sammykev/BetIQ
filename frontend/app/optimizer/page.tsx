@@ -34,9 +34,13 @@ interface OptResult {
   picks?: OptPick[]; games?: number; total_odds?: number; win_chance?: number;
   within_target?: boolean; estimated_prices?: number; matches_considered?: number; bookable_picks?: number;
   target?: [number, number]; target_odds?: number; error?: string;
+  /** Each pick checked on SportyBet's match page as the slip was made */
+  live_check?: { checked: number; unchecked: number; repriced: number;
+                 removed: { home: string; away: string; label: string; reason: string }[] };
 }
 interface BookResult { code: string | null; share_url: string | null; total_odds: number | null; error: string | null;
-  picks: { key: string; status: string; reason?: string }[] }
+  price_changes?: number;
+  picks: { key: string; status: string; reason?: string; odds?: number | null; shown_odds?: number }[] }
 
 // Target odds: a slider on a log scale (each step is the same % change),
 // quick jumps, and how far off the slip's total may land
@@ -326,7 +330,7 @@ export default function OptimizerPage() {
 
   const selections: SlipSelection[] = (result?.picks ?? []).map(p => ({
     home: p.home, away: p.away, date: p.date, time: p.time, league: p.league,
-    market: p.market, marketName: p.market_name, code: p.code, label: p.label, prob: p.prob,
+    market: p.market, marketName: p.market_name, code: p.code, label: p.label, prob: p.prob, odds: p.odds,
     ...(p.sb ? { sb: p.sb } : {}),
   }));
 
@@ -621,6 +625,7 @@ export default function OptimizerPage() {
                 {result.estimated_prices! > 0 &&
                   ` ${result.estimated_prices} price${result.estimated_prices === 1 ? " is" : "s are"} estimated from our probabilities; SportyBet's own odds may differ.`}
               </p>
+              <LiveCheckNote check={result.live_check} />
 
               {booked?.code ? (
                 <div className="rounded-xl bg-surface-sunken p-4 space-y-3 [box-shadow:inset_0_0_0_1px_rgb(var(--accent)/0.4)]">
@@ -646,6 +651,19 @@ export default function OptimizerPage() {
                       Get a {bookOn === "sportybet" ? "football.com" : "SportyBet"} code too
                     </button>
                   </div>
+                  {booked.total_odds != null && (
+                    <p className="text-xs text-n-300 tnum">
+                      Total odds on {bookName}: <span className="font-bold text-n-0">{odds(booked.total_odds)}x</span>
+                      {booked.total_odds !== result.total_odds && result.total_odds != null &&
+                        <span className="text-n-500"> (the slip above said {odds(result.total_odds)}x)</span>}
+                    </p>
+                  )}
+                  {(booked.price_changes ?? 0) > 0 && (
+                    <p className="text-xs text-warn">
+                      {booked.price_changes} price{booked.price_changes === 1 ? " has" : "s have"} moved since the slip was made;
+                      the code carries {bookName}&apos;s current odds.
+                    </p>
+                  )}
                   {failedPicks.length > 0 && (
                     <p className="text-xs text-warn">{failedPicks.length} pick{failedPicks.length === 1 ? " wasn't" : "s weren't"} included: {failedPicks[0].reason}</p>
                   )}
@@ -716,5 +734,33 @@ export default function OptimizerPage() {
         </>}
       </div>
     </AppShell>
+  );
+}
+
+
+/** What the live check on SportyBet did to the slip: suspended picks taken out, prices brought up to date. */
+function LiveCheckNote({ check }: { check?: OptResult["live_check"] }) {
+  if (!check || (check.checked === 0 && check.removed.length === 0)) return null;
+  const removed = check.removed;
+  return (
+    <div className="rounded-xl bg-surface-sunken px-3 py-2.5 text-[12px] text-n-300 space-y-1">
+      <p className="flex items-center gap-1.5">
+        <Check size={13} className="text-accent shrink-0" />
+        Checked on SportyBet just now: {check.checked} pick{check.checked === 1 ? "" : "s"} open at the odds shown
+        {check.repriced > 0 && ` (${check.repriced} price${check.repriced === 1 ? "" : "s"} updated to SportyBet's current odds)`}.
+      </p>
+      {removed.length > 0 && (
+        <p className="flex items-start gap-1.5 text-warn">
+          <AlertTriangle size={13} className="shrink-0 mt-px" />
+          <span>
+            Left out and replaced: {removed.slice(0, 3).map(x => `${x.home} v ${x.away} (${x.label}: ${x.reason.toLowerCase()})`).join("; ")}
+            {removed.length > 3 && ` and ${removed.length - 3} more`}.
+          </span>
+        </p>
+      )}
+      {check.unchecked > 0 && (
+        <p className="text-n-500">{check.unchecked} pick{check.unchecked === 1 ? "" : "s"} couldn&apos;t be checked right now; booking checks them again.</p>
+      )}
+    </div>
   );
 }

@@ -26,6 +26,8 @@ interface PickResult {
   status: "booked" | "matched" | "not_found" | "unsupported" | "unavailable";
   reason?: string;
   odds: number | null;
+  /** The price BetIQ showed, when SportyBet's had moved by booking time */
+  shown_odds?: number;
 }
 interface ConvertResult {
   code: string | null;
@@ -33,6 +35,7 @@ interface ConvertResult {
   total_odds: number | null;
   picks: PickResult[];
   error: string | null;
+  price_changes?: number;
 }
 
 /** Top-bar button with the slip count. */
@@ -80,7 +83,10 @@ function SlipRow({ s, result, onRemove }: { s: SlipSelection; result?: PickResul
         </div>
         <div className="text-right shrink-0">
           {result?.odds ? (
-            <p className="font-mono text-sm font-bold text-n-0">{result.odds.toFixed(2)}</p>
+            <p className="font-mono text-sm font-bold text-n-0">
+              {result.shown_odds && <span className="mr-1 text-[11px] font-medium text-n-500 line-through" aria-label="was">{result.shown_odds.toFixed(2)}</span>}
+              {result.odds.toFixed(2)}
+            </p>
           ) : typeof s.prob === "number" ? (
             <p className="tnum text-sm font-bold text-n-200">{Math.round(s.prob * 100)}%</p>
           ) : null}
@@ -241,6 +247,12 @@ export function SlipDrawer() {
                         </div>
                       )}
                     </div>
+                    {(result?.price_changes ?? 0) > 0 && (
+                      <p className="text-[11px] text-warn">
+                        {result!.price_changes} price{result!.price_changes === 1 ? " has" : "s have"} moved since you added {result!.price_changes === 1 ? "it" : "them"};
+                        the code and its odds are {BOOK_NAME[platform === "other" ? "sportybet" : platform]}&apos;s current ones.
+                      </p>
+                    )}
 
                     <div role="radiogroup" aria-label="Bookmaker" className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-surface-sunken">
                       {([["sportybet", "SportyBet"], ["football_com", "football.com"], ["other", "Other"]] as const).map(([id, label]) => (

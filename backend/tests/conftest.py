@@ -67,6 +67,21 @@ def _local_development_auth(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_live_match_pages(monkeypatch):
+    """Tests never read SportyBet's real match pages: the optimizer's live
+    check sees them as unreadable (picks stay as they are) unless a test
+    stands in its own pages."""
+    import main
+    import sportybet
+
+    async def unreadable(event_id, session=None):
+        return None
+    monkeypatch.setattr(sportybet, "event_page", unreadable)
+    main._live_pages.clear()
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _paywall_off(monkeypatch):
     """Tests run with the paywall switched off (admin → Features), as the
     server can't check plans without Clerk keys. Paywall tests switch it on."""
