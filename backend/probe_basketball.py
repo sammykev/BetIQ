@@ -668,80 +668,94 @@ async def livestats() -> None:
     line("\n=== Live stats sources ===")
     session = sportybet.shared_session()
     sports = {"football": "sr:sport:1", "basketball": BASKETBALL, "tennis": "sr:sport:5", "table_tennis": "sr:sport:20"}
-    sofa_sport = {"football": "football", "basketball": "basketball", "tennis": "tennis", "table_tennis": "table-tennis"}
     OUT["livestats"] = {}
-    headers = {"Origin": "https://www.sportybet.com", "Referer": "https://www.sportybet.com/"}
-    sofa_headers = {"Origin": "https://www.sofascore.com", "Referer": "https://www.sofascore.com/"}
+    sb = {"Origin": "https://www.sportybet.com", "Referer": "https://www.sportybet.com/"}
+
+    async def show(hc, label, url, headers=None, n=700):
+        try:
+            resp = await hc.get(url, headers=headers or {})
+            line(f"    {label}: HTTP {resp.status_code} len {len(resp.text)} :: {resp.text[:n]!r}")
+            return resp
+        except Exception as ex:
+            line(f"    {label}: {str(ex)[:200]}")
+            return None
+
     async with AsyncSession(impersonate="chrome", timeout=20) as hc:
+        picked: Dict[str, List[Dict]] = {}
         for sport, sid in sports.items():
-            out = OUT["livestats"][sport] = {}
             try:
                 data = await sportybet._request(session, "GET", "/factsCenter/liveOrPrematchEvents",
                                                 params={"sportId": sid, "_t": sportybet._now_ms()})
                 found: List[Dict] = []
                 sportybet._collect_events(data.get("data"), found)
             except Exception as e:
-                line(f"  {sport}: SportyBet live list failed: {e}")
                 found = []
-            live = [e for e in found if e.get("status") == 1 or e.get("matchStatus") not in (None, "", "Not start")][:2]
-            line(f"\n  -- {sport}: {len(found)} listed, {len(live)} live picked")
-            for e in live:
-                eid = str(e.get("eventId"))
-                num = eid.rsplit(":", 1)[-1]
-                line(f"  {eid} {e.get('homeTeamName')} v {e.get('awayTeamName')} {e.get('matchStatus')} {e.get('setScore')}")
-                rec = out[eid] = {}
-                # SportyBet's own event page: every key (any stats?)
-                try:
-                    page = await sportybet._request(session, "GET", "/factsCenter/event", params={"eventId": eid, "productId": 1})
-                    ev = page.get("data") or {}
-                    rec["sb_keys"] = sorted(ev.keys())
-                    line(f"    sportybet event keys: {rec['sb_keys']}")
-                except Exception as ex:
-                    line(f"    sportybet event: {ex}")
-                for base in ("https://lmt.fn.sportradar.com/common/en/Etc:UTC/gismo",
-                             "https://lmt.fn.sportradar.com/sportybet/en/Etc:UTC/gismo",
-                             "https://widgets.fn.sportradar.com/sportybet/en/Etc:UTC/gismo"):
-                    for feed in ("match_detailsextended", "match_timelinedelta", "match_info"):
-                        url = f"{base}/{feed}/{num}"
-                        try:
-                            resp = await hc.get(url, headers=headers)
-                            body = resp.text
-                            got = {"status": resp.status_code, "len": len(body)}
-                            try:
-                                j = resp.json()
-                                doc = (j.get("doc") or [{}])[0]
-                                d = doc.get("data") or {}
-                                got["event"] = doc.get("event")
-                                if feed == "match_detailsextended" and isinstance(d, dict):
-                                    vals = d.get("values") or {}
-                                    got["stats"] = {v.get("name"): v.get("value") for v in vals.values() if isinstance(v, dict)} if isinstance(vals, dict) else vals
-                                elif feed == "match_timelinedelta" and isinstance(d, dict):
-                                    evs = d.get("events") or []
-                                    got["events"] = [{k: x.get(k) for k in ("type", "time", "team", "name", "result")} for x in evs[-8:]]
-                                elif isinstance(d, dict):
-                                    got["keys"] = sorted(d.keys())[:30]
-                            except Exception:
-                                got["body"] = body[:200]
-                        except Exception as ex:
-                            got = {"error": str(ex)[:200]}
-                        rec[url] = got
-                        line(f"    {url.split('/gismo')[0].split('//')[1]} {feed}: " + json.dumps(got, default=str)[:1500])
-            # SofaScore: live list for the sport, then one match's statistics
-            try:
-                resp = await hc.get(f"https://api.sofascore.com/api/v1/sport/{sofa_sport[sport]}/events/live", headers=sofa_headers)
-                evs = (resp.json() or {}).get("events") or [] if resp.status_code == 200 else []
-                line(f"    sofascore live {sport}: HTTP {resp.status_code}, {len(evs)} events")
-                out["sofascore_live"] = {"status": resp.status_code, "n": len(evs)}
-                for sev in evs[:1]:
-                    st = await hc.get(f"https://api.sofascore.com/api/v1/event/{sev['id']}/statistics", headers=sofa_headers)
-                    j = st.json() if st.status_code == 200 else {}
-                    items = [(i.get("name"), i.get("home"), i.get("away")) for p in (j.get("statistics") or [])[:1]
-                             for g in p.get("groups") or [] for i in g.get("statisticsItems") or []]
-                    out["sofascore_stats"] = {"status": st.status_code, "items": items[:40]}
-                    line(f"    sofascore stats {sev.get('homeTeam', {}).get('name')} v {sev.get('awayTeam', {}).get('name')}: "
-                         f"HTTP {st.status_code} {items[:40]}")
-            except Exception as ex:
-                line(f"    sofascore {sport}: {ex}")
+            picked[sport] = [e for e in found if str(e.get("eventId", "")).rsplit(":", 1)[-1].isdigit()
+                             and len(str(e.get("eventId")).rsplit(":", 1)[-1]) <= 9][:1]
+        line("  picked: " + json.dumps({k: [(e["eventId"], e.get("homeTeamName"), e.get("awayTeamName")) for e in v] for k, v in picked.items()}))
+
+        # Sportradar: hosts, client aliases, feeds
+        for sport, evs in picked.items():
+            for e in evs:
+                num = str(e["eventId"]).rsplit(":", 1)[-1]
+                line(f"\n  -- Sportradar {sport} {num}")
+                for host in ("lmt.fn.sportradar.com", "stats.fn.sportradar.com", "widgets.fn.sportradar.com"):
+                    for alias in ("common", "sportybet", "betradar", "demolmt", "sportradar"):
+                        await show(hc, f"{host}/{alias} match_detailsextended",
+                                   f"https://{host}/{alias}/en/Etc:UTC/gismo/match_detailsextended/{num}", sb, 300)
+                    if sport == "football":
+                        break
+        # SportyBet's own stats endpoints (guesses; the site's match tracker)
+        for sport, evs in picked.items():
+            for e in evs[:1]:
+                eid = e["eventId"]
+                for path in ("/factsCenter/eventStatistics", "/factsCenter/statistics", "/factsCenter/matchStatistics",
+                             "/factsCenter/liveMatchStatistics", "/factsCenter/eventTimeline"):
+                    try:
+                        d = await sportybet._request(session, "GET", path, params={"eventId": eid})
+                        line(f"    sportybet {path} {sport}: " + json.dumps(d, default=str)[:300])
+                    except Exception as ex:
+                        line(f"    sportybet {path} {sport}: {str(ex)[:150]}")
+        # SofaScore on other hosts / fingerprints
+        line("\n  -- SofaScore")
+        for imp in ("chrome", "safari", "chrome_android"):
+            async with AsyncSession(impersonate=imp, timeout=20) as h2:
+                for host in ("https://api.sofascore.com/api/v1", "https://www.sofascore.com/api/v1", "https://api.sofascore.app/api/v1"):
+                    await show(h2, f"{imp} {host} tennis live", f"{host}/sport/tennis/events/live",
+                               {"Referer": "https://www.sofascore.com/"}, 200)
+        # Flashscore feeds (x-fsign), sport ids: 1 football, 3 basketball, 2 tennis, 25 table tennis
+        line("\n  -- Flashscore")
+        fs = {"x-fsign": "SW9D1eZo", "Referer": "https://www.flashscore.com/"}
+        for host in ("https://d.flashscore.com/x/feed", "https://global.flashscore.ninja/2/x/feed",
+                     "https://local-global.flashscore.ninja/2/x/feed", "https://2.flashscore.ninja/2/x/feed"):
+            resp = await show(hc, f"{host} tennis today", f"{host}/f_2_0_3_en_1", fs, 300)
+            if resp is not None and resp.status_code == 200 and "~AA÷" in resp.text:
+                ids = re.findall(r"~AA÷([A-Za-z0-9]{8})", resp.text)
+                line(f"    {len(ids)} tennis events; first {ids[:3]}")
+                for fid in ids[:1]:
+                    for feed in (f"df_st_1_{fid}", f"df_st_2_{fid}", f"dc_1_{fid}"):
+                        await show(hc, f"{host} {feed}", f"{host}/{feed}", fs, 600)
+                for sid_, name in (("3", "basketball"), ("25", "table tennis")):
+                    r2 = await show(hc, f"{host} {name} today", f"{host}/f_{sid_}_0_3_en_1", fs, 120)
+                    if r2 is not None and r2.status_code == 200:
+                        ids2 = re.findall(r"~AA÷([A-Za-z0-9]{8})", r2.text)
+                        line(f"    {len(ids2)} {name} events")
+                        for fid in ids2[:1]:
+                            await show(hc, f"{host} {name} df_st_1", f"{host}/df_st_1_{fid}", fs, 600)
+                break
+        # ESPN: tennis and basketball scoreboards (which have per-match stats)
+        line("\n  -- ESPN")
+        for path in ("tennis/atp", "tennis/wta", "basketball/nbl", "basketball/fiba"):
+            resp = await show(hc, f"espn {path}", f"https://site.api.espn.com/apis/site/v2/sports/{path}/scoreboard", None, 0)
+            if resp is not None and resp.status_code == 200:
+                j = resp.json()
+                evs = j.get("events") or []
+                comps = [c for ev in evs for g in (ev.get("groupings") or [{"competitions": ev.get("competitions") or []}]) for c in g.get("competitions") or []]
+                live = [c for c in comps if ((c.get("status") or {}).get("type") or {}).get("state") == "in"]
+                line(f"    {len(evs)} events, {len(comps)} competitions, {len(live)} live")
+                for c in (live or comps)[:1]:
+                    cs = c.get("competitors") or []
+                    line("    stats keys: " + json.dumps([[s.get("name") for s in (x.get("statistics") or [])] for x in cs])[:400])
 
 
 async def main(pages: int, parts: str) -> None:
