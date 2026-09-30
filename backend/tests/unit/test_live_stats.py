@@ -185,3 +185,13 @@ def test_football_matches_without_espn_stats_get_sportradars(monkeypatch):
     by = {m["key"]: m for m in c.get(f"/api/matchday?date={today}").json()["matches"]}
     assert by["albania|lithuania"]["stats"]["corners"] == [6, 2]
     assert by["a|b"]["stats"] == {"shots": [1, 1]}              # ESPN's kept
+
+
+def test_sportybets_own_matches_get_stats_from_their_score():
+    rows = {r["key"]: r for r in ls.from_score([[11, 8], [9, 11], [11, 4], [11, 9]], "table_tennis")}
+    assert rows["points"]["h"] == 42 and rows["points"]["a"] == 32 and rows["points"]["hs"] == "42 (57%)"
+    assert rows["games"]["h"] == 3 and rows["games"]["a"] == 1
+    assert rows["best_game"]["h"] == 7 and rows["best_game"]["a"] == 2
+    t = {r["key"]: r for r in ls.from_score([[6, 4], [3, 6], [7, 6]], "tennis")}
+    assert t["games"]["h"] == 16 and t["sets"]["h"] == 2
+    assert ls.from_score(None, "table_tennis") == [] and ls.from_score([["x", 1]], "tennis") == []

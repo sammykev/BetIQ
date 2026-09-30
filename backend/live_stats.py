@@ -165,6 +165,33 @@ def rows(data: Any, sport: str) -> List[Dict[str, Any]]:
     return out
 
 
+def from_score(periods: Any, sport: str) -> List[Dict[str, Any]]:
+    """For matches Sportradar has no stats for (SportyBet's own events, like
+    the Setka Cup): what the game-by-game score shows. Table tennis: points
+    and games won, the biggest game win; tennis: games and sets won."""
+    try:
+        ps = [(int(h), int(a)) for h, a in periods or []]
+    except (TypeError, ValueError):
+        return []
+    if not ps:
+        return []
+    th, ta = sum(h for h, _ in ps), sum(a for _, a in ps)
+    wh, wa = sum(1 for h, a in ps if h > a), sum(1 for h, a in ps if a > h)
+    if sport == "table_tennis":
+        mh = max((h - a for h, a in ps if h > a), default=0)
+        ma = max((a - h for h, a in ps if a > h), default=0)
+        total = th + ta
+        return [{"key": "points", "label": "Total points won", "h": th, "a": ta,
+                 "hs": f"{th} ({round(100 * th / total)}%)" if total else str(th),
+                 "as": f"{ta} ({round(100 * ta / total)}%)" if total else str(ta)},
+                {"key": "games", "label": "Games won", "h": wh, "a": wa},
+                {"key": "best_game", "label": "Biggest game win (points)", "h": mh, "a": ma}]
+    if sport == "tennis":
+        return [{"key": "games", "label": "Total games won", "h": th, "a": ta},
+                {"key": "sets", "label": "Sets won", "h": wh, "a": wa}]
+    return []
+
+
 def football_stats(rows: List[Dict[str, Any]]) -> Optional[Dict[str, List[float]]]:
     """Football rows in the shape ESPN's stats have on the site ({key: [home, away]})."""
     return {r["key"]: [r["h"], r["a"]] for r in rows} or None if rows else None

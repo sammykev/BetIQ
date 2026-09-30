@@ -5966,7 +5966,11 @@ def _with_live_stats(sport: str, date_: str, matches: List[Dict]) -> List[Dict]:
     stored = ls.load(_get_redis(), sport, date_)
     for m in matches:
         got = stored.get(m.get("id") or "")
-        m["live_stats"] = (got or {}).get("rows") or None
+        rows = (got or {}).get("rows")
+        if not rows and not ls.sr_number(m.get("id") or "") and m.get("status") in ("live", "finished"):
+            # SportyBet's own events (e.g. the Setka Cup): Sportradar has none; the score's own numbers
+            rows = ls.from_score(m.get("periods"), sport)
+        m["live_stats"] = rows or None
     return matches
 
 
