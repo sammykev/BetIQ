@@ -280,7 +280,9 @@ def pick_ids(pick: Dict[str, Any], event_id: Optional[str],
     return {"eventId": str(event_id), **ids}
 
 
-_SB_FIELDS = {"eventId": re.compile(r"^sr:[a-z_]+:\d{1,12}$"), "marketId": re.compile(r"^\d{1,6}$"),
+# Event ids: Sportradar's ("sr:match:75103556") and SportyBet's own events
+# ("sr:match:111111114505257", 15 digits; some basketball "sr:match:BAaDswk7me6i4doEmJKRIxg")
+_SB_FIELDS = {"eventId": re.compile(r"^sr:[a-z_]+:[A-Za-z0-9_-]{1,40}$"), "marketId": re.compile(r"^\d{1,6}$"),
               # Player props' outcomes are long and have colons ("sr:player:1021607",
               # "pre:playerprops:73262972:607880:9"), as are their specifiers
               "specifier": re.compile(r"^[\w=.|+:-]{0,120}$"), "outcomeId": re.compile(r"^[\w:.+-]{1,80}$")}

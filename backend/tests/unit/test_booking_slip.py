@@ -82,6 +82,20 @@ class TestValidate:
         with pytest.raises(ValueError):
             validate(bad)
 
+    @pytest.mark.parametrize("eid", ["sr:match:75103556", "sr:match:111111114505257", "sr:match:BAaDswk7me6i4doEmJKRIxg"])
+    def test_sportybets_own_event_ids_are_valid(self, eid):
+        """Setka Cup and Czech Liga Pro table tennis are SportyBet's own events (15-digit ids)."""
+        s = sel(home="Rejent, Stepan", away="Rulc, Lukas", market="rk_winner", code="2")
+        s["sb"] = {"eventId": eid, "marketId": "1", "specifier": "", "outcomeId": "5"}
+        assert validate([s])[0]["sb"]["eventId"] == eid
+
+    @pytest.mark.parametrize("eid", ["sr:match:1;drop", "match:1", "sr:match:" + "9" * 41])
+    def test_malformed_event_ids_are_refused(self, eid):
+        s = sel()
+        s["sb"] = {"eventId": eid, "marketId": "1", "specifier": "", "outcomeId": "1"}
+        with pytest.raises(ValueError):
+            validate([s])
+
     def test_size_limit(self):
         with pytest.raises(ValueError):
             validate([sel(home=f"T{i}") for i in range(booking_slip.MAX_SELECTIONS + 1)])
