@@ -132,3 +132,16 @@ def test_a_long_stall_is_noted_with_its_cpu_time(monkeypatch):
     assert stall["s"] >= 0.2 and stall["cpu_s"] < 0.2
     s = perf.summary()
     assert s["stalls"] and "watchdog_late_s" in s and "memory_mb" in s
+
+
+def test_web_forms_are_read_in_one_round_trip(monkeypatch):
+    calls = []
+
+    class R:
+        def mget(self, keys):
+            calls.append(keys)
+            return [b'{"matches": [1]}' if "arsenal" in k else None for k in keys]
+        def get(self, k): raise AssertionError("one read per team")
+    monkeypatch.setattr(main, "_get_redis", lambda: R())
+    got = main._get_web_form_caches(["Arsenal", "Chelsea"])
+    assert got == {"Arsenal": {"matches": [1]}} and len(calls) == 1

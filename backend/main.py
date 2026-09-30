@@ -506,6 +506,25 @@ def _get_web_form_cache(team: str) -> Optional[Dict]:
         return None
 
 
+def _get_web_form_caches(teams: List[str]) -> Dict[str, Dict]:
+    """The cached web forms of many teams in one Redis round trip (MGET)."""
+    r = _get_redis()
+    if not r or not teams:
+        return {}
+    try:
+        raws = r.mget([_redis_team_key(t) for t in teams])
+    except Exception:
+        return {}
+    out = {}
+    for t, raw in zip(teams, raws):
+        try:
+            if raw:
+                out[t] = json.loads(raw)
+        except Exception:
+            continue
+    return out
+
+
 def _set_web_form_cache(team: str, form: Dict):
     r = _get_redis()
     if not r:
@@ -1123,6 +1142,9 @@ async def _prefetch_web_forms(predictor, fixtures: list):
     if not GROQ_API_KEY:
         return
 
+    teams = list(dict.fromkeys(t for fx in fixtures for t in (fx["home"], fx["away"])))
+    # One round trip, off the event loop (a read per team held it for ~50s)
+    cached_forms = await asyncio.to_thread(_get_web_form_caches, teams)
     seen = set()
     sparse_teams = []
     team_competition: Dict[str, str] = {}
@@ -1136,7 +1158,7 @@ async def _prefetch_web_forms(predictor, fixtures: list):
             seen.add(team)
             local_pts = len(predictor.team_stats.get(predictor.canon(team), {}).get("pts", []))
             # Already have enough local data AND a cached web form → skip
-            if local_pts >= 5 and _get_web_form_cache(team):
+            if local_pts >= 5 and team in cached_forms:
                 continue
             sparse_teams.append(team)
 
@@ -1152,8 +1174,7 @@ async def _prefetch_web_forms(predictor, fixtures: list):
     print(f"[WebForm] Fetching form for {len(sparse_teams)} teams with sparse data...")
     for team in sparse_teams[:25]:  # cap at 25 to respect Groq quota
         try:
-            cached = _get_web_form_cache(team)
-            if cached:
+            if team in cached_forms:
                 continue  # already have it
             form = await fetch_team_form_web(team, competition=team_competition.get(team, ""))
             if form and form.get("matches"):
@@ -1895,10 +1916,10 @@ async def _run_pipeline():
                 # paying every run, and this is also what self-heals a
                 # previously rate-limited/failed lookup (see
                 # _has_cached_competition_emblem).
-                if not _has_cached_competition_emblem(code):
+                if not await asyncio.to_thread(_has_cached_competition_emblem, code):
                     try:
                         emblem = await client.fetch_competition_emblem(code)
-                        _cache_competition_emblem(code, emblem)
+                        await asyncio.to_thread(_cache_competition_emblem, code, emblem)
                     except Exception as e:
                         print(f"[Pipeline] Emblem fetch failed for {code}: {e}")
                 await asyncio.sleep(10)  # respect football-data.org rate limit
@@ -3797,13 +3818,15 @@ async def get_tickets(request: Request, uid: str = ""):
     r = _get_redis()
     if not r:
         return {"tickets": [], "summary": tickets.summary([]), "older": []}
-    raw = r.get(_ukey(uid, "tickets"))
-    items: List[Dict] = json.loads(raw) if raw else []
-    _attach_live(r, items)
-    tracked = {t.get("code") for t in items}
-    old_raw = r.get(_ukey(uid, "codes"))
-    older = [c for c in (json.loads(old_raw) if old_raw else []) if c.get("code") not in tracked]
-    return {"tickets": items, "summary": tickets.summary(items), "older": older[:50]}
+    def build() -> Dict[str, Any]:
+        raw = r.get(_ukey(uid, "tickets"))
+        items: List[Dict] = json.loads(raw) if raw else []
+        _attach_live(r, items)
+        tracked = {t.get("code") for t in items}
+        old_raw = r.get(_ukey(uid, "codes"))
+        older = [c for c in (json.loads(old_raw) if old_raw else []) if c.get("code") not in tracked]
+        return {"tickets": items, "summary": tickets.summary(items), "older": older[:50]}
+    return await asyncio.to_thread(build)
 
 
 @app.post("/api/feedback/result")
@@ -6563,8 +6586,15 @@ async def _get_football_competition_emblem(name: str) -> Optional[str]:
     if not code or not API_KEY:
         return None
 
-    if _has_cached_competition_emblem(code):
-        return _get_redis().get(_competition_emblem_cache_key(code))
+    def cached() -> Optional[str]:
+        r = _get_redis()
+        try:
+            return (r.get(_competition_emblem_cache_key(code)) or None) if r else None
+        except Exception:
+            return None
+    hit = await asyncio.to_thread(cached)
+    if hit:
+        return hit
 
     try:
         emblem = await _get_fd_client().fetch_competition_emblem(code)
@@ -6574,7 +6604,7 @@ async def _get_football_competition_emblem(name: str) -> Optional[str]:
         print(f"[CompetitionLogo] football-data.org emblem fetch failed for {code}: {e}")
         return None
 
-    _cache_competition_emblem(code, emblem)
+    await asyncio.to_thread(_cache_competition_emblem, code, emblem)
     return emblem
 
 
@@ -8507,13 +8537,13 @@ async def get_daily_slips(day: str = Query("", alias="date"), _access=Depends(re
     today = daily_slips.today()
     d = _date_param(day or today).isoformat()
     r = _get_redis()
-    doc = _daily_load(r, d)
+    doc = await asyncio.to_thread(_daily_load, r, d)
     if doc and r:
         async with _daily_lock:
-            if _grade_daily(r, doc):
-                _daily_save(r, doc)
-        for s in doc.get("slips") or []:
-            _attach_live(r, [{"status": "pending", "legs": s.get("picks") or []}])
+            if await asyncio.to_thread(_grade_daily, r, doc):
+                await asyncio.to_thread(_daily_save, r, doc)
+        await asyncio.to_thread(lambda: [_attach_live(r, [{"status": "pending", "legs": s.get("picks") or []}])
+                                         for s in doc.get("slips") or []])
     record: Dict[str, Dict[str, int]] = {}
     for k, v in ((r.hgetall(DAILY_RECORD_KEY) if r else None) or {}).items():
         k = k.decode() if isinstance(k, bytes) else str(k)
