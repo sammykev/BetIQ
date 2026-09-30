@@ -3,7 +3,7 @@
 import clsx from "clsx";
 import type { MatchEvent, MatchdayMatch, StatRow } from "@/lib/matchday";
 
-// A match's live (and full-time) numbers from ESPN: key events in order, then
+// A match's live (and full-time) numbers from ESPN (or Sportradar when ESPN has none): key events in order, then
 // each team stat as a split bar. Refreshed every few minutes while it's on.
 
 const STAT_ROWS: { key: string; label: string; pct?: boolean }[] = [
@@ -16,6 +16,7 @@ const STAT_ROWS: { key: string; label: string; pct?: boolean }[] = [
   { key: "saves", label: "Saves" },
   { key: "yellow", label: "Yellow cards" },
   { key: "red", label: "Red cards" },
+  { key: "dangerous", label: "Dangerous attacks" },
 ];
 
 function EventIcon({ kind }: { kind: MatchEvent["kind"] }) {

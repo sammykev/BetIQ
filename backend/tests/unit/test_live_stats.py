@@ -70,13 +70,16 @@ class TestDue:
     def entry(self, eid, status, at_min_ago=1):
         return {"id": eid, "result": {"status": status, "at": (self.NOW - timedelta(minutes=at_min_ago)).isoformat()}}
 
-    def test_live_matches_every_so_often_and_each_final_once(self):
-        entries = [self.entry("sr:match:1", "live"), self.entry("sr:match:2", "live"),
-                   self.entry("sr:match:3", "finished", 5), self.entry("sr:match:4", "finished", 120),
-                   self.entry("sr:match:5", "finished", 5), {"id": "sr:match:6", "result": None}]
+    def test_live_matches_every_so_often_and_every_final_once(self):
+        entries = [self.entry("sr:match:4", "finished", 600), self.entry("sr:match:1", "live"),
+                   self.entry("sr:match:2", "live"), self.entry("sr:match:3", "finished", 5),
+                   self.entry("sr:match:5", "finished", 5), self.entry("sr:match:7", "finished", 5),
+                   {"id": "sr:match:6", "result": None}]
         stored = {"sr:match:2": {"at": (self.NOW - timedelta(seconds=30)).isoformat()},
-                  "sr:match:5": {"at": self.NOW.isoformat(), "final": True}}
-        assert ls.due(entries, stored, self.NOW) == ["sr:match:1", "sr:match:3"]
+                  "sr:match:5": {"at": self.NOW.isoformat(), "final": True},
+                  "sr:match:7": {"tries": ls.MAX_TRIES}}
+        # Live first; then finished ones newest first, however long ago (earlier ones backfilled)
+        assert ls.due(entries, stored, self.NOW) == ["sr:match:1", "sr:match:3", "sr:match:4"]
 
 
 def test_matches_are_read_several_at_a_time():
@@ -132,3 +135,53 @@ def test_the_job_stores_stats_and_the_day_shows_them(monkeypatch):
     c = TestClient(main.app)
     m = c.get(f"/api/basketball/matchday?date={p['date']}").json()["matches"][0]
     assert m["live_stats"][1]["hs"] == "6/12 (50%)"
+
+
+FOOTBALL = {"values": {"1": {"name": "Shots on target", "value": {"home": 4, "away": 1}},
+                       "2": {"name": "Corner kicks", "value": {"home": 6, "away": 2}},
+                       "3": {"name": "Goal attempts", "value": {"home": 11, "away": 5}},
+                       "4": {"name": "Dangerous Attack", "value": {"home": 40, "away": 22}}}}
+
+
+def test_football_rows_take_the_sites_football_keys():
+    stats = ls.football_stats(ls.rows(FOOTBALL, "football"))
+    assert stats == {"shots": [11, 5], "sot": [4, 1], "corners": [6, 2], "dangerous": [40, 22]}
+    assert ls.football_stats([]) is None
+
+
+def test_a_sportybet_result_leaves_its_event_id_on_the_match():
+    import matchday
+    import results_feed
+    ev = {"eventId": "sr:match:74864644", "homeTeamName": "Albania", "awayTeamName": "Lithuania",
+          "estimateStartTime": 1790780400000, "matchStatus": "H1", "setScore": "1:0", "status": 1,
+          "playedSeconds": "20:00"}
+    res = results_feed.parse_sportybet(ev)
+    assert res["sb_id"] == "sr:match:74864644"
+    entry = {"home": "Albania", "away": "Lithuania", "date": res["date"], "result": None, "pred": {}}
+    assert matchday.apply_result(entry, res) and entry["sb_id"] == "sr:match:74864644"
+    assert "sb_id" not in entry["result"]
+    # The same reading again changes nothing
+    assert not matchday.apply_result(entry, res)
+
+
+def test_football_matches_without_espn_stats_get_sportradars(monkeypatch):
+    fake = Redis()
+    monkeypatch.setattr(main, "_get_redis", lambda: fake)
+    today = datetime.now(timezone.utc).date().isoformat()
+    day = {"albania|lithuania": {"home": "Albania", "away": "Lithuania", "date": today, "time": "15:00",
+                                 "sb_id": "sr:match:74864644", "pred": {}, "locked": True,
+                                 "result": {"status": "live", "hg": 1, "ag": 0, "minute": "20'",
+                                            "at": datetime.now(timezone.utc).isoformat()}},
+           "a|b": {"home": "A", "away": "B", "date": today, "time": "15:00", "sb_id": "sr:match:1", "pred": {},
+                   "result": {"status": "live", "hg": 0, "ag": 0, "stats": {"shots": [1, 1]}}}}
+    main._md_save(fake, today, day)
+
+    async def fetch(ids, sport, get=None):
+        return {i: ls.rows(FOOTBALL, sport) for i in ids} if sport == "football" else {}
+    monkeypatch.setattr(ls, "fetch", fetch)
+    report = asyncio.run(main._live_stats_run())
+    assert report["football"]["due"] == 1                       # ESPN's match isn't read again
+    c = TestClient(main.app)
+    by = {m["key"]: m for m in c.get(f"/api/matchday?date={today}").json()["matches"]}
+    assert by["albania|lithuania"]["stats"]["corners"] == [6, 2]
+    assert by["a|b"]["stats"] == {"shots": [1, 1]}              # ESPN's kept

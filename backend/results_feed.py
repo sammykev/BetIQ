@@ -322,7 +322,7 @@ def parse_sportybet(ev: Dict) -> Optional[Dict]:
     if not home or not away:
         return None
     base = {"date": ko.date().isoformat(), "home": home, "away": away, "minute": None, "aet": False,
-            "corners": None, "bookings": None, "source": "sportybet"}
+            "corners": None, "bookings": None, "source": "sportybet", "sb_id": str(ev.get("eventId") or "") or None}
     if _SB_OFF.search(status_text):
         return {**base, "status": "postponed", "hg": None, "ag": None}
     try:

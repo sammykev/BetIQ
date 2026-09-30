@@ -2994,20 +2994,29 @@ def _snapshot_matchdays(r) -> int:
     import matchday
     import price_book
     by_date: Dict[str, List[Dict]] = {}
+    sb_ids: Dict[str, Dict[str, str]] = {}   # date -> match key -> SportyBet event id (its stats come by it)
     for p in _predictions_cache:
         if p.get("sport") in (None, "football") and p.get("date"):
+            ev = _linked_event(p)
             try:
-                priced = price_book.prices(p, _linked_event(p))
+                priced = price_book.prices(p, ev)
             except Exception:
                 priced = None
             by_date.setdefault(p["date"], []).append({**p, "_sb_prices": priced} if priced else p)
+            if ev and ev.get("eventId") and p.get("home") and p.get("away"):
+                sb_ids.setdefault(p["date"], {})[matchday.key(p["home"], p["away"])] = str(ev["eventId"])
     now = datetime.now(timezone.utc)
     written, failed = 0, []
     for d, preds in sorted(by_date.items()):
         # Each date on its own: one failed write mustn't leave the later dates unsaved
         try:
             day = _md_load(r, d)
-            if matchday.merge_predictions(day, preds, now):
+            changed = matchday.merge_predictions(day, preds, now)
+            for k, eid in (sb_ids.get(d) or {}).items():
+                if k in day and not day[k].get("sb_id"):
+                    day[k]["sb_id"] = eid
+                    changed = True
+            if changed:
                 _md_save(r, d, day)
                 written += 1
         except Exception as e:
@@ -3419,6 +3428,7 @@ async def get_matchday(date_: str = Query("", alias="date")):
     day = _md_day_view(d.isoformat())
     matches = sorted((matchday.public(e) for e in day.values()),
                      key=lambda m: (m.get("league_name") or "", m.get("time") or "", m.get("home") or ""))
+    await asyncio.to_thread(_with_football_stats, d.isoformat(), day, matches)
     return {"date": d.isoformat(), "today": today.isoformat(), "matches": matches,
             "summary": matchday.day_summary(day.values()),
             "updated": _md_status.get("at"),
@@ -5885,8 +5895,9 @@ LIVE_STATS_MINUTES = 2
 
 
 async def _live_stats_run() -> Dict[str, Any]:
-    """Live match stats (live_stats.py) for basketball, tennis and table
-    tennis matches in play, and once more just after each final."""
+    """Match stats (live_stats.py) for basketball, tennis and table tennis:
+    matches in play every EVERY seconds, and each finished match of today
+    and yesterday once for its full-match numbers."""
     import live_stats as ls
     r = _get_redis()
     if not r:
@@ -5894,9 +5905,15 @@ async def _live_stats_run() -> Dict[str, Any]:
     now = datetime.now(timezone.utc)
     dates = [(now.date() - timedelta(days=i)).isoformat() for i in (1, 0)]
     report: Dict[str, Any] = {}
-    for sport in ("basketball", "tennis", "table_tennis"):
+    for sport in ("basketball", "tennis", "table_tennis", "football"):
         if sport == "basketball":
             days = await asyncio.to_thread(lambda: {d: _bbmd_load(r, d) for d in dates})
+        elif sport == "football":
+            # By SportyBet's event id, for matches ESPN gives no stats for
+            loaded = await asyncio.to_thread(lambda: {d: _md_load(r, d) for d in dates})
+            days = {d: {e["sb_id"]: {"id": e["sb_id"], "result": e.get("result")} for e in day.values()
+                        if e.get("sb_id") and not (e.get("result") or {}).get("stats")}
+                    for d, day in loaded.items()}
         else:
             days = await asyncio.to_thread(lambda sp=sport: {d: _rkmd_load(r, sp, d) for d in dates})
         stored = await asyncio.to_thread(lambda sp=sport: {d: ls.load(r, sp, d) for d in dates})
@@ -5908,12 +5925,16 @@ async def _live_stats_run() -> Dict[str, Any]:
         at = ls.now_iso()
         by_day: Dict[str, Dict[str, Dict]] = {}
         for eid, rows in got.items():
-            if rows is None:
-                continue
             d = todo[eid]
+            have = stored[d].get(eid) or {}
             final = ((days[d].get(eid) or {}).get("result") or {}).get("status") == "finished"
+            if rows is None:
+                if final:  # unreadable: tried again next time, up to ls.MAX_TRIES
+                    by_day.setdefault(d, {})[eid] = {**have, "tries": int(have.get("tries") or 0) + 1}
+                continue
             if rows or final:
-                by_day.setdefault(d, {})[eid] = {"at": at, "rows": rows, "final": final}
+                # Nothing for a finished match: keep what was read while it was live
+                by_day.setdefault(d, {})[eid] = {"at": at, "rows": rows or have.get("rows") or [], "final": final}
         await asyncio.to_thread(lambda sp=sport: [ls.save(r, sp, d, v) for d, v in by_day.items()])
         report[sport] = {"due": len(todo), "read": sum(1 for v in got.values() if v is not None),
                          "with_stats": sum(1 for v in got.values() if v), "failed": sum(1 for v in got.values() if v is None)}
@@ -5923,6 +5944,20 @@ async def _live_stats_run() -> Dict[str, Any]:
 
 async def _live_stats_tick() -> Dict[str, Any]:
     return await _guarded_tick("live_stats", _live_stats_run, 100)
+
+
+def _with_football_stats(date_: str, day: Dict[str, Dict], matches: List[Dict]) -> None:
+    """Football matches ESPN gives no stats for: Sportradar's (live_stats.py), by SportyBet's event id."""
+    import live_stats as ls
+    import matchday
+    ids = {matchday.key(e.get("home", ""), e.get("away", "")): e.get("sb_id") for e in day.values() if e.get("sb_id")}
+    if not ids:
+        return
+    stored = ls.load(_get_redis(), "football", date_)
+    for m in matches:
+        got = stored.get(ids.get(m.get("key")) or "") or {}
+        if not m.get("stats") and got.get("rows"):
+            m["stats"] = ls.football_stats(got["rows"])
 
 
 def _with_live_stats(sport: str, date_: str, matches: List[Dict]) -> List[Dict]:

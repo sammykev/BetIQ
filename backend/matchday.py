@@ -176,15 +176,19 @@ def grade(entry: Dict) -> Optional[Dict[str, Dict]]:
 def apply_result(entry: Dict, res: Dict) -> bool:
     """Put a feed result on an entry (never a finished one back to live) and
     grade it. True if anything changed."""
+    # SportyBet's event id (sr:match:N): the match's stats come by it (live_stats.py)
+    got_id = bool(res.get("sb_id")) and not entry.get("sb_id")
+    if got_id:
+        entry["sb_id"] = res["sb_id"]
     old = entry.get("result") or {}
     # A match doesn't go back to not started: one source still showing it
     # scheduled mustn't wipe the live score another source gave
     if res.get("status") not in (FINISHED, LIVE, POSTPONED) and old.get("status") == LIVE:
-        return False
+        return got_id
     if old.get("status") == FINISHED:
         # Final already: a second source only fills in stats it lacked
         if res.get("status") != FINISHED:
-            return False
+            return got_id
         new = {k: v for k, v in old.items() if k != "at"}
         for stat in RESULT_STATS:
             if new.get(stat) is None and res.get(stat) is not None:
@@ -196,7 +200,7 @@ def apply_result(entry: Dict, res: Dict) -> bool:
         new = {k: res.get(k) for k in ("status", "minute", "hg", "ag", "aet", "source", *RESULT_STATS, *LIVE_FIELDS)}
         new = {k: v for k, v in new.items() if v is not None and v is not False}
     if {k: v for k, v in old.items() if k != "at"} == new:
-        return False
+        return got_id
     new["at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     entry["result"] = new
     entry["grades"] = grade(entry)

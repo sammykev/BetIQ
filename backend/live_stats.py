@@ -1,5 +1,5 @@
 """
-Live match statistics for basketball, tennis and table tennis, from
+Match statistics for basketball, tennis, table tennis and football, from
 Sportradar's stats service. SportyBet's event ids are Sportradar's
 ("sr:match:N"), so each match is read by its own id, no name matching.
 
@@ -29,7 +29,7 @@ EVERY = 90              # seconds between reads of one match
 AT_ONCE = 8             # reads at a time
 TIMEOUT = 8.0
 MAX_PER_TICK = 80       # per sport
-FINAL_WINDOW_MIN = 30   # after the final: one last read for the full-match numbers
+MAX_TRIES = 3           # reads of a finished match that fail before it's given up
 
 # (Sportradar's name, our key, label, kind): kinds
 #   n: a count · pct: a percentage · made: "made/missed/attempted" · won: "won/of"
@@ -60,6 +60,20 @@ SHOWN: Dict[str, List[tuple]] = {
         ("Points won", "points", "Total points won", "n"),
         ("Max Points in a Row", "best_run", "Most points in a row", "n"),
         ("Tiebreaks Won", "tiebreaks", "Tiebreaks won", "n"),
+    ],
+    # Football: the site's football stats keys (results_feed.LIVE_STATS), for
+    # matches ESPN gives none for (smaller leagues, friendlies)
+    "football": [
+        ("Ball possession", "possession", "Possession", "pct"),
+        ("Goal attempts", "shots", "Shots", "n"),
+        ("Shots on target", "sot", "Shots on target", "n"),
+        ("Corner kicks", "corners", "Corners", "n"),
+        ("Fouls", "fouls", "Fouls", "n"),
+        ("Offsides", "offsides", "Offsides", "n"),
+        ("Saves", "saves", "Saves", "n"),
+        ("Yellow cards", "yellow", "Yellow cards", "n"),
+        ("Red cards", "red", "Red cards", "n"),
+        ("Dangerous Attack", "dangerous", "Dangerous attacks", "n"),
     ],
     "table_tennis": [
         ("Points won", "points", "Total points won", "n"),
@@ -151,6 +165,11 @@ def rows(data: Any, sport: str) -> List[Dict[str, Any]]:
     return out
 
 
+def football_stats(rows: List[Dict[str, Any]]) -> Optional[Dict[str, List[float]]]:
+    """Football rows in the shape ESPN's stats have on the site ({key: [home, away]})."""
+    return {r["key"]: [r["h"], r["a"]] for r in rows} or None if rows else None
+
+
 def doc_data(body: Any) -> Any:
     try:
         return (body.get("doc") or [{}])[0].get("data")
@@ -201,9 +220,10 @@ async def fetch(event_ids: Iterable[str], sport: str, get=None) -> Dict[str, Opt
 
 def due(entries: Iterable[Dict], stored: Dict[str, Dict], now: datetime, live: str = "live",
         finished: str = "finished") -> List[str]:
-    """The ids to read now: live ones not read in the last EVERY seconds, and
-    ones finished in the last FINAL_WINDOW_MIN without their final numbers."""
-    out = []
+    """The ids to read now, live ones first: live matches not read in the
+    last EVERY seconds, then finished ones without their full-match numbers
+    (newest first; each tried at most MAX_TRIES times)."""
+    playing, done = [], []
     for e in entries:
         eid = e.get("id")
         res = e.get("result") or {}
@@ -212,22 +232,19 @@ def due(entries: Iterable[Dict], stored: Dict[str, Dict], now: datetime, live: s
             continue
         have = stored.get(eid) or {}
         if st == finished:
-            if have.get("final"):
+            if have.get("final") or int(have.get("tries") or 0) >= MAX_TRIES:
                 continue
-            try:
-                ended = datetime.fromisoformat(res.get("at"))
-            except (TypeError, ValueError):
-                continue
-            if (now - ended).total_seconds() > FINAL_WINDOW_MIN * 60:
-                continue
+            done.append((res.get("at") or "", eid))
+            continue
         try:
             last = datetime.fromisoformat(have["at"]) if have.get("at") else None
         except ValueError:
             last = None
-        if st == live and last and (now - last).total_seconds() < EVERY:
+        if last and (now - last).total_seconds() < EVERY:
             continue
-        out.append(eid)
-    return out[:MAX_PER_TICK]
+        playing.append(eid)
+    done.sort(reverse=True)
+    return (playing + [eid for _, eid in done])[:MAX_PER_TICK]
 
 
 def load(r, sport: str, date: str) -> Dict[str, Dict]:
