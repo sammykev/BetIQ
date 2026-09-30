@@ -124,7 +124,7 @@ def test_tick_grades_finals_and_endpoints_show_them(api, monkeypatch):
     async def no_fetch(d):
         return []
 
-    async def live(ids):
+    async def live(ids, **kw):
         return ({"sr:match:2": {"id": "sr:match:2", "score": [30, 25], "periods": None, "minute": "Q2 03:00"}},
                 "test", set(ids))
     monkeypatch.setattr(bd, "fetch_results_day", no_fetch)

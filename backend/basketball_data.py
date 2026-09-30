@@ -15,6 +15,7 @@ games, compressed), collected a day at a time: yesterday and today on each
 run, and older days (a backfill) a few at a time until RESULT_DAYS are in.
 """
 
+import asyncio
 import base64
 import json
 import re
@@ -122,11 +123,15 @@ LIVE_LISTS = (("/factsCenter/liveOrPrematchEvents", {"sportId": BASKETBALL}),
 
 
 async def fetch_live(started_ids: List[str], session=None, per_event_max: int = 40, sport_id: str = BASKETBALL,
-                     parse=None) -> Tuple[Dict[str, Dict], str, set]:
+                     parse=None, final=None, finals: Optional[Dict[str, Dict]] = None,
+                     timeout: float = 12.0) -> Tuple[Dict[str, Dict], str, set]:
     """In-play scores for the games we priced that have started: ({event id:
     live}, how they were read, the ids actually checked). SportyBet's live
     listing first; the games it doesn't include (it can leave some out) are
-    read from their own pages (productId 1: live), up to per_event_max."""
+    read from their own pages (productId 1: live), up to per_event_max.
+    With `final` (a results parser) and a `finals` dict, a page that shows
+    the game over puts its final score in `finals` (the results list can
+    miss games). Every request is given up after `timeout` seconds."""
     import sportybet
     session = session or sportybet.shared_session()
     parse = parse or parse_live
@@ -136,8 +141,8 @@ async def fetch_live(started_ids: List[str], session=None, per_event_max: int = 
     how = []
     for path, params in LIVE_LISTS:
         try:
-            data = await sportybet._request(session, "GET", path,
-                                            params={**params, "sportId": sport_id, "_t": sportybet._now_ms()})
+            data = await asyncio.wait_for(sportybet._request(
+                session, "GET", path, params={**params, "sportId": sport_id, "_t": sportybet._now_ms()}), timeout)
         except Exception:
             continue
         found: List[Dict] = []
@@ -156,14 +161,20 @@ async def fetch_live(started_ids: List[str], session=None, per_event_max: int = 
     errors = 0
     for eid in rest:
         try:
-            data = await sportybet._request(session, "GET", "/factsCenter/event", params={"eventId": eid, "productId": 1})
+            data = await asyncio.wait_for(sportybet._request(
+                session, "GET", "/factsCenter/event", params={"eventId": eid, "productId": 1}), timeout)
         except Exception:
             errors += 1
             continue
         checked.add(eid)
-        x = parse(data.get("data") or {})
+        ev = data.get("data") or {}
+        x = parse(ev)
         if x:
             live[eid] = x
+        elif final is not None and finals is not None:
+            f = final(ev)
+            if f:
+                finals[eid] = f
     if rest:
         how.append(f"event pages: {len(rest) - errors} read" + (f", {errors} failed" if errors else ""))
     return live, " · ".join(how) or "nothing read", checked

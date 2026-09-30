@@ -2971,12 +2971,19 @@ def _snapshot_matchdays(r) -> int:
                 priced = None
             by_date.setdefault(p["date"], []).append({**p, "_sb_prices": priced} if priced else p)
     now = datetime.now(timezone.utc)
-    written = 0
-    for d, preds in by_date.items():
-        day = _md_load(r, d)
-        if matchday.merge_predictions(day, preds, now):
-            _md_save(r, d, day)
-            written += 1
+    written, failed = 0, []
+    for d, preds in sorted(by_date.items()):
+        # Each date on its own: one failed write mustn't leave the later dates unsaved
+        try:
+            day = _md_load(r, d)
+            if matchday.merge_predictions(day, preds, now):
+                _md_save(r, d, day)
+                written += 1
+        except Exception as e:
+            failed.append(f"{d}: {type(e).__name__}: {e}"[:200])
+    if failed:
+        print(f"[MatchDay] snapshot failed for {len(failed)} date(s): {failed[:3]}")
+        _record_job("football_snapshot", {"written": written, "failed": failed[:10]})
     return written
 
 
@@ -3002,6 +3009,39 @@ def _md_day_view(d: str) -> Dict[str, Dict]:
     return day
 
 
+LIVE_JOBS_KEY = "betiq:live:last"
+
+
+def _record_job(name: str, report: Any) -> None:
+    """A live job's last run (time, and its report or error) in Redis, for
+    the probe and the admin page: these jobs otherwise fail silently."""
+    r = _get_redis()
+    if not r:
+        return
+    try:
+        r.hset(LIVE_JOBS_KEY, name, json.dumps({"at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                                                "report": report}, default=str)[:4000])
+        r.expire(LIVE_JOBS_KEY, 7 * 86400)
+    except Exception:
+        pass
+
+
+async def _guarded_tick(name: str, run, limit: float) -> Dict[str, Any]:
+    """A live job that can't hang: given up after `limit` seconds, so the next
+    minute's run isn't skipped behind a stuck request forever (the jobs allow
+    one run at a time), and its outcome recorded either way."""
+    try:
+        report = await asyncio.wait_for(run(), limit)
+    except asyncio.TimeoutError:
+        report = {"error": f"gave up after {limit:.0f}s"}
+        print(f"[Live] {name}: gave up after {limit:.0f}s")
+    except Exception as e:
+        report = {"error": f"{type(e).__name__}: {e}"[:300]}
+        print(f"[Live] {name} failed: {report['error']}")
+    _record_job(name, report)
+    return report
+
+
 async def _refresh_matchdays(days_back: int = 1, trigger: str = "schedule") -> Dict[str, Any]:
     """Scores for matches that have kicked off in the last `days_back` days
     (ESPN live/final, then the league CSVs for stats and anything missed);
@@ -3016,10 +3056,25 @@ async def _refresh_matchdays(days_back: int = 1, trigger: str = "schedule") -> D
     today = now.date()
     dates = [(today - timedelta(days=i)).isoformat() for i in range(days_back + 1)]
     days = _md_many(r, dates)
+    # A day the snapshot never wrote (or a match added since) would never be
+    # scored: its predictions go into the store here, before asking for scores
+    added = []
+    for d in dates:
+        preds = [p for p in _predictions_cache if p.get("date") == d and p.get("sport") in (None, "football")]
+        if not preds:
+            continue
+        try:
+            if matchday.merge_predictions(days[d], preds, now):
+                _md_save(r, d, days[d])
+                added.append(d)
+        except Exception as e:
+            print(f"[MatchDay] couldn't store {d}'s predictions: {e}")
     need = {d: {k: e for k, e in day.items() if matchday.needs_result(e, now)} for d, day in days.items()}
     need = {d: v for d, v in need.items() if v}
     report: Dict[str, Any] = {"dates": sorted(need), "matches": sum(len(v) for v in need.values()),
                               "updated": 0, "requests": 0, "errors": [], "unmatched": 0}
+    if added:
+        report["stored_from_predictions"] = added
     if need:
         pairs = set()
         for entries in need.values():
@@ -3047,8 +3102,20 @@ async def _refresh_matchdays(days_back: int = 1, trigger: str = "schedule") -> D
         backup: List[Dict] = []
         stale = _unscored(need, espn, now)
         if stale:
-            _md_status["stage"] = f"asking API-Football ({len(stale)} unscored)"
-            backup, report["backup"] = await _backup_results(r, stale)
+            # SportyBet first (its live list every run, its results now and then), then API-Football
+            _md_status["stage"] = f"asking SportyBet ({len(stale)} unscored)"
+            try:
+                sb, report["sportybet"] = await asyncio.wait_for(_sportybet_scores(stale, now), 60)
+                backup += sb
+            except asyncio.TimeoutError:
+                report["sportybet"] = {"error": "over 60s"}
+            except Exception as e:
+                report["sportybet"] = {"error": f"{type(e).__name__}: {e}"[:200]}
+            still = _unscored(need, espn + backup, now)
+            if still:
+                _md_status["stage"] = f"asking API-Football ({len(still)} unscored)"
+                af, report["backup"] = await _backup_results(r, still)
+                backup += af
         near = {(date.fromisoformat(d) + timedelta(days=o)).isoformat() for d in need for o in (-1, 0, 1)}
         csv = []
         # The league CSVs arrive a day or two after a match: the 3-hourly sweep
@@ -3095,6 +3162,28 @@ async def _refresh_matchdays(days_back: int = 1, trigger: str = "schedule") -> D
     if report["updated"]:
         print(f"[MatchDay] {trigger}: {report['updated']} results updated over {report['dates']}")
     return report
+
+
+SB_RESULTS_EVERY = 10 * 60  # seconds between reads of SportyBet's football results (a day is many pages)
+_sb_results_at: Dict[str, float] = {}
+
+
+async def _sportybet_scores(stale: Dict[str, Dict], now: datetime) -> Tuple[List[Dict], Dict[str, Any]]:
+    """Live scores and finals from SportyBet for the matches ESPN doesn't
+    score: its live list (one request) each run, and the results of their
+    days at most every SB_RESULTS_EVERY."""
+    import results_feed
+    out = await results_feed.fetch_sportybet_live()
+    report: Dict[str, Any] = {"live_events": len(out)}
+    days = sorted({e["date"] for e in stale.values() if e.get("date")})
+    for d in days:
+        if time.time() - _sb_results_at.get(d, 0) < SB_RESULTS_EVERY:
+            continue
+        _sb_results_at[d] = time.time()
+        got = await results_feed.fetch_sportybet_results(d)
+        report[f"results {d}"] = len(got)
+        out += got
+    return out, report
 
 
 AF_LIVE_EVERY = 15 * 60   # seconds between backup requests
@@ -3248,6 +3337,7 @@ def _repredict(teams: set) -> int:
 
 async def _matchday_live() -> None:
     await _guarded_refresh(1, "live")
+    _record_job("football_live", {k: _md_status.get(k) for k in ("at", "stage", "error", "failed_at", "report")})
     # Matches that just finished: into the models, and their teams' next predictions redone
     try:
         await asyncio.to_thread(_learn_finished_matches, 1)
@@ -5583,6 +5673,23 @@ def _rk_results_days(r, sport: str, days: Iterable[str]) -> Dict[str, Dict]:
     return out
 
 
+OVERDUE_EVERY = 10 * 60   # seconds between reads of one overdue match's page
+OVERDUE_PER_TICK = 15
+_overdue_at: Dict[str, float] = {}
+
+
+def _overdue(sport: str, ids: List[str]) -> List[str]:
+    """Of the started matches past their live window without a final, the
+    ones whose page is due a read (each at most every OVERDUE_EVERY; the
+    longest-waiting first, OVERDUE_PER_TICK a run)."""
+    now = time.time()
+    due = sorted((i for i in ids if now - _overdue_at.get(f"{sport}:{i}", 0) >= OVERDUE_EVERY),
+                 key=lambda i: _overdue_at.get(f"{sport}:{i}", 0))[:OVERDUE_PER_TICK]
+    for i in due:
+        _overdue_at[f"{sport}:{i}"] = now
+    return due
+
+
 async def _rk_live_tick(sport: str) -> Dict[str, Any]:
     """Live scores for matches under way, and finals (graded) from SportyBet's results."""
     import basketball_data as bd
@@ -5603,43 +5710,51 @@ async def _rk_live_tick(sport: str) -> Dict[str, Any]:
         _rkmd_results_at[sport] = time.time()
         for d in sorted({d for d, _ in open_.values()} | {now.date().isoformat()}):
             try:
-                found = await tf.fetch_results_day(d, sport=sport)
+                found = await asyncio.wait_for(tf.fetch_results_day(d, sport=sport), 60)
                 if found:
                     r.hset(tf.SPORTS[sport]["key"], d, bd.encode(found))
             except Exception as e:
-                print(f"[{sport}] live tick: results for {d}: {e}")
+                print(f"[{sport}] live tick: results for {d}: {type(e).__name__} {e}")
     finals = _rk_results_days(r, sport, dates + [(now.date() + timedelta(days=1)).isoformat()])
     for eid, (d, e) in open_.items():
         if eid in finals and rmd.apply_result(e, finals[eid]):
             changed.add(d)
     playing = [eid for eid, (d, e) in open_.items() if (e.get("result") or {}).get("status") != rmd.FINISHED
                and now - (rmd.kickoff(e) or now) < timedelta(hours=6)]
+    # Past the live window with no final in the results list: their own pages,
+    # now and then (a final there is taken; otherwise they stop showing "live")
+    overdue = _overdue(sport, [eid for eid, (d, e) in open_.items() if eid not in playing
+                               and (e.get("result") or {}).get("status") != rmd.FINISHED])
     how = "none started"
-    if playing:
+    ended: Dict[str, Dict] = {}
+    if playing or overdue:
         try:
-            live, how, checked = await bd.fetch_live(playing, sport_id=tf.SPORTS[sport]["id"],
-                                                     parse=lambda ev: rmd.parse_live(ev, sport))
+            live, how, checked = await bd.fetch_live(playing + overdue, sport_id=tf.SPORTS[sport]["id"],
+                                                     parse=lambda ev: rmd.parse_live(ev, sport),
+                                                     final=tf.parse_result, finals=ended)
         except Exception as e:
             live, how, checked = {}, f"failed: {e}", set()
-        for eid in playing:
+        for eid in playing + overdue:
             d, e = open_[eid]
-            if (eid in live and rmd.apply_live(e, live[eid])) or rmd.stale_live(e, live, checked):
+            if eid in ended and rmd.apply_result(e, ended[eid]):
+                changed.add(d)
+            elif (eid in live and rmd.apply_live(e, live[eid])) or rmd.stale_live(e, live, checked):
                 changed.add(d)
     for d in changed:
         _rkmd_save(r, sport, d, days[d])
     if changed:
         _rk_strip_cache.pop(sport, None)
     _rkmd_status[sport].update(at=now.isoformat(timespec="seconds"), open=len(open_), playing=len(playing),
-                               live_source=how)
+                               overdue=len(overdue), finals_from_pages=len(ended), live_source=how)
     return dict(_rkmd_status[sport])
 
 
 async def _tennis_live_tick() -> Dict[str, Any]:
-    return await _rk_live_tick("tennis")
+    return await _guarded_tick("tennis_live", lambda: _rk_live_tick("tennis"), 110)
 
 
 async def _table_tennis_live_tick() -> Dict[str, Any]:
-    return await _rk_live_tick("table_tennis")
+    return await _guarded_tick("table_tennis_live", lambda: _rk_live_tick("table_tennis"), 110)
 
 
 def _rk_strip(sport: str) -> Dict[str, Any]:
@@ -5862,11 +5977,11 @@ async def _bb_live_tick() -> Dict[str, Any]:
         _bbmd_results_at[0] = time.time()
         for d in sorted({d for d, _ in open_.values()} | {now.date().isoformat()}):
             try:
-                found = await bd.fetch_results_day(d)
+                found = await asyncio.wait_for(bd.fetch_results_day(d), 60)
                 if found:
                     r.hset(bd.RESULTS_KEY, d, bd.encode(found))
             except Exception as e:
-                print(f"[Basketball] live tick: results for {d}: {e}")
+                print(f"[Basketball] live tick: results for {d}: {type(e).__name__} {e}")
     finals = {g["id"]: g for g in _bb_results(r, dates + [(now.date() + timedelta(days=1)).isoformat()])}
     for eid, (d, e) in open_.items():
         if eid in finals and bbmd.apply_result(e, finals[eid]):
@@ -5874,22 +5989,32 @@ async def _bb_live_tick() -> Dict[str, Any]:
     # In play: the rest that have tipped off
     playing = [eid for eid, (d, e) in open_.items() if (e.get("result") or {}).get("status") != bbmd.FINISHED
                and now - (bbmd.kickoff(e) or now) < timedelta(hours=4)]
+    overdue = _overdue("basketball", [eid for eid, (d, e) in open_.items() if eid not in playing
+                                      and (e.get("result") or {}).get("status") != bbmd.FINISHED])
     how = "none started"
-    if playing:
+    ended: Dict[str, Dict] = {}
+    if playing or overdue:
         try:
-            live, how, checked = await bd.fetch_live(playing)
+            live, how, checked = await bd.fetch_live(playing + overdue, final=bd.parse_result, finals=ended)
         except Exception as e:
             live, how, checked = {}, f"failed: {e}", set()
-        for eid in playing:
+        for eid in playing + overdue:
             d, e = open_[eid]
-            if (eid in live and bbmd.apply_live(e, live[eid])) or bbmd.stale_live(e, live, checked):
+            if eid in ended and bbmd.apply_result(e, ended[eid]):
+                changed.add(d)
+            elif (eid in live and bbmd.apply_live(e, live[eid])) or bbmd.stale_live(e, live, checked):
                 changed.add(d)
     for d in changed:
         _bbmd_save(r, d, days[d])
     if changed:
         _bb_strip_cache.clear()
-    _bbmd_status.update(at=now.isoformat(timespec="seconds"), open=len(open_), playing=len(playing), live_source=how)
+    _bbmd_status.update(at=now.isoformat(timespec="seconds"), open=len(open_), playing=len(playing),
+                        overdue=len(overdue), finals_from_pages=len(ended), live_source=how)
     return dict(_bbmd_status)
+
+
+async def _bb_live_guarded() -> Dict[str, Any]:
+    return await _guarded_tick("basketball_live", _bb_live_tick, 110)
 
 
 _bb_strip_cache: Dict[str, Tuple[float, Any]] = {}
@@ -8600,7 +8725,7 @@ async def startup():
     scheduler.add_job(_table_tennis_live_tick, "interval", minutes=1, id="table_tennis_live", max_instances=1, misfire_grace_time=300,
                       coalesce=True, next_run_time=datetime.now() + timedelta(minutes=5))
     # Basketball games under way: live scores every minute, and finals graded as they come in
-    scheduler.add_job(_bb_live_tick, "interval", minutes=1, id="bb_live", max_instances=1, coalesce=True,
+    scheduler.add_job(_bb_live_guarded, "interval", minutes=1, id="bb_live", max_instances=1, coalesce=True, misfire_grace_time=300,
                       next_run_time=datetime.now() + timedelta(minutes=4))
     # Player props: box scores and the check's numbers (nightly in Actions), goalscorers priced
     scheduler.add_job(_props_load, "interval", hours=3, id="props_load", max_instances=1, coalesce=True)

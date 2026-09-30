@@ -18,7 +18,7 @@ import {
 import { ChatBot } from "@/components/ChatBot";
 import { DateStrip } from "@/components/DateStrip";
 import { MatchdayList } from "@/components/MatchdayList";
-import { awaitingScore, fetchMatchday, fetchStrip, matchKey, type MatchdayMatch, type MatchdayResponse, type StripResponse } from "@/lib/matchday";
+import { awaitingScore, inPlayWindow, fetchMatchday, fetchStrip, matchKey, type MatchdayMatch, type MatchdayResponse, type StripResponse } from "@/lib/matchday";
 import { SportCard, type SportPrediction } from "@/components/SportCard";
 import { SportModal } from "@/components/SportModal";
 import { BasketballDays } from "@/components/BasketballDays";
@@ -397,7 +397,8 @@ export default function HomePage() {
         .then(d => {
           if (!alive) return;
           setMd(d);
-          if (d.summary.live > 0) timer = setTimeout(() => load(false), 60_000);
+          // In play, or kicked off and still waiting for a score: ask again in a minute
+          if (d.summary.live > 0 || d.matches.some(m => inPlayWindow(m))) timer = setTimeout(() => load(false), 60_000);
         })
         .catch(() => { if (alive && first) setMdError(true); })
         .finally(() => { if (alive && first) setMdLoading(false); });

@@ -58,6 +58,15 @@ export const matchKey = (home: string, away: string) => `${home.trim().toLowerCa
 export const awaitingScore = (m: Pick<MatchdayMatch, "status" | "date" | "time">, now = Date.now()) =>
   m.status === "scheduled" && !!m.time && Date.parse(`${m.date}T${m.time}:00Z`) < now - 10 * 60_000;
 
+/** Worth asking again in a minute: a match in play, or one that has kicked
+ *  off (or is about to) and has no final yet. */
+export const inPlayWindow = (m: Pick<MatchdayMatch, "status" | "date" | "time">, now = Date.now()) => {
+  if (m.status === "live") return true;
+  if (m.status !== "scheduled" || !m.time) return false;
+  const ko = Date.parse(`${m.date}T${m.time}:00Z`);
+  return ko < now + 5 * 60_000 && ko > now - 4 * 3600_000;
+};
+
 export const won = (v?: Verdict) => v === "won" || v === "half_won";
 export const lost = (v?: Verdict) => v === "lost" || v === "half_lost";
 

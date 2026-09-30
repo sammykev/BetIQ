@@ -19,6 +19,7 @@ ESPN's also carry "stats" ({possession, shots, sot, corners, fouls, ...:
 """
 
 import glob
+import re
 import os
 from datetime import date, datetime, timedelta, timezone
 from typing import Dict, Iterable, List, Optional, Set, Tuple
@@ -298,3 +299,74 @@ def csv_results(days: Set[str], csv_dir: str = CSV_DIR) -> List[Dict]:
                     "source": "football-data.co.uk"})
         _csv_cache.update(key=stamp, rows=rows)
     return [r for r in _csv_cache["rows"] if r["date"] in days]
+
+
+# ── SportyBet (backup for matches ESPN doesn't score) ─────────────────────
+_SB_ENDED = re.compile(r"ended|^ft$|full\s*time|after|aet|a\.e\.t|pen", re.I)
+_SB_EXTRA = re.compile(r"aet|a\.e\.t|after extra|after pen|pen", re.I)
+_SB_OFF = re.compile(r"cancel|abandon|postpon|interrupt|suspend", re.I)
+_SB_HALF = re.compile(r"half\s*time|^ht$|pause|break", re.I)
+SB_LIVE_LISTS = (("/factsCenter/liveOrPrematchEvents", {}), ("/factsCenter/wapConfigurableIndexLiveEvents", {}))
+
+
+def parse_sportybet(ev: Dict) -> Optional[Dict]:
+    """A football event from SportyBet's live list or results, as a match-day
+    result; None when it hasn't started or has no score."""
+    home, away = (ev.get("homeTeamName") or "").strip(), (ev.get("awayTeamName") or "").strip()
+    try:
+        ko = datetime.fromtimestamp(int(ev["estimateStartTime"]) / 1000, timezone.utc)
+    except (KeyError, TypeError, ValueError):
+        return None
+    status_text = str(ev.get("matchStatus") or "").strip()
+    score = str(ev.get("setScore") or "")
+    if not home or not away:
+        return None
+    base = {"date": ko.date().isoformat(), "home": home, "away": away, "minute": None, "aet": False,
+            "corners": None, "bookings": None, "source": "sportybet"}
+    if _SB_OFF.search(status_text):
+        return {**base, "status": "postponed", "hg": None, "ag": None}
+    try:
+        hg, ag = (int(x) for x in score.split(":")[:2])
+    except ValueError:
+        return None
+    if _SB_ENDED.search(status_text) or ev.get("status") in (3, 4):
+        return {**base, "status": "finished", "hg": hg, "ag": ag, "aet": bool(_SB_EXTRA.search(status_text))}
+    if ev.get("status") != 1 and not status_text:
+        return None
+    played = str(ev.get("playedSeconds") or "")
+    if _SB_HALF.search(status_text):
+        minute = "HT"
+    elif ":" in played and played.split(":")[0].isdigit():
+        minute = f"{int(played.split(':')[0]) + 1}'"
+    else:
+        minute = status_text or "Live"
+    return {**base, "status": "live", "hg": hg, "ag": ag, "minute": minute}
+
+
+async def fetch_sportybet_live(timeout: float = 15.0) -> List[Dict]:
+    """Every football match in play on SportyBet (one request)."""
+    import asyncio
+    import sportybet
+    session = sportybet.shared_session()
+    for path, params in SB_LIVE_LISTS:
+        try:
+            data = await asyncio.wait_for(sportybet._request(session, "GET", path, params={
+                **params, "sportId": sportybet.FOOTBALL, "_t": sportybet._now_ms()}), timeout)
+        except Exception:
+            continue
+        found: List[Dict] = []
+        sportybet._collect_events(data.get("data"), found)
+        if found:
+            return [x for x in (parse_sportybet(e) for e in found) if x and x["status"] != "scheduled"]
+    return []
+
+
+async def fetch_sportybet_results(day: str, max_pages: int = 60) -> List[Dict]:
+    """SportyBet's football finals for one UTC day."""
+    import sportybet
+    session = sportybet.shared_session()
+    start = datetime.fromisoformat(day).replace(tzinfo=timezone.utc)
+    events, _, _ = await sportybet._paged(session, "/factsCenter/eventResultList", {
+        "pageSize": 100, "sportId": sportybet.FOOTBALL, "startTime": int(start.timestamp() * 1000),
+        "endTime": int((start + timedelta(days=1)).timestamp() * 1000)}, max_pages)
+    return [x for x in (parse_sportybet(e) for e in events) if x and x["status"] in ("finished", "postponed")]

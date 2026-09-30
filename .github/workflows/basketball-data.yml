@@ -129,7 +129,8 @@ jobs:
                           print(traceback.format_exc()[-1500:])
                           print("  keys:", sorted(p)[:60])
                   print(f"snapshot dry run {d}: {len(day)} entries; stored key exists: {bool(r.exists(f'betiq:md:{d}'))}")
-          print("Live job reports:", (r.get("betiq:live:last") or b"none yet")[:3000])
+          for job, rep in sorted(r.hgetall("betiq:live:last").items()):
+              print("Live job", job.decode(), rep.decode()[:1500])
           days = [(now.date() - timedelta(days=i)).isoformat() for i in (2, 1, 0)]
           for sport, fmt in (("football", "betiq:md:{d}"), ("basketball", "betiq:bbmd:{d}"),
                              ("tennis", "betiq:tennis:md:{d}"), ("table_tennis", "betiq:table_tennis:md:{d}")):
