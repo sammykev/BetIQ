@@ -50,6 +50,7 @@ const SPORTS: readonly { key: "football" | "basketball" | "tennis" | "table-tenn
 ];
 type Sport = (typeof SPORTS)[number]["key"];
 const SPORT_KEY = "betiq-sport";
+const SIGNED_IN_KEY = "betiq-signed-in";
 const isSport = (v: unknown): v is Sport => SPORTS.some(s => s.key === v);
 
 /** The sport tab to open on: the address (?sport=tennis, so a link or a
@@ -275,6 +276,12 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
   const [quick, setQuick] = useState<Quick>("all");
   const [activeSport, setActiveSportState] = useState<Sport>(initialSport);
+  // Signed in on this device last time (read after the first render, so the
+  // server's HTML and the browser's first render match)
+  const [wasSignedIn, setWasSignedIn] = useState(false);
+  useEffect(() => {
+    try { setWasSignedIn(localStorage.getItem(SIGNED_IN_KEY) === "1"); } catch { /* storage off */ }
+  }, []);
   // Remembered in the address and on the device, so a refresh stays on it
   const setActiveSport = useCallback((s: Sport) => {
     setActiveSportState(s);
@@ -301,6 +308,10 @@ export default function HomePage() {
   const dayPicked = useRef(false);
 
   const { user, isLoaded } = useUser();
+  useEffect(() => {
+    if (!isLoaded) return;
+    try { if (user) localStorage.setItem(SIGNED_IN_KEY, "1"); else localStorage.removeItem(SIGNED_IN_KEY); } catch { /* storage off */ }
+  }, [isLoaded, user]);
   const authFetch = useAuthedFetch();
   const [maintenanceMode, setMaintenanceMode] = useState(false);
   const [siteBanner, setSiteBanner] = useState("");
@@ -594,8 +605,10 @@ export default function HomePage() {
 
   const retry = () => { setLoading(true); load(); };
 
-  // Auth gate — all hooks above must run first (React rules)
-  if (!isLoaded) {
+  // Auth gate — all hooks above must run first (React rules). A device that
+  // was signed in last time doesn't wait for Clerk: the page (with the kept
+  // lists) shows at once, and the sign-in page only if Clerk finds no session.
+  if (!isLoaded && !wasSignedIn) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="w-8 h-8 border-2 border-brand-400 border-t-transparent rounded-full animate-spin" />
@@ -603,7 +616,7 @@ export default function HomePage() {
     );
   }
 
-  if (!user) return <AuthGate />;
+  if (isLoaded && !user) return <AuthGate />;
 
   if (maintenanceMode) {
     return (

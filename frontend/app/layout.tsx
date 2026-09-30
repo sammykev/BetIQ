@@ -31,6 +31,11 @@ const mono = JetBrains_Mono({
   variable: "--font-mono",
 });
 
+const API_ORIGIN = (() => {
+  try { return new URL(process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com").origin; }
+  catch { return "https://betiq-backend-jcwa.onrender.com"; }
+})();
+
 export const metadata: Metadata = {
   metadataBase: new URL("https://predict-withbetiq.vercel.app"),
   title: "BetIQ — AI Sports Predictions",
@@ -105,6 +110,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <html lang="en" className={`dark ${inter.variable} ${display.variable} ${mono.variable}`} suppressHydrationWarning>
         <head>
           <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+          {/* Open the connection to the API while the page loads (saves the TLS handshake on the first request) */}
+          <link rel="preconnect" href={API_ORIGIN} crossOrigin="anonymous" />
+          <link rel="dns-prefetch" href={API_ORIGIN} />
         </head>
         <body className="antialiased">
           <ThemeSync />
