@@ -11,6 +11,7 @@ import os
 import re
 import time
 import glob
+import hashlib
 import json
 from datetime import datetime, date, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -18,7 +19,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 import httpx
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi import FastAPI, BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from auth import auth_enforced, optional_user, require_user
 from grading import grade_prediction, regrade, to_goals
 from team_names import UCL_ALIASES, TeamResolver
@@ -29,6 +30,7 @@ from dotenv import load_dotenv
 from predictor import LeaguePredictor
 from data_fetcher import FootballDataClient, LEAGUES, API_BASE, NOT_IN_PLAN
 import international_fixtures as intl
+import perf
 import security
 import traffic
 import set_pieces
@@ -430,6 +432,8 @@ app.add_middleware(
     max_age=3600,
 )
 security.configure(lambda: _get_redis())
+# Outermost: how long each API request takes, whole (perf.py)
+app.add_middleware(perf.TimingMiddleware)
 
 # --- Global state ---
 _predictor: Optional[LeaguePredictor] = None
@@ -2133,31 +2137,43 @@ async def get_leagues():
 
 @app.get("/api/predictions")
 async def get_predictions(
+    request: Request,
     league: Optional[str] = None,
     date_str: Optional[str] = None,
     min_confidence: float = 0.0,
     limit: int = 500,
 ):
-    # Predictions cached before the window shrank stay hidden
-    data = [p for p in _predictions_cache if _within_window(p.get("date", ""))]
+    """The upcoming football predictions, most confident first. Each variant is
+    built once per predictions update (and per minute, as the window moves)
+    and served with an ETag: a browser holding the same list gets a 304."""
+    key = (id(_predictions_cache), _last_updated, (league or "").upper(), date_str or "", min_confidence, limit,
+           int(time.time() // 60))
+    hit = _predictions_response.get(key)
+    if hit is None:
+        # Predictions cached before the window shrank stay hidden
+        data = [p for p in _predictions_cache if _within_window(p.get("date", ""))]
+        if league and league.upper() != "ALL":
+            data = [p for p in data if p.get("league", "").upper() == league.upper()]
+        if date_str:
+            data = [p for p in data if p.get("date") == date_str]
+        if min_confidence > 0:
+            data = [p for p in data if _pick_confidence(p) >= min_confidence]
+        # Sort by confidence desc, then date
+        data = sorted(data, key=lambda x: (-_pick_confidence(x), x.get("date", "")))
+        body = json.dumps({"predictions": data[:limit], "total": len(data), "last_updated": _last_updated},
+                          separators=(",", ":"), default=str).encode()
+        hit = (body, '"' + hashlib.sha1(body).hexdigest()[:20] + '"')
+        if len(_predictions_response) > 32:
+            _predictions_response.clear()
+        _predictions_response[key] = hit
+    body, etag = hit
+    headers = {"ETag": etag, "Cache-Control": "public, max-age=30, stale-while-revalidate=600"}
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers=headers)
+    return Response(content=body, media_type="application/json", headers=headers)
 
-    if league and league.upper() != "ALL":
-        data = [p for p in data if p.get("league", "").upper() == league.upper()]
 
-    if date_str:
-        data = [p for p in data if p.get("date") == date_str]
-
-    if min_confidence > 0:
-        data = [p for p in data if _pick_confidence(p) >= min_confidence]
-
-    # Sort by confidence desc, then date
-    data = sorted(data, key=lambda x: (-_pick_confidence(x), x.get("date", "")))
-
-    return {
-        "predictions": data[:limit],
-        "total": len(data),
-        "last_updated": _last_updated,
-    }
+_predictions_response: Dict[Tuple, Tuple[bytes, str]] = {}
 
 
 def _parse_api_h2h(data: Dict, home: str, away: str) -> Dict:
@@ -8948,6 +8964,16 @@ async def startup():
                       next_run_time=datetime.now() + timedelta(minutes=1))
     scheduler.add_job(_shot_blend_job, "interval", hours=6, id="shot_blend",
                       next_run_time=datetime.now() + timedelta(minutes=15))
+    # How long each job runs, and the loop-lag watch (perf.py; the probe reads them)
+    from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED
+
+    def _job_done(ev):
+        try:
+            perf.record_job(ev.job_id, (datetime.now(ev.scheduled_run_time.tzinfo) - ev.scheduled_run_time).total_seconds())
+        except Exception:
+            pass
+    scheduler.add_listener(_job_done, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)
+    asyncio.get_event_loop().create_task(perf.watch_loop(_get_redis))
     scheduler.start()
     # Which code this server runs (the "Basketball data" workflow's read_probe job prints it)
     if r:

@@ -15,6 +15,7 @@ import { fetchRKMatchday, fetchRKStrip, RK_WORDS, type RacketPrediction, type RK
 import type { RacketSport } from "@/lib/tennis";
 import { Empty as EmptyState } from "@/components/ui/empty";
 import { Enter, EnterGroup } from "@/components/ui/enter";
+import { keep, peek } from "@/lib/cache";
 
 function Empty({ icon, title, body, action }: { icon: React.ReactNode; title: string; body?: string; action?: React.ReactNode }) {
   return <EmptyState icon={icon} title={title} body={body} action={action} />;
@@ -61,8 +62,20 @@ export function RacketDays({ sport, preds, loading, onOpen }: {
   useEffect(() => {
     let alive = true;
     let timer: ReturnType<typeof setTimeout>;
+    // Last visit's strip at once (and its day), the fresh one when it arrives
+    const kept = peek<RKStripResponse>(`${sport}:strip`);
+    if (kept) {
+      setStrip(kept);
+      if (!picked.current) {
+        picked.current = true;
+        const t = kept.days.find(d => d.date === kept.today);
+        const next = kept.days.find(d => d.date > kept.today && d.total > 0);
+        setDay(t && t.total > 0 ? kept.today : next?.date ?? kept.today);
+      }
+    }
     const load = () => fetchRKStrip(authFetch, sport).then(s => {
       if (!alive) return;
+      keep(`${sport}:strip`, s);
       setStrip(s);
       if (!picked.current) {
         picked.current = true;
@@ -87,18 +100,19 @@ export function RacketDays({ sport, preds, loading, onOpen }: {
     let timer: ReturnType<typeof setTimeout>;
     const ctrl = new AbortController();
     const load = (first: boolean) => {
-      if (first) { setMdLoading(true); setMdError(false); }
+      const kept = first ? peek<RKMatchdayResponse>(`${sport}:md:${day}`) : null;
+      if (first) { setMd(kept); setMdLoading(!kept); setMdError(false); }
       fetchRKMatchday(authFetch, sport, day, ctrl.signal)
         .then(d => {
           if (!alive) return;
           setMd(d);
+          keep(`${sport}:md:${day}`, d);
           const under = d.matches.some(m => m.status === "live" || (m.status === "scheduled" && Date.parse(`${m.date}T${m.time}:00Z`) < Date.now()));
           if (under) timer = setTimeout(() => load(false), 45_000);
         })
-        .catch(() => { if (alive && first) setMdError(true); })
+        .catch(() => { if (alive && first && !kept) setMdError(true); })
         .finally(() => { if (alive && first) setMdLoading(false); });
     };
-    setMd(null);
     load(true);
     return () => { alive = false; ctrl.abort(); clearTimeout(timer); };
   }, [day, today, authFetch, sport]);

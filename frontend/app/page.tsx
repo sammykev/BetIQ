@@ -39,6 +39,7 @@ import { motion } from "motion/react";
 import { UnderlineTabs } from "@/components/ui/tabs";
 import { Empty as EmptyState } from "@/components/ui/empty";
 import { Enter, EnterGroup } from "@/components/ui/enter";
+import { keep, peek } from "@/lib/cache";
 
 // Football is always on; the rest follow their switches (admin → Access)
 const SPORTS: readonly { key: "football" | "basketball" | "tennis" | "table-tennis"; label: string; feature?: FeatureId }[] = [
@@ -48,6 +49,21 @@ const SPORTS: readonly { key: "football" | "basketball" | "tennis" | "table-tenn
   { key: "table-tennis", label: "Table Tennis", feature: "sport.table_tennis" },
 ];
 type Sport = (typeof SPORTS)[number]["key"];
+const SPORT_KEY = "betiq-sport";
+const isSport = (v: unknown): v is Sport => SPORTS.some(s => s.key === v);
+
+/** The sport tab to open on: the address (?sport=tennis, so a link or a
+ *  refresh keeps it), else the one last used on this device. */
+function initialSport(): Sport {
+  if (typeof window === "undefined") return "football";
+  const fromUrl = new URLSearchParams(window.location.search).get("sport");
+  if (isSport(fromUrl)) return fromUrl;
+  try {
+    const saved = localStorage.getItem(SPORT_KEY);
+    if (isSport(saved)) return saved;
+  } catch { /* storage off */ }
+  return "football";
+}
 
 type Quick = "all" | "bankers" | "value" | "high";
 
@@ -258,7 +274,15 @@ export default function HomePage() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [quick, setQuick] = useState<Quick>("all");
-  const [activeSport, setActiveSport] = useState<Sport>("football");
+  const [activeSport, setActiveSportState] = useState<Sport>(initialSport);
+  // Remembered in the address and on the device, so a refresh stays on it
+  const setActiveSport = useCallback((s: Sport) => {
+    setActiveSportState(s);
+    try { localStorage.setItem(SPORT_KEY, s); } catch { /* storage off */ }
+    const url = new URL(window.location.href);
+    if (s === "football") url.searchParams.delete("sport"); else url.searchParams.set("sport", s);
+    window.history.replaceState(window.history.state, "", url.toString());
+  }, []);
   const [sportPreds, setSportPreds] = useState<SportPrediction[]>([]);
   const [sportLoading, setSportLoading] = useState(false);
   const [selectedSportMatch, setSelectedSportMatch] = useState<SportPrediction | null>(null);
@@ -291,6 +315,14 @@ export default function HomePage() {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 15000);
 
+    // Last visit's lists at once; the fresh ones replace them when they arrive
+    const kept = peek<{ predictions: Prediction[]; last_updated: string | null; leagues: League[] }>("football:predictions");
+    if (kept) {
+      setAllPredictions(kept.predictions);
+      setLastUpdated(kept.last_updated);
+      setLeagues(kept.leagues);
+      setLoading(false);
+    }
     try {
       setError(null);
       const [data, lgs, maint, ban] = await Promise.all([
@@ -300,13 +332,16 @@ export default function HomePage() {
         fetch(`${API}/api/admin/banner`).then(r => r.json()).catch(() => ({ banner: null })),
       ]);
       clearTimeout(timer);
-      setAllPredictions(Array.isArray(data?.predictions) ? data.predictions : []);
+      const predictions = Array.isArray(data?.predictions) ? data.predictions : [];
+      setAllPredictions(predictions);
       setLastUpdated(data?.last_updated ?? null);
       setLeagues(Array.isArray(lgs) ? lgs : []);
+      keep("football:predictions", { predictions, last_updated: data?.last_updated ?? null, leagues: Array.isArray(lgs) ? lgs : [] });
       setMaintenanceMode(maint?.enabled === true);
       setSiteBanner(ban?.banner || "");
     } catch (e: any) {
       clearTimeout(timer);
+      if (kept) return;   // the kept lists stay up; the next refresh tries again
       if (e?.name === "AbortError") {
         setError("__waking__");   // special code — show friendly waking-up message
       } else {
@@ -346,13 +381,18 @@ export default function HomePage() {
   // Load sport predictions when sport tab changes (non-football)
   useEffect(() => {
     if (activeSport === "football") return;
-    setSportLoading(true);
-    setSportPreds([]);
+    const kept = peek<SportPrediction[]>(`sport:${activeSport}`);
+    setSportPreds(kept ?? []);
+    setSportLoading(!kept);
     const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
     authFetch(`${API}/api/sports/${activeSport}`)
-      .then(r => r.ok ? r.json() : [])
-      .then(d => setSportPreds(Array.isArray(d) ? d : []))
-      .catch(() => setSportPreds([]))
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (!Array.isArray(d)) { if (!kept) setSportPreds([]); return; }
+        setSportPreds(d);
+        keep(`sport:${activeSport}`, d);
+      })
+      .catch(() => { if (!kept) setSportPreds([]); })
       .finally(() => setSportLoading(false));
   }, [activeSport, authFetch]);
 
@@ -365,8 +405,20 @@ export default function HomePage() {
   useEffect(() => {
     let alive = true;
     let timer: ReturnType<typeof setTimeout>;
+    const use = (s: StripResponse) => {
+      setStrip(s);
+      if (!dayPicked.current) {
+        dayPicked.current = true;
+        const t = s.days.find(d => d.date === s.today);
+        const next = s.days.find(d => d.date > s.today && d.total > 0);
+        setDay(t && t.total > 0 ? s.today : next?.date ?? s.today);
+      }
+    };
+    const kept = peek<StripResponse>("football:strip");
+    if (kept) use(kept);
     const load = () => fetchStrip().then(s => {
       if (!alive) return;
+      keep("football:strip", s);
       setStrip(s);
       if (!dayPicked.current) {
         dayPicked.current = true;
@@ -392,18 +444,19 @@ export default function HomePage() {
     let timer: ReturnType<typeof setTimeout>;
     const ctrl = new AbortController();
     const load = (first: boolean) => {
-      if (first) { setMdLoading(true); setMdError(false); }
+      const kept = first ? peek<MatchdayResponse>(`football:md:${day}`) : null;
+      if (first) { setMd(kept); setMdLoading(!kept); setMdError(false); }
       fetchMatchday(day, ctrl.signal)
         .then(d => {
           if (!alive) return;
           setMd(d);
+          keep(`football:md:${day}`, d);
           // In play, or kicked off and still waiting for a score: ask again in a minute
           if (d.summary.live > 0 || d.matches.some(m => inPlayWindow(m))) timer = setTimeout(() => load(false), 60_000);
         })
-        .catch(() => { if (alive && first) setMdError(true); })
+        .catch(() => { if (alive && first && !kept) setMdError(true); })
         .finally(() => { if (alive && first) setMdLoading(false); });
     };
-    setMd(null);
     load(true);
     return () => { alive = false; ctrl.abort(); clearTimeout(timer); };
   }, [day, today]);
