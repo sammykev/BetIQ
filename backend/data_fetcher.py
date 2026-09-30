@@ -12,6 +12,19 @@ import pandas as pd
 from datetime import date, timedelta
 from typing import List, Dict, Optional
 import os
+import ssl
+
+
+_tls_ctx: List[ssl.SSLContext] = []
+
+
+def _tls() -> ssl.SSLContext:
+    """One TLS context for every request (each new one loads the CA bundle again)."""
+    if not _tls_ctx:
+        import certifi
+        _tls_ctx.append(ssl.create_default_context(cafile=certifi.where()))
+    return _tls_ctx[0]
+
 
 API_BASE = "https://api.football-data.org/v4"
 
@@ -127,7 +140,7 @@ class FootballDataClient:
             f"{API_BASE}/competitions/{league_code}/matches"
             f"?dateFrom={today}&dateTo={date_to}"
         )
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(verify=_tls()) as client:
             data = await self._get(client, url)
 
         if not data or "matches" not in data:
@@ -168,13 +181,13 @@ class FootballDataClient:
             f"{API_BASE}/competitions/{league_code}/matches"
             f"?dateFrom={today}&dateTo={date_to}"
         )
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(verify=_tls()) as client:
             return await self._get(client, url)
 
     async def fetch_h2h(self, match_id: int, limit: int = 10) -> Optional[Dict]:
         """Fetch head-to-head record for a specific match ID."""
         url = f"{API_BASE}/matches/{match_id}/head2head?limit={limit}"
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(verify=_tls()) as client:
             return await self._get(client, url)
 
     async def fetch_competition_emblem(self, league_code: str) -> Optional[str]:
@@ -191,7 +204,7 @@ class FootballDataClient:
         is safe to cache for a long time.
         """
         url = f"{API_BASE}/competitions/{league_code}"
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(verify=_tls()) as client:
             data = await self._get(client, url)
         if data is None:
             raise RuntimeError(f"football-data.org request failed for competition {league_code!r}")
@@ -207,7 +220,7 @@ class FootballDataClient:
             f"{API_BASE}/competitions/{league_code}/matches"
             f"?status=FINISHED&dateFrom={date_from}&dateTo={today}"
         )
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(verify=_tls()) as client:
             data = await self._get(client, url)
 
         if not data or "matches" not in data:

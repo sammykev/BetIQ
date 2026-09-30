@@ -314,7 +314,7 @@ async def admin_alerts(_admin: str = Depends(require_admin)):
     review_alert = market_review.alert(_review, review_age)
     if review_alert:
         alerts.append(review_alert)
-    alerts += _post_alerts()
+    alerts += await asyncio.to_thread(_post_alerts)
     return {"alerts": alerts}
 
 
@@ -1783,7 +1783,7 @@ async def _run_pipeline():
             print(f"[Pipeline] Results index failed (non-fatal): {e}")
         global _set_pieces
         try:
-            _set_pieces = await asyncio.to_thread(set_pieces.SetPieceModel.fit, _with_club_referees(history))
+            _set_pieces = await asyncio.to_thread(lambda: set_pieces.SetPieceModel.fit(_with_club_referees(history)))
         except Exception as e:
             print(f"[Pipeline] Corners/bookings model failed (non-fatal): {e}")
         try:
@@ -3420,7 +3420,7 @@ async def get_matchday_strip():
     dates = [(today + timedelta(days=o)).isoformat() for o in range(-MD_DAYS_BACK, MD_DAYS_AHEAD + 1)]
     r = _get_redis()
     try:
-        stored = _md_many(r, dates) if r else {}
+        stored = await asyncio.to_thread(_md_many, r, dates) if r else {}
     except Exception:
         stored = {}
     upcoming: Dict[str, int] = {}
@@ -5111,7 +5111,7 @@ async def get_sport_predictions(sport: str, request: Request):
 
     if r:
         try:
-            cached = r.get(cache_key)
+            cached = await asyncio.to_thread(r.get, cache_key)
             if cached:
                 out = drop_started_events(_json.loads(cached))
                 return _with_racket_form(out, "table_tennis" if sport == "table-tennis" else sport) if sport in ("tennis", "table-tennis") else out
@@ -5916,7 +5916,7 @@ def _rk_match(sport: str, event: str) -> Dict:
 async def get_tennis_strip(request: Request):
     """The tennis date strip: 7 days back to 14 ahead."""
     await _check_sport_access(request, "tennis")
-    return _rk_strip("tennis")
+    return await asyncio.to_thread(_rk_strip, "tennis")
 
 
 @app.get("/api/tennis/matchday")
@@ -5937,7 +5937,7 @@ async def get_tennis_match(request: Request, event: str = Query(..., max_length=
 @app.get("/api/table-tennis/matchday/strip")
 async def get_table_tennis_strip(request: Request):
     await _check_sport_access(request, "table-tennis")
-    return _rk_strip("table_tennis")
+    return await asyncio.to_thread(_rk_strip, "table_tennis")
 
 
 @app.get("/api/table-tennis/matchday")
@@ -7273,7 +7273,7 @@ async def _link_sportybet_events_now(trigger: str) -> Dict[str, Any]:
             r = _get_redis()
             if r:
                 try:
-                    r.set(SB_LINKS_KEY, json.dumps(links), ex=6 * 3600)
+                    await asyncio.to_thread(lambda: r.set(SB_LINKS_KEY, json.dumps(links), ex=6 * 3600))
                 except Exception as e:
                     print(f"[SportyBet] Could not save links: {e}")
         else:
@@ -7287,7 +7287,7 @@ async def _link_sportybet_events_now(trigger: str) -> Dict[str, Any]:
         p["sportybet"] = _sb_key(p.get("home", ""), p.get("away", ""), p.get("date", "")) in _sb_links
     _sb_link_status.clear()
     _sb_link_status.update(status)
-    _save_link_status()
+    await asyncio.to_thread(_save_link_status)
     print(f"[SportyBet] Linked {status['linked']}/{status['predictions']} predictions "
           f"({status['events']} SportyBet events, {trigger}) — {' · '.join(status['report']) or 'no fetch'}")
     return _sb_link_status
@@ -7549,11 +7549,11 @@ async def _collect_fd_referees(trigger: str = "schedule") -> Dict[str, Any]:
     r = model_store._client()  # binary: the blob is gzip'd
     if r is None:
         return {"skipped": "no Redis"}
-    state = _fd_refs_load(r)
+    state = await asyncio.to_thread(_fd_refs_load, r)
     fd = FootballDataClient(API_KEY)
     async with httpx.AsyncClient() as hc:
         report = await referee_sources.collect_past(lambda url: fd._get(hc, url), state, date.today(), asyncio.sleep)
-    r.set(referee_sources.REFS_KEY, gzip.compress(json.dumps(state, separators=(",", ":")).encode()))
+    await asyncio.to_thread(lambda: r.set(referee_sources.REFS_KEY, gzip.compress(json.dumps(state, separators=(",", ":")).encode())))
     _fd_refs_status.update(at=state.get("at"), report=report, refs=len(state.get("refs") or {}),
                            seasons_done=len(state.get("done") or []), trigger=trigger)
     print(f"[Referees] football-data.org: {report['found']} new past referees, {report['requests']} requests")
@@ -8601,9 +8601,9 @@ async def _maybe_post_daily(doc: Dict[str, Any]) -> None:
         return
     for ch in POST_CHANNELS:
         mod = _channel(ch)
-        if not _post_enabled(ch) or not mod.configured():
+        if not await asyncio.to_thread(_post_enabled, ch) or not mod.configured():
             continue
-        state = _post_day(_get_redis(), ch, doc["date"])
+        state = await asyncio.to_thread(_post_day, _get_redis(), ch, doc["date"])
         if state.get("status") in ("posted", "skipped") or int(state.get("tries") or 0) >= mod.MAX_TRIES:
             continue
         try:

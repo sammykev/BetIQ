@@ -113,3 +113,22 @@ def test_logo_answers_are_remembered_and_cached_by_browsers(monkeypatch):
     assert first.json()["logo"] == again.json()["logo"] == "https://img/badge.png"
     assert asked == ["Lakers"]                                   # the second came from memory
     assert "max-age=86400" in again.headers["cache-control"]
+
+
+def test_a_long_stall_is_noted_with_its_cpu_time(monkeypatch):
+    monkeypatch.setattr(perf, "_stalls", perf.deque(maxlen=12))
+    monkeypatch.setattr(perf, "STALL_NOTE", 0.2)
+    monkeypatch.setattr(perf, "LAG_TICK", 0.05)
+
+    async def run():
+        watch = asyncio.ensure_future(perf.watch_loop(lambda: None))
+        await asyncio.sleep(0.06)
+        import time
+        time.sleep(0.3)             # held, but not by work: no CPU time
+        await asyncio.sleep(0.12)
+        watch.cancel()
+    asyncio.run(run())
+    stall = perf._stalls[-1]
+    assert stall["s"] >= 0.2 and stall["cpu_s"] < 0.2
+    s = perf.summary()
+    assert s["stalls"] and "watchdog_late_s" in s and "memory_mb" in s

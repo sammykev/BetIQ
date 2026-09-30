@@ -207,18 +207,19 @@ def add_club_referees(history, club_refs: Dict[str, str]):
         return seen[(a, b)]
 
     filled = []
-    for i, row in out[missing].iterrows():
-        d = pd.Timestamp(row["Date"]).date()
+    todo = out[missing]
+    for i, when, row_home, row_away in zip(todo.index, todo["Date"], todo["HomeTeam"], todo["AwayTeam"]):
+        d = pd.Timestamp(when).date()
         best, best_score = None, 0.0
         for day in (d, d - timedelta(days=1), d + timedelta(days=1)):
             for home, away, name in by_day.get(day.isoformat(), []):
-                sh, sa = similar(row["HomeTeam"], home), similar(row["AwayTeam"], away)
+                sh, sa = similar(row_home, home), similar(row_away, away)
                 if min(sh, sa) >= 0.8 and sh + sa > best_score:
                     best, best_score = name, sh + sa
         if best:
             filled.append((i, best))
-    for i, name in filled:
-        out.at[i, "Referee"] = name
+    if filled:
+        out.loc[[i for i, _ in filled], "Referee"] = [name for _, name in filled]
     return out
 
 

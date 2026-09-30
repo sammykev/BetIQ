@@ -33,6 +33,12 @@ STUCK_AFTER = 0.5
 _beat = [time.monotonic()]
 _loop_thread: List[Optional[int]] = [None]
 _blocking: Dict[str, int] = defaultdict(int)
+# Long stalls (over STALL_NOTE s): when, how long, and the process's CPU time
+# in them (≈ the stall: code running; ≈ 0: the process was paused, e.g. swap),
+# and the longest the watchdog itself overslept (it can't run then either)
+STALL_NOTE = 5.0
+_stalls: Deque[Dict[str, Any]] = deque(maxlen=12)
+_watchdog_late = [0.0]
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -52,7 +58,9 @@ def _where(frame) -> str:
 
 def _watchdog() -> None:
     while True:
+        before = time.monotonic()
         time.sleep(WATCH_EVERY)
+        _watchdog_late[0] = max(_watchdog_late[0], time.monotonic() - before - WATCH_EVERY)
         tid = _loop_thread[0]
         if tid is None or time.monotonic() - _beat[0] < STUCK_AFTER:
             continue
@@ -87,25 +95,47 @@ def _pct(values: List[float], p: float) -> float:
     return values[min(len(values) - 1, int(round(p * (len(values) - 1))))]
 
 
+def _recent(q: Deque, now: float) -> list:
+    # list() copies in one step (safe while the loop appends); no trimming
+    # here, as this runs off the loop
+    return [x for x in list(q) if now - x[0] <= WINDOW_SECONDS]
+
+
+def _memory() -> Dict[str, Any]:
+    """The process's memory and the machine's free memory (MB), from /proc."""
+    out: Dict[str, Any] = {}
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith(("VmRSS:", "VmHWM:", "VmSwap:")):
+                    out[line.split(":")[0]] = round(int(line.split()[1]) / 1024)
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith(("MemTotal:", "MemAvailable:", "SwapTotal:", "SwapFree:")):
+                    out[line.split(":")[0]] = round(int(line.split()[1]) / 1024)
+    except OSError:
+        pass
+    return out
+
+
 def summary() -> Dict[str, Any]:
     now = time.time()
     routes = {}
-    for route, q in _requests.items():
-        _trim(q, now)
+    for route, q in list(_requests.items()):
+        q = _recent(q, now)
         if not q:
             continue
         ms = [x[1] for x in q]
         routes[route] = {"n": len(q), "p50_ms": round(_pct(ms, 0.5)), "p95_ms": round(_pct(ms, 0.95)),
                          "max_ms": round(max(ms)), "kb": round(sum(x[2] for x in q) / len(q) / 1024, 1)}
-    _trim(_lag, now)
-    lag = [x[1] for x in _lag]
+    lag = [x[1] for x in _recent(_lag, now)]
     jobs = {}
-    for job, q in _jobs.items():
-        _trim(q, now)
+    for job, q in list(_jobs.items()):
+        q = _recent(q, now)
         if q:
             s = [x[1] for x in q]
             jobs[job] = {"runs": len(q), "avg_s": round(sum(s) / len(s), 1), "max_s": round(max(s), 1)}
-    top = sorted(_blocking.items(), key=lambda kv: -kv[1])[:25]
+    top = sorted(list(_blocking.items()), key=lambda kv: -kv[1])[:25]
     return {
         "blocking_s": {k: round(n * WATCH_EVERY, 1) for k, n in top},
         "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
@@ -115,7 +145,19 @@ def summary() -> Dict[str, Any]:
                      "stalls_over_1s": sum(1 for x in lag if x > 1000)},
         "routes": dict(sorted(routes.items(), key=lambda kv: -kv[1]["p95_ms"] * kv[1]["n"])),
         "jobs": dict(sorted(jobs.items(), key=lambda kv: -kv[1]["max_s"])),
+        "stalls": list(_stalls),
+        "watchdog_late_s": round(_watchdog_late[0], 1),
+        "memory_mb": _memory(),
     }
+
+
+def _flush(get_redis) -> None:
+    r = get_redis()
+    if r:
+        try:
+            r.set(KEY, json.dumps(summary(), separators=(",", ":")), ex=24 * 3600)
+        except Exception:
+            pass
 
 
 async def watch_loop(get_redis) -> None:
@@ -125,7 +167,7 @@ async def watch_loop(get_redis) -> None:
     _loop_thread[0] = threading.get_ident()
     threading.Thread(target=_watchdog, name="perf-watchdog", daemon=True).start()
     while True:
-        start = time.monotonic()
+        start, cpu = time.monotonic(), time.process_time()
         _beat[0] = start
         await asyncio.sleep(LAG_TICK)
         _beat[0] = time.monotonic()
@@ -133,14 +175,13 @@ async def watch_loop(get_redis) -> None:
         now = time.time()
         _lag.append((now, max(0.0, late)))
         _trim(_lag, now)
+        if late >= STALL_NOTE * 1000:
+            _stalls.append({"at": time.strftime("%H:%M:%S", time.gmtime(now - late / 1000)),
+                            "s": round(late / 1000, 1), "cpu_s": round(time.process_time() - cpu, 1)})
         if time.monotonic() - last_flush >= FLUSH_SECONDS:
             last_flush = time.monotonic()
-            r = get_redis()
-            if r:
-                try:
-                    r.set(KEY, json.dumps(summary(), separators=(",", ":")), ex=24 * 3600)
-                except Exception:
-                    pass
+            # Off the loop: the summary and the Redis write take a moment
+            asyncio.get_running_loop().run_in_executor(None, _flush, get_redis)
 
 
 def route_of(scope: Dict[str, Any]) -> Optional[str]:

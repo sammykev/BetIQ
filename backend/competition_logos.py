@@ -23,6 +23,8 @@ Results are cached (Redis if available, else in-process) since TheSportsDB is
 a shared free service and league badges essentially never change.
 """
 
+import asyncio
+
 import httpx
 from difflib import SequenceMatcher
 from typing import Dict, List, Optional
@@ -128,7 +130,7 @@ async def lookup_competition_logo(
 
     if redis_client:
         try:
-            cached = redis_client.get(cache_key)
+            cached = await asyncio.to_thread(redis_client.get, cache_key)
             if cached is not None:
                 return cached or None  # empty string cached = "known no logo"
         except Exception:
@@ -156,7 +158,7 @@ async def lookup_competition_logo(
 
     if redis_client:
         try:
-            redis_client.setex(cache_key, 60 * 60 * 24 * 30, logo_url or "")  # 30 days
+            await asyncio.to_thread(redis_client.setex, cache_key, 60 * 60 * 24 * 30, logo_url or "")  # 30 days
         except Exception:
             pass
     else:
