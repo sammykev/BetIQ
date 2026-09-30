@@ -9,6 +9,9 @@ changes.
 
 The same scripts work on Oracle Cloud or any Ubuntu server (see the end).
 
+**1 GB is too little for BetIQ now:** the app swaps and pauses. Use Oracle's
+free Ampere A1 server (4 CPUs, 24 GB) instead: [ORACLE-A1.md](ORACLE-A1.md).
+
 **Staying free:** use exactly the settings in step 2: e2-micro, a US region
 (`us-east1`, `us-central1` or `us-west1`) and a **Standard** 30 GB disk. The
 other disk types are charged. The free tier includes 1 GB of outbound traffic
