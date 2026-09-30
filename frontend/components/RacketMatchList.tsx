@@ -11,6 +11,8 @@ import { TennisFacts } from "@/components/TennisFacts";
 import { RK_WORDS, type RKMatchdayMatch } from "@/lib/racket";
 import type { RacketSport } from "@/lib/tennis";
 import { Reveal } from "@/components/ui/reveal";
+import { SportStats } from "@/components/LiveStats";
+import { useAccess } from "@/lib/access";
 
 const pct = (x?: number | null) => (typeof x === "number" ? `${Math.round(x * 100)}%` : "—");
 
@@ -77,6 +79,7 @@ function FormAndStats({ m, sport }: { m: RKMatchdayMatch; sport: RacketSport }) 
 }
 
 function Detail({ m, sport }: { m: RKMatchdayMatch; sport: RacketSport }) {
+  const showStats = useAccess().shown("live_stats");
   const p = m.pred;
   const grades = Object.entries(m.grades ?? {});
   const facts = [
@@ -104,6 +107,7 @@ function Detail({ m, sport }: { m: RKMatchdayMatch; sport: RacketSport }) {
         )}
       </div>
       {(m.status === "live" || m.status === "finished") && <Sets m={m} sport={sport} />}
+      {showStats && <SportStats rows={m.live_stats} status={m.status} minute={m.minute} />}
       {m.status === "finished" && (
         <div className="space-y-1.5">
           <p className="eyebrow">How our picks did</p>

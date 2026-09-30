@@ -10,6 +10,8 @@ import { localTime } from "@/lib/matchTime";
 import { BasketballFacts } from "@/components/BasketballFacts";
 import { BB_GRADE_LABELS, type BasketballPrediction, type BBMatchdayMatch } from "@/lib/basketball";
 import { Reveal } from "@/components/ui/reveal";
+import { SportStats } from "@/components/LiveStats";
+import { useAccess } from "@/lib/access";
 
 const pct = (x?: number | null) => (typeof x === "number" ? `${Math.round(x * 100)}%` : "—");
 
@@ -72,6 +74,7 @@ function FormAndStats({ m }: { m: BBMatchdayMatch }) {
 }
 
 function Detail({ m }: { m: BBMatchdayMatch }) {
+  const showStats = useAccess().shown("live_stats");
   const p = m.pred;
   const grades = Object.entries(m.grades ?? {});
   const facts = [
@@ -99,6 +102,7 @@ function Detail({ m }: { m: BBMatchdayMatch }) {
         )}
       </div>
       {(m.status === "live" || m.status === "finished") && <Quarters m={m} />}
+      {showStats && <SportStats rows={m.live_stats} status={m.status} minute={m.minute} />}
       {m.status === "finished" && (
         <div className="space-y-1.5">
           <p className="eyebrow">How our picks did</p>

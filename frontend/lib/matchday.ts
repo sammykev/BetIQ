@@ -6,6 +6,9 @@ export const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcw
 export type MatchStatus = "scheduled" | "live" | "finished" | "postponed";
 export type Verdict = "won" | "lost" | "push" | "half_won" | "half_lost";
 
+/** A basketball, tennis or table tennis stat, as the server sends it (live_stats.py). */
+export interface StatRow { key: string; label: string; h: number; a: number; hs?: string; as?: string }
+
 export interface Grade { pick: string; prob: number | null; verdict: Verdict }
 
 export interface MatchdayPred {

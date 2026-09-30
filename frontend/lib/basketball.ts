@@ -1,4 +1,5 @@
 import type { SlipSelection } from "./slip";
+import type { StatRow } from "./matchday";
 
 // Basketball predictions (backend basketball_predictions.py): SportyBet's
 // listed matches, our expected points, and every line it offers priced by
@@ -81,6 +82,8 @@ export interface BBMatchdayMatch {
   best: { market: string; market_name: string; code: string; label: string; prob: number; odds: number } | null;
   grades: Partial<Record<"tip" | "points" | "best", BBGrade>> | null;
   locked: boolean;
+  /** Live (then full-match) stats from Sportradar, when it has them */
+  live_stats?: StatRow[] | null;
 }
 export interface BBDaySummary { total: number; finished: number; live: number;
   tip: [number, number]; points: [number, number]; best: [number, number] }

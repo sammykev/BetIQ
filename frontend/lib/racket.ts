@@ -1,5 +1,6 @@
 import type { SlipSelection } from "./slip";
 import type { RacketSport } from "./tennis";
+import type { StatRow } from "./matchday";
 
 // Tennis and table tennis predictions (backend racket_predictions.py):
 // SportyBet's listed matches, and every line it offers priced by our model
@@ -99,6 +100,8 @@ export interface RKMatchdayMatch {
   best: { market: string; market_name: string; code: string; label: string; prob: number; odds: number } | null;
   grades: Partial<Record<"tip" | "games" | "best", RKGrade>> | null;
   locked: boolean;
+  /** Live (then full-match) stats from Sportradar, when it has them */
+  live_stats?: StatRow[] | null;
   home_form?: string; away_form?: string;
 }
 export interface RKDaySummary { total: number; finished: number; live: number;

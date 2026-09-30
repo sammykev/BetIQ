@@ -1,7 +1,7 @@
 "use client";
 
 import clsx from "clsx";
-import type { MatchEvent, MatchdayMatch } from "@/lib/matchday";
+import type { MatchEvent, MatchdayMatch, StatRow } from "@/lib/matchday";
 
 // A match's live (and full-time) numbers from ESPN: key events in order, then
 // each team stat as a split bar. Refreshed every few minutes while it's on.
@@ -60,29 +60,53 @@ export function LiveStats({ m, compact = false, split = false }: {
         <div className={clsx("space-y-2", compact && "space-y-1.5")}>
           {rows.map(r => {
             const [h, a] = stats[r.key] as [number, number];
-            const total = h + a;
-            const hw = total > 0 ? (h / total) * 100 : 50;
             const fmt = (v: number) => (r.pct ? `${Math.round(v)}%` : String(Math.round(v)));
-            return (
-              <div key={r.key}>
-                <div className="flex justify-between text-[11px] tnum">
-                  <span className={clsx(h > a ? "text-n-0 font-semibold" : "text-n-400")}>{fmt(h)}</span>
-                  <span className="text-n-500">{r.label}</span>
-                  <span className={clsx(a > h ? "text-n-0 font-semibold" : "text-n-400")}>{fmt(a)}</span>
-                </div>
-                <div className="flex h-1.5 gap-0.5 mt-0.5">
-                  <div className="flex-1 flex justify-end rounded-l-full bg-n-800 overflow-hidden">
-                    <div className={clsx("h-full rounded-l-full", h >= a ? "bg-accent" : "bg-n-500")} style={{ width: `${hw}%` }} />
-                  </div>
-                  <div className="flex-1 rounded-r-full bg-n-800 overflow-hidden">
-                    <div className={clsx("h-full rounded-r-full", a >= h ? "bg-accent" : "bg-n-500")} style={{ width: `${100 - hw}%` }} />
-                  </div>
-                </div>
-              </div>
-            );
+            return <StatBar key={r.key} label={r.label} h={h} a={a} hs={fmt(h)} as={fmt(a)} />;
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+/** One stat, both sides: the numbers either end, a split bar under them. */
+function StatBar({ label, h, a, hs, as }: { label: string; h: number; a: number; hs: string; as: string }) {
+  const total = h + a;
+  const hw = total > 0 ? (h / total) * 100 : 50;
+  return (
+    <div>
+      <div className="flex justify-between gap-2 text-[11px] tnum">
+        <span className={clsx("shrink-0", h > a ? "text-n-0 font-semibold" : "text-n-400")}>{hs}</span>
+        <span className="text-n-500 truncate">{label}</span>
+        <span className={clsx("shrink-0", a > h ? "text-n-0 font-semibold" : "text-n-400")}>{as}</span>
+      </div>
+      <div className="flex h-1.5 gap-0.5 mt-0.5">
+        <div className="flex-1 flex justify-end rounded-l-full bg-n-800 overflow-hidden">
+          <div className={clsx("h-full rounded-l-full", h >= a ? "bg-accent" : "bg-n-500")} style={{ width: `${hw}%` }} />
+        </div>
+        <div className="flex-1 rounded-r-full bg-n-800 overflow-hidden">
+          <div className={clsx("h-full rounded-r-full", a >= h ? "bg-accent" : "bg-n-500")} style={{ width: `${100 - hw}%` }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const plain = (v: number) => (Number.isInteger(v) ? String(v) : v.toFixed(1));
+
+/** Basketball, tennis and table tennis stats: in play (with the stage) or at the final. */
+export function SportStats({ rows, status, minute }: { rows?: StatRow[] | null; status: string; minute?: string | null }) {
+  if (!rows?.length || (status !== "live" && status !== "finished")) return null;
+  return (
+    <div className="space-y-2">
+      {status === "live" ? (
+        <p className="eyebrow inline-flex items-center gap-1.5">
+          <span className="w-1.5 h-1.5 rounded-full bg-danger animate-pulse" /> Live stats{minute ? ` · ${minute}` : ""}
+        </p>
+      ) : <p className="eyebrow">Match stats</p>}
+      <div className="space-y-1.5">
+        {rows.map(r => <StatBar key={r.key} label={r.label} h={r.h} a={r.a} hs={r.hs ?? plain(r.h)} as={r.as ?? plain(r.a)} />)}
+      </div>
     </div>
   );
 }
