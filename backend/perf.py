@@ -10,6 +10,9 @@ FLUSH_SECONDS for the probe and the admin page.
 
 import asyncio
 import json
+import os
+import sys
+import threading
 import time
 from collections import defaultdict, deque
 from typing import Any, Deque, Dict, List, Optional, Tuple
@@ -17,11 +20,45 @@ from typing import Any, Deque, Dict, List, Optional, Tuple
 KEY = "betiq:perf"
 WINDOW_SECONDS = 15 * 60
 FLUSH_SECONDS = 120
-LAG_TICK = 0.5            # the loop-lag probe sleeps this long; any overshoot is time the loop was held
+LAG_TICK = 0.1            # the loop-lag probe sleeps this long; any overshoot is time the loop was held
 
 _requests: Dict[str, Deque[Tuple[float, float, int]]] = defaultdict(deque)   # route -> (at, ms, bytes)
 _lag: Deque[Tuple[float, float]] = deque()                                   # (at, ms late)
 _jobs: Dict[str, Deque[Tuple[float, float]]] = defaultdict(deque)            # job id -> (at, seconds)
+# What holds the loop: while it's stuck, a watchdog thread samples the loop
+# thread's stack every WATCH_EVERY; each sample counts under the code line
+# that was running (≈ WATCH_EVERY seconds of blocking each)
+WATCH_EVERY = 0.2
+STUCK_AFTER = 0.5
+_beat = [time.monotonic()]
+_loop_thread: List[Optional[int]] = [None]
+_blocking: Dict[str, int] = defaultdict(int)
+_HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def _where(frame) -> str:
+    """The innermost lines of our own code on a stack (and the library call
+    it was in), e.g. "main.py:5620 _rk_live_tick > basketball_data.py:88 encode | zlib"."""
+    ours, lib = [], None
+    while frame is not None:
+        code = frame.f_code
+        if code.co_filename.startswith(_HERE) and "site-packages" not in code.co_filename:
+            ours.append(f"{os.path.basename(code.co_filename)}:{frame.f_lineno} {code.co_name}")
+        elif lib is None and not ours:
+            lib = f"{os.path.basename(code.co_filename)}:{code.co_name}"
+        frame = frame.f_back
+    return " > ".join(reversed(ours[:3])) + (f" | {lib}" if lib else "")
+
+
+def _watchdog() -> None:
+    while True:
+        time.sleep(WATCH_EVERY)
+        tid = _loop_thread[0]
+        if tid is None or time.monotonic() - _beat[0] < STUCK_AFTER:
+            continue
+        frame = sys._current_frames().get(tid)
+        if frame is not None:
+            _blocking[_where(frame)] += 1
 
 
 def _trim(q: Deque, now: float) -> None:
@@ -68,7 +105,9 @@ def summary() -> Dict[str, Any]:
         if q:
             s = [x[1] for x in q]
             jobs[job] = {"runs": len(q), "avg_s": round(sum(s) / len(s), 1), "max_s": round(max(s), 1)}
+    top = sorted(_blocking.items(), key=lambda kv: -kv[1])[:25]
     return {
+        "blocking_s": {k: round(n * WATCH_EVERY, 1) for k, n in top},
         "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
         "window_min": WINDOW_SECONDS // 60,
         "loop_lag": {"p50_ms": round(_pct(lag, 0.5)), "p95_ms": round(_pct(lag, 0.95)),
@@ -83,9 +122,13 @@ async def watch_loop(get_redis) -> None:
     """Runs for the server's life: measures loop lag every LAG_TICK and
     writes the summary to Redis every FLUSH_SECONDS."""
     last_flush = time.monotonic()
+    _loop_thread[0] = threading.get_ident()
+    threading.Thread(target=_watchdog, name="perf-watchdog", daemon=True).start()
     while True:
         start = time.monotonic()
+        _beat[0] = start
         await asyncio.sleep(LAG_TICK)
+        _beat[0] = time.monotonic()
         late = (time.monotonic() - start - LAG_TICK) * 1000
         now = time.time()
         _lag.append((now, max(0.0, late)))

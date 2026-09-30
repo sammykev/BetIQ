@@ -61,3 +61,21 @@ def test_predictions_are_served_once_built_with_an_etag(monkeypatch):
     monkeypatch.setattr(main, "_predictions_cache", preds + [{**preds[0], "home": "C"}])
     fresh = c.get("/api/predictions?limit=500", headers={"If-None-Match": etag})
     assert fresh.status_code == 200 and fresh.json()["total"] == 2 and fresh.headers["etag"] != etag
+
+
+def test_the_watchdog_names_the_code_holding_the_loop(monkeypatch):
+    import time as t
+    monkeypatch.setattr(perf, "_blocking", perf.defaultdict(int))
+
+    def slow_encode():
+        t.sleep(1.2)                 # a job doing heavy work on the loop
+
+    async def run():
+        watch = asyncio.ensure_future(perf.watch_loop(lambda: None))
+        await asyncio.sleep(0.15)
+        slow_encode()
+        await asyncio.sleep(0.15)
+        watch.cancel()
+    asyncio.run(run())
+    assert any("slow_encode" in k for k in perf._blocking), dict(perf._blocking)
+    assert "blocking_s" in perf.summary()
