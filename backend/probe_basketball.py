@@ -694,6 +694,14 @@ async def livestats() -> None:
                              and len(str(e.get("eventId")).rsplit(":", 1)[-1]) <= 9][:1]
         line("  picked: " + json.dumps({k: [(e["eventId"], e.get("homeTeamName"), e.get("awayTeamName")) for e in v] for k, v in picked.items()}))
 
+        # Sportradar stats host: the full stats doc per sport
+        for sport, evs in picked.items():
+            for e in evs:
+                num = str(e["eventId"]).rsplit(":", 1)[-1]
+                line(f"\n  -- stats.fn {sport} {num} {e.get('homeTeamName')} v {e.get('awayTeamName')}")
+                for feed in ("match_detailsextended", "match_timelinedelta", "match_info"):
+                    await show(hc, feed, f"https://stats.fn.sportradar.com/common/en/Etc:UTC/gismo/{feed}/{num}", None, 6000)
+        return
         # Sportradar: hosts, client aliases, feeds
         for sport, evs in picked.items():
             for e in evs:
