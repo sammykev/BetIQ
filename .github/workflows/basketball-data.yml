@@ -94,6 +94,33 @@ jobs:
           print("Server boot:", r.get("betiq:server:boot"))
           print("Basketball status:", (r.get("betiq:bb:status") or b"")[:300])
           print("Match-day keys:", sorted(k.decode() for k in r.scan_iter("betiq:*md:*", count=1000))[-12:])
+          # Live scores: per sport and day, statuses, the newest score written, and started matches still unscored
+          from datetime import datetime, timedelta, timezone
+          now = datetime.now(timezone.utc)
+          print("Now (UTC):", now.isoformat(timespec="seconds"))
+          days = [(now.date() - timedelta(days=i)).isoformat() for i in (2, 1, 0)]
+          for sport, fmt in (("football", "betiq:md:{d}"), ("basketball", "betiq:bbmd:{d}"),
+                             ("tennis", "betiq:tennis:md:{d}"), ("table_tennis", "betiq:table_tennis:md:{d}")):
+              for d in days:
+                  raw = r.get(fmt.format(d=d))
+                  if not raw:
+                      print(f"{sport} {d}: nothing stored"); continue
+                  day = json.loads(raw)
+                  st, last, stuck = {}, "", []
+                  for e in day.values():
+                      res = e.get("result") or {}
+                      s = res.get("status") or "scheduled"
+                      st[s] = st.get(s, 0) + 1
+                      last = max(last, res.get("at") or "")
+                      try:
+                          ko = datetime.strptime(f"{e.get('date')} {e.get('time') or '12:00'}", "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
+                      except ValueError:
+                          continue
+                      if s not in ("finished", "postponed") and ko < now - timedelta(minutes=20):
+                          stuck.append(f"{e.get('time')} {e.get('home')} v {e.get('away')} [{e.get('league')}] {s} {res.get('minute') or ''}")
+                  print(f"{sport} {d}: {len(day)} matches {st}; newest score written {last or 'never'}; started but unfinished {len(stuck)}")
+                  for x in stuck[:8]:
+                      print("    ", x)
           raw = r.get("betiq:probe:web")
           print(json.dumps(json.loads(raw), indent=1)[:200000] if raw else "No probe saved yet")
           import basketball_data as bd
