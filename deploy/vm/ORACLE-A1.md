@@ -11,6 +11,27 @@ trains or loads its own model. Keep the old server running until step 7.
 
 Time: about 30 minutes, most of it waiting for the build.
 
+## 0. A network, if the home region has none
+
+Skip this if the current server is in your home region: the new one uses its
+network. Otherwise (Networking → **Virtual cloud networks** shows none there):
+
+1. ☰ → **Networking** → **Virtual cloud networks** → **Start VCN Wizard**
+   (on newer consoles: **Actions** → **Start VCN Wizard**) →
+   **Create VCN with Internet Connectivity** → **Start VCN Wizard**.
+2. Name `betiq-vcn`, compartment: the root (your tenancy name). Leave the
+   address ranges as they are → **Next** → **Create**. It makes a public
+   subnet, a private one and an internet gateway. All free.
+3. Open the web ports: **View VCN** → **Subnets** → **public subnet-betiq-vcn**
+   → **Security** (or **Security Lists**) → **Default Security List for
+   betiq-vcn** → **Add Ingress Rules**:
+   - Source CIDR `0.0.0.0/0`, IP protocol **TCP**, destination port **80** →
+     **+ Another Ingress Rule** → the same with port **443** → **Add Ingress Rules**.
+
+   SSH (port 22) is already allowed.
+4. For the retry script below, the subnet's OCID is on the public subnet's
+   page: **OCID: Copy**.
+
 ## 1. Create the A1 server
 
 Oracle Cloud console (<https://cloud.oracle.com>) → ☰ → **Compute** →
