@@ -79,3 +79,37 @@ def test_the_watchdog_names_the_code_holding_the_loop(monkeypatch):
     asyncio.run(run())
     assert any("slow_encode" in k for k in perf._blocking), dict(perf._blocking)
     assert "blocking_s" in perf.summary()
+
+
+def test_crests_are_written_in_one_round_trip(monkeypatch):
+    calls = []
+
+    class Pipe:
+        def setex(self, k, ttl, v): calls.append((k, v))
+        def execute(self): calls.append("execute")
+
+    class R:
+        def pipeline(self, transaction=False): return Pipe()
+        def setex(self, *a): raise AssertionError("one write per team")
+    monkeypatch.setattr(main, "_get_redis", lambda: R())
+    main._cache_team_crests([{"home": "Arsenal", "away": "Chelsea", "home_crest": "a.png", "away_crest": "c.png"},
+                             {"home": "Arsenal", "away": "Spurs", "home_crest": "a.png", "away_crest": None}])
+    assert calls[-1] == "execute" and len(calls) == 3              # Arsenal, Chelsea; no crest for Spurs
+
+
+def test_logo_answers_are_remembered_and_cached_by_browsers(monkeypatch):
+    main._logo_memo.clear()
+    asked = []
+
+    async def lookup(name, redis_client=None):
+        asked.append(name)
+        return "https://img/badge.png"
+    import team_logos
+    monkeypatch.setattr(team_logos, "lookup_team_logo", lookup)
+    monkeypatch.setattr(main, "_get_cached_team_crest", lambda name: None)
+    c = TestClient(main.app)
+    first = c.get("/api/team-logo?name=Lakers")
+    again = c.get("/api/team-logo?name=Lakers")
+    assert first.json()["logo"] == again.json()["logo"] == "https://img/badge.png"
+    assert asked == ["Lakers"]                                   # the second came from memory
+    assert "max-age=86400" in again.headers["cache-control"]

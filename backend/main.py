@@ -1833,13 +1833,11 @@ async def _run_pipeline():
         # First, so an international break shows up within seconds.
         fixtures.extend(await _fetch_international_fixtures())
         if fixtures:
-            for fx in fixtures:
-                _cache_team_crest(fx["home"], fx.get("home_crest"))
-                _cache_team_crest(fx["away"], fx.get("away_crest"))
-            predictions = _build_predictions(predictor, fixtures, {})
+            await asyncio.to_thread(_cache_team_crests, fixtures)
+            predictions = await asyncio.to_thread(_build_predictions, predictor, fixtures, {})
             _predictions_cache = predictions
             _last_updated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-            _save_predictions_cache()
+            await asyncio.to_thread(_save_predictions_cache)
             print(f"[Pipeline] +INT: {len(fixtures)} international fixtures — "
                   f"{len(predictions)} predictions published.")
 
@@ -1848,13 +1846,11 @@ async def _run_pipeline():
         europe = await _fetch_europe_fixtures(predictor, combined)
         if europe:
             fixtures.extend(europe)
-            for fx in europe:
-                _cache_team_crest(fx["home"], fx.get("home_crest"))
-                _cache_team_crest(fx["away"], fx.get("away_crest"))
-            predictions = _build_predictions(predictor, fixtures, {})
+            await asyncio.to_thread(_cache_team_crests, europe)
+            predictions = await asyncio.to_thread(_build_predictions, predictor, fixtures, {})
             _predictions_cache = predictions
             _last_updated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-            _save_predictions_cache()
+            await asyncio.to_thread(_save_predictions_cache)
             print(f"[Pipeline] +EL/UECL: {len(europe)} Europa/Conference League fixtures published.")
 
         if API_KEY:
@@ -1883,17 +1879,15 @@ async def _run_pipeline():
                     fixtures.extend(league_fixtures)
                     # Team crests ride along for free on the fixtures response
                     # (no extra API call) — cache them for /api/team-logo.
-                    for fx in league_fixtures:
-                        _cache_team_crest(fx["home"], fx.get("home_crest"))
-                        _cache_team_crest(fx["away"], fx.get("away_crest"))
+                    await asyncio.to_thread(_cache_team_crests, league_fixtures)
                     # No live odds yet on this fast pass — predict_match() falls back
                     # to league-average implied probabilities, which is fine for an
                     # initial publish; the odds pass below refines it.
-                    predictions = _build_predictions(predictor, fixtures, {})
+                    predictions = await asyncio.to_thread(_build_predictions, predictor, fixtures, {})
                     _predictor = predictor
                     _predictions_cache = predictions
                     _last_updated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-                    _save_predictions_cache()
+                    await asyncio.to_thread(_save_predictions_cache)
                     print(f"[Pipeline] +{code}: {len(league_fixtures)} fixtures — "
                           f"{len(predictions)} predictions published so far.")
                 # Backfill this league's badge only if we don't already have a
@@ -1922,10 +1916,10 @@ async def _run_pipeline():
                 except Exception as e:
                     print(f"[Pipeline] Live odds fetch error (non-fatal): {e}")
 
-                predictions = _build_predictions(predictor, fixtures, live_odds)
+                predictions = await asyncio.to_thread(_build_predictions, predictor, fixtures, live_odds)
                 _predictions_cache = predictions
                 _last_updated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-                _save_predictions_cache()
+                await asyncio.to_thread(_save_predictions_cache)
                 print(f"[Pipeline] Republished {len(predictions)} predictions (with live odds).")
                 if _unknown_clubs:
                     print(f"[Pipeline] {len(_unknown_clubs)} fixture clubs the model has no matches for: "
@@ -1952,10 +1946,10 @@ async def _run_pipeline():
 
             # Re-predict with the calibrated Elo and republish.
             if calibrated and fixtures:
-                predictions = _build_predictions(predictor, fixtures, live_odds)
+                predictions = await asyncio.to_thread(_build_predictions, predictor, fixtures, live_odds)
                 _predictions_cache = predictions
                 _last_updated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-                _save_predictions_cache()
+                await asyncio.to_thread(_save_predictions_cache)
                 print(f"[Pipeline] Republished {len(predictions)} predictions (calibrated).")
         else:
             print("[Pipeline] WARNING: No FOOTBALL_DATA_API_KEY set. Add your key to .env to get live fixtures.")
@@ -3054,7 +3048,7 @@ async def _guarded_tick(name: str, run, limit: float) -> Dict[str, Any]:
     except Exception as e:
         report = {"error": f"{type(e).__name__}: {e}"[:300]}
         print(f"[Live] {name} failed: {report['error']}")
-    _record_job(name, report)
+    await asyncio.to_thread(_record_job, name, report)
     return report
 
 
@@ -3071,7 +3065,7 @@ async def _refresh_matchdays(days_back: int = 1, trigger: str = "schedule") -> D
     _md_status.update(started=now.isoformat(timespec="seconds"), stage="loading match days")
     today = now.date()
     dates = [(today - timedelta(days=i)).isoformat() for i in range(days_back + 1)]
-    days = _md_many(r, dates)
+    days = await asyncio.to_thread(_md_many, r, dates)
     # A day the snapshot never wrote (or a match added since) would never be
     # scored: its predictions go into the store here, before asking for scores
     added = []
@@ -3081,7 +3075,7 @@ async def _refresh_matchdays(days_back: int = 1, trigger: str = "schedule") -> D
             continue
         try:
             if matchday.merge_predictions(days[d], preds, now):
-                _md_save(r, d, days[d])
+                await asyncio.to_thread(_md_save, r, d, days[d])
                 added.append(d)
         except Exception as e:
             print(f"[MatchDay] couldn't store {d}'s predictions: {e}")
@@ -3157,7 +3151,7 @@ async def _refresh_matchdays(days_back: int = 1, trigger: str = "schedule") -> D
             report["unmatched"] += sum(1 for k in entries if k not in matched
                                        and (matchday.kickoff(entries[k]) or now) < now - timedelta(hours=3))
             if changed:
-                _md_save(r, d, day)
+                await asyncio.to_thread(_md_save, r, d, day)
     report["errors"] = report["errors"][:20]
     # Settling reads every account with open tickets (a Redis command each):
     # live runs do it when a score changed, or every MD_SETTLE_MINUTES
@@ -3353,7 +3347,8 @@ def _repredict(teams: set) -> int:
 
 async def _matchday_live() -> None:
     await _guarded_refresh(1, "live")
-    _record_job("football_live", {k: _md_status.get(k) for k in ("at", "stage", "error", "failed_at", "report")})
+    await asyncio.to_thread(_record_job, "football_live",
+                            {k: _md_status.get(k) for k in ("at", "stage", "error", "failed_at", "report")})
     # Matches that just finished: into the models, and their teams' next predictions redone
     try:
         await asyncio.to_thread(_learn_finished_matches, 1)
@@ -5617,12 +5612,14 @@ async def _rk_refresh(sport: str) -> List[Dict]:
     r = _get_redis()
     if r:
         try:
-            r.set(RK_PRED_KEY.format(sport=sport), bd.encode(preds), ex=6 * 3600)
-            r.setex(f"betiq:sports:{_rk_url(sport)}", 3600, json.dumps([_rk_slim(p) for p in preds]))
+            def save():
+                r.set(RK_PRED_KEY.format(sport=sport), bd.encode(preds), ex=6 * 3600)
+                r.setex(f"betiq:sports:{_rk_url(sport)}", 3600, json.dumps([_rk_slim(p) for p in preds]))
+            await asyncio.to_thread(save)
         except Exception as e:
             print(f"[{sport}] couldn't save predictions: {e}")
     try:
-        if _rkmd_merge(sport, preds):
+        if await asyncio.to_thread(_rkmd_merge, sport, preds):
             _rk_strip_cache.pop(sport, None)
     except Exception as e:
         print(f"[{sport}] couldn't keep the match days: {e}")
@@ -5736,13 +5733,14 @@ async def _rk_results_refresh(sport: str) -> Dict[str, Any]:
         return {"skipped": "no Redis"}
     now = datetime.now(timezone.utc)
     dates = [(now.date() - timedelta(days=i)).isoformat() for i in (2, 1, 0)]
-    open_days = {d for d in dates if any(rmd.needs_result(e, now) for e in _rkmd_load(r, sport, d).values())}
+    loaded = await asyncio.to_thread(lambda: {d: _rkmd_load(r, sport, d) for d in dates})
+    open_days = {d for d in dates if any(rmd.needs_result(e, now) for e in loaded[d].values())}
     got = {}
     for d in sorted(open_days | {now.date().isoformat()}):
         try:
             found = await asyncio.wait_for(tf.fetch_results_day(d, sport=sport), 120)
             if found:
-                r.hset(tf.SPORTS[sport]["key"], d, bd.encode(found))
+                await asyncio.to_thread(r.hset, tf.SPORTS[sport]["key"], d, bd.encode(found))
             got[d] = len(found)
         except Exception as e:
             got[d] = f"{type(e).__name__} {e}"[:120]
@@ -5757,13 +5755,14 @@ async def _bb_results_refresh() -> Dict[str, Any]:
         return {"skipped": "no Redis"}
     now = datetime.now(timezone.utc)
     dates = [(now.date() - timedelta(days=i)).isoformat() for i in (2, 1, 0)]
-    open_days = {d for d in dates if any(bbmd.needs_result(e, now) for e in _bbmd_load(r, d).values())}
+    loaded = await asyncio.to_thread(lambda: {d: _bbmd_load(r, d) for d in dates})
+    open_days = {d for d in dates if any(bbmd.needs_result(e, now) for e in loaded[d].values())}
     got = {}
     for d in sorted(open_days | {now.date().isoformat()}):
         try:
             found = await asyncio.wait_for(bd.fetch_results_day(d), 120)
             if found:
-                r.hset(bd.RESULTS_KEY, d, bd.encode(found))
+                await asyncio.to_thread(r.hset, bd.RESULTS_KEY, d, bd.encode(found))
             got[d] = len(found)
         except Exception as e:
             got[d] = f"{type(e).__name__} {e}"[:120]
@@ -5809,14 +5808,15 @@ async def _rk_live_tick(sport: str) -> Dict[str, Any]:
         return {"skipped": "no Redis"}
     now = datetime.now(timezone.utc)
     dates = [(now.date() - timedelta(days=i)).isoformat() for i in (2, 1, 0)]
-    days = {d: _rkmd_load(r, sport, d) for d in dates}
+    # Redis (a network round trip each) off the event loop: page requests don't wait on it
+    days = await asyncio.to_thread(lambda: {d: _rkmd_load(r, sport, d) for d in dates})
     open_ = {e["id"]: (d, e) for d, day in days.items() for e in day.values() if rmd.needs_result(e, now)}
     if not open_:
         _rkmd_status[sport].update(at=now.isoformat(timespec="seconds"), open=0)
         return {"open": 0}
     changed = set()
     # Finals from the stored results (read by _rk_results_refresh every few minutes)
-    finals = _rk_results_days(r, sport, dates + [(now.date() + timedelta(days=1)).isoformat()])
+    finals = await asyncio.to_thread(_rk_results_days, r, sport, dates + [(now.date() + timedelta(days=1)).isoformat()])
     for eid, (d, e) in open_.items():
         if eid in finals and rmd.apply_result(e, finals[eid]):
             changed.add(d)
@@ -5841,8 +5841,8 @@ async def _rk_live_tick(sport: str) -> Dict[str, Any]:
             if _apply_live_reading(e, eid, eid in overdue, live, ended, checked, paged, now,
                                    rmd.apply_result, rmd.apply_live, rmd.stale_live):
                 changed.add(d)
-    for d in changed:
-        _rkmd_save(r, sport, d, days[d])
+    if changed:
+        await asyncio.to_thread(lambda: [_rkmd_save(r, sport, d, days[d]) for d in changed])
     if changed:
         _rk_strip_cache.pop(sport, None)
     _rkmd_status[sport].update(at=now.isoformat(timespec="seconds"), open=len(open_), playing=len(playing),
@@ -6066,13 +6066,13 @@ async def _bb_live_tick() -> Dict[str, Any]:
         return {"skipped": "no Redis"}
     now = datetime.now(timezone.utc)
     dates = [(now.date() - timedelta(days=i)).isoformat() for i in (2, 1, 0)]
-    days = {d: _bbmd_load(r, d) for d in dates}
+    days = await asyncio.to_thread(lambda: {d: _bbmd_load(r, d) for d in dates})
     open_ = {e["id"]: (d, e) for d, day in days.items() for e in day.values() if bbmd.needs_result(e, now)}
     if not open_:
         return {"open": 0}
     changed = set()
     # Finals from the stored results (read by _bb_results_refresh every few minutes)
-    finals = {g["id"]: g for g in _bb_results(r, dates + [(now.date() + timedelta(days=1)).isoformat()])}
+    finals = {g["id"]: g for g in await asyncio.to_thread(_bb_results, r, dates + [(now.date() + timedelta(days=1)).isoformat()])}
     for eid, (d, e) in open_.items():
         if eid in finals and bbmd.apply_result(e, finals[eid]):
             changed.add(d)
@@ -6095,8 +6095,8 @@ async def _bb_live_tick() -> Dict[str, Any]:
             if _apply_live_reading(e, eid, eid in overdue, live, ended, checked, paged, now,
                                    bbmd.apply_result, bbmd.apply_live, bbmd.stale_live):
                 changed.add(d)
-    for d in changed:
-        _bbmd_save(r, d, days[d])
+    if changed:
+        await asyncio.to_thread(lambda: [_bbmd_save(r, d, days[d]) for d in changed])
     if changed:
         _bb_strip_cache.clear()
     _bbmd_status.update(at=now.isoformat(timespec="seconds"), open=len(open_), playing=len(playing),
@@ -6383,7 +6383,7 @@ def _bb_result_for(r, leg: Dict, cache: Dict[str, Dict]) -> Optional[Dict]:
 
 
 @app.get("/api/team-logo")
-async def get_team_logo(name: str):
+async def get_team_logo(name: str, response: Response):
     """
     Generic team badge/logo lookup. Tries the football-data.org crest cache
     first — crests for every team in our tracked football competitions
@@ -6394,8 +6394,12 @@ async def get_team_logo(name: str):
     window). Cached server-side (Redis, 30 days) since badges don't change.
     """
     from team_logos import lookup_team_logo
+    key = ("team", name)
+    hit = _logo_answer(response, key)
+    if hit is not None:
+        return hit
 
-    logo = _get_cached_team_crest(name)
+    logo = await asyncio.to_thread(_get_cached_team_crest, name)
     source = "football-data.org" if logo else None
 
     if not logo:
@@ -6403,7 +6407,7 @@ async def get_team_logo(name: str):
         logo = await lookup_team_logo(name, redis_client=r)
         source = "thesportsdb" if logo else None
 
-    return {"name": name, "logo": logo, "source": source}
+    return _logo_answer(response, key, {"name": name, "logo": logo, "source": source})
 
 
 @app.get("/api/debug/team-logo")
@@ -6540,6 +6544,27 @@ def _cache_team_crest(team_name: str, crest_url: Optional[str]) -> None:
         pass
 
 
+def _cache_team_crests(fixtures: Iterable[Dict]) -> None:
+    """Every fixture's crests in one Redis round trip (one write per team took
+    a network round trip each, hundreds a pipeline run)."""
+    r = _get_redis()
+    if not r:
+        return
+    pairs = {(fx.get(side) or "").strip(): fx.get(f"{side}_crest")
+             for fx in fixtures for side in ("home", "away")}
+    pairs = {team: url for team, url in pairs.items() if team and url}
+    if not pairs:
+        return
+    try:
+        pipe = r.pipeline(transaction=False)
+        for team, url in pairs.items():
+            pipe.setex(_team_crest_cache_key(team), 60 * 60 * 24 * 30, url)
+        pipe.execute()
+    except Exception:
+        for team, url in pairs.items():
+            _cache_team_crest(team, url)
+
+
 def _get_cached_team_crest(team_name: str) -> Optional[str]:
     if not team_name or not team_name.strip():
         return None
@@ -6552,8 +6577,32 @@ def _get_cached_team_crest(team_name: str) -> Optional[str]:
         return None
 
 
+LOGO_SECONDS = 24 * 3600        # a badge found is kept this long (in memory, and by browsers)
+LOGO_MISS_SECONDS = 3600        # a badge not found is asked for again after this
+_logo_memo: Dict[Tuple, Tuple[float, Dict[str, Any]]] = {}
+
+
+def _logo_answer(response: Response, key: Tuple, found: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    """The remembered answer for `key` (None when there isn't a fresh one);
+    with `found`, remember it. Badges don't change: browsers keep them a day."""
+    now = time.time()
+    if found is not None:
+        _logo_memo[key] = (now, found)
+        if len(_logo_memo) > 5000:
+            _logo_memo.clear()
+        hit = found
+    else:
+        memo = _logo_memo.get(key)
+        if not memo or now - memo[0] > (LOGO_SECONDS if memo[1].get("logo") else LOGO_MISS_SECONDS):
+            return None
+        hit = memo[1]
+    ttl = LOGO_SECONDS if hit.get("logo") else LOGO_MISS_SECONDS
+    response.headers["Cache-Control"] = f"public, max-age={ttl}, stale-while-revalidate={LOGO_SECONDS}"
+    return hit
+
+
 @app.get("/api/competition-logo")
-async def get_competition_logo(name: str, sport: str = "Soccer"):
+async def get_competition_logo(name: str, response: Response, sport: str = "Soccer"):
     """
     Competition/league badge lookup (World Cup, Premier League, EuroLeague,
     etc.). For football competitions we already know (our own LEAGUES dict),
@@ -6563,11 +6612,15 @@ async def get_competition_logo(name: str, sport: str = "Soccer"):
     league isn't one of ours). Cached server-side (Redis, 30 days).
     """
     from competition_logos import lookup_competition_logo
+    key = ("competition", name, sport)
+    hit = _logo_answer(response, key)
+    if hit is not None:
+        return hit
 
     # International competitions: the badge their fixture source supplied
     logo = _international_competition_logo(name)
     if logo:
-        return {"name": name, "sport": sport, "logo": logo, "source": "fixture-source"}
+        return _logo_answer(response, key, {"name": name, "sport": sport, "logo": logo, "source": "fixture-source"})
 
     logo = await _get_football_competition_emblem(name)
     source = "football-data.org" if logo else None
@@ -6577,7 +6630,7 @@ async def get_competition_logo(name: str, sport: str = "Soccer"):
         logo = await lookup_competition_logo(name, redis_client=r, sport=sport)
         source = "thesportsdb" if logo else None
 
-    return {"name": name, "sport": sport, "logo": logo, "source": source}
+    return _logo_answer(response, key, {"name": name, "sport": sport, "logo": logo, "source": source})
 
 
 @app.get("/api/debug/competition-logo")
@@ -7446,7 +7499,7 @@ async def _refresh_referees(trigger: str = "schedule") -> Dict[str, Any]:
         except Exception as e:
             print(f"[Referees] Could not save: {e}")
         report["on_predictions"] = _apply_referees()
-        _save_predictions_cache()
+        await asyncio.to_thread(_save_predictions_cache)
         print(f"[Referees] {trigger}: {len(found)} referees; errors {report.get('errors') or 'none'}")
         return report
 
