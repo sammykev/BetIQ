@@ -9,6 +9,9 @@ ARG PYTHON_IMAGE=python:3.12-slim
 FROM ${PYTHON_IMAGE}
 
 ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+# Fewer malloc arenas: each thread (the jobs' to_thread work) otherwise gets
+# its own, and on a 1 GB server the extra memory pushes the process into swap
+ENV MALLOC_ARENA_MAX=2
 
 # XGBoost needs OpenMP; curl for the health check
 RUN apt-get update \
