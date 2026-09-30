@@ -108,6 +108,15 @@ jobs:
           from datetime import datetime, timedelta, timezone
           now = datetime.now(timezone.utc)
           print("Now (UTC):", now.isoformat(timespec="seconds"))
+          print("Server boot:", (r.get("betiq:server:boot") or b"")[:120])
+          pc = r.get("betiq:predictions")
+          if pc:
+              preds = json.loads(pc).get("predictions", [])
+              by = {}
+              for p in preds:
+                  by[p.get("date")] = by.get(p.get("date"), 0) + 1
+              print("Predictions cache: updated", json.loads(pc).get("last_updated"), "by date", dict(sorted(by.items())[:6]), "TTL", r.ttl("betiq:predictions"))
+          print("Live job reports:", (r.get("betiq:live:last") or b"none yet")[:3000])
           days = [(now.date() - timedelta(days=i)).isoformat() for i in (2, 1, 0)]
           for sport, fmt in (("football", "betiq:md:{d}"), ("basketball", "betiq:bbmd:{d}"),
                              ("tennis", "betiq:tennis:md:{d}"), ("table_tennis", "betiq:table_tennis:md:{d}")):
