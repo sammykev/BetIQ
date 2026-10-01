@@ -176,11 +176,35 @@ def load(r, days: int = DAYS, today: Optional[date] = None) -> Dict[str, List[Di
     return out
 
 
+def live_method(r, today: Optional[date] = None) -> Dict[str, Dict[str, int]]:
+    """Which de-vig the server prices with now: matches not started yet that
+    we don't rate are priced at SportyBet's chance alone, so their p_home
+    shows the method (to 3 decimals)."""
+    import racket_matchday as rmd
+    today = today or datetime.now(timezone.utc).date()
+    out: Dict[str, Dict[str, int]] = {}
+    for sport in ("tennis", "table_tennis"):
+        seen = out.setdefault(sport, {m: 0 for m in fair_odds.METHODS})
+        for d in (today, today + timedelta(days=1)):
+            raw = r.get(rmd.key(sport, d.isoformat()))
+            for e in (json.loads(raw) if raw else {}).values():
+                p = e.get("pred") or {}
+                oh, oa, ph = p.get("odds_home"), p.get("odds_away"), p.get("p_home")
+                if e.get("locked") or e.get("result") or p.get("rated") or not all(
+                        isinstance(x, (int, float)) for x in (oh, oa, ph)):
+                    continue
+                for m in fair_odds.METHODS:
+                    if abs(fair_odds.fair((oh, oa), m)[0] - ph) <= 0.0015:
+                        seen[m] += 1
+    return out
+
+
 def main() -> None:
     import model_store
     r = model_store._client()
     if r is None:
         raise SystemExit("UPSTASH_REDIS_URL isn't set")
+    print(f"Unrated matches to come, by the de-vig their chance matches: {json.dumps(live_method(r))}")
     report = run(load(r))
     r.set(REPORT_KEY, json.dumps(report))
 
