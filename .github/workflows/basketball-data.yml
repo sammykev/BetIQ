@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       job:
-        description: "backtest, history (10 seasons of games), history_sample, props, props_sample, probe, or read_probe (the server's web probe)"
+        description: "backtest, elo_check, history (10 seasons of games), history_sample, props, props_sample, probe, or read_probe (the server's web probe)"
         default: "backtest"
       minutes:
         description: "props: minutes of collection"
@@ -81,6 +81,13 @@ jobs:
         env:
           UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
         run: python backtest_basketball.py
+
+      # Does a margin-of-victory Elo add to the basketball ratings? (walk-forward)
+      - name: Basketball Elo check
+        if: github.event.inputs.job == 'elo_check'
+        env:
+          UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
+        run: python elo_check_basketball.py
 
       # The production server's own probe (web_probe.py), read back from Redis
       - name: Read the server's probe
