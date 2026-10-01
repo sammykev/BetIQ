@@ -15,9 +15,9 @@ Each market gets a map of our chance p to
 fitted on its settled picks, pulled towards one map for all markets by
 SHRINK picks' worth (a market with few picks keeps close to it). Checked
 first on time: fitted on the earlier days, scored on the later ones (log
-loss, against our raw chances); a market keeps its own map, the shared one,
-or none, whichever did best on the later days. The maps are then refitted
-on every day and stored (REPORT_KEY), and the server applies them to the
+loss, against our raw chances); a market keeps its map only where it did
+better there. The maps are then refitted on every day, kept only where they
+still move chances the same way, and stored (REPORT_KEY), and the server applies them to the
 optimizer's and daily slips' chances (optimizer.candidates). The accuracy
 records (market_accuracy, price_book) keep the raw chances these maps
 are fitted from.
@@ -128,9 +128,15 @@ def _score(rows: List[Dict], how) -> Dict:
             "said": round(sum(q) / n, 4), "hit": round(hit / n, 4)}
 
 
+def _lifts(m: Map, p: float = 0.7) -> bool:
+    return apply("m", p, {"m": m}) > p
+
+
 def check(rows: List[Dict]) -> Dict:
-    """Earlier days fit, later days score; each market's choice and the
-    overall effect, then the maps refitted on every day."""
+    """Earlier days fit, later days score: a market gets a map only where
+    its own map (fitted on the earlier days) beat our raw chances on the
+    later ones. The live map is then refitted on every day, and kept only
+    if it still moves chances the same way as the one checked."""
     rows = [r for r in rows if LO <= r["prob"] < HI]
     days = sorted({r["date"] for r in rows})
     cut = days[int(len(days) * (1 - HOLDOUT))] if len(days) >= MIN_DAYS else None
@@ -140,24 +146,19 @@ def check(rows: List[Dict]) -> Dict:
         return report
     train = [r for r in rows if r["date"] < cut]
     test = [r for r in rows if r["date"] >= cut]
-    shared, own = fit_all(train)
-    choice: Dict[str, str] = {}
+    _, own = fit_all(train)
     by_test: Dict[str, List[Dict]] = {}
     for r in test:
         by_test.setdefault(r["market"], []).append(r)
-    ways = {"raw": lambda r: r["prob"],
-            "shared": lambda r: apply("*", r["prob"], {"*": shared}),
-            "own": lambda r: apply(r["market"], r["prob"], own) if r["market"] in own else apply("*", r["prob"], {"*": shared})}
-    overall = {k: _score(test, f) for k, f in ways.items()}
-    best_overall = min(("shared", "own"), key=lambda k: overall[k]["log_loss"])
+    ways = {"raw": lambda r: r["prob"], "own": lambda r: apply(r["market"], r["prob"], own)}
+    choice: Dict[str, str] = {}
     for m, rs in sorted(by_test.items(), key=lambda kv: -len(kv[1])):
         s = {k: _score(rs, f) for k, f in ways.items()}
-        if len(rs) >= MIN_TEST:
-            pick = min(s, key=lambda k: s[k]["log_loss"])
-        else:   # too few later picks to judge alone: the better way overall, if it beat raw
-            pick = best_overall if overall[best_overall]["log_loss"] < overall["raw"]["log_loss"] else "raw"
+        pick = "own" if (len(rs) >= MIN_TEST and m in own and s["own"]["log_loss"] < s["raw"]["log_loss"]) else "raw"
         choice[m] = pick
         report["markets"][m] = {"choice": pick, "train": sum(r["market"] == m for r in train), **s}
+    overall = {k: _score(test, f) for k, f in ways.items()}
+    # Chosen market by market on these same later days, so this flatters
     chosen = lambda r: ways[choice.get(r["market"], "raw")](r)
     overall["chosen"] = _score(test, chosen)
     d = [_ll(chosen(r), r["won"]) - _ll(r["prob"], r["won"]) for r in test]
@@ -166,15 +167,13 @@ def check(rows: List[Dict]) -> Dict:
     overall["chosen"]["vs_raw"] = round(mean, 5)
     overall["chosen"]["vs_raw_z"] = round(mean / (sd / math.sqrt(len(d))), 2) if sd > 0 else 0.0
     report.update({"cut": cut, "train_picks": len(train), "test_picks": len(test), "overall": overall})
-    # Live maps: refitted on every day, for the markets whose check chose one
-    shared_all, own_all = fit_all(rows)
-    if overall["chosen"]["log_loss"] < overall["raw"]["log_loss"]:
-        for m, pick in choice.items():
-            if pick == "own" and m in own_all:
+    _, own_all = fit_all(rows)
+    for m, pick in choice.items():
+        if pick == "own" and m in own_all:
+            if _lifts(own_all[m]) == _lifts(own[m]):
                 report["maps"][m] = [round(v, 4) for v in own_all[m]]
-            elif pick == "shared":
-                report["maps"][m] = [round(v, 4) for v in shared_all]
-    report["shared"] = [round(v, 4) for v in shared_all]
+            else:
+                report["markets"][m]["choice"] = "raw (refit turned)"
     return report
 
 
@@ -226,11 +225,11 @@ def print_report(rep: Dict) -> None:
     print(f"fitted on {rep['train_picks']} picks before {rep['cut']}, scored on {rep['test_picks']} after")
     for k, v in rep["overall"].items():
         print(f"  {k:<7} {json.dumps(v)}")
-    print("\nBy market (later days): raw → own map / shared map, and the choice")
+    print("\nBy market (later days): raw against its map from the earlier days, and the choice")
     for m, v in rep["markets"].items():
         print(f"  {m:<22} n {v['raw']['n']:>5} hit {v['raw']['hit']:.3f} · said raw {v['raw']['said']:.3f} "
-              f"own {v['own']['said']:.3f} shared {v['shared']['said']:.3f} · log loss raw {v['raw']['log_loss']:.4f} "
-              f"own {v['own']['log_loss']:.4f} shared {v['shared']['log_loss']:.4f} → {v['choice']}")
+              f"mapped {v['own']['said']:.3f} · log loss raw {v['raw']['log_loss']:.4f} "
+              f"mapped {v['own']['log_loss']:.4f} → {v['choice']}")
     print(f"\nLive maps ({len(rep['maps'])}): {json.dumps(rep['maps'])}")
 
 
