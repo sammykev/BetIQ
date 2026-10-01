@@ -11,6 +11,8 @@ services:
       - betiq-data:/app/backend/data   # trained model, predictions, synced CSVs
     expose:
       - "8000"
+    networks:
+      - default
 
   caddy:
     image: caddy:2
@@ -22,10 +24,17 @@ services:
       - "443:443"
     environment:
       DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+    networks:
+      - default
+      - web                             # reaches other stacks on this server (ngx-api)
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data                # HTTPS certificates
       - caddy-config:/config
+
+networks:
+  web:
+    external: true   # shared with the ngx-quant stack: docker network create web
 
 volumes:
   betiq-data:

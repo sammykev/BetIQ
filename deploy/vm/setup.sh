@@ -29,6 +29,9 @@ if [ -n "$reject" ]; then
   sudo netfilter-persistent save
 fi
 
+echo "==> Shared network (lets Caddy reach other stacks, e.g. ngx-quant)"
+sudo docker network inspect web >/dev/null 2>&1 || sudo docker network create web
+
 echo "==> Swap (only on small machines)"
 mem_mb=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
 if [ "$mem_mb" -lt 4000 ] && [ ! -f /swapfile ]; then
