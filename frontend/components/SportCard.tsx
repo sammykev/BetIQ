@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { getSportAssets, sportDbSport } from "@/lib/sportsAssets";
 import { useTeamLogo } from "@/lib/useTeamLogo";
+import type { PlayerRating, SideRatings } from "@/components/Ratings";
 import { CompetitionBadge } from "./CompetitionBadge";
 import { kickoff } from "@/lib/matchTime";
 import clsx from "clsx";
@@ -38,6 +39,8 @@ export interface SportPrediction {
   pick_type?: "safe" | "upset" | null;
   /** Tennis: each player's last 5, oldest to newest ("WWLWL") */
   home_form?: string; away_form?: string;
+  /** Tennis and table tennis: each player's Elo */
+  model_detail?: { ratings?: SideRatings<PlayerRating> | null } | null;
 }
 
 function spreadLabel(name: string, spread: SpreadLine): string {

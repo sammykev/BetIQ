@@ -1,7 +1,7 @@
 """Basketball Elo with margin of victory (basketball_elo.py) and its walk-forward check."""
 
 import random
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import basketball_elo as be
 import basketball_model as bm
@@ -47,3 +47,48 @@ def test_the_check_scores_the_model_elo_and_blends():
     got = ec.league_check("Test", games)
     assert got["tested"] > 500 and set(got["scores"]) == {"w0", "w0.25", "w0.5", "w0.75", "w1"}
     assert all(0.5 < v["accuracy"] < 1 and v["log_loss"] < 0.7 for v in got["scores"].values())
+
+
+def test_league_weights_follow_the_check_shrunk_by_its_size():
+    report = {"leagues": {
+        "Big": {"tested": 20000, "scale": 0.048, "scores": {"w0": {"log_loss": 0.60}, "w1": {"log_loss": 0.58}}},
+        "Small": {"tested": 80, "scale": 0.04, "scores": {"w0": {"log_loss": 0.60}, "w1": {"log_loss": 0.59}}},
+        "Level": {"tested": 8000, "scale": 0.035, "scores": {"w0.25": {"log_loss": 0.63}, "w1": {"log_loss": 0.64}}}}}
+    w = be.league_weights(report)
+    assert w["Big"][0] > 0.95 and w["Big"][1] == 0.048
+    assert be.DEFAULT_WEIGHT < w["Small"][0] < 0.35          # pulled most of the way back
+    assert w["Level"][0] == be.DEFAULT_WEIGHT
+    assert be.league_weights(None) == {}
+
+
+def test_expect_mixes_elos_margin_and_keeps_the_total():
+    lg = bm.League("L", 80.0, 3.0, {"A": 2.0, "B": -2.0}, {"A": 0.0, "B": 0.0}, {"A": 20, "B": 20},
+                   dict(bm.DEFAULT_SIGMA))
+    h0, a0 = lg.expect("A", "B")
+    lg.elo, lg.elo_scale, lg.elo_weight = {"A": 1700.0, "B": 1400.0}, 0.04, 0.5
+    h, a = lg.expect("A", "B")
+    elo_margin = 0.04 * (1700 + be.HOME - 1400)
+    assert abs((h - a) - (0.5 * (h0 - a0) + 0.5 * elo_margin)) < 1e-9
+    assert abs((h + a) - (h0 + a0)) < 1e-9
+    again = bm.League.from_json(lg.to_json())
+    assert again.elo == lg.elo and again.elo_weight == 0.5 and again.expect("A", "B") == (h, a)
+    assert bm.team_rating(lg, "A")["elo"] == 1700
+
+
+def test_fit_all_rates_elo_over_the_long_history():
+    import basketball_data as bd
+    random.seed(5)
+    teams = [f"T{i}" for i in range(8)]
+    res = []
+    for k in range(120):
+        day = date(2026, 1, 1) + timedelta(days=k)
+        random.shuffle(teams)
+        for i in range(0, 8, 2):
+            hs, as_ = random.randint(70, 95), random.randint(70, 95)
+            res.append({"id": f"{k}-{i}", "t": "Test League", "h": teams[i], "a": teams[i + 1], "hs": hs,
+                        "as": as_ + (hs == as_), "ko": int(datetime(day.year, day.month, day.day, 18, tzinfo=timezone.utc).timestamp())})
+    report = {"leagues": {"Test League": {"tested": 5000, "scale": 0.04, "scores": {"w1": {"log_loss": 0.5}, "w0": {"log_loss": 0.6}}}}}
+    leagues = bd.fit_all(res, elo_report=report, history=res)
+    lg = leagues["Test League"]
+    assert lg.elo_weight > 0.85 and len(lg.elo) == 8
+    assert bd.fit_all(res)["Test League"].elo_weight == 0.0          # no report: as before

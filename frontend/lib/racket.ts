@@ -1,6 +1,7 @@
 import type { SlipSelection } from "./slip";
 import type { RacketSport } from "./tennis";
 import type { StatRow } from "./matchday";
+import type { PlayerRating, SideRatings } from "@/components/Ratings";
 
 // Tennis and table tennis predictions (backend racket_predictions.py):
 // SportyBet's listed matches, and every line it offers priced by our model
@@ -33,6 +34,8 @@ export interface RacketPrediction {
   set_scores?: Record<string, number>;
   model: "ratings+market" | "market";
   rated: boolean;
+  /** Each player's Elo (components/Ratings.tsx) */
+  model_detail?: { ratings?: SideRatings<PlayerRating> | null } | null;
   top_lines?: RKLine[];
   lines?: number;
   rk_markets?: RKLine[];  // one match (/api/{sport}/match): every line
@@ -96,6 +99,7 @@ export interface RKMatchdayMatch {
   pred: {
     p_home?: number; p_away?: number; tip_1x2?: string; tip_code?: string; tip_confidence?: number | null;
     tip_goals?: string; goals_confidence?: number | null; total_line?: number | null; model?: RacketPrediction["model"];
+    ratings?: SideRatings<PlayerRating> | null;
   };
   best: { market: string; market_name: string; code: string; label: string; prob: number; odds: number } | null;
   grades: Partial<Record<"tip" | "games" | "best", RKGrade>> | null;

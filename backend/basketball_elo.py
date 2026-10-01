@@ -13,7 +13,17 @@ anything to the attack/defence ratings (basketball_model.py).
 """
 
 from datetime import date
-from typing import Dict, Iterable, Optional
+from typing import Dict, Iterable, Optional, Tuple
+
+# Elo's weight in a league's expected margin (basketball_model.expect),
+# from the walk-forward check (elo_check_basketball.py): the league's best
+# weight there, pulled towards DEFAULT_WEIGHT by SHRINK_GAMES' worth (a league
+# with few tested games keeps close to it). On 71,539 games the check found
+# Elo much better in NCAA (thousands of teams, few meetings), level in the
+# NBA, and mixed in the smaller leagues.
+DEFAULT_WEIGHT = 0.25
+SHRINK_GAMES = 800
+SCALE0 = 1 / 28.0         # points per Elo point where a league has no measured scale
 
 K = 20.0
 HOME = 100.0              # home court, in Elo points (FiveThirtyEight: 100 for the NBA)
@@ -60,3 +70,18 @@ def rate(games: Iterable, until: Optional[str] = None, out: Optional[Dict[str, f
         r[g.home] = r.get(g.home, START) + shift
         r[g.away] = r.get(g.away, START) - shift
     return r
+
+
+def league_weights(report: Optional[Dict]) -> Dict[str, Tuple[float, float]]:
+    """{league: (Elo's weight, points per Elo point)} from the check's report."""
+    out = {}
+    for name, lg in ((report or {}).get("leagues") or {}).items():
+        scores = lg.get("scores") or {}
+        if not scores:
+            continue
+        best = min(scores, key=lambda k: scores[k].get("log_loss", 9))
+        n = float(lg.get("tested") or 0)
+        w_best = float(best[1:])
+        w = DEFAULT_WEIGHT + (w_best - DEFAULT_WEIGHT) * n / (n + SHRINK_GAMES)
+        out[name] = (round(w, 3), float(lg.get("scale") or SCALE0))
+    return out

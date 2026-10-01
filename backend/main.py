@@ -5287,7 +5287,17 @@ def _bb_fit_sync() -> Dict[str, Any]:
         backtest = json.loads(r.get("betiq:bb:backtest") or "null") if r else None   # backtest_basketball.py
     except Exception:
         backtest = None
-    leagues = bd.fit_all(results, backtest=backtest)
+    # Elo (basketball_elo.py) over the long history (bb_history.py), weighted
+    # in each league as the Elo check found best (elo_check_basketball.py)
+    elo_report, history = None, None
+    try:
+        import bb_history
+        import elo_check_basketball as ec
+        elo_report = json.loads(r.get(ec.REPORT_KEY) or "null") if r else None
+        history = bb_history.combine(results, bb_history.load(r)) if r and elo_report else None
+    except Exception as e:
+        print(f"[Basketball] Elo not used: {e}")
+    leagues = bd.fit_all(results, backtest=backtest, elo_report=elo_report, history=history)
     _bb_leagues.clear()
     _bb_leagues.update(leagues)
     _bb_index_set(results)

@@ -67,10 +67,16 @@ TRAIN_DAYS = 730         # each week's ratings: the two seasons before it (older
 MIN_CONSTANT_GAMES = 200  # out-of-sample games with quarters before a league's constants are used
 
 
-def league_backtest(name: str, games: List[bm.Game]) -> Optional[Dict]:
+def league_backtest(name: str, games: List[bm.Game], elo: Optional[tuple] = None) -> Optional[Dict]:
+    """`elo`: (weight, scale) of the league's Elo in its margins, as served
+    (basketball_elo.league_weights), so the spreads are measured on them."""
+    import basketball_elo as be
     games = sorted(games, key=lambda g: g.date)
     if len(games) < MIN_GAMES:
         return None
+    ratings: Dict[str, float] = {}
+    last: Dict[str, str] = {}
+    done = 0
     start = date.fromisoformat(games[int(len(games) * WARMUP)].date)
     end = date.fromisoformat(games[-1].date)
     picks: List[tuple] = []
@@ -87,6 +93,14 @@ def league_backtest(name: str, games: List[bm.Game]) -> Optional[Dict]:
         while lo < len(games) and games[lo].date < first:
             lo += 1
         lg = bm.fit(name, games[lo:], as_of=week)
+        if elo:
+            upto = done
+            while upto < len(games) and games[upto].date < week.isoformat():
+                upto += 1
+            be.rate(games[done:upto], out=ratings, last=last)
+            done = upto
+            if lg:
+                lg.elo_weight, lg.elo_scale, lg.elo = elo[0], elo[1], ratings
         if lg:
             for g in games:
                 if not (week.isoformat() <= g.date < nxt.isoformat()):
@@ -165,13 +179,16 @@ def calibration(picks: List[tuple]) -> Dict[str, List[Dict]]:
     return out
 
 
-def run(results: List[Dict], min_games: int = MIN_GAMES) -> Dict:
-    report = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "leagues": {}}
+def run(results: List[Dict], min_games: int = MIN_GAMES, elo_report: Optional[Dict] = None) -> Dict:
+    import basketball_elo as be
+    weights = be.league_weights(elo_report)
+    report = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "leagues": {},
+              "elo": bool(weights)}
     every: List[tuple] = []
     for name, games in sorted(bd.games_by_league(results).items(), key=lambda kv: -len(kv[1])):
         if len(games) < min_games:
             continue
-        got = league_backtest(name, games)
+        got = league_backtest(name, games, weights.get(name))
         if got:
             report["leagues"][name] = got
             print(f"{name}: {got['tested']} games tested, sigma x{got['sigma_scale']['margin']} margin, "
@@ -213,7 +230,12 @@ def main() -> None:
     history = bb_history.load(r)
     print(f"{len(results)} SportyBet results, {len(history)} older games (bb_history.py)")
     results = bb_history.combine(results, history)
-    report = run(results, args.min)
+    import elo_check_basketball as ec
+    try:
+        elo_report = json.loads(r.get(ec.REPORT_KEY) or "null")
+    except Exception:
+        elo_report = None
+    report = run(results, args.min, elo_report)
     r.set(BACKTEST_KEY, json.dumps(report))
     print(f"Saved: {len(report['leagues'])} leagues")
 

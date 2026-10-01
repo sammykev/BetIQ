@@ -8,6 +8,7 @@ import { FormDots } from "@/components/BasketballCard";
 import { VerdictIcon } from "@/components/MatchdayList";
 import { localTime } from "@/lib/matchTime";
 import { TennisFacts } from "@/components/TennisFacts";
+import { PlayerRatings } from "@/components/Ratings";
 import { RK_WORDS, type RKMatchdayMatch } from "@/lib/racket";
 import type { RacketSport } from "@/lib/tennis";
 import { Reveal } from "@/components/ui/reveal";
@@ -130,6 +131,7 @@ function Detail({ m, sport }: { m: RKMatchdayMatch; sport: RacketSport }) {
         </div>
       )}
       {m.status === "live" && <p className="text-xs text-n-400">In play: the score updates every minute. Picks are graded when the match ends.</p>}
+      <PlayerRatings r={p.ratings} sport={sport} home={m.home} away={m.away} />
       <FormAndStats m={m} sport={sport} />
       {awaiting(m) && <p className="text-xs text-n-400">Started: waiting for the score from SportyBet.</p>}
     </div>

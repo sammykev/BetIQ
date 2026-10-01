@@ -216,5 +216,7 @@ def predict(players: Dict[str, Player], p1: str, p2: str, market_p1: Optional[fl
         return None
     md = match_dist(solve_rally(level, bo, swing), bo, swing)
     md.detail = {"level": round(level, 4), "elo": round(p_elo, 4) if p_elo is not None else None,
-                 "market": round(market_p1, 4) if market_p1 is not None else None, "known": known}
+                 "market": round(market_p1, 4) if market_p1 is not None else None, "known": known,
+                 "ratings": {side: {"elo": round(p.elo), "matches": p.n} if p is not None else None
+                             for side, p in (("home", a), ("away", b))}}
     return md

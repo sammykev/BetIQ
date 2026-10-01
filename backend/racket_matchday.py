@@ -53,6 +53,9 @@ def best_line(pred: Dict) -> Optional[Dict]:
 def snapshot(pred: Dict) -> Dict[str, Any]:
     out = {k: pred.get(k) for k in _PRED}
     out["best"] = best_line(pred)
+    ratings = (pred.get("model_detail") or {}).get("ratings")
+    if ratings:   # each side's rating before the start (the site shows them)
+        out["ratings"] = ratings
     return out
 
 

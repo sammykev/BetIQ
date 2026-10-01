@@ -76,18 +76,19 @@ jobs:
         if: github.event.inputs.job == 'history_sample'
         run: python bb_history.py --sample
 
+      # How much Elo (basketball_elo.py) each league's margins should take
+      # (walk-forward); the server and the walk-forward check below use it
+      - name: Basketball Elo check
+        if: github.event_name == 'schedule' || github.event.inputs.job == 'elo_check' || github.event.inputs.job == 'backtest' || github.event.inputs.job == 'history'
+        env:
+          UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
+        run: python elo_check_basketball.py
+
       - name: Walk-forward check
         if: github.event_name == 'schedule' || github.event.inputs.job == 'backtest' || github.event.inputs.job == 'history'
         env:
           UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
         run: python backtest_basketball.py
-
-      # Does a margin-of-victory Elo add to the basketball ratings? (walk-forward)
-      - name: Basketball Elo check
-        if: github.event.inputs.job == 'elo_check'
-        env:
-          UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
-        run: python elo_check_basketball.py
 
       # The production server's own probe (web_probe.py), read back from Redis
       - name: Read the server's probe

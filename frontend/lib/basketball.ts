@@ -1,5 +1,6 @@
 import type { SlipSelection } from "./slip";
 import type { StatRow } from "./matchday";
+import type { SideRatings, TeamRating } from "@/components/Ratings";
 
 // Basketball predictions (backend basketball_predictions.py): SportyBet's
 // listed matches, our expected points, and every line it offers priced by
@@ -32,6 +33,8 @@ export interface BasketballPrediction {
   exp_home_pts: number; exp_away_pts: number;
   model: "model" | "market" | "blend";
   rated: boolean;
+  /** Each team's attack/defence rating (components/Ratings.tsx) */
+  model_detail?: { ratings?: SideRatings<TeamRating> | null } | null;
   top_lines?: BBLine[];   // the list: its likeliest lines
   lines?: number;         // how many lines were priced
   bb_markets?: BBLine[];  // one match (/api/basketball/match): every line
@@ -78,6 +81,7 @@ export interface BBMatchdayMatch {
     p_home?: number; p_away?: number; tip_1x2?: string; tip_code?: string; tip_confidence?: number | null;
     tip_goals?: string; goals_confidence?: number | null; total_line?: number | null; handicap_line?: number | null;
     exp_home_pts?: number; exp_away_pts?: number; model?: BasketballPrediction["model"];
+    ratings?: SideRatings<TeamRating> | null;
   };
   best: { market: string; market_name: string; code: string; label: string; prob: number; odds: number } | null;
   grades: Partial<Record<"tip" | "points" | "best", BBGrade>> | null;

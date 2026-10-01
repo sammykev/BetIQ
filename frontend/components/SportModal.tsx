@@ -8,6 +8,7 @@ import { useTeamLogo } from "@/lib/useTeamLogo";
 import { CompetitionBadge } from "./CompetitionBadge";
 import type { SportPrediction } from "./SportCard";
 import { TennisFacts } from "./TennisFacts";
+import { PlayerRatings } from "./Ratings";
 import { RacketLines } from "./RacketLines";
 import type { RacketPrediction } from "@/lib/racket";
 import type { RacketSport } from "@/lib/tennis";
@@ -194,7 +195,8 @@ export function SportModal({ prediction: p, onClose }: Props) {
         )}
 
         {view === "form" ? (
-          <div className="p-5">
+          <div className="p-5 space-y-5">
+            <PlayerRatings r={p.model_detail?.ratings} sport={racket} home={p.home} away={p.away} />
             <TennisFacts m={{ home: p.home, away: p.away, date: p.date, time: p.time, league: p.league_name }}
               sport={racket} />
           </div>

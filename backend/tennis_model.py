@@ -255,6 +255,7 @@ def predict(players: Dict[str, Player], avg: Dict[str, float], p1: str, p2: str,
         k = name_key(name)
         return players.get(f"{tour}|{k}") or players.get(f"{'WTA' if tour == 'ATP' else 'ATP'}|{k}")
     a, b = find(p1), find(p2)
+    rated = {"home": a, "away": b}
     known = a is not None and b is not None and a.n >= 5 and b.n >= 5
     if known:
         p_elo = shrink(elo_p(a.rating(surface, surface_weight), b.rating(surface, surface_weight)), shrink_s)
@@ -269,5 +270,14 @@ def predict(players: Dict[str, Player], avg: Dict[str, float], p1: str, p2: str,
     pa, pb = solve_serve(level, pa0, pb0)
     md = match_dist(pa, pb, best_of)
     md.detail = {"level": round(level, 4), "elo": round(p_elo, 4) if known else None,
-                 "market": round(market_p1, 4) if market_p1 is not None else None, "known": known}
+                 "market": round(market_p1, 4) if market_p1 is not None else None, "known": known,
+                 "ratings": ratings_of(rated, surface)}
     return md
+
+
+def ratings_of(players: Dict[str, Optional[Player]], surface: str) -> Dict[str, Optional[Dict]]:
+    """Each player's Elo as the site shows it: overall, on this surface, and from how many matches."""
+    s = surface if surface in SURFACES else "Hard"
+    return {side: {"elo": round(p.elo), "surface": s, "surface_elo": round(p.surf[s]), "matches": p.n,
+                   "surface_matches": p.surf_n[s]} if p is not None else None
+            for side, p in players.items()}

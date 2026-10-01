@@ -6,6 +6,7 @@ import { Info, Loader2, X } from "lucide-react";
 import { CompetitionBadge } from "./CompetitionBadge";
 import { Crest, LineRow, leagueTitle } from "./BasketballCard";
 import { BasketballFacts } from "./BasketballFacts";
+import { TeamRatings } from "./Ratings";
 import { kickoff } from "@/lib/matchTime";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
 import { FAMILIES, MODEL_NOTE, type BasketballPrediction } from "@/lib/basketball";
@@ -79,7 +80,7 @@ export function BasketballModal({ p, onClose }: { p: BasketballPrediction; onClo
           value={view} onChange={setView} />
 
         {view === "form" ? (
-          <div className="p-5"><BasketballFacts p={d} /></div>
+          <div className="p-5 space-y-5"><TeamRatings r={d.model_detail?.ratings} home={d.home} away={d.away} /><BasketballFacts p={d} /></div>
         ) : (
         <div className="p-5 space-y-4">
           <div className="flex gap-1.5 overflow-x-auto [scrollbar-width:none] -mx-1 px-1">

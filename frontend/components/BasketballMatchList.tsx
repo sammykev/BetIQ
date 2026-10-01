@@ -8,6 +8,7 @@ import { Crest } from "@/components/BasketballCard";
 import { VerdictIcon } from "@/components/MatchdayList";
 import { localTime } from "@/lib/matchTime";
 import { BasketballFacts } from "@/components/BasketballFacts";
+import { TeamRatings } from "@/components/Ratings";
 import { BB_GRADE_LABELS, type BasketballPrediction, type BBMatchdayMatch } from "@/lib/basketball";
 import { Reveal } from "@/components/ui/reveal";
 import { SportStats } from "@/components/LiveStats";
@@ -123,6 +124,7 @@ function Detail({ m }: { m: BBMatchdayMatch }) {
         </div>
       )}
       {m.status === "live" && <p className="text-xs text-n-400">In play: the score updates every minute. Picks are graded at the final buzzer.</p>}
+      <TeamRatings r={p.ratings} home={m.home} away={m.away} />
       <FormAndStats m={m} />
       {awaiting(m) && <p className="text-xs text-n-400">Tipped off: waiting for the score from SportyBet.</p>}
     </div>

@@ -283,10 +283,27 @@ def apply_calibration(lg: bm.League, backtest: Optional[Dict]) -> bm.League:
     return lg
 
 
+def with_elo(lg: bm.League, games: List[bm.Game], weights: Dict[str, Tuple[float, float]]) -> bm.League:
+    """A league's teams' Elo (over `games`, its long history) and Elo's weight
+    in its margins, from the Elo check (basketball_elo.league_weights)."""
+    import basketball_elo as be
+    if lg.name not in weights:
+        return lg
+    lg.elo_weight, lg.elo_scale = weights[lg.name]
+    lg.elo = {t: round(v, 1) for t, v in be.rate(games).items()}
+    return lg
+
+
 def fit_all(results: Iterable[Dict], as_of: Optional[date] = None,
-            backtest: Optional[Dict] = None) -> Dict[str, bm.League]:
+            backtest: Optional[Dict] = None, elo_report: Optional[Dict] = None,
+            history: Optional[Iterable[Dict]] = None) -> Dict[str, bm.League]:
     """A rated league for every competition with MIN_LEAGUE_GAMES games,
-    its spreads calibrated by the last walk-forward check where there is one."""
+    its spreads calibrated by the last walk-forward check where there is one,
+    and its teams' Elo (over the long history where given) mixed into the
+    margins as the Elo check found best."""
+    import basketball_elo as be
+    weights = be.league_weights(elo_report)
+    long_games = games_by_league(history) if history is not None else {}
     out = {}
     for t, games in games_by_league(results).items():
         if len(games) < MIN_LEAGUE_GAMES:
@@ -297,7 +314,7 @@ def fit_all(results: Iterable[Dict], as_of: Optional[date] = None,
             print(f"[Basketball] couldn't rate {t}: {e}")
             continue
         if lg:
-            out[t] = apply_calibration(lg, backtest)
+            out[t] = with_elo(apply_calibration(lg, backtest), long_games.get(t) or games, weights)
     return out
 
 

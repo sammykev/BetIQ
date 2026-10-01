@@ -80,6 +80,11 @@ class League:
     # measured, not assumed — a favourite's lead grows less once starters rest
     margin_shares: Tuple[float, float, float, float, float] = (0.5, 0.25, 0.25, 0.25, 0.25)
     tie_factor: float = TIE_FACTOR   # regulation ties (overtime) against the spread's own chance of one
+    # Margin-of-victory Elo (basketball_elo.py): each team's rating, points per
+    # Elo point, and Elo's weight in the expected margin (0: not used)
+    elo: Dict[str, float] = field(default_factory=dict)
+    elo_scale: float = 0.0
+    elo_weight: float = 0.0
 
     def known(self, team: str) -> bool:
         return self.games.get(team, 0.0) >= MIN_GAMES
@@ -88,12 +93,18 @@ class League:
         hc = 0.0 if neutral else self.home_court
         h = self.avg + hc + self.attack.get(home, 0.0) - self.defence.get(away, 0.0)
         a = self.avg + self.attack.get(away, 0.0) - self.defence.get(home, 0.0)
+        if self.elo_weight > 0 and home in self.elo and away in self.elo:
+            # The margin mixed with Elo's (the total stays the ratings')
+            import basketball_elo as be
+            w = self.elo_weight
+            margin = (1 - w) * (h - a) + w * self.elo_scale * be.diff(self.elo, home, away, neutral)
+            h, a = (h + a + margin) / 2, (h + a - margin) / 2
         return h, a
 
     def to_json(self) -> Dict:
         return {k: getattr(self, k) for k in ("name", "avg", "home_court", "attack", "defence", "games",
                                               "sigma", "h1_share", "n", "as_of", "q_shares", "margin_shares",
-                                              "tie_factor")}
+                                              "tie_factor", "elo", "elo_scale", "elo_weight")}
 
     @classmethod
     def from_json(cls, d: Dict) -> "League":
@@ -101,7 +112,9 @@ class League:
                    h1_share=d.get("h1_share", 0.5), n=d.get("n", 0), as_of=d.get("as_of", ""),
                    q_shares=tuple(d.get("q_shares") or (0.25,) * 4),
                    margin_shares=tuple(d.get("margin_shares") or (0.5, 0.25, 0.25, 0.25, 0.25)),
-                   tie_factor=float(d.get("tie_factor") or TIE_FACTOR))
+                   tie_factor=float(d.get("tie_factor") or TIE_FACTOR),
+                   elo=dict(d.get("elo") or {}), elo_scale=float(d.get("elo_scale") or 0.0),
+                   elo_weight=float(d.get("elo_weight") or 0.0))
 
 
 def _weights(games: List[Game], as_of: date) -> np.ndarray:
@@ -420,13 +433,26 @@ class Part:
         return p if over else 1.0 - p
 
 
+def team_rating(lg: League, team: str) -> Dict[str, float]:
+    """A team's rating as the site shows it, in points a game against an
+    average team of its league: attack (scored above average), defence
+    (conceded below average) and net (their sum)."""
+    att, dfn = lg.attack.get(team, 0.0), lg.defence.get(team, 0.0)
+    out = {"attack": round(att, 1), "defence": round(dfn, 1), "net": round(att + dfn, 1),
+           "games": round(lg.games.get(team, 0.0), 1)}
+    if team in lg.elo:
+        out["elo"] = round(lg.elo[team])
+    return out
+
+
 def expect(lg: League, home: str, away: str, neutral: bool = False) -> Optional[Match]:
     """Our expectation for a match, or None when either team is unknown."""
     if not (lg.known(home) and lg.known(away)):
         return None
     h, a = lg.expect(home, away, neutral)
     return Match(h, a, dict(lg.sigma), lg.h1_share, "model",
-                 {"games_home": round(lg.games.get(home, 0), 1), "games_away": round(lg.games.get(away, 0), 1)},
+                 {"games_home": round(lg.games.get(home, 0), 1), "games_away": round(lg.games.get(away, 0), 1),
+                  "ratings": {"home": team_rating(lg, home), "away": team_rating(lg, away)}},
                  tuple(lg.q_shares), tuple(lg.margin_shares), lg.tie_factor)
 
 
