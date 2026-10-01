@@ -36,6 +36,11 @@ MARGIN = 0.93          # bookmaker payout assumed when estimating a price
 STEP = 0.01            # log-odds resolution of the search (1%)
 MAX_GAMES = 30         # SportyBet's limit per booking code
 MAX_MATCHES = 150      # candidates considered, best first
+# Picks whose real price pays clearly less than our chance is worth
+# (chance × odds below 1 + MIN_EDGE) are left out: on 120 days of settled
+# picks they lost 11% of the stake in football and basketball (insights.py).
+# Estimated prices (margin / chance) always look like that, so they're kept.
+MIN_EDGE = -0.05
 
 
 @dataclass
@@ -191,9 +196,12 @@ def _bookmaker_price(pred: Dict, market: str, code: str) -> Optional[float]:
 
 def candidates(pred: Dict, sportybet_event: Optional[Dict] = None,
                min_prob: float = 0.6, markets: Optional[set] = None,
-               allowed: Optional[Callable[[str, str], bool]] = None) -> List[Option]:
+               allowed: Optional[Callable[[str, str], bool]] = None, calibrate: bool = True) -> List[Option]:
     """The pickable selections for one prediction, each with its best price.
-    `allowed(market, code)` can veto picks (e.g. markets SportyBet codes can't take yet)."""
+    `allowed(market, code)` can veto picks (e.g. markets SportyBet codes can't take yet).
+    Chances go through each market's calibration map (football_calibration)
+    unless `calibrate` is False (the accuracy records the maps are fitted on)."""
+    import football_calibration
     if not all(isinstance(pred.get(k), (int, float))
                for k in ("p_home", "p_draw", "p_away", "p_over15", "p_over25")):
         return []
@@ -207,6 +215,8 @@ def candidates(pred: Dict, sportybet_event: Optional[Dict] = None,
         if prob is None:
             continue
         prob = float(prob)
+        if calibrate:
+            prob = football_calibration.apply(market, prob)
         if not min_prob <= prob < 0.995:
             continue
         odds, source = None, None
@@ -269,13 +279,20 @@ def _solve(groups: List[List[Option]], L: int, W: int, max_games: int) -> Option
     return picks
 
 
+def worth_it(o: Option, min_edge: Optional[float] = MIN_EDGE) -> bool:
+    """False for a pick at a real price clearly below what our chance is worth."""
+    return min_edge is None or o.odds_source == "estimated" or o.prob * o.odds >= 1 + min_edge
+
+
 def optimize(groups: List[List[Option]], lo: float, hi: float,
-             max_games: int = MAX_GAMES) -> Optional[Dict]:
+             max_games: int = MAX_GAMES, min_edge: Optional[float] = MIN_EDGE) -> Optional[Dict]:
     """The slip (≤ one option per group) with total odds in [lo, hi] and the
-    highest win chance, or None if no combination reaches the range."""
+    highest win chance, or None if no combination reaches the range.
+    Options priced below their worth (worth_it) aren't considered."""
     if lo < 1 or hi < lo:
         raise ValueError("target odds need 1 ≤ min ≤ max")
     max_games = max(1, min(int(max_games), MAX_GAMES))
+    groups = [[o for o in g if worth_it(o, min_edge)] for g in groups]
     groups = [g for g in groups if g]
     # Best matches first when there are too many: highest-probability pick
     groups = sorted(groups, key=lambda g: -max(o.prob for o in g))[:MAX_MATCHES]

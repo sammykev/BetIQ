@@ -7,9 +7,10 @@ tennis and basketball match in the match-day store.
 For each match the store keeps the winner prices and the chance we gave
 (p_home). Where we rated both players, that chance was
 
-    w0 * Elo's chance + (1 - w0) * SportyBet's (proportional de-vig)
+    w0 * Elo's chance + (1 - w0) * SportyBet's (de-vigged)
 
-so Elo's own chance is recovered from it with the weight in use then (w0).
+so Elo's own chance is recovered from it with the weight and method in use
+then (ERAS).
 Every method × weight is then scored on what happened: log loss (lower is
 better), Brier score, and the chance given to the market's favourite
 against how often it won. Each is compared with what the site does now,
@@ -31,20 +32,26 @@ import fair_odds
 REPORT_KEY = "betiq:fair_odds_check"
 DAYS = 120
 WEIGHTS = (0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.35, 0.5)
-# The weight on our ratings when each match was priced; table tennis went
-# from 0.35 to 0.2 late on 29 Sep 2026 (matches around the change are left out)
-CURRENT = {"tennis": 0.35, "table_tennis": 0.2}
-TT_CHANGE = ("2026-09-29 21:30", "2026-09-30 00:00")
+# How each match's chance was made: (priced until, weight on our ratings,
+# de-vig method), in kickoff time (UTC); None around a change, left out.
+# Table tennis went from 0.35 to 0.2 late on 29 Sep 2026; both went to 0.1
+# with the power de-vig on 1 Oct 2026.
+ERAS = {
+    "tennis": [("2026-10-01 09:50", 0.35, "proportional"), ("2026-10-01 12:00", None, None),
+               ("", 0.1, "power")],
+    "table_tennis": [("2026-09-29 21:30", 0.35, "proportional"), ("2026-09-30 00:00", None, None),
+                     ("2026-10-01 09:50", 0.2, "proportional"), ("2026-10-01 12:00", None, None),
+                     ("", 0.1, "power")],
+}
+NOW = {sport: eras[-1][1:] for sport, eras in ERAS.items()}
 
 
-def w0_of(sport: str, when: str) -> Optional[float]:
-    if sport != "table_tennis":
-        return CURRENT.get(sport)
-    if when < TT_CHANGE[0]:
-        return 0.35
-    if when < TT_CHANGE[1]:
-        return None
-    return CURRENT[sport]
+def era_of(sport: str, when: str):
+    """(weight, method) a match kicking off at `when` was priced with, or (None, None)."""
+    for until, w, method in ERAS.get(sport, [("", 0.0, "proportional")]):
+        if not until or when < until:
+            return w, method
+    return None, None
 
 
 def row(sport: str, e: Dict) -> Optional[Dict]:
@@ -59,11 +66,11 @@ def row(sport: str, e: Dict) -> Optional[Dict]:
     home_won = (p["tip_code"] == "1") == (tip["verdict"] == "won")
     out = {"sport": sport, "odds": (float(oh), float(oa)), "home_won": home_won, "p_elo": None}
     rated = bool(p.get("rated")) if "rated" in p else p.get("model") == "ratings+market"
-    w0 = w0_of(sport, f"{e.get('date') or ''} {e.get('time') or ''}")
+    w0, method = era_of(sport, f"{e.get('date') or ''} {e.get('time') or ''}")
     if sport != "basketball" and rated:
-        if w0 is None:
+        if not w0:
             return None
-        mp = fair_odds.proportional(out["odds"])[0]
+        mp = fair_odds.fair(out["odds"], method)[0]
         ph = p.get("p_home")
         if not isinstance(ph, (int, float)):
             return None
@@ -106,19 +113,19 @@ def score(rows: List[Dict], method: str, w: float, base: Optional[List[float]] =
 
 
 def check(sport: str, rows: List[Dict]) -> Dict:
-    now_w = CURRENT.get(sport, 0.0)
+    now_w, now_m = NOW.get(sport, (0.0, fair_odds.METHOD))
     rated = [r for r in rows if r["p_elo"] is not None]
     out: Dict = {"matches": len(rows), "rated": len(rated)}
-    base_all = [_ll(chance(r, "proportional", now_w), r["home_won"]) for r in rows]
+    base_all = [_ll(chance(r, now_m, now_w), r["home_won"]) for r in rows]
     out["all"] = {f"{m} w{w:g}": score(rows, m, w, base_all)
                   for m in fair_odds.METHODS for w in (WEIGHTS if rated else (0.0,))}
     if rated:
-        base = [_ll(chance(r, "proportional", now_w), r["home_won"]) for r in rated]
+        base = [_ll(chance(r, now_m, now_w), r["home_won"]) for r in rated]
         out["rated_only"] = {f"{m} w{w:g}": score(rated, m, w, base) for m in fair_odds.METHODS for w in WEIGHTS}
         out["elo_alone"] = score(rated, "proportional", 1.0, base)
     best = min(out["all"], key=lambda k: out["all"][k]["log_loss"])
     out["best"] = best
-    out["now"] = f"proportional w{now_w:g}" if rated else "proportional w0"
+    out["now"] = f"{now_m} w{now_w:g}" if rated else f"{now_m} w0"
     return out
 
 

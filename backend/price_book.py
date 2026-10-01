@@ -28,7 +28,7 @@ def prices(pred: Dict, event: Optional[Dict]) -> Optional[List[List[Any]]]:
     if not event:
         return None
     out = [[o.market, o.code, o.prob, o.odds]
-           for o in optimizer.candidates(pred, event, min_prob=0.0) if o.odds_source == "sportybet"]
+           for o in optimizer.candidates(pred, event, min_prob=0.0, calibrate=False) if o.odds_source == "sportybet"]
     return out or None
 
 

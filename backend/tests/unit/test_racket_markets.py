@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+import fair_odds
 import racket_markets as rkm
 import racket_matchday as rmd
 import racket_predictions as rp
@@ -103,7 +104,7 @@ def test_settle():
 def test_predict_prices_every_line():
     p = rp.predict(EV, "tennis", None)                  # no ratings: the market's level
     assert p["sport"] == "tennis" and p["sportybet_event_id"] == "sr:match:1"
-    assert p["p_home"] == pytest.approx((1 / 1.8) / (1 / 1.8 + 1 / 2.0), abs=0.002)
+    assert p["p_home"] == pytest.approx(fair_odds.power([1.8, 2.0])[0], abs=0.002)
     assert p["tip_code"] == "1" and p["model"] == "market"
     assert p["total_line"] == 22.5 and p["tip_goals"].endswith("games")
     assert all(0.5 <= x["prob"] <= 0.985 or x["market"] == "rk_winner" for x in p["rk_markets"])

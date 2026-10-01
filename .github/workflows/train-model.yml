@@ -43,3 +43,10 @@ jobs:
         env:
           UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
         run: python train_model.py
+
+      # Each football market's calibration map from its settled picks,
+      # checked on later days first (backend/football_calibration.py)
+      - name: Football calibration
+        env:
+          UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
+        run: python football_calibration.py

@@ -5621,6 +5621,21 @@ async def _rk_load_models() -> Dict[str, int]:
     return got
 
 
+async def _fb_calibration_load() -> int:
+    """Football's calibration maps (fitted nightly, GitHub Actions) from Redis."""
+    import football_calibration
+
+    def load() -> int:
+        r = _get_redis()
+        if r is None:
+            return 0
+        football_calibration.set_maps(football_calibration.load(r))
+        return len(football_calibration.maps())
+    got = await asyncio.to_thread(load)
+    print(f"[Calibration] football maps loaded: {got} markets")
+    return got
+
+
 def _rk_slim(p: Dict) -> Dict:
     """A prediction for the list: its likeliest lines at useful prices; the
     rest from /api/{sport}/match."""
@@ -9123,6 +9138,8 @@ async def startup():
     scheduler.add_job(_web_probe, "interval", hours=24, id="web_probe", max_instances=1, coalesce=True,
                       misfire_grace_time=900, next_run_time=datetime.now() + timedelta(seconds=75))
     # Tennis and table tennis: the nightly ratings, SportyBet's matches priced, live scores and finals
+    scheduler.add_job(_fb_calibration_load, "interval", hours=3, id="fb_calibration", max_instances=1, misfire_grace_time=300,
+                      coalesce=True, next_run_time=datetime.now() + timedelta(seconds=20))
     scheduler.add_job(_rk_load_models, "interval", hours=3, id="racket_models", max_instances=1, misfire_grace_time=300, coalesce=True,
                       next_run_time=datetime.now() + timedelta(seconds=30))
     scheduler.add_job(_tennis_refresh, "interval", minutes=15, id="tennis_refresh", max_instances=1, misfire_grace_time=300, coalesce=True,

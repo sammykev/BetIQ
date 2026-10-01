@@ -459,8 +459,8 @@ def expect(lg: League, home: str, away: str, neutral: bool = False) -> Optional[
 # ── The market's expectation, from SportyBet prices ───────────────────────
 
 def _fair(odds: List[float]) -> List[float]:
-    inv = [1 / o for o in odds]
-    return [x / sum(inv) for x in inv]
+    import fair_odds
+    return fair_odds.fair(odds)
 
 
 def market_margin(sigma: float, winner: Optional[Tuple[float, float]] = None,

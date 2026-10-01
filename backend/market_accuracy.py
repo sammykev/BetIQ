@@ -27,7 +27,7 @@ _SET_PIECE_FIELDS = {"corners_over": ("corners_ou", "95"), "bookings_over": ("ca
 def picks_of(pred: Dict) -> Dict[str, Dict[str, float]]:
     """{market: {code: prob}} for every option the model rates ≥ MIN_PROB."""
     out: Dict[str, Dict[str, float]] = {}
-    for o in optimizer.candidates(pred, None, min_prob=MIN_PROB):
+    for o in optimizer.candidates(pred, None, min_prob=MIN_PROB, calibrate=False):
         out.setdefault(o.market, {})[o.code] = round(o.prob, 3)
     return out
 

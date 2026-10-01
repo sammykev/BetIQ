@@ -13,13 +13,15 @@ back out matters most for clear favourites:
 Bookmakers load more of their margin on longshots (the favourite–longshot
 bias), so power and Shin usually price favourites closer to how often they
 win. Which one the site uses (METHOD) is chosen by the check on settled
-matches (check_fair_odds.py).
+matches (check_fair_odds.py): on 1 Oct 2026 power did best on tennis
+(log loss 0.513 against proportional's 0.524 on 240 matches) and basketball
+winner prices (116), and table tennis was level within noise (1,681).
 """
 
 import math
 from typing import Callable, Dict, List, Sequence
 
-METHOD = "shin"
+METHOD = "power"
 
 
 def _implied(odds: Sequence[float]) -> List[float]:

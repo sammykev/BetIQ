@@ -15,11 +15,15 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 
+import fair_odds
 import racket_markets as rkm
 
-# Table tennis's ratings (SportyBet's own results) pick 55.7% of winners in
-# the walk-forward check (Setka Cup, Liga Pro: near coin flips): less weight
-MODEL_WEIGHT = {"tennis": 0.35, "table_tennis": 0.2}
+# Our ratings' share against SportyBet's winner chance (power de-vig,
+# fair_odds.py). On settled matches (check_fair_odds.py, 1 Oct 2026: 240
+# tennis, 1,681 table tennis) less weight did better: tennis's log loss
+# fell 0.014 at 0.1 from 0.35 (z -2.9); table tennis was level within noise,
+# best near 0.1. The ratings still price matches SportyBet hasn't.
+MODEL_WEIGHT = {"tennis": 0.1, "table_tennis": 0.1}
 KEEP_MIN, KEEP_MAX = 0.50, 0.985
 MAX_LINES = 60
 FLAGS = {"tennis": "🎾", "table_tennis": "🏓"}
@@ -89,8 +93,7 @@ def market_p1(offs: List[Dict]) -> Optional[float]:
     w = rkm.main_lines(offs)["winner"]
     if not w:
         return None
-    a, b = 1 / w[0], 1 / w[1]
-    return a / (a + b)
+    return fair_odds.fair(w)[0]
 
 
 def distribution(ev: Dict, sport: str, model: Optional[Dict], offs: List[Dict]):

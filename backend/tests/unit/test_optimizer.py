@@ -191,7 +191,7 @@ class TestTargetOdds:
             assert abs(res["total_odds"] / target - 1) <= 0.02 + 1e-9
 
     def test_endpoint_falls_back_to_the_nearest_slip(self, monkeypatch):
-        preds = [pred(i, p_home=0.62, p_draw=0.22, p_away=0.16, odds_home=1.5, odds_draw=4.0, odds_away=6.0)
+        preds = [pred(i, p_home=0.66, p_draw=0.2, p_away=0.14, odds_home=1.5, odds_draw=4.0, odds_away=6.0)
                  for i in range(2)]
         monkeypatch.setattr(main, "_predictions_cache", preds)
         body = {"target_odds": 2.0, "min_odds": 1.96, "max_odds": 2.04, "markets": ["1x2"], "min_prob": 0.6, "days": 3}
@@ -250,3 +250,19 @@ class TestBookableAfterRebuild:
         monkeypatch.setattr(main, "_sb_links", {f"Arsenal|Chelsea|{fx['date']}": {"eventId": "sr:match:9"}})
         [p] = main._build_predictions(Model(), [fx], {})
         assert p["sportybet"] is True
+
+
+class TestNegativeEdge:
+    def opt(self, prob, odds, source="sportybet", code="1"):
+        return Option("A", "B", "2026-10-01", "15:00", "L", "1x2", "1X2", code, code, prob, odds, source)
+
+    def test_picks_priced_below_their_worth_are_left_out(self):
+        # 0.7 × 1.3 = 0.91: clearly below what the chance is worth
+        res = optimize([[self.opt(0.7, 1.3), self.opt(0.55, 1.95, code="X")]], 1.2, 2.0, 1)
+        assert res["picks"][0]["code"] == "X"
+        assert optimize([[self.opt(0.7, 1.3)]], 1.2, 1.4, 1) is None
+        # Estimated prices always pay less than the chance: they stay
+        assert optimize([[self.opt(0.7, 1.3, "estimated")]], 1.2, 1.4, 1)["games"] == 1
+        # A slightly short price (within MIN_EDGE) stays, and the filter can be switched off
+        assert optimize([[self.opt(0.7, 1.38)]], 1.2, 1.4, 1)["games"] == 1
+        assert optimize([[self.opt(0.7, 1.3)]], 1.2, 1.4, 1, min_edge=None)["games"] == 1
