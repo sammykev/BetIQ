@@ -35,6 +35,7 @@ DAYS = 120
 SHRINK = 500           # picks' worth pulling a market's map towards the shared one
 HOLDOUT = 0.3          # the later share of days the maps are checked on
 MIN_TEST = 100         # a market's own choice needs this many later picks
+MIN_DAYS = 6           # days of settled picks needed to fit and check at all
 LO, HI = 0.5, 0.995    # the chances the maps apply to (what they're fitted on)
 B_RANGE = (0.3, 2.5)
 
@@ -132,7 +133,7 @@ def check(rows: List[Dict]) -> Dict:
     overall effect, then the maps refitted on every day."""
     rows = [r for r in rows if LO <= r["prob"] < HI]
     days = sorted({r["date"] for r in rows})
-    cut = days[int(len(days) * (1 - HOLDOUT))] if len(days) >= 10 else None
+    cut = days[int(len(days) * (1 - HOLDOUT))] if len(days) >= MIN_DAYS else None
     report: Dict = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "picks": len(rows),
                     "days": len(days), "markets": {}, "maps": {}}
     if cut is None:
