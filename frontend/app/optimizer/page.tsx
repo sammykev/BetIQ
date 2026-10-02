@@ -198,7 +198,7 @@ const pct = (x: number) => (x >= 0.1 ? `${Math.round(x * 100)}%` : x >= 0.001 ? 
 
 function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
-    <button type="button" onClick={onClick} className={clsx("chip", active ? "chip-active" : "chip-idle")}>
+    <button type="button" onClick={onClick} aria-pressed={active} className={clsx("chip", active ? "chip-active" : "chip-idle")}>
       {children}
     </button>
   );
@@ -243,10 +243,10 @@ export default function OptimizerPage() {
   const [days, setDays] = useState(3);
   const [maxGames, setMaxGames] = useState(30);
   const [markets, setMarkets] = useState<string[]>(MARKETS.map(m => m.id));
-  // Football, basketball, tennis, table tennis (every line SportyBet offers,
-  // priced by our model) or all of them
-  type OptSport = "football" | "basketball" | "tennis" | "table_tennis" | "all";
-  const [sport, setSport] = useState<OptSport>("football");
+  // Any mix of football, basketball, tennis and table tennis (every line
+  // SportyBet offers, priced by our model)
+  type OptSport = "football" | "basketball" | "tennis" | "table_tennis";
+  const [sports, setSports] = useState<OptSport[]>(["football"]);
   const [bbFamilies, setBbFamilies] = useState<string[]>(BB_FAMILIES.map(f => f.id));
   const [tnFamilies, setTnFamilies] = useState<string[]>(RK_FAMILIES.tennis.map(f => f.id));
   const [ttFamilies, setTtFamilies] = useState<string[]>(RK_FAMILIES.table_tennis.map(f => f.id));
@@ -254,6 +254,15 @@ export default function OptimizerPage() {
   const tnOn = access.shown("sport.tennis");
   const ttOn = access.shown("sport.table_tennis");
   const otherSports = bbOn || tnOn || ttOn;
+  const sportChips = ([["football", "Football", true], ["basketball", "Basketball", bbOn], ["tennis", "Tennis", tnOn],
+                       ["table_tennis", "Table tennis", ttOn]] as const).filter(([, , on]) => on);
+  // The sports in play: the ones picked that are open to this account (football if none)
+  const inPlay = sports.filter(k => sportChips.some(([c]) => c === k));
+  const playing: OptSport[] = inPlay.length ? inPlay : ["football"];
+  const allPicked = sportChips.every(([k]) => playing.includes(k));
+  // A sport chip toggles; the last one in play stays on
+  const toggleSport = (k: OptSport) =>
+    setSports(() => playing.includes(k) ? (playing.length > 1 ? playing.filter(x => x !== k) : playing) : [...playing, k]);
   // Markets switched off (admin, or paused by the weekly accuracy review):
   // not offered at all, rather than offered and then left out
   const [off, setOff] = useState<Set<string>>(new Set());
@@ -302,10 +311,10 @@ export default function OptimizerPage() {
       .catch(() => {});
   }, []);
   const unconfirmed = shownMarkets.filter(m => !confirmed(m, link));
-  const showFootball = !otherSports || sport === "football" || sport === "all";
-  const showBasketball = bbOn && (sport === "basketball" || sport === "all");
-  const showTennis = tnOn && (sport === "tennis" || sport === "all");
-  const showTT = ttOn && (sport === "table_tennis" || sport === "all");
+  const showFootball = !otherSports || playing.includes("football");
+  const showBasketball = bbOn && playing.includes("basketball");
+  const showTennis = tnOn && playing.includes("tennis");
+  const showTT = ttOn && playing.includes("table_tennis");
   const panels = [showFootball, showBasketball, showTennis, showTT].filter(Boolean).length;
   const bbChosen = bbShown.filter(f => bbFamilies.includes(f.id));
   const tnShown = RK_FAMILIES.tennis.filter(f => !off.has(f.id));
@@ -342,7 +351,10 @@ export default function OptimizerPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ target_odds: targetOdds, min_odds: lo, max_odds: hi, min_prob: minProb, days, max_games: maxGames,
                                ...request(),
-                               sport: otherSports ? sport : "football", bb_markets: bbFamilies.filter(f => !off.has(f)),
+                               sports: otherSports ? playing : ["football"],
+                               // Servers from before multi-sport read one sport (or all)
+                               sport: !otherSports ? "football" : playing.length === 1 ? playing[0] : "all",
+                               bb_markets: bbFamilies.filter(f => !off.has(f)),
                                tn_markets: tnFamilies.filter(f => !off.has(f)), tt_markets: ttFamilies.filter(f => !off.has(f)),
                                bookable_only: bookable }),
       });
@@ -454,12 +466,11 @@ export default function OptimizerPage() {
               {DAYS.map(d => <Chip key={d.n} active={days === d.n} onClick={() => setDays(d.n)}>{d.label}</Chip>)}
             </Setting>
             {otherSports && (
-              <Setting label="Sport">
-                {([["football", "Football", true], ["basketball", "Basketball", bbOn], ["tennis", "Tennis", tnOn],
-                   ["table_tennis", "Table tennis", ttOn], ["all", "All", true]] as const)
-                  .filter(([, , on]) => on).map(([k, l]) => (
-                    <Chip key={k} active={sport === k} onClick={() => setSport(k)}>{l}</Chip>
-                  ))}
+              <Setting label="Sports (pick one or more)">
+                {sportChips.map(([k, l]) => (
+                  <Chip key={k} active={playing.includes(k)} onClick={() => toggleSport(k)}>{l}</Chip>
+                ))}
+                <Chip active={allPicked} onClick={() => setSports(allPicked ? ["football"] : sportChips.map(([k]) => k))}>All</Chip>
               </Setting>
             )}
             <div className="space-y-2">

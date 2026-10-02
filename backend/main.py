@@ -8078,31 +8078,58 @@ def _explain_empty(reasons: List[Dict], matches: int, days: int, min_prob: float
     return " ".join(parts) or f"None of {span} has a pick at {round(min_prob * 100)}% or more."
 
 
+OPT_SPORTS = ("football", "basketball", "tennis", "table_tennis")
+
+
+def _optimizer_sports(body: Dict[str, Any]) -> List[str]:
+    """The sports an optimizer request picks from: `sports` (a list, any of
+    OPT_SPORTS or "all") or else `sport` (one of them or "all"; football by default)."""
+    raw = body.get("sports")
+    if isinstance(raw, list) and raw:
+        asked = {str(x) for x in raw}
+    elif raw is not None and not isinstance(raw, list):
+        raise HTTPException(status_code=400, detail="sports must be a list")
+    else:
+        asked = {str(body.get("sport") or "football")}
+    if "all" in asked:
+        asked = set(OPT_SPORTS)
+    bad = asked - set(OPT_SPORTS)
+    if bad:
+        raise HTTPException(status_code=400, detail=f"Unknown sport: {', '.join(sorted(bad))} "
+                                                    "(football, basketball, tennis, table_tennis or all)")
+    return [x for x in OPT_SPORTS if x in asked]
+
+
 @app.post("/api/optimizer")
 async def optimize_slip(request: Request, body: Dict[str, Any], _access=Depends(require_feature("optimizer"))):
     """
     Build the slip with the best win chance whose total odds land in a target
     range (optimizer.py). Body: {min_odds, max_odds, max_games?, min_prob?,
     days?, leagues?: [codes], markets?: [ids], codes?: {market: [option
-    codes]} (e.g. only some goal lines), bookable_only?, sport?: football |
-    basketball | tennis | table_tennis | all, bb_markets?: [basketball
-    families], tn_markets? / tt_markets?: [tennis / table tennis families]}.
+    codes]} (e.g. only some goal lines), bookable_only?, sports?: [football,
+    basketball, tennis, table_tennis: any of them] (or sport?: one of them or
+    all), bb_markets?: [basketball families], tn_markets? / tt_markets?:
+    [tennis / table tennis families]}.
     """
-    sport = str((body or {}).get("sport") or "football")
-    if sport in ("basketball", "all"):
-        await _check_sport_access(request, "basketball")   # switched off, or for testers only
-    if sport in ("tennis", "table_tennis"):
-        await _check_sport_access(request, _rk_url(sport))
     body = dict(body or {})
-    if sport == "all":
-        # Racket sports switched off (or for testers only) are left out of an "all" slip
-        off = []
-        for rk in RK_SPORTS:
+    sports = _optimizer_sports(body)
+    if len(sports) == 1:
+        if sports[0] != "football":
+            await _check_sport_access(request, "basketball" if sports[0] == "basketball" else _rk_url(sports[0]))
+    else:
+        # Sports switched off (or for testers only) are left out of a mixed slip
+        off, refused = [], None
+        for sp in sports:
+            if sp == "football":
+                continue
             try:
-                await _check_sport_access(request, _rk_url(rk))
-            except HTTPException:
-                off.append(rk)
-        body["_rk_off"] = off
+                await _check_sport_access(request, "basketball" if sp == "basketball" else _rk_url(sp))
+            except HTTPException as e:
+                off.append(sp)
+                refused = e
+        if refused and len(off) == len(sports):
+            raise refused
+        body["_off"] = off
     return await _optimize_request(body)
 
 
@@ -8261,16 +8288,19 @@ async def _optimize_request(body: Dict[str, Any],
     if not isinstance(codes, dict):
         raise HTTPException(status_code=400, detail="codes must be {market: [codes]}")
     only = {str(m): {str(c) for c in (cs or [])} for m, cs in codes.items() if isinstance(cs, list) and cs}
-    # football (default), basketball, or all: basketball picks are the lines
-    # SportyBet offers on its listed matches (_bb_predictions), all bookable
-    sport = str(body.get("sport") or "football")
-    if sport not in ("football", "basketball", "tennis", "table_tennis", "all"):
-        raise HTTPException(status_code=400, detail="sport must be football, basketball, tennis, table_tennis or all")
+    # Any of football (default), basketball, tennis, table tennis: the other
+    # sports' picks are the lines SportyBet offers on its listed matches, all bookable
+    on = set(_optimizer_sports(body)) - set(body.get("_off") or body.get("_rk_off") or [])
+    if body.get("no_racket") and len(on) > 1:
+        on -= set(RK_SPORTS)
+    if not on:
+        raise HTTPException(status_code=403, detail="None of the sports you picked is open to your account")
+    # One sport alone gets its own "nothing found" messages
+    sport = next(iter(on)) if len(on) == 1 else "mixed"
     bb_families = {str(m) for m in body.get("bb_markets") or []} or None
     rk_families = {"tennis": {str(m) for m in body.get("tn_markets") or []} or None,
                    "table_tennis": {str(m) for m in body.get("tt_markets") or []} or None}
-    rk_on = [rk for rk in RK_SPORTS if sport in (rk, "all") and rk not in (body.get("_rk_off") or [])
-             and not (sport == "all" and body.get("no_racket"))]
+    rk_on = [rk for rk in RK_SPORTS if rk in on]
 
     now = datetime.now(timezone.utc)
     today, last = now.date().isoformat(), (now.date() + timedelta(days=days - 1)).isoformat()
@@ -8282,7 +8312,7 @@ async def _optimize_request(body: Dict[str, Any],
             return False
         return max(window[0], now) < k < window[1]
 
-    upcoming = [p for p in (_predictions_cache if sport in ("football", "all") else [])
+    upcoming = [p for p in (_predictions_cache if "football" in on else [])
                 if p.get("sport") in (None, "football")
                 and (in_window(p) if window else
                      today <= p.get("date", "") <= last
@@ -8293,7 +8323,7 @@ async def _optimize_request(body: Dict[str, Any],
     # predictions (flags and all) minutes before the next linking run.
     linked = {id(p): _linked_event(p) for p in upcoming}
     preds = [p for p in upcoming if not bookable_only or linked[id(p)]]
-    bb_preds = [] if sport not in ("basketball", "all") else [
+    bb_preds = [] if "basketball" not in on else [
         p for p in _bb_upcoming()
         if (in_window(p) if window else today <= p["date"] <= last) and not (leagues and sport == "basketball"
                                                                               and p.get("league") not in leagues)]

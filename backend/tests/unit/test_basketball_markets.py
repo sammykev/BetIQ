@@ -236,3 +236,34 @@ class TestServer:
         monkeypatch.setattr(main, "_check_sport_access", off)
         r = TestClient(main.app).post("/api/optimizer", json={"sport": "basketball", "min_odds": 2, "max_odds": 3})
         assert (r.status_code, r.json()["detail"]) == (404, "feature_off")
+
+    def test_the_optimizer_takes_several_sports(self, priced, monkeypatch):
+        import asyncio
+        import main
+        from fastapi import HTTPException
+        from fastapi.testclient import TestClient
+        from tests.unit.test_optimizer import pred
+        monkeypatch.setattr(main, "_predictions_cache", [pred(i, p_home=0.7, p_draw=0.2, p_away=0.1, odds_home=1.6,
+                                                              odds_draw=4.0, odds_away=6.0) for i in range(4)])
+        body = {"min_odds": 1.5, "max_odds": 30, "min_prob": 0.6, "days": 3, "no_live_check": True}
+        both = asyncio.run(main._optimize_request({**body, "sports": ["football", "basketball"]}))
+        alone = asyncio.run(main._optimize_request({**body, "sports": ["basketball"]}))
+        assert both["matches_considered"] == alone["matches_considered"] + 4
+        assert {p.get("sport", "football") for p in both["picks"]} <= {"football", "basketball"}
+        # A list with "all" is every sport; anything else is refused
+        assert main._optimizer_sports({"sports": ["tennis", "all"]}) == list(main.OPT_SPORTS)
+        assert main._optimizer_sports({"sport": "table_tennis"}) == ["table_tennis"]
+        assert main._optimizer_sports({}) == ["football"]
+        for bad in ({"sports": ["cricket"]}, {"sports": "football"}):
+            with pytest.raises(HTTPException):
+                main._optimizer_sports(bad)
+
+        # A sport switched off is left out of a mixed slip, and refused alone
+        async def basketball_off(request, sport):
+            if sport == "basketball":
+                raise HTTPException(status_code=404, detail="feature_off")
+        monkeypatch.setattr(main, "_check_sport_access", basketball_off)
+        c = TestClient(main.app)
+        mixed = c.post("/api/optimizer", json={**body, "sports": ["football", "basketball"]})
+        assert mixed.status_code == 200 and mixed.json()["matches_considered"] == 4
+        assert c.post("/api/optimizer", json={**body, "sports": ["basketball"]}).status_code == 404
