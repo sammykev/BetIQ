@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import clsx from "clsx";
 import { Check, ChevronDown, Clock, Copy, ExternalLink, HelpCircle, Loader2, Ticket as TicketIcon } from "lucide-react";
 import { VerdictIcon } from "@/components/MatchdayList";
-import { LiveStats } from "@/components/LiveStats";
+import { LiveStats, SportStats } from "@/components/LiveStats";
 import { useAccess } from "@/lib/access";
 import { API, type Ticket, type TicketLeg, type TicketSummary } from "@/lib/matchday";
 
@@ -59,7 +59,7 @@ export function LegRow({ leg, showProb = false }: { leg: TicketLeg; showProb?: b
   const [open, setOpen] = useState(false);
   const lv = leg.live;
   const inPlay = lv?.status === "live";
-  const hasStats = useAccess().shown("live_stats") && !!lv && (!!lv.stats || !!lv.events?.length);
+  const hasStats = useAccess().shown("live_stats") && !!lv && (!!lv.stats || !!lv.events?.length || !!lv.rows?.length);
   const now = inPlay ? lv?.as_it_stands : null;
   const body = (
     <>
@@ -76,7 +76,7 @@ export function LegRow({ leg, showProb = false }: { leg: TicketLeg; showProb?: b
         <span className="text-right shrink-0 leading-tight">
           <span className={clsx("block font-display font-extrabold text-base tnum", inPlay ? "text-danger" : "text-n-0")}>{lv.score[0]}–{lv.score[1]}</span>
           <span className={clsx("block text-[10px] font-bold tnum", inPlay ? "text-danger" : "text-n-500")}>
-            {inPlay ? lv.minute || "Live" : lv.aet ? "AET" : "FT"}</span>
+            {inPlay ? lv.minute || "Live" : lv.aet ? (lv.sport === "basketball" ? "OT" : "AET") : "FT"}</span>
         </span>
       )}
       <span className="font-mono text-xs text-n-400 tnum shrink-0 w-9 text-right">{leg.odds ? leg.odds.toFixed(2) : "—"}</span>
@@ -94,11 +94,15 @@ export function LegRow({ leg, showProb = false }: { leg: TicketLeg; showProb?: b
       {open && hasStats && lv && (
         <div className="pb-3">
           <div className="rounded-xl [box-shadow:var(--ring-control)] bg-surface-sunken px-3 py-3">
-            <p className="eyebrow mb-2 flex items-center gap-1.5">
-              {inPlay && <span className="w-1.5 h-1.5 rounded-full bg-danger animate-pulse" />}
-              {inPlay ? `Live stats · ${lv.minute || "in play"}` : "Match stats"}
-            </p>
-            <LiveStats m={lv} compact />
+            {lv.rows?.length ? <SportStats rows={lv.rows} status={lv.status} minute={lv.minute} /> : (
+              <>
+                <p className="eyebrow mb-2 flex items-center gap-1.5">
+                  {inPlay && <span className="w-1.5 h-1.5 rounded-full bg-danger animate-pulse" />}
+                  {inPlay ? `Live stats · ${lv.minute || "in play"}` : "Match stats"}
+                </p>
+                <LiveStats m={lv} compact />
+              </>
+            )}
           </div>
         </div>
       )}

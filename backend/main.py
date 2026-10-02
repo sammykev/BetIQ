@@ -3793,17 +3793,88 @@ async def admin_all_tickets(limit: int = 200, status: str = "", source: str = ""
         for t in page]}
 
 
+TICKET_LIVE_DAYS = 14   # settled tickets keep their legs' scores and stats this long
+
+
+def _leg_sport(leg: Dict) -> str:
+    """football, basketball or a racket sport ("tennis", "table_tennis", or
+    "racket" when the leg doesn't say which)."""
+    m = str(leg.get("market") or "")
+    if m.startswith("bb_") and not m.startswith("bb_player_"):
+        return "basketball"
+    if m.startswith("rk_"):
+        sp = leg.get("sport")
+        return sp if sp in ("tennis", "table_tennis") else "racket"
+    return "football"
+
+
+def _other_sport_live(r, leg: Dict, sport: str, days: Dict[Tuple[str, str], Dict],
+                      stats: Dict[Tuple[str, str], Dict]) -> Optional[Dict]:
+    """A basketball, tennis or table tennis leg's match as it stands, by the
+    SportyBet event it was booked on: score, the period/set scores and the
+    live stats rows (live_stats.py)."""
+    import basketball_matchday as bbmd
+    import live_stats as ls
+    import racket_matchday as rmd
+    eid = str(leg.get("event_id") or (leg.get("sb") or {}).get("eventId") or "")
+    try:
+        d0 = date.fromisoformat(leg.get("date") or "")
+    except ValueError:
+        return None
+    if not eid:
+        return None
+    if sport == "basketball":
+        sports = ["basketball"]
+    else:   # the leg's racket sport first, then the other (a leg may not say which)
+        sports = sorted(("tennis", "table_tennis"), key=lambda x: x != sport)
+    for sp in sports:
+        for d in (d0, d0 - timedelta(days=1), d0 + timedelta(days=1)):
+            ds = d.isoformat()
+            if (sp, ds) not in days:
+                days[(sp, ds)] = (_bbmd_load(r, ds) if sp == "basketball" else _rkmd_load(r, sp, ds)) \
+                    if d <= date.today() else {}
+            e = days[(sp, ds)].get(eid)
+            if not e:
+                continue
+            m = (bbmd if sp == "basketball" else rmd).public(e)
+            if m.get("status") not in ("live", "finished"):
+                return None
+            if (sp, ds) not in stats:
+                stats[(sp, ds)] = ls.load(r, sp, ds)
+            rows = (stats[(sp, ds)].get(eid) or {}).get("rows")
+            if not rows and not ls.sr_number(eid):
+                rows = ls.from_score(m.get("periods"), sp)
+            return {"status": m["status"], "minute": m.get("minute"), "score": m.get("score"),
+                    "aet": bool(m.get("aet")), "stats": None, "events": None, "sport": sp,
+                    "periods": m.get("periods"), "rows": rows or None}
+    return None
+
+
 def _attach_live(r, items: List[Dict]) -> None:
-    """On open tickets, each leg's match as it stands (score, minute, live
-    stats) and whether the pick would win if it ended now. For the response
-    only: nothing is saved."""
+    """Each leg's match as it stands (score, minute, live stats; the final
+    score and stats once it's over) and, in play, whether the pick would win
+    if it ended now. Open tickets, and settled ones for TICKET_LIVE_DAYS.
+    For the response only: nothing is saved."""
     import matchday
     import tickets
     days: Dict[str, Dict] = {}
+    other_days: Dict[Tuple[str, str], Dict] = {}
+    other_stats: Dict[Tuple[str, str], Dict] = {}
+    oldest = (date.today() - timedelta(days=TICKET_LIVE_DAYS)).isoformat()
     for t in items:
-        if t.get("status") not in ("pending", "open"):
-            continue
+        open_ = t.get("status") in ("pending", "open")
         for leg in t.get("legs") or []:
+            if not open_ and (leg.get("date") or "") < oldest:
+                continue
+            sport = _leg_sport(leg)
+            if sport != "football":
+                try:
+                    live = _other_sport_live(r, leg, sport, other_days, other_stats)
+                except Exception:
+                    live = None
+                if live:
+                    leg["live"] = live
+                continue
             try:
                 e = _md_entry_for(r, leg, days)
             except Exception:

@@ -252,6 +252,43 @@ class TestEndpoints:
         assert over["status"] == "pending"                    # nothing settles before full time
         assert "live" not in json.loads(redis.kv["betiq:user:u1:tickets"])[0]["legs"][0]  # never saved
 
+    def test_settled_tickets_keep_scores_and_other_sports_show_theirs(self, redis):
+        import tickets
+        d = date.today().isoformat()
+        day = {}
+        matchday.merge_predictions(day, [pred(d=d, t="00:00")], datetime.now(timezone.utc) - timedelta(days=1))
+        matchday.apply_result(day["arsenal|chelsea"], {"status": "finished", "minute": "FT", "hg": 0, "ag": 2,
+                                                       "source": "espn", "stats": {"shots": [9, 12]}})
+        main._md_save(redis, d, day)
+        # A table tennis match in play and a basketball one finished, by their SportyBet events
+        main._rkmd_save(redis, "table_tennis", d, {"sr:match:111111114432685": {
+            "id": "sr:match:111111114432685", "home": "Kim", "away": "Lee",
+            "result": {"status": "live", "score": [1, 0], "periods": [[11, 8], [5, 3]], "minute": "Game 2"}, "pred": {}}})
+        main._bbmd_save(redis, d, {"sr:match:72016786": {
+            "id": "sr:match:72016786", "home": "Breakers", "away": "Cairns",
+            "result": {"status": "finished", "score": [88, 80], "periods": [[20, 18], [22, 20], [24, 22], [22, 20]]},
+            "pred": {}}})
+        legs = [{"home": "Arsenal", "away": "Chelsea", "date": d, "market": "1x2", "code": "1", "label": "1"},
+                {"home": "Kim", "away": "Lee", "date": d, "market": "rk_winner", "code": "1", "label": "Kim",
+                 "sb": {"eventId": "sr:match:111111114432685"}},
+                {"home": "Breakers", "away": "Cairns", "date": d, "market": "bb_winner", "code": "1", "label": "Breakers",
+                 "sb": {"eventId": "sr:match:72016786"}}]
+        sel = [{"status": "booked", "odds": 1.5, "sb": l.get("sb")} for l in legs]
+        t = tickets.new_ticket("MIX1", legs, sel, "optimizer", None, 3.4, "x")
+        t["status"] = "lost"                                  # settled: the scores stay on it
+        main._record_ticket("u1", t)
+        [got] = TestClient(main.app).get("/api/user/tickets?uid=u1").json()["tickets"]
+        fb, tt, bb = got["legs"]
+        assert fb["live"]["status"] == "finished" and fb["live"]["score"] == [0, 2] and fb["live"]["stats"] == {"shots": [9, 12]}
+        assert tt["live"]["status"] == "live" and tt["live"]["score"] == [1, 0] and tt["live"]["sport"] == "table_tennis"
+        assert {r["key"] for r in tt["live"]["rows"]} >= {"points", "games"}      # SportyBet's own event: from the score
+        assert bb["live"]["score"] == [88, 80] and bb["live"]["sport"] == "basketball"
+        # Older than TICKET_LIVE_DAYS: settled tickets aren't looked up any more
+        old = (date.today() - timedelta(days=main.TICKET_LIVE_DAYS + 1)).isoformat()
+        items = [{"status": "lost", "legs": [{**legs[0], "date": old}]}]
+        main._attach_live(redis, items)
+        assert "live" not in items[0]["legs"][0]
+
 
 class TestRefresh:
     def test_scores_come_in_and_tickets_settle(self, redis, monkeypatch):

@@ -116,12 +116,15 @@ export type LegStatus = "won" | "lost" | "void" | "pending" | "unknown";
 export interface TicketLeg {
   home: string; away: string; date: string; time?: string; market: string; marketName?: string;
   code: string; label?: string; prob?: number | null; odds?: number | null; status: LegStatus;
-  /** On open tickets, once the match has started: how it stands. */
+  /** Once the match has started: how it stands (and, at the end, the final score and stats). */
   live?: LegLive;
 }
 export interface LegLive {
   status: "live" | "finished"; minute: string | null; score: [number, number] | null; aet: boolean;
   stats: MatchdayMatch["stats"]; events: MatchdayMatch["events"];
+  /** Basketball, tennis and table tennis: which, and their stats rows (score in sets for tennis and table tennis) */
+  sport?: "basketball" | "tennis" | "table_tennis";
+  rows?: StatRow[] | null;
   /** Whether the pick would win if the match ended now (in play only). */
   as_it_stands?: "won" | "lost" | null;
 }
