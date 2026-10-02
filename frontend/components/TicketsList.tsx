@@ -24,6 +24,9 @@ const SOURCE: Record<string, string> = {
 
 interface OldCode { code: string; games?: { game: string; tip: string; odds: string | number | null }[]; total_odds?: number; date?: string }
 
+// What a racket or basketball leg's period scores are called
+const PERIOD_NAME: Record<string, string> = { tennis: "Sets", table_tennis: "Games", basketball: "Quarters" };
+
 const LIVE_REFRESH_MS = 60_000;
 const IDLE_REFRESH_MAX_MS = 30 * 60_000;
 const kickoffMs = (l: TicketLeg) => Date.parse(`${l.date}T${l.time || "12:00"}:00Z`);
@@ -71,6 +74,16 @@ export function LegRow({ leg, showProb = false }: { leg: TicketLeg; showProb?: b
           {showProb && typeof leg.prob === "number" && <span className="text-n-400 tnum"> · {Math.round(leg.prob * 100)}%</span>}
           {now && <span className={clsx("font-semibold", now === "won" ? "text-accent" : "text-danger")}> · {now === "won" ? "winning now" : "losing now"}</span>}
         </span>
+        {!!lv?.periods?.length && (
+          <span className="block truncate text-[11px] text-n-400 tnum" aria-label={`${PERIOD_NAME[lv.sport ?? ""] ?? "Period"} scores`}>
+            {PERIOD_NAME[lv.sport ?? ""] ?? "Periods"}:{" "}
+            {lv.periods.map(([h, a], i) => (
+              <span key={i} className={clsx(i === lv.periods!.length - 1 && inPlay && "text-danger font-semibold")}>
+                {i > 0 && " · "}{h}–{a}
+              </span>
+            ))}
+          </span>
+        )}
       </span>
       {lv?.score && (
         <span className="text-right shrink-0 leading-tight">

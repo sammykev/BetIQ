@@ -3667,39 +3667,77 @@ def _leg_results(r, days: Dict[str, Dict]):
     return result_for
 
 
-def _settle_tickets(r) -> Dict[str, int]:
-    """Grade the legs of every open ticket whose matches have finished."""
-    import tickets
-    uids = [u.decode() if isinstance(u, bytes) else u for u in (r.smembers(TICKETS_OPEN_KEY) or [])]
-    days: Dict[str, Dict] = {}
-    report = {"accounts": len(uids), "settled": 0, "legs": 0}
+SETTLE_LEGS_DAYS = 7          # a settled ticket's other legs are still graded this long after its last match
+TICKETS_RESCAN_HOURS = 6      # how often every account's tickets are looked through for legs left pending
+_tickets_rescan_at = [0.0]
 
+
+def _ticket_needs_settling(t: Dict, today: date) -> bool:
+    """A ticket still being played, or a settled one (a lost leg settles it)
+    whose other legs aren't graded yet, up to SETTLE_LEGS_DAYS after its last match."""
+    legs = t.get("legs") or []
+    last = max((l.get("date") or "" for l in legs), default="")
+    recent = last >= (today - timedelta(days=SETTLE_LEGS_DAYS)).isoformat()
+    if t.get("status") == "pending":
+        return True
+    if t.get("status") == "open":
+        return last >= (today - timedelta(days=3)).isoformat()
+    return recent and any(l.get("status") in (None, "pending") for l in legs)
+
+
+def _rescan_open_tickets(r, today: date) -> int:
+    """Every account with a ticket that still needs settling, back in the
+    open set (accounts can drop out of it; this puts them back)."""
+    added = 0
+    for key in r.scan_iter(match="betiq:user:*:tickets", count=500):
+        key = key.decode() if isinstance(key, bytes) else key
+        try:
+            items = json.loads(r.get(key) or "[]")
+        except ValueError:
+            continue
+        if any(_ticket_needs_settling(t, today) for t in items if isinstance(t, dict)):
+            added += int(r.sadd(TICKETS_OPEN_KEY, key[len("betiq:user:"):-len(":tickets")]) or 0)
+    return added
+
+
+def _settle_tickets(r) -> Dict[str, int]:
+    """Grade the legs of every ticket still being played, and the legs left
+    pending on settled ones (_ticket_needs_settling), whose matches have finished."""
+    import tickets
+    today = date.today()
+    report: Dict[str, Any] = {"settled": 0, "legs": 0}
+    if time.time() - _tickets_rescan_at[0] > TICKETS_RESCAN_HOURS * 3600:
+        _tickets_rescan_at[0] = time.time()
+        report["rescan_added"] = _rescan_open_tickets(r, today)
+    uids = [u.decode() if isinstance(u, bytes) else u for u in (r.smembers(TICKETS_OPEN_KEY) or [])]
+    report["accounts"] = len(uids)
+    days: Dict[str, Dict] = {}
     result_for = _leg_results(r, days)
 
     for uid in uids:
-        key = _ukey(uid, "tickets")
-        raw = r.get(key)
-        items: List[Dict] = json.loads(raw) if raw else []
-        changed = False
-        for t in items:
-            if t.get("status") in ("pending", "open"):
+        try:
+            key = _ukey(uid, "tickets")
+            raw = r.get(key)
+            items: List[Dict] = json.loads(raw) if raw else []
+            changed = False
+            for t in items:
+                if not _ticket_needs_settling(t, today):
+                    continue
+                was = t.get("status")
                 before = sum(1 for l in t.get("legs") or [] if l.get("status") != "pending")
                 if tickets.settle(t, result_for):
                     changed = True
                     report["legs"] += sum(1 for l in t.get("legs") or [] if l.get("status") != "pending") - before
-                    if t["status"] in ("won", "lost", "void"):
+                    if t["status"] != was and t["status"] in ("won", "lost", "void"):
                         report["settled"] += 1
                         r.hincrby(TICKETS_STATS_KEY, t["status"], 1)
-        if changed:
-            r.set(key, json.dumps(items, separators=(",", ":")), ex=365 * 86400)
-        # Nothing left to settle (or only legs we can't settle, all played)
-        def open_(t):
-            if t.get("status") == "pending":
-                return True
-            last = max((l.get("date") or "" for l in t.get("legs") or []), default="")
-            return t.get("status") == "open" and last >= (today - timedelta(days=3)).isoformat()
-        if not any(open_(t) for t in items):
-            r.srem(TICKETS_OPEN_KEY, uid)
+            if changed:
+                r.set(key, json.dumps(items, separators=(",", ":")), ex=365 * 86400)
+            # Nothing left to settle (or only legs we can't settle, all played)
+            if not any(_ticket_needs_settling(t, today) for t in items):
+                r.srem(TICKETS_OPEN_KEY, uid)
+        except Exception as e:   # one account's tickets can't stop the others'
+            report.setdefault("errors", []).append(f"{uid[:8]}…: {e}"[:200])
     return report
 
 

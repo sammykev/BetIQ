@@ -290,6 +290,40 @@ class TestEndpoints:
         assert "live" not in items[0]["legs"][0]
 
 
+class TestSettling:
+    def test_a_lost_tickets_other_legs_still_settle_and_no_account_stops_the_rest(self, redis, monkeypatch):
+        import tickets
+        d = (date.today() - timedelta(days=1)).isoformat()
+        day = {}
+        matchday.merge_predictions(day, [pred(d=d, t="15:00"), pred(d=d, t="18:00", home="Leeds", away="Hull")],
+                                   datetime.now(timezone.utc) - timedelta(days=2))
+        matchday.apply_result(day["arsenal|chelsea"], {"status": "finished", "hg": 0, "ag": 1, "source": "espn"})
+        matchday.apply_result(day["leeds|hull"], {"status": "finished", "hg": 3, "ag": 1, "source": "espn"})
+        main._md_save(redis, d, day)
+
+        def leg(home, away, market, code, status="pending"):
+            return {"home": home, "away": away, "date": d, "market": market, "code": code, "label": code, "status": status}
+        # Lost on its first leg; the second was never graded
+        lost = {"code": "LOST1", "status": "lost", "created_at": d, "legs": [
+            leg("Arsenal", "Chelsea", "1x2", "1", "lost"), leg("Leeds", "Hull", "goals_ou", "O25")]}
+        # An account whose tickets are all settled (this used to stop the run)
+        done = {"code": "DONE1", "status": "won", "created_at": d, "legs": [leg("Leeds", "Hull", "1x2", "1", "won")]}
+        redis.set("betiq:user:a1:tickets", json.dumps([done]))
+        redis.set("betiq:user:a2:tickets", json.dumps([lost]))
+        redis.sadd(main.TICKETS_OPEN_KEY, "a1")          # a2 dropped out of the open set
+        monkeypatch.setattr(main, "_tickets_rescan_at", [0.0])
+        report = main._settle_tickets(redis)
+        assert "errors" not in report and "rescan_added" in report
+        got = json.loads(redis.kv["betiq:user:a2:tickets"])[0]
+        assert got["status"] == "lost" and [l["status"] for l in got["legs"]] == ["lost", "won"]
+        assert main.TICKETS_OPEN_KEY not in redis.sets or "a1" not in redis.sets[main.TICKETS_OPEN_KEY]
+        assert redis.h.get(main.TICKETS_STATS_KEY, {}).get("lost") is None   # still the same loss, not counted again
+        # A week after its last match, a settled ticket's leftover legs are left alone
+        old = (date.today() - timedelta(days=main.SETTLE_LEGS_DAYS + 1)).isoformat()
+        assert not main._ticket_needs_settling({"status": "lost", "legs": [{"date": old, "status": "pending"}]}, date.today())
+        assert main._ticket_needs_settling({"status": "lost", "legs": [{"date": d, "status": "pending"}]}, date.today())
+
+
 class TestRefresh:
     def test_scores_come_in_and_tickets_settle(self, redis, monkeypatch):
         import curl_cffi.requests as cr

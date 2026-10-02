@@ -125,6 +125,8 @@ export interface LegLive {
   /** Basketball, tennis and table tennis: which, and their stats rows (score in sets for tennis and table tennis) */
   sport?: "basketball" | "tennis" | "table_tennis";
   rows?: StatRow[] | null;
+  /** Each set's (tennis), game's (table tennis) or quarter's (basketball) score, the current one last */
+  periods?: [number, number][] | null;
   /** Whether the pick would win if the match ended now (in play only). */
   as_it_stands?: "won" | "lost" | null;
 }
