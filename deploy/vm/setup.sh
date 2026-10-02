@@ -53,6 +53,18 @@ line="*/5 * * * * bash $HERE/update.sh >> $HOME/betiq-deploy.log 2>&1"
 # (A new server has no crontab yet: `crontab -l` fails, which must not stop the script)
 { crontab -l 2>/dev/null | grep -v 'deploy/vm/update.sh' || true; echo "$line"; } | crontab -
 
+echo "==> Daily Redis backup (04:10 UTC, kept 14 days in /root/betiq-backups)"
+line="10 4 * * * bash $HERE/backup-redis.sh >> $HOME/betiq-backup.log 2>&1"
+{ crontab -l 2>/dev/null | grep -v 'deploy/vm/backup-redis.sh' || true; echo "$line"; } | crontab -
+if ! grep -q '^REDIS_PASSWORD=.\+' .env; then
+  if grep -q '^REDIS_PASSWORD=' .env; then
+    sed -i "s|^REDIS_PASSWORD=.*|REDIS_PASSWORD=$(openssl rand -hex 24)|" .env
+  else
+    echo "REDIS_PASSWORD=$(openssl rand -hex 24)" >> .env
+  fi
+  echo "Made a Redis password (REDIS_PASSWORD in .env)"
+fi
+
 if grep -q '^FOOTBALL_DATA_API_KEY=$' .env; then
   echo
   echo "Now fill in $HERE/.env (nano $HERE/.env), then run this script again."

@@ -1,4 +1,4 @@
-# BetIQ API behind Caddy (automatic HTTPS). Run from this folder:
+# BetIQ API behind Caddy (automatic HTTPS), with its Redis. Run from this folder:
 #   docker compose up -d --build
 services:
   api:
@@ -7,10 +7,34 @@ services:
       dockerfile: backend/Dockerfile
     restart: unless-stopped
     env_file: .env
+    environment:
+      # This server's Redis (the api uses UPSTASH_REDIS_URL from .env; this
+      # one is for copying the data across: backend/redis_copy.py)
+      LOCAL_REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env (openssl rand -hex 24)}@redis:6379/0
+    depends_on:
+      - redis
     volumes:
       - betiq-data:/app/backend/data   # trained model, predictions, synced CSVs
     expose:
       - "8000"
+
+  # Everything the site stores: tickets, accounts, match days, models.
+  # Saved to disk every second (append-only file) plus snapshots, in the
+  # redis-data volume; backup-redis.sh copies a snapshot out daily. Reachable
+  # by the api and from this machine only (GitHub's jobs come in over SSH).
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env (openssl rand -hex 24)}
+    command: >-
+      sh -c 'exec redis-server --requirepass "$$REDIS_PASSWORD"
+      --appendonly yes --appendfsync everysec --save "3600 1 300 100 60 10000"
+      --maxmemory 2gb --maxmemory-policy noeviction'
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis-data:/data
 
   caddy:
     image: caddy:2
@@ -29,5 +53,6 @@ services:
 
 volumes:
   betiq-data:
+  redis-data:
   caddy-data:
   caddy-config:

@@ -1,0 +1,36 @@
+# Reach the BetIQ server's Redis from a GitHub job: an SSH tunnel from this
+# runner's 127.0.0.1:6379 to the server's, as the "redis-tunnel" user
+# (deploy/vm/redis-tunnel.sh), which may forward to Redis and nothing else.
+# The UPSTASH_REDIS_URL secret then points at redis://:<password>@127.0.0.1:6379/0.
+# Does nothing while the REDIS_TUNNEL_KEY secret isn't set.
+name: Redis tunnel
+description: SSH tunnel to the server's Redis
+inputs:
+  host:
+    description: The server's address (VM_HOST secret)
+    required: false
+  key:
+    description: The redis-tunnel user's private key (REDIS_TUNNEL_KEY secret)
+    required: false
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        HOST: ${{ inputs.host }}
+        KEY: ${{ inputs.key }}
+      run: |
+        if [ -z "$KEY" ] || [ -z "$HOST" ]; then
+          echo "No REDIS_TUNNEL_KEY / VM_HOST secret: no tunnel (UPSTASH_REDIS_URL is used as it is)"
+          exit 0
+        fi
+        mkdir -p ~/.ssh && chmod 700 ~/.ssh
+        printf '%s\n' "$KEY" > ~/.ssh/redis_tunnel && chmod 600 ~/.ssh/redis_tunnel
+        ssh -i ~/.ssh/redis_tunnel -o StrictHostKeyChecking=accept-new -o ExitOnForwardFailure=yes \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=6 -f -N -L 6379:127.0.0.1:6379 "redis-tunnel@$HOST"
+        for _ in $(seq 1 20); do
+          (exec 3<>/dev/tcp/127.0.0.1/6379) 2>/dev/null && { echo "Tunnel to the server's Redis is up"; exit 0; }
+          sleep 1
+        done
+        echo "::error::The tunnel to the server's Redis didn't open"
+        exit 1
