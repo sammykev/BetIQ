@@ -7,6 +7,7 @@ Europa League on the free tier) answer 403 and are skipped (NOT_IN_PLAN).
 """
 
 import asyncio
+import time
 import httpx
 import pandas as pd
 from datetime import date, timedelta
@@ -29,9 +30,30 @@ def _tls() -> ssl.SSLContext:
 API_BASE = "https://api.football-data.org/v4"
 
 # Competitions this process's API key got a 401/403 for (not in its plan);
-# the Europa and Conference League come from ESPN instead, never asked for
+# the Europa and Conference League come from ESPN instead, never asked for.
+# A 403 can also be passing (football-data.org answers some throttled or
+# restricted requests with one), so a competition is skipped only for
+# SKIP_HOURS and then asked for again; it used to be skipped until the
+# server restarted, which left the site with no Premier League, La Liga,
+# Serie A... for days after one bad answer.
 ESPN_ONLY = {"EL", "UECL"}
 NOT_IN_PLAN: set = set(ESPN_ONLY)
+SKIP_HOURS = 6
+_skipped_at: Dict[str, float] = {}
+
+
+def not_in_plan(comp: Optional[str]) -> bool:
+    """Whether to skip this competition now (ESPN's always; a 401/403 one for SKIP_HOURS)."""
+    if not comp or comp not in NOT_IN_PLAN:
+        return False
+    if comp in ESPN_ONLY:
+        return True
+    at = _skipped_at.get(comp)
+    if at is not None and time.time() - at > SKIP_HOURS * 3600:
+        NOT_IN_PLAN.discard(comp)
+        _skipped_at.pop(comp, None)
+        return False
+    return True
 
 
 def competition_of(url: str) -> Optional[str]:
@@ -77,7 +99,7 @@ class FootballDataClient:
         the first retry waited on itself forever (one 403 on the Europa
         League stalled the whole pipeline's fixture loop there)."""
         comp = competition_of(url)
-        if comp and comp in NOT_IN_PLAN:
+        if not_in_plan(comp):
             return None
         attempts = 3
         for attempt in range(_attempt, attempts):
@@ -112,7 +134,9 @@ class FootballDataClient:
                 continue
             if r.status_code in (401, 403) and comp:
                 NOT_IN_PLAN.add(comp)
-                print(f"[API] {comp}: not in this API key's football-data.org plan ({r.status_code}) — skipping it from now on")
+                _skipped_at[comp] = time.time()
+                print(f"[API] {comp}: football-data.org answered {r.status_code} for {url} — skipping it for "
+                      f"{SKIP_HOURS} h: {r.text[:200]}")
                 return None
             if r.status_code >= 400:
                 print(f"[API] {r.status_code} for {url} — not retrying")

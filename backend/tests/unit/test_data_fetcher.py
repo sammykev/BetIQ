@@ -394,9 +394,30 @@ class TestNotInPlan:
     @pytest.fixture(autouse=True)
     def _clean(self):
         data_fetcher.NOT_IN_PLAN.clear()
+        data_fetcher._skipped_at.clear()
         yield
         data_fetcher.NOT_IN_PLAN.clear()
+        data_fetcher._skipped_at.clear()
         data_fetcher.NOT_IN_PLAN |= data_fetcher.ESPN_ONLY
+
+    async def test_a_403_only_pauses_a_league_then_it_is_asked_again(self):
+        client = _make_client()
+        mock_httpx = MagicMock()
+        mock_httpx.get = AsyncMock(side_effect=[_resp(403), _resp(200, {"matches": []})])
+        url = "https://api.football-data.org/v4/competitions/PL/matches?dateFrom=x"
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            assert await client._get(mock_httpx, url) is None
+            assert data_fetcher.not_in_plan("PL")
+            assert await client._get(mock_httpx, url) is None          # skipped: not asked
+            assert mock_httpx.get.call_count == 1
+            # SKIP_HOURS later it's asked for again (the site used to lose it until a restart)
+            data_fetcher._skipped_at["PL"] -= data_fetcher.SKIP_HOURS * 3600 + 1
+            assert not data_fetcher.not_in_plan("PL")
+            assert await client._get(mock_httpx, url) == {"matches": []}
+        assert mock_httpx.get.call_count == 2
+        # ESPN's competitions are never asked for
+        data_fetcher.NOT_IN_PLAN |= data_fetcher.ESPN_ONLY
+        assert data_fetcher.not_in_plan("EL") and data_fetcher.not_in_plan("UECL")
 
     async def test_403_is_not_retried_and_the_competition_is_skipped_after(self):
         client = _make_client()

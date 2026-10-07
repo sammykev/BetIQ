@@ -28,7 +28,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 
 from predictor import LeaguePredictor
-from data_fetcher import FootballDataClient, LEAGUES, API_BASE, NOT_IN_PLAN
+import data_fetcher
+from data_fetcher import FootballDataClient, LEAGUES, API_BASE, not_in_plan
 import international_fixtures as intl
 import perf
 import security
@@ -1889,7 +1890,7 @@ async def _run_pipeline():
             # if a later one stalls or the run never finishes.
             print("[Pipeline] Fetching upcoming fixtures (publishing after each league)...")
             for code in list(LEAGUES.keys()):
-                if code in NOT_IN_PLAN:
+                if not_in_plan(code):
                     continue
                 try:
                     league_fixtures = await client.fetch_upcoming(code, days_ahead=PREDICTION_DAYS)
@@ -1950,7 +1951,7 @@ async def _run_pipeline():
             print("[Pipeline] Fetching recent API results to calibrate Elo...")
             calibrated = False
             for code in list(LEAGUES.keys()):
-                if code in NOT_IN_PLAN:
+                if not_in_plan(code):
                     continue
                 try:
                     recent = await client.fetch_recent_results(code, days_back=60)
@@ -2024,7 +2025,7 @@ async def _fetch_and_save_results():
 
     client = FootballDataClient(API_KEY) if API_KEY else None
     for code in (LEAGUES if client else []):
-        if code in NOT_IN_PLAN:
+        if not_in_plan(code):
             continue
         try:
             df = await client.fetch_recent_results(code, days_back=30)
@@ -2130,6 +2131,8 @@ async def health():
         "last_updated": _last_updated,
         "predictions": len(_predictions_cache),
         "model_ready": _predictor is not None,
+        # football-data.org competitions paused after a 401/403 (data_fetcher.not_in_plan)
+        "leagues_paused": sorted(c for c in data_fetcher.NOT_IN_PLAN if c not in data_fetcher.ESPN_ONLY),
     }
 
 
