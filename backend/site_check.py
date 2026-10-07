@@ -54,6 +54,13 @@ def main() -> None:
                         print(f"      {r.text[:300]}")
                 except Exception as e:
                     print(f"  ERR {time.time() - t0:6.2f}s  {p}  · {type(e).__name__}: {e}")
+    with httpx.Client(timeout=60) as c:
+        print("\nHealth:", c.get(BASE + "/api/health").text)
+        preds = c.get(BASE + "/api/predictions").json()
+        preds = preds.get("predictions", preds) if isinstance(preds, dict) else preds
+        from collections import Counter
+        print("Football predictions by date:", sorted(Counter(p.get("date") for p in preds).items()))
+        print("By league:", Counter(p.get("league_name") or p.get("league") for p in preds).most_common(40))
     url = os.getenv("UPSTASH_REDIS_URL")
     if url:
         import redis
@@ -62,6 +69,11 @@ def main() -> None:
         raw = r.get("betiq:perf")
         print("Server timing report (perf.py):")
         print(json.dumps(json.loads(raw), indent=1)[:20000] if raw else "  none saved")
+        for k in ("betiq:pipeline:status", "betiq:predictions:meta", "betiq:refresh:status"):
+            v = r.get(k)
+            if v:
+                print(k, v[:1500])
+        print("Prediction-ish keys:", sorted(k for k in r.scan_iter("betiq:*pred*", count=1000))[:30])
         md = r.get("betiq:md:status")
         if md:
             print("Match-day job status:", md[:2000])
