@@ -345,3 +345,18 @@ def test_at_most_max_remakes_a_day():
     doc["cut"] = doc["cut"][:-1]
     assert daily_slips.needs_remake(doc, doc["slips"][0])
     assert not daily_slips.needs_remake(doc, {"target": 10, "status": "won", "picks": []})
+
+
+def test_the_optimizer_leaves_out_thin_history_matches_and_lists_them(monkeypatch):
+    import asyncio
+    day = "2030-06-15"
+    monkeypatch.setattr(main, "_predictions_cache", [
+        {**pred(home="A", away="A2", d=day, t="18:00"), "sport": "football"},
+        {**pred(home="B", away="B2", d=day, t="18:00"), "sport": "football", "thin_history": True}])
+    monkeypatch.setattr(main, "_get_redis", lambda: None)
+    seen = []
+    monkeypatch.setattr(main, "_linked_event", lambda p: seen.append(p["home"]) or None)
+    res = asyncio.run(main._optimize_request({"min_odds": 2, "max_odds": 3, "bookable_only": True},
+                                             window=daily_slips.window(day)))
+    assert seen == ["A"]
+    assert [(m["home"], m["away"]) for m in res["thin_history"]] == [("B", "B2")]

@@ -2,7 +2,7 @@
 
 import { useCallback, useState, useSyncExternalStore, type ReactNode } from "react";
 import clsx from "clsx";
-import { ChevronDown, Pin } from "lucide-react";
+import { ChevronDown, ChevronsDownUp, ChevronsUpDown, Pin } from "lucide-react";
 import { CompetitionBadge } from "./CompetitionBadge";
 
 // A day's matches under their league, like Flashscore: each league a header
@@ -63,15 +63,33 @@ export function PinButton({ pinned, name, onToggle }: { pinned: boolean; name: s
   );
 }
 
-/** Folded-away leagues (kept while the page is open). */
-export function useFolded(): [Set<string>, (id: string) => void] {
-  const [folded, setFolded] = useState<Set<string>>(new Set());
-  const fold = useCallback((id: string) => setFolded(f => {
-    const n = new Set(f);
-    if (n.has(id)) n.delete(id); else n.add(id);
-    return n;
-  }), []);
-  return [folded, fold];
+/** Which leagues are open. Sport pages start with every league collapsed
+ *  except the pinned ones; a header's tap (or "Expand all") overrides that
+ *  while the page is open. */
+export function useLeagueOpen(defaultOpen: boolean, pinned: string[] = NO_PINS) {
+  const [over, setOver] = useState<Record<string, boolean>>({});
+  const isOpen = useCallback((id: string) => over[id] ?? (defaultOpen || pinned.includes(id)),
+    [over, defaultOpen, pinned]);
+  const toggle = useCallback((id: string) => setOver(o => ({ ...o, [id]: !(o[id] ?? (defaultOpen || pinned.includes(id))) })),
+    [defaultOpen, pinned]);
+  const setAll = useCallback((ids: string[], open: boolean) =>
+    setOver(o => { const n = { ...o }; for (const id of ids) n[id] = open; return n; }), []);
+  return { isOpen, toggle, setAll };
+}
+
+/** "Expand all" while any league is collapsed, else "Collapse all". */
+export function ExpandAllButton({ ids, isOpen, setAll, className }: {
+  ids: string[]; isOpen: (id: string) => boolean; setAll: (ids: string[], open: boolean) => void; className?: string;
+}) {
+  if (ids.length < 2) return null;
+  const anyClosed = ids.some(id => !isOpen(id));
+  return (
+    <button type="button" onClick={() => setAll(ids, anyClosed)} aria-label={anyClosed ? "Expand all leagues" : "Collapse all leagues"}
+      className={clsx("inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[12px] font-semibold text-n-300 hover:text-n-0 hover:bg-n-800/60 transition-colors", className)}>
+      {anyClosed ? <ChevronsUpDown size={14} aria-hidden="true" /> : <ChevronsDownUp size={14} aria-hidden="true" />}
+      {anyClosed ? "Expand all" : "Collapse all"}
+    </button>
+  );
 }
 
 export function LeagueSections<T>({ sport, items, leagueOf, itemKey, render, badgeSport }: {
@@ -84,7 +102,7 @@ export function LeagueSections<T>({ sport, items, leagueOf, itemKey, render, bad
   render: (item: T, i: number) => ReactNode;
 }) {
   const [pins, toggle] = usePinnedLeagues(sport);
-  const [folded, fold] = useFolded();
+  const { isOpen, toggle: fold, setAll } = useLeagueOpen(false, pins);
 
   // Leagues in the order their first match plays (items come sorted); pinned first, in pin order
   const groups = new Map<string, { league: LeagueInfo; items: T[] }>();
@@ -98,9 +116,12 @@ export function LeagueSections<T>({ sport, items, leagueOf, itemKey, render, bad
 
   return (
     <div className="space-y-5">
+      <div className="flex justify-end -mb-3">
+        <ExpandAllButton ids={ordered.map(g => g.league.id)} isOpen={isOpen} setAll={setAll} className="-mr-2" />
+      </div>
       {ordered.map(({ league, items: list }) => {
         const pinned = pins.includes(league.id);
-        const open = !folded.has(league.id);
+        const open = isOpen(league.id);
         return (
           <section key={league.id} className="space-y-3">
             <div className={clsx("flex items-center gap-2 border-b pb-2", pinned ? "border-accent/40" : "border-n-800")}>

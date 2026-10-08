@@ -8548,9 +8548,12 @@ async def _optimize_request(body: Dict[str, Any],
                 and (in_window(p) if window else
                      today <= p.get("date", "") <= last
                      and not (p.get("date") == today and (p.get("time") or "99:99") <= kicked_off))
-                and (not leagues or p.get("league") in leagues)
-                # a club the model has (next to) no matches for: its chances are mostly guesswork
-                and not p.get("thin_history")]
+                and (not leagues or p.get("league") in leagues)]
+    # A club the model has (next to) no matches for: its chances are mostly
+    # guesswork, so the match stays out (the page lists what was left out)
+    thin = [{k: p.get(k) for k in ("home", "away", "date", "time", "league", "league_name", "flag")}
+            for p in upcoming if p.get("thin_history")]
+    upcoming = [p for p in upcoming if not p.get("thin_history")]
     # Bookable = linked to a SportyBet event. Asked of the stored links, not
     # the prediction's "sportybet" flag: a predictions rebuild replaces the
     # predictions (flags and all) minutes before the next linking run.
@@ -8563,7 +8566,7 @@ async def _optimize_request(body: Dict[str, Any],
         return {"error": (f"SportyBet hasn't listed any of the {len(upcoming)} matches in the next {days} "
                           f"day{'s' if days != 1 else ''} yet (or we haven't linked them since the last restart). "
                           "Untick \"Only matches SportyBet lists\", or pick more days."),
-                "matches_considered": 0, "target": [lo, hi], "target_odds": target}
+                "matches_considered": 0, "target": [lo, hi], "target_odds": target, "thin_history": thin}
     # Bookable-only slips skip markets SportyBet hasn't confirmed yet (a code
     # couldn't take those picks)
     bookable = _bookable_markets() if bookable_only else None
@@ -8574,7 +8577,7 @@ async def _optimize_request(body: Dict[str, Any],
         return {"error": (f"{market_review.names(sorted(markets))} {'is' if len(markets) == 1 else 'are'} paused: "
                           "recent picks came in less often than we said, so we're not using "
                           f"{'it' if len(markets) == 1 else 'them'} until the accuracy check clears. Add other markets."),
-                "paused": sorted(markets), "matches_considered": 0, "target": [lo, hi], "target_odds": target}
+                "paused": sorted(markets), "matches_considered": 0, "target": [lo, hi], "target_odds": target, "thin_history": thin}
 
     def allowed(market: str, code: str) -> bool:
         if market in paused:
@@ -8622,7 +8625,7 @@ async def _optimize_request(body: Dict[str, Any],
                           + (" in the markets you chose" if bb_families else "")
                           + ". Lower the minimum confidence, add markets or pick more days."
                           if bb_preds else "No basketball matches listed on SportyBet in those days yet."),
-                "matches_considered": 0, "target": [lo, hi], "target_odds": target}
+                "matches_considered": 0, "target": [lo, hi], "target_odds": target, "thin_history": thin}
     if considered == 0 and sport in RK_SPORTS:
         name = "tennis" if sport == "tennis" else "table tennis"
         return {"error": (f"None of the {len(rk_preds)} {name} matches in the next {days} day{'s' if days != 1 else ''} "
@@ -8630,11 +8633,11 @@ async def _optimize_request(body: Dict[str, Any],
                           + (" in the markets you chose" if rk_families[sport] else "")
                           + ". Lower the minimum confidence, add markets or pick more days."
                           if rk_preds else f"No {name} matches listed on SportyBet in those days yet."),
-                "matches_considered": 0, "target": [lo, hi], "target_odds": target}
+                "matches_considered": 0, "target": [lo, hi], "target_odds": target, "thin_history": thin}
     if considered == 0:
         reasons = optimizer.why_empty(preds, markets, min_prob, bookable, only)
         return {"error": _explain_empty(reasons, len(preds), days, min_prob), "reasons": reasons,
-                "matches_considered": 0, "target": [lo, hi], "target_odds": target}
+                "matches_considered": 0, "target": [lo, hi], "target_odds": target, "thin_history": thin}
     # Every pick checked on SportyBet's current match page (_solve_checked)
     events = {(p["home"], p["away"], p.get("date")): ev for p, ev in pairs}
     if body.get("no_live_check"):
@@ -8645,11 +8648,11 @@ async def _optimize_request(body: Dict[str, Any],
     if result is None and live_check["removed"]:
         return {"error": (f"{len(live_check['removed'])} of the picks were suspended on SportyBet and "
                           "no slip without them reaches the target. Try again in a few minutes, or widen the target."),
-                "live_check": live_check, "matches_considered": considered, "target": [lo, hi], "target_odds": target}
+                "live_check": live_check, "matches_considered": considered, "target": [lo, hi], "target_odds": target, "thin_history": thin}
     if result is None:
         return {"error": (f"No slip from {considered} matches gets near {target:,.2f}x. "
                           "Allow more games or days, add markets, or lower the minimum confidence."),
-                "matches_considered": considered, "target": [lo, hi], "target_odds": target}
+                "matches_considered": considered, "target": [lo, hi], "target_odds": target, "thin_history": thin}
     # Which picks a SportyBet code can take: the match is linked to a SportyBet
     # event and SportyBet confirmed the market (shots, for one, it doesn't offer)
     ok = bookable or _bookable_markets()
@@ -8661,7 +8664,7 @@ async def _optimize_request(body: Dict[str, Any],
         pick["bookable"] = (bool(events.get((pick["home"], pick["away"], pick["date"]))) and ok(pick["market"], pick["code"])
                             and (pick["market"] not in booking_slip.LISTED_ONLY or pick["odds_source"] == "sportybet"))
     result["bookable_picks"] = sum(1 for pick in result.get("picks") or [] if pick["bookable"])
-    return {**result, "target": [lo, hi], "target_odds": round(target, 2), "matches_considered": considered}
+    return {**result, "target": [lo, hi], "target_odds": round(target, 2), "matches_considered": considered, "thin_history": thin}
 
 
 def _prediction_for_leg(sel: Dict[str, Any], by_event: Dict[str, Dict]) -> Optional[Dict]:

@@ -16,7 +16,9 @@ import { FeatureGate, Unavailable } from "@/components/FeatureGate";
 import type { SlipSelection } from "@/lib/slip";
 import { Tabs } from "@/components/ui/tabs";
 import { CompetitionBadge } from "@/components/CompetitionBadge";
-import { PinButton, pinnedFirst, useFolded, usePinnedLeagues } from "@/components/LeagueSections";
+import { ThinHistoryBadge } from "@/components/ThinHistoryBadge";
+import { localTime } from "@/lib/matchTime";
+import { ExpandAllButton, PinButton, pinnedFirst, useLeagueOpen, usePinnedLeagues } from "@/components/LeagueSections";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
 
@@ -37,10 +39,36 @@ interface OptResult {
   picks?: OptPick[]; games?: number; total_odds?: number; win_chance?: number;
   within_target?: boolean; estimated_prices?: number; matches_considered?: number; bookable_picks?: number;
   target?: [number, number]; target_odds?: number; error?: string;
+  /** Matches left out: a club with fewer than 5 matches in our data */
+  thin_history?: ThinMatch[];
   /** Each pick checked on SportyBet's match page as the slip was made */
   live_check?: { checked: number; unchecked: number; repriced: number;
                  removed: { home: string; away: string; label: string; reason: string }[] };
 }
+interface ThinMatch { home: string; away: string; date: string; time?: string; league?: string; league_name?: string }
+
+/** The matches the optimizer left out for want of data on a club. */
+function ThinLeftOut({ matches }: { matches?: ThinMatch[] }) {
+  if (!matches?.length) return null;
+  return (
+    <details className="group rounded-xl bg-surface-sunken px-3 py-2 text-xs">
+      <summary className="flex cursor-pointer list-none items-center gap-2 text-n-300 [&::-webkit-details-marker]:hidden">
+        <ThinHistoryBadge />
+        <span className="flex-1">{matches.length} {matches.length === 1 ? "match" : "matches"} left out: too little data on a club</span>
+        <ChevronDown size={14} className="shrink-0 text-n-500 transition-transform group-open:rotate-180" aria-hidden="true" />
+      </summary>
+      <ul className="mt-2 space-y-1">
+        {matches.map(m => (
+          <li key={`${m.home}-${m.away}-${m.date}`} className="flex items-center justify-between gap-2 text-n-200">
+            <span className="truncate">{m.home} v {m.away}</span>
+            <span className="shrink-0 text-n-500">{m.league_name || m.league} · {m.date.slice(5)}{m.time ? ` ${localTime(m.date, m.time)}` : ""}</span>
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
 interface BookResult { code: string | null; share_url: string | null; total_odds: number | null; error: string | null;
   price_changes?: number;
   picks: { key: string; status: string; reason?: string; odds?: number | null; shown_odds?: number }[] }
@@ -647,6 +675,7 @@ export default function OptimizerPage() {
             <AlertTriangle size={16} className="shrink-0 mt-0.5" />
             <div className="space-y-2">
               <p>{result.error}</p>
+              <ThinLeftOut matches={result.thin_history} />
               {bookableOnly && result.matches_considered === 0 && /SportyBet/.test(result.error) && (
                 <button onClick={() => { setBookableOnly(false); run(false); }}
                   className="chip chip-idle">Try all matches, not just SportyBet-listed ones</button>
@@ -683,6 +712,7 @@ export default function OptimizerPage() {
                   ` ${result.estimated_prices} price${result.estimated_prices === 1 ? " is" : "s are"} estimated from our probabilities; SportyBet's own odds may differ.`}
               </p>
               <LiveCheckNote check={result.live_check} />
+              <ThinLeftOut matches={result.thin_history} />
 
               {booked?.code ? (
                 <div className="rounded-xl bg-surface-sunken p-4 space-y-3 [box-shadow:inset_0_0_0_1px_rgb(var(--accent)/0.4)]">
@@ -832,7 +862,8 @@ function SlipByLeague({ picks, row }: { picks: OptPick[]; row: (p: OptPick) => R
   const pinsOf: Record<string, [string[], (id: string) => void]> = {
     football: [fbPins, fbToggle], basketball: [bbPins, bbToggle], tennis: [tnPins, tnToggle], table_tennis: [ttPins, ttToggle],
   };
-  const [folded, fold] = useFolded();
+  // The slip is the answer: its leagues start open
+  const { isOpen, toggle: fold, setAll } = useLeagueOpen(true);
   const byLeague: { key: string; sport: string; id: string; name: string; items: OptPick[] }[] = [];
   for (const p of picks) {
     const sport = p.sport || "football", id = p.league_id || p.league;
@@ -844,9 +875,14 @@ function SlipByLeague({ picks, row }: { picks: OptPick[]; row: (p: OptPick) => R
   const groups = pinnedFirst(byLeague, g => (pinsOf[g.sport]?.[0] ?? []).indexOf(g.id));
   return (
     <>
+      {groups.length > 1 && (
+        <div className="flex justify-end px-3 py-1">
+          <ExpandAllButton ids={groups.map(g => g.key)} isOpen={isOpen} setAll={setAll} />
+        </div>
+      )}
       {groups.map(g => {
         const [pins, toggle] = pinsOf[g.sport] ?? pinsOf.football;
-        const open = !folded.has(g.key);
+        const open = isOpen(g.key);
         return (
           <div key={g.key}>
             <div className="flex items-center gap-2 px-5 py-1.5 bg-surface-sunken/60">
