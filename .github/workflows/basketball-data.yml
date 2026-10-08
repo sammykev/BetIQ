@@ -132,7 +132,7 @@ jobs:
 
       # Football: our chances against blends with the market's prices (check_football_blend.py)
       - name: Football blend check
-        if: github.event.inputs.job == 'football_blend'
+        if: github.event_name == 'schedule' || github.event.inputs.job == 'football_blend'
         env:
           UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
         run: python check_football_blend.py
