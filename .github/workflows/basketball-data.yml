@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       job:
-        description: "backtest, elo_check, insights, fair_odds, football_blend, calibration, tickets, site, history (10 seasons of games), history_sample, props, props_sample, probe, or read_probe (the server's web probe)"
+        description: "backtest, elo_check, insights, fair_odds, football_blend, clubs, calibration, tickets, site, history (10 seasons of games), history_sample, props, props_sample, probe, or read_probe (the server's web probe)"
         default: "backtest"
       minutes:
         description: "props: minutes of collection"
@@ -136,6 +136,13 @@ jobs:
         env:
           UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
         run: python check_football_blend.py
+
+      # Football fixture clubs the model has no history for, with the closest known names (club_check.py)
+      - name: Club check
+        if: github.event.inputs.job == 'clubs'
+        env:
+          UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
+        run: python club_check.py
 
       # The production server's own probe (web_probe.py), read back from Redis
       - name: Read the server's probe
