@@ -74,6 +74,19 @@ def main() -> None:
             if v:
                 print(k, v[:1500])
         print("Prediction-ish keys:", sorted(k for k in r.scan_iter("betiq:*pred*", count=1000))[:30])
+        from collections import Counter as _C
+        for sport in ("basketball", "tennis", "table_tennis"):
+            raw = r.get({"basketball": "betiq:bb:predictions"}.get(sport, f"betiq:{sport}:predictions"))
+            try:
+                ps = json.loads(raw) if raw else []
+                ps = ps.get("predictions", ps) if isinstance(ps, dict) else ps
+            except Exception as e:
+                print(sport, "predictions unreadable:", e)
+                continue
+            leagues = _C(p.get("league") for p in ps if isinstance(p, dict))
+            print(f"{sport}: {len(ps)} predictions in {len(leagues)} leagues: {leagues.most_common(12)}")
+            if ps and isinstance(ps[0], dict):
+                print("   one:", {k: ps[0].get(k) for k in ("league", "league_name", "flag", "home", "away")})
         md = r.get("betiq:md:status")
         if md:
             print("Match-day job status:", md[:2000])
