@@ -143,5 +143,6 @@ def options(pred: Dict, min_prob: float, families: Optional[set] = None,
             continue
         out.append(optimizer.Option(pred["home"], pred["away"], pred["date"], pred.get("time") or "",
                                     pred.get("league_name") or "", x["market"], x["market_name"], x["code"],
-                                    x["label"], x["prob"], x["odds"], "sportybet", sb=x["sb"], sport="basketball"))
+                                    x["label"], x["prob"], x["odds"], "sportybet", sb=x["sb"], sport="basketball",
+                                    league_id=str(pred.get("league") or "")))
     return out

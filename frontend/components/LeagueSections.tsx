@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useState, useSyncExternalStore, type ReactNode } from "react";
 import clsx from "clsx";
 import { ChevronDown, Pin } from "lucide-react";
 import { CompetitionBadge } from "./CompetitionBadge";
@@ -13,23 +13,65 @@ export interface LeagueInfo { id: string; name: string; flag?: string }
 
 const pinKey = (sport: string) => `betiq:pinned:${sport}`;
 
+// One store for every list on the page (cards, results, the optimizer's
+// slip), so a pin made in one shows in all of them at once
+const pinStore: Record<string, string[]> = {};
+const listeners = new Set<() => void>();
+function readPins(sport: string): string[] {
+  if (!(sport in pinStore)) {
+    try {
+      const raw = typeof window !== "undefined" ? localStorage.getItem(pinKey(sport)) : null;
+      pinStore[sport] = raw ? (JSON.parse(raw) as unknown[]).filter((x): x is string => typeof x === "string") : [];
+    } catch { pinStore[sport] = []; }
+  }
+  return pinStore[sport];
+}
+export function togglePin(sport: string, id: string): void {
+  const ps = readPins(sport);
+  pinStore[sport] = ps.includes(id) ? ps.filter(x => x !== id) : [...ps, id];
+  try { localStorage.setItem(pinKey(sport), JSON.stringify(pinStore[sport])); } catch { /* storage off */ }
+  listeners.forEach(l => l());
+}
+const NO_PINS: string[] = [];
+
 /** The leagues pinned on this device for a sport, and a toggle. */
 export function usePinnedLeagues(sport: string): [string[], (id: string) => void] {
-  const [pins, setPins] = useState<string[]>([]);
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(pinKey(sport));
-      setPins(raw ? (JSON.parse(raw) as string[]).filter(x => typeof x === "string") : []);
-    } catch { setPins([]); }
-  }, [sport]);
-  const toggle = useCallback((id: string) => {
-    setPins(ps => {
-      const next = ps.includes(id) ? ps.filter(x => x !== id) : [...ps, id];
-      try { localStorage.setItem(pinKey(sport), JSON.stringify(next)); } catch { /* storage off */ }
-      return next;
-    });
-  }, [sport]);
+  const pins = useSyncExternalStore(
+    (l) => { listeners.add(l); return () => { listeners.delete(l); }; },
+    () => readPins(sport),
+    () => NO_PINS,
+  );
+  const toggle = useCallback((id: string) => togglePin(sport, id), [sport]);
   return [pins, toggle];
+}
+
+/** Pinned leagues first (in pin order), the rest as they came. */
+export function pinnedFirst<G>(groups: G[], pinned: (g: G) => number): G[] {
+  return groups.map((g, i) => ({ g, i, p: pinned(g) }))
+    .sort((a, b) => (a.p < 0 ? Infinity : a.p) - (b.p < 0 ? Infinity : b.p) || a.i - b.i)
+    .map(x => x.g);
+}
+
+/** The pin toggle in a league header. */
+export function PinButton({ pinned, name, onToggle }: { pinned: boolean; name: string; onToggle: () => void }) {
+  return (
+    <button type="button" onClick={e => { e.stopPropagation(); onToggle(); }} aria-pressed={pinned}
+      aria-label={pinned ? `Unpin ${name}` : `Pin ${name} to the top`} title={pinned ? "Unpin" : "Pin to the top"}
+      className={clsx("shrink-0 rounded-lg p-1.5 transition-colors", pinned ? "text-accent" : "text-n-500 hover:text-n-200")}>
+      <Pin size={15} className={clsx(pinned && "fill-current")} />
+    </button>
+  );
+}
+
+/** Folded-away leagues (kept while the page is open). */
+export function useFolded(): [Set<string>, (id: string) => void] {
+  const [folded, setFolded] = useState<Set<string>>(new Set());
+  const fold = useCallback((id: string) => setFolded(f => {
+    const n = new Set(f);
+    if (n.has(id)) n.delete(id); else n.add(id);
+    return n;
+  }), []);
+  return [folded, fold];
 }
 
 export function LeagueSections<T>({ sport, items, leagueOf, itemKey, render, badgeSport }: {
@@ -41,8 +83,8 @@ export function LeagueSections<T>({ sport, items, leagueOf, itemKey, render, bad
   itemKey: (item: T, i: number) => string;
   render: (item: T, i: number) => ReactNode;
 }) {
-  const [pins, togglePin] = usePinnedLeagues(sport);
-  const [folded, setFolded] = useState<Set<string>>(new Set());
+  const [pins, toggle] = usePinnedLeagues(sport);
+  const [folded, fold] = useFolded();
 
   // Leagues in the order their first match plays (items come sorted); pinned first, in pin order
   const groups = new Map<string, { league: LeagueInfo; items: T[] }>();
@@ -52,16 +94,7 @@ export function LeagueSections<T>({ sport, items, leagueOf, itemKey, render, bad
     g.items.push(it);
     groups.set(lg.id, g);
   }
-  const ordered = Array.from(groups.values()).sort((a, b) => {
-    const pa = pins.indexOf(a.league.id), pb = pins.indexOf(b.league.id);
-    if (pa >= 0 || pb >= 0) return (pa < 0 ? Infinity : pa) - (pb < 0 ? Infinity : pb);
-    return 0;
-  });
-  const fold = (id: string) => setFolded(f => {
-    const n = new Set(f);
-    if (n.has(id)) n.delete(id); else n.add(id);
-    return n;
-  });
+  const ordered = pinnedFirst(Array.from(groups.values()), g => pins.indexOf(g.league.id));
 
   return (
     <div className="space-y-5">
@@ -78,13 +111,7 @@ export function LeagueSections<T>({ sport, items, leagueOf, itemKey, render, bad
                 <span className="truncate font-display font-bold text-n-0">{league.name}</span>
                 <span className="shrink-0 tnum text-xs font-semibold text-n-500">{list.length}</span>
               </button>
-              <button type="button" onClick={() => togglePin(league.id)} aria-pressed={pinned}
-                aria-label={pinned ? `Unpin ${league.name}` : `Pin ${league.name} to the top`}
-                title={pinned ? "Unpin" : "Pin to the top"}
-                className={clsx("shrink-0 rounded-lg p-1.5 transition-colors",
-                  pinned ? "text-accent" : "text-n-500 hover:text-n-200")}>
-                <Pin size={16} className={clsx(pinned && "fill-current")} />
-              </button>
+              <PinButton pinned={pinned} name={league.name} onToggle={() => toggle(league.id)} />
             </div>
             {open && (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">

@@ -16,6 +16,7 @@ import { FeatureGate, Unavailable } from "@/components/FeatureGate";
 import type { SlipSelection } from "@/lib/slip";
 import { Tabs } from "@/components/ui/tabs";
 import { CompetitionBadge } from "@/components/CompetitionBadge";
+import { PinButton, pinnedFirst, useFolded, usePinnedLeagues } from "@/components/LeagueSections";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
 
@@ -30,6 +31,7 @@ interface OptPick {
   sb?: { eventId: string; marketId: string; specifier: string; outcomeId: string } | null;
   sport?: "football" | "basketball" | "tennis" | "table_tennis";
   bookable?: boolean;  // a SportyBet code can take it (match listed, market confirmed)
+  league_id?: string;  // the league's id (its header and pin go by it); `league` is its name
 }
 interface OptResult {
   picks?: OptPick[]; games?: number; total_odds?: number; win_chance?: number;
@@ -765,23 +767,23 @@ export default function OptimizerPage() {
 
             <div className="card divide-y divide-n-800">
               <p className="px-5 py-3 text-sm font-bold text-n-0">Optimized slip</p>
-              {result.picks.map(p => (
-                <div key={`${p.home}-${p.away}-${p.date}`} className="px-5 py-3 flex items-center gap-3">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[11px] text-n-500 truncate">{p.league} · {p.date} {p.time}</p>
-                    <p className="text-sm text-n-0 font-semibold truncate">{p.home} vs {p.away}</p>
-                    <p className="text-xs text-n-400">{p.market_name}: <span className="text-n-200">{p.label}</span>
-                      {p.bookable === false && <span className="ml-1.5 text-[10px] font-bold uppercase tracking-wide text-warn">not on SportyBet</span>}
-                    </p>
+              <SlipByLeague picks={result.picks} row={p => (
+                <div className="px-5 py-3 flex items-center gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[11px] text-n-500 truncate">{p.date} {p.time}</p>
+                      <p className="text-sm text-n-0 font-semibold truncate">{p.home} vs {p.away}</p>
+                      <p className="text-xs text-n-400">{p.market_name}: <span className="text-n-200">{p.label}</span>
+                        {p.bookable === false && <span className="ml-1.5 text-[10px] font-bold uppercase tracking-wide text-warn">not on SportyBet</span>}
+                      </p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-sm font-bold text-n-0 tnum">{odds(p.odds)}</p>
+                      <p className="text-[11px] text-n-500 tnum">
+                        {pct(p.prob)} · {p.odds_source === "sportybet" ? "SportyBet" : p.odds_source === "bookmaker" ? "market" : "est."}
+                      </p>
+                    </div>
                   </div>
-                  <div className="text-right shrink-0">
-                    <p className="text-sm font-bold text-n-0 tnum">{odds(p.odds)}</p>
-                    <p className="text-[11px] text-n-500 tnum">
-                      {pct(p.prob)} · {p.odds_source === "sportybet" ? "SportyBet" : p.odds_source === "bookmaker" ? "market" : "est."}
-                    </p>
-                  </div>
-                </div>
-              ))}
+              )} />
             </div>
           </section>
         )}
@@ -819,3 +821,49 @@ function LiveCheckNote({ check }: { check?: OptResult["live_check"] }) {
     </div>
   );
 }
+
+
+/** The slip's picks under their league, pinned leagues first (the same pins as each sport's page). */
+function SlipByLeague({ picks, row }: { picks: OptPick[]; row: (p: OptPick) => React.ReactNode }) {
+  const [fbPins, fbToggle] = usePinnedLeagues("football");
+  const [bbPins, bbToggle] = usePinnedLeagues("basketball");
+  const [tnPins, tnToggle] = usePinnedLeagues("tennis");
+  const [ttPins, ttToggle] = usePinnedLeagues("table_tennis");
+  const pinsOf: Record<string, [string[], (id: string) => void]> = {
+    football: [fbPins, fbToggle], basketball: [bbPins, bbToggle], tennis: [tnPins, tnToggle], table_tennis: [ttPins, ttToggle],
+  };
+  const [folded, fold] = useFolded();
+  const byLeague: { key: string; sport: string; id: string; name: string; items: OptPick[] }[] = [];
+  for (const p of picks) {
+    const sport = p.sport || "football", id = p.league_id || p.league;
+    const key = `${sport}:${id}`;
+    const g = byLeague.find(x => x.key === key);
+    if (g) g.items.push(p);
+    else byLeague.push({ key, sport, id, name: p.league, items: [p] });
+  }
+  const groups = pinnedFirst(byLeague, g => (pinsOf[g.sport]?.[0] ?? []).indexOf(g.id));
+  return (
+    <>
+      {groups.map(g => {
+        const [pins, toggle] = pinsOf[g.sport] ?? pinsOf.football;
+        const open = !folded.has(g.key);
+        return (
+          <div key={g.key}>
+            <div className="flex items-center gap-2 px-5 py-1.5 bg-surface-sunken/60">
+              <button type="button" onClick={() => fold(g.key)} aria-expanded={open} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+                <ChevronDown size={14} className={clsx("shrink-0 text-n-500 transition-transform", !open && "-rotate-90")} />
+                <CompetitionBadge name={g.name} fallbackEmoji={SPORT_ICON[g.sport] ?? "🏆"} size={16} />
+                <span className="text-[12px] font-bold uppercase tracking-[0.06em] text-n-200 truncate">{g.name}</span>
+                <span className="text-[11px] text-n-500 tnum shrink-0">{g.items.length}</span>
+              </button>
+              <PinButton pinned={pins.includes(g.id)} name={g.name} onToggle={() => toggle(g.id)} />
+            </div>
+            {open && g.items.map(p => <div key={`${p.home}-${p.away}-${p.date}`}>{row(p)}</div>)}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+const SPORT_ICON: Record<string, string> = { football: "⚽", basketball: "🏀", tennis: "🎾", table_tennis: "🏓" };

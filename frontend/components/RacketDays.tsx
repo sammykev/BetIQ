@@ -7,6 +7,7 @@ import { DateStrip } from "@/components/DateStrip";
 import { DaySummaryBar } from "@/components/DaySummaryBar";
 import { SportCard, type SportPrediction } from "@/components/SportCard";
 import { LeagueSections } from "@/components/LeagueSections";
+import { StatusFilter, type MatchStatus } from "@/components/StatusFilter";
 import { CompetitionBadge } from "@/components/CompetitionBadge";
 import { RacketMatchList } from "@/components/RacketMatchList";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
@@ -122,6 +123,13 @@ export function RacketDays({ sport, preds, loading, onOpen }: {
   const underway = (m: RKMatchdayMatch) => m.status !== "scheduled" || Date.parse(`${m.date}T${m.time}:00Z`) <= Date.now();
   const played = isToday ? (md?.matches ?? []).filter(underway) : [];
   const started = new Set(played.map(m => m.id));
+  // Today's filter: live (in play, or tipped off and waiting for its score), finished, or still to play
+  const [matchStatus, setMatchStatus] = useState<MatchStatus>("all");
+  const livePlayed = played.filter(m => m.status === "live" || m.status === "scheduled");
+  const finishedPlayed = played.filter(m => m.status !== "live" && m.status !== "scheduled");
+  const playedShown = matchStatus === "live" ? livePlayed : matchStatus === "finished" ? finishedPlayed
+    : matchStatus === "upcoming" ? [] : played;
+  const showUpcoming = matchStatus === "all" || matchStatus === "upcoming";
   const dayPreds = preds.filter(p => p.date === day && !started.has(p.sportybet_event_id));
   const counts = new Map<string, number>();
   dayPreds.forEach(p => counts.set(p.league, (counts.get(p.league) ?? 0) + 1));
@@ -156,16 +164,25 @@ export function RacketDays({ sport, preds, loading, onOpen }: {
           </div>
         )
       ) : <>
-        {played.length > 0 && (
+        {isToday && (played.length > 0 || dayPreds.length > 0) && (
+          <StatusFilter value={matchStatus} onChange={setMatchStatus}
+            counts={{ live: livePlayed.length, finished: finishedPlayed.length, upcoming: dayPreds.length }} />
+        )}
+        {!showUpcoming && playedShown.length === 0 && (
+          <Empty icon={<CalendarDays size={20} />} title={matchStatus === "live" ? "Nothing in play right now" : "Nothing finished yet today"}
+            body="Live and finished matches show here as the day goes on." />
+        )}
+        {playedShown.length > 0 && (
           <section className="space-y-3">
-            <Heading title="Live & finished" n={played.length} />
+            <Heading title={matchStatus === "live" ? "Live" : matchStatus === "finished" ? "Finished" : "Live & finished"} n={playedShown.length} />
             {md && md.summary.finished > 0 && (
               <DaySummaryBar summary={md.summary} label="Today so far" items={summaryItems(md.summary, sport)} link={false} />
             )}
-            <RacketMatchList matches={played} sport={sport} />
+            <RacketMatchList matches={playedShown} sport={sport} />
           </section>
         )}
-        {played.length > 0 && dayPreds.length > 0 && <div className="pt-2"><Heading title="Still to play" n={dayPreds.length} /></div>}
+        {showUpcoming && playedShown.length > 0 && dayPreds.length > 0 && <div className="pt-2"><Heading title="Still to play" n={dayPreds.length} /></div>}
+        {showUpcoming && <>
 
         {loading ? (
           <div className="card flex items-center justify-center gap-2 py-16 text-sm text-n-400"><Loader2 size={16} className="animate-spin" /> Loading matches…</div>
@@ -212,6 +229,7 @@ export function RacketDays({ sport, preds, loading, onOpen }: {
               )}
             />
           </EnterGroup>
+        </>}
         </>}
       </>}
     </div>

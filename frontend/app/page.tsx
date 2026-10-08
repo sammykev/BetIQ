@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { PredictionCard } from "@/components/PredictionCard";
 import { LeagueTabs } from "@/components/LeagueTabs";
 import { LeagueSections } from "@/components/LeagueSections";
+import { StatusFilter, type MatchStatus } from "@/components/StatusFilter";
 import { triggerRefresh } from "@/lib/api";
 import type { Prediction, League } from "@/lib/api";
 import { dayLabel, localDateStr } from "@/lib/matchTime";
@@ -554,6 +555,13 @@ export default function HomePage() {
   const started = new Set((isToday ? md?.matches ?? [] : []).filter(underway).map(m => m.key));
   const dayPredictions = validPredictions.filter(p => p.date === day && !started.has(matchKey(p.home, p.away)));
   const playedToday: MatchdayMatch[] = isToday ? (md?.matches ?? []).filter(underway) : [];
+  // Today's filter: live (in play, or kicked off and waiting for its score), finished, or still to play
+  const [matchStatus, setMatchStatus] = useState<MatchStatus>("all");
+  const liveToday = playedToday.filter(m => m.status === "live" || m.status === "scheduled");
+  const finishedToday = playedToday.filter(m => m.status !== "live" && m.status !== "scheduled");
+  const playedShown = matchStatus === "live" ? liveToday : matchStatus === "finished" ? finishedToday
+    : matchStatus === "upcoming" ? [] : playedToday;
+  const showUpcoming = matchStatus === "all" || matchStatus === "upcoming";
 
   // Counts per league for tab badges (the chosen day): the bar shows only these
   const counts: Record<string, number> = {};
@@ -756,24 +764,33 @@ export default function HomePage() {
               </div>
             )
           ) : <>
-          {playedToday.length > 0 && (
+          {isToday && (playedToday.length > 0 || dayPredictions.length > 0) && (
+            <StatusFilter value={matchStatus} onChange={setMatchStatus}
+              counts={{ live: liveToday.length, finished: finishedToday.length, upcoming: dayPredictions.length }} />
+          )}
+          {!showUpcoming && playedShown.length === 0 && (
+            <StatePanel icon={<SearchX size={20} />} title={matchStatus === "live" ? "Nothing in play right now" : "Nothing finished yet today"}
+              body="Live and finished matches show here as the day goes on." />
+          )}
+          {playedShown.length > 0 && (
             <section className="space-y-3">
               <div className="flex items-baseline gap-3">
-                <h2 className="heading text-xl">Live &amp; finished</h2>
-                <span className="text-xs font-semibold text-n-500 tnum">{playedToday.length}</span>
+                <h2 className="heading text-xl">{matchStatus === "live" ? "Live" : matchStatus === "finished" ? "Finished" : <>Live &amp; finished</>}</h2>
+                <span className="text-xs font-semibold text-n-500 tnum">{playedShown.length}</span>
                 <span className="flex-1 h-px bg-n-800 self-center" />
               </div>
               {md && md.summary.finished > 0 && <DaySummaryBar summary={md.summary} label="Today so far" />}
-              <MatchdayList matches={playedToday} onOpen={openMatchday} />
+              <MatchdayList matches={playedShown} onOpen={openMatchday} />
             </section>
           )}
-          {playedToday.length > 0 && dayPredictions.length > 0 && (
+          {showUpcoming && playedShown.length > 0 && dayPredictions.length > 0 && (
             <div className="flex items-baseline gap-3 pt-2">
               <h2 className="heading text-xl">Still to play</h2>
               <span className="text-xs font-semibold text-n-500 tnum">{dayPredictions.length}</span>
               <span className="flex-1 h-px bg-n-800 self-center" />
             </div>
           )}
+          {showUpcoming && <>
           {/* Filters */}
           <div className="space-y-3">
             {/* Quick views */}
@@ -910,6 +927,7 @@ export default function HomePage() {
               />
             </EnterGroup>
           )}
+          </>}
           </>}
         </>}
 

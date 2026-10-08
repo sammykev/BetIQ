@@ -3,6 +3,7 @@
 import { useState } from "react";
 import clsx from "clsx";
 import { ChevronDown } from "lucide-react";
+import { PinButton, pinnedFirst, useFolded, usePinnedLeagues } from "@/components/LeagueSections";
 import { CompetitionBadge } from "@/components/CompetitionBadge";
 import { FormDots } from "@/components/BasketballCard";
 import { VerdictIcon } from "@/components/MatchdayList";
@@ -179,32 +180,40 @@ function Row({ m, sport, open, onToggle }: { m: RKMatchdayMatch; sport: RacketSp
 /** A day's tennis or table tennis matches grouped by tournament, like the football list. */
 export function RacketMatchList({ matches, sport }: { matches: RKMatchdayMatch[]; sport: RacketSport }) {
   const [openKey, setOpenKey] = useState<string | null>(null);
-  const groups: { name: string; flag: string; items: RKMatchdayMatch[] }[] = [];
+  // Under each league (pinned ones first, shared with the cards above); a header folds its matches away
+  const [pins, togglePin] = usePinnedLeagues(sport);
+  const [folded, fold] = useFolded();
+  const byLeague: { id: string; name: string; flag: string; items: RKMatchdayMatch[] }[] = [];
   for (const m of matches) {
-    const name = m.league_name || m.league;
-    const g = groups.find(x => x.name === name);
+    const id = m.league || m.league_name;
+    const g = byLeague.find(x => x.id === id);
     if (g) g.items.push(m);
-    else groups.push({ name, flag: m.flag, items: [m] });
+    else byLeague.push({ id, name: m.league_name || m.league, flag: m.flag, items: [m] });
   }
+  const groups = pinnedFirst(byLeague, g => pins.indexOf(g.id));
   return (
     <div className="space-y-3">
       {groups.map(g => {
         const settled = g.items.filter(m => m.grades?.tip);
         const right = settled.filter(m => m.grades!.tip!.verdict === "won").length;
         return (
-          <section key={g.name} className="card overflow-hidden">
-            <header className="flex items-center gap-2 px-3 sm:px-4 py-2 bg-surface-sunken/60 border-b border-n-800">
-              <CompetitionBadge name={g.name} fallbackEmoji={g.flag} size={16} className="text-sm" />
-              <span className="text-[12px] font-bold uppercase tracking-[0.06em] text-n-200 truncate">{g.name}</span>
-              <span className="ml-auto text-[11px] text-n-500 tnum shrink-0">
+          <section key={g.id} className={clsx("card overflow-hidden", pins.includes(g.id) && "[box-shadow:0_0_0_1px_rgb(var(--accent)/0.35)]")}>
+            <header className={clsx("flex items-center gap-2 px-3 sm:px-4 py-1.5 bg-surface-sunken/60", !folded.has(g.id) && "border-b border-n-800")}>
+              <button type="button" onClick={() => fold(g.id)} aria-expanded={!folded.has(g.id)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+                <ChevronDown size={14} className={clsx("shrink-0 text-n-500 transition-transform", folded.has(g.id) && "-rotate-90")} />
+                <CompetitionBadge name={g.name} fallbackEmoji={g.flag} size={16} className="text-sm" />
+                <span className="text-[12px] font-bold uppercase tracking-[0.06em] text-n-200 truncate">{g.name}</span>
+              </button>
+              <span className="text-[11px] text-n-500 tnum shrink-0">
                 {settled.length ? `${right}/${settled.length} tips right` : `${g.items.length} ${g.items.length === 1 ? "match" : "matches"}`}
               </span>
+              <PinButton pinned={pins.includes(g.id)} name={g.name} onToggle={() => togglePin(g.id)} />
             </header>
-            <ul className="divide-y divide-n-800">
+            {!folded.has(g.id) && <ul className="divide-y divide-n-800">
               {g.items.map(m => (
                 <Row key={m.key} m={m} sport={sport} open={openKey === m.key} onToggle={() => setOpenKey(openKey === m.key ? null : m.key)} />
               ))}
-            </ul>
+            </ul>}
           </section>
         );
       })}

@@ -8539,7 +8539,8 @@ async def _optimize_request(body: Dict[str, Any],
                 if min_prob <= x["prob"] < 0.995 and x["odds"] > 1.01 and "anytime_scorer" not in paused:
                     g.append(optimizer.Option(p["home"], p["away"], p["date"], p.get("time") or "",
                                               p.get("league_name") or "", "anytime_scorer", x["market_name"],
-                                              x["code"], x["label"], x["prob"], x["odds"], "sportybet", sb=x["sb"]))
+                                              x["code"], x["label"], x["prob"], x["odds"], "sportybet", sb=x["sb"],
+                                              league_id=str(p.get("league") or "")))
     if bb_preds:
         import basketball_predictions
         groups += [basketball_predictions.options(p, min_prob, bb_families, lambda m, c: m not in paused)

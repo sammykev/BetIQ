@@ -60,6 +60,9 @@ class Option:
     # SportyBet's own ids for the pick (basketball: every line is one SportyBet offers)
     sb: Optional[Dict[str, str]] = None
     sport: str = "football"
+    # The league's id (football's code, e.g. "PL"; basketball's and racket's league
+    # key): the site's league headers and pins go by it; `league` is its name
+    league_id: str = ""
 
 
 def _line(stat: str, line: str, over: bool):
@@ -232,7 +235,8 @@ def candidates(pred: Dict, sportybet_event: Optional[Dict] = None,
         out.append(Option(pred["home"], pred["away"], pred["date"], pred.get("time") or "",
                           pred.get("league_name") or pred.get("league") or "", market, market_name,
                           code, label.format(home=pred["home"], away=pred["away"]),
-                          round(prob, 4), round(float(odds), 2), source))
+                          round(prob, 4), round(float(odds), 2), source,
+                          league_id=str(pred.get("league") or "")))
     return out
 
 

@@ -129,7 +129,8 @@ def analyse(selections: List[Dict], find_pred: Callable[[Dict], Optional[Dict]],
                 options = [o for o in options if (o.market, o.code) != (pick["market"], pick["code"])] + [
                     Option(pred["home"], pred["away"], pred["date"], pred.get("time") or "",
                            pred.get("league_name") or "", pick["market"], pick["market_name"], pick["code"],
-                           pick["label"], round(prob, 4), round(float(odds), 2), "sportybet")]
+                           pick["label"], round(prob, 4), round(float(odds), 2), "sportybet",
+                           league_id=str(pred.get("league") or ""))]
             better = max((o for o in options if o.odds >= 1.2 and o.prob >= (prob or 0) + BETTER_BY),
                          key=lambda o: (o.prob, o.odds), default=None)
             if better and (prob is None or better.code != pick["code"] or better.market != pick["market"]):
