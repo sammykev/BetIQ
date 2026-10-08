@@ -47,9 +47,15 @@ def best_line(pred: Dict) -> Optional[Dict]:
 def snapshot(pred: Dict) -> Dict[str, Any]:
     out = {k: pred.get(k) for k in _PRED}
     out["best"] = best_line(pred)
-    ratings = (pred.get("model_detail") or {}).get("ratings")
+    detail = pred.get("model_detail") or {}
+    ratings = detail.get("ratings")
     if ratings:   # each side's rating before the start (the site shows them)
         out["ratings"] = ratings
+    # Our margin and total and the market's, before blending (check_basketball_blend.py)
+    lines = {k: detail[k] for k in ("model_margin", "model_total", "market_margin", "market_total")
+             if isinstance(detail.get(k), (int, float))}
+    if lines:
+        out["lines"] = lines
     return out
 
 

@@ -1292,18 +1292,27 @@ async def admin_unhide_match(body: Dict[str, Any], _admin: str = Depends(require
     return {"hidden": False}
 
 
-def _note_unknown_clubs(model, fx: Dict) -> None:
-    """Remember a fixture's clubs the model has no matches for."""
+# Fewer matches than this for either club and a fixture stays out of slips
+THIN_HISTORY = 5
+
+
+def _note_unknown_clubs(model, fx: Dict) -> bool:
+    """Remember a fixture's clubs the model has no matches for; True if
+    either club has fewer than THIN_HISTORY."""
     stats = getattr(model, "team_stats", None)
     if not isinstance(stats, dict) or fx.get("sport") not in (None, "football"):
-        return
+        return False
     canon = getattr(model, "canon", lambda n: n)
+    thin = False
     for side in ("home", "away"):
         try:
-            if not (stats.get(canon(fx[side])) or {}).get("pts"):
+            n = len((stats.get(canon(fx[side])) or {}).get("pts") or [])
+            if not n:
                 _unknown_clubs[fx[side]] = fx.get("league", "")
+            thin = thin or n < THIN_HISTORY
         except Exception:
             pass
+    return thin
 
 
 # Our share of the 1X2 chances against the bookmaker's de-vigged prices
@@ -1363,7 +1372,8 @@ def _build_predictions(predictor, fixtures: list, live_odds: dict) -> list:
             if not tip:
                 continue
             tip = _blend_1x2(tip, odds)
-            _note_unknown_clubs(model, fx)
+            if _note_unknown_clubs(model, fx):
+                tip = {**tip, "thin_history": True}
             # Value bet detection: model prob vs bookmaker implied prob
             tip_code = tip.get("tip_code", "?")
             if tip_code == "1" and odds.get("1") and float(odds.get("1", 0)) > 1:
@@ -3398,7 +3408,7 @@ def _repredict(teams: set) -> int:
                 odds = {"1": p.get("odds_home") or 0, "X": p.get("odds_draw") or 0, "2": p.get("odds_away") or 0}
                 new = _build_predictions(_predictor, [p], {f"{p['home']}:{p['away']}:{p.get('date', '')}": odds})
                 if new:
-                    out.append({**p, **new[0]})
+                    out.append({**{k: v for k, v in p.items() if k != "thin_history"}, **new[0]})
                     redone += 1
                     continue
             out.append(p)
@@ -5803,9 +5813,19 @@ async def _fb_calibration_load() -> int:
         if r is None:
             return 0
         football_calibration.set_maps(football_calibration.load(r))
+        # and each market's blend with SportyBet's prices (check_market_blend.py)
+        try:
+            raw = r.get(market_blend.REPORT_KEY)
+            got = (json.loads(raw) or {}).get("weights") if raw else {}
+            market_blend.weights = {str(k): float(v) for k, v in (got or {}).items()
+                                    if isinstance(v, (int, float)) and 0 <= v < 1}
+        except Exception as e:
+            print(f"[Calibration] market blend weights not loaded: {e}")
         return len(football_calibration.maps())
+    import market_blend
     got = await asyncio.to_thread(load)
-    print(f"[Calibration] football maps loaded: {got} markets")
+    print(f"[Calibration] football maps loaded: {got} markets; blended with SportyBet: "
+          f"{market_blend.weights or 'none'}")
     return got
 
 
@@ -8528,7 +8548,9 @@ async def _optimize_request(body: Dict[str, Any],
                 and (in_window(p) if window else
                      today <= p.get("date", "") <= last
                      and not (p.get("date") == today and (p.get("time") or "99:99") <= kicked_off))
-                and (not leagues or p.get("league") in leagues)]
+                and (not leagues or p.get("league") in leagues)
+                # a club the model has (next to) no matches for: its chances are mostly guesswork
+                and not p.get("thin_history")]
     # Bookable = linked to a SportyBet event. Asked of the stored links, not
     # the prediction's "sportybet" flag: a predictions rebuild replaces the
     # predictions (flags and all) minutes before the next linking run.

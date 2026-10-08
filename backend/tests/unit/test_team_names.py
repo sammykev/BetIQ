@@ -139,3 +139,25 @@ class TestPredictorUsesTrainedNames:
         m = LeaguePredictor()
         m.train(_season(["Sheffield United", "Sheffield Weds", "Leeds", "Hull"], rounds=4))
         assert {"Sheffield United", "Sheffield Weds"} <= set(m.team_stats)
+
+
+def test_eastern_european_affixes_are_dropped():
+    from team_names import TeamResolver
+    r = TeamResolver(["Shakhtar Donetsk", "Shakhtar", "AEK", "Celje"])
+    assert r.resolve("FK Shakhtar Donetsk") == "Shakhtar Donetsk"
+    assert r.resolve("PAE AEK") == "AEK"
+    assert r.resolve("NK Celje") == "Celje"
+
+
+def test_thin_history_flags_a_fixture():
+    import main
+
+    class M:
+        team_stats = {"A": {"pts": [3] * 20}, "B": {"pts": [1] * 3}}
+        canon = staticmethod(lambda n: n)
+    main._unknown_clubs.clear()
+    assert main._note_unknown_clubs(M, {"home": "A", "away": "B", "league": "CL"}) is True
+    assert main._note_unknown_clubs(M, {"home": "A", "away": "C", "league": "CL"}) is True
+    assert main._unknown_clubs == {"C": "CL"}
+    M.team_stats["B"]["pts"] = [1] * 10
+    assert main._note_unknown_clubs(M, {"home": "A", "away": "B", "league": "CL"}) is False

@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       job:
-        description: "backtest, elo_check, insights, fair_odds, football_blend, clubs, calibration, tickets, site, history (10 seasons of games), history_sample, props, props_sample, probe, or read_probe (the server's web probe)"
+        description: "backtest, elo_check, insights, fair_odds, football_blend, market_blend, basketball_blend, clubs, calibration, tickets, site, history (10 seasons of games), history_sample, props, props_sample, probe, or read_probe (the server's web probe)"
         default: "backtest"
       minutes:
         description: "props: minutes of collection"
@@ -136,6 +136,20 @@ jobs:
         env:
           UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
         run: python check_football_blend.py
+
+      # Every other football market against SportyBet's prices; saves the weights the server uses (check_market_blend.py)
+      - name: Market blend check
+        if: github.event_name == 'schedule' || github.event.inputs.job == 'market_blend'
+        env:
+          UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
+        run: python check_market_blend.py
+
+      # Basketball: our margin/total's weight against SportyBet's lines (check_basketball_blend.py)
+      - name: Basketball blend check
+        if: github.event_name == 'schedule' || github.event.inputs.job == 'basketball_blend'
+        env:
+          UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
+        run: python check_basketball_blend.py
 
       # Football fixture clubs the model has no history for, with the closest known names (club_check.py)
       - name: Club check

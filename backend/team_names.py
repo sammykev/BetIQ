@@ -31,6 +31,8 @@ _STOPWORDS = {
     "rc", "rcd", "cd", "ud", "ca", "sd", "sv", "vfl", "vfb", "tsg", "fsv",
     "ogc", "losc", "aj", "sco", "hsc", "calcio", "club", "de", "del", "la",
     "the", "and", "futbol", "balompie", "football", "e",
+    # Eastern European and Greek ones ("FK Shakhtar Donetsk", "PAE AEK", "NK Celje")
+    "fk", "pae", "nk", "hnk", "gnk", "pfc",
 }
 
 # football-data.org name (normalised) → training CSV name

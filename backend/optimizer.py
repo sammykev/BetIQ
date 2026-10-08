@@ -205,10 +205,11 @@ def candidates(pred: Dict, sportybet_event: Optional[Dict] = None,
     Chances go through each market's calibration map (football_calibration)
     unless `calibrate` is False (the accuracy records the maps are fitted on)."""
     import football_calibration
+    import market_blend
     if not all(isinstance(pred.get(k), (int, float))
                for k in ("p_home", "p_draw", "p_away", "p_over15", "p_over25")):
         return []
-    out = []
+    rows = []
     for market, market_name, code, label, prob_of in _PICKS:
         if markets and market not in markets:
             continue
@@ -217,15 +218,33 @@ def candidates(pred: Dict, sportybet_event: Optional[Dict] = None,
         prob = prob_of(pred)
         if prob is None:
             continue
-        prob = float(prob)
-        if calibrate:
-            prob = football_calibration.apply(market, prob)
-        if not min_prob <= prob < 0.995:
-            continue
         odds, source = None, None
         ids = sportybet_ids(market, code)
         if sportybet_event and ids:
             odds, source = _event_odds(sportybet_event, ids), "sportybet"
+        rows.append([market, market_name, code, label, float(prob), odds, source])
+    # Markets the nightly check found better leaning on SportyBet's prices
+    # (market_blend.py): blended where SportyBet prices the whole set, and
+    # those chances aren't calibrated again (the maps are fitted on ours alone)
+    blended = set()
+    if calibrate and market_blend.weights:
+        by_market: Dict[str, List[int]] = {}
+        for i, r in enumerate(rows):
+            if r[0] in market_blend.weights and r[6] == "sportybet" and r[5]:
+                by_market.setdefault(r[0], []).append(i)
+        for market, ix in by_market.items():
+            got = market_blend.apply(market, {rows[i][2]: rows[i][4] for i in ix},
+                                     {rows[i][2]: rows[i][5] for i in ix})
+            for i in ix:
+                if got[rows[i][2]] != rows[i][4]:
+                    rows[i][4] = got[rows[i][2]]
+                    blended.add(i)
+    out = []
+    for i, (market, market_name, code, label, prob, odds, source) in enumerate(rows):
+        if calibrate and i not in blended:
+            prob = football_calibration.apply(market, prob)
+        if not min_prob <= prob < 0.995:
+            continue
         if not odds:
             odds, source = _bookmaker_price(pred, market, code), "bookmaker"
         if not odds:
