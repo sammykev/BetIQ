@@ -123,7 +123,9 @@ export function BasketballDays({ preds, loading, onOpen }: {
   const counts = new Map<string, number>();
   dayPreds.forEach(p => counts.set(p.league, (counts.get(p.league) ?? 0) + 1));
   const leagues = Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
-  const shown = league && counts.has(league) ? dayPreds.filter(p => p.league === league) : dayPreds;
+  // The bar lists only the chosen day's leagues; one picked on another day counts as "All"
+  const activeLeague = league && counts.has(league) ? league : "";
+  const shown = activeLeague ? dayPreds.filter(p => p.league === activeLeague) : dayPreds;
   const nextDay = strip?.days.find(d => d.date > day && d.total > 0)?.date;
   const goTo = (d: string) => { picked.current = true; setDay(d); };
 
@@ -178,15 +180,15 @@ export function BasketballDays({ preds, loading, onOpen }: {
             // Scrolls sideways with a visible scrollbar, like football's league tabs
             <div className="overflow-x-auto pb-1 -mx-4 px-4 sm:mx-0 sm:px-0">
               <div className="flex gap-1.5 min-w-max">
-                <button onClick={() => setLeague("")} className={clsx("chip", !league ? "chip-active" : "chip-idle")}>
-                  <span>🏀</span><span>All leagues</span><Count n={dayPreds.length} active={!league} />
+                <button onClick={() => setLeague("")} className={clsx("chip", !activeLeague ? "chip-active" : "chip-idle")}>
+                  <span>🏀</span><span>All leagues</span><Count n={dayPreds.length} active={!activeLeague} />
                 </button>
                 {leagues.map(([l, n]) => {
                   const p = dayPreds.find(x => x.league === l)!;
                   return (
-                    <button key={l} onClick={() => setLeague(l)} className={clsx("chip", league === l ? "chip-active" : "chip-idle")}>
+                    <button key={l} onClick={() => setLeague(l)} className={clsx("chip", activeLeague === l ? "chip-active" : "chip-idle")}>
                       <CompetitionBadge name={p.league_name} fallbackEmoji={p.flag} size={14} />
-                      <span>{p.league_name}</span><Count n={n} active={league === l} />
+                      <span>{p.league_name}</span><Count n={n} active={activeLeague === l} />
                     </button>
                   );
                 })}
