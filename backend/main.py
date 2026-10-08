@@ -1306,6 +1306,37 @@ def _note_unknown_clubs(model, fx: Dict) -> None:
             pass
 
 
+# Our share of the 1X2 chances against the bookmaker's de-vigged prices
+# (fair_odds). On 93 settled matches (check_football_blend.py, 8 Oct 2026)
+# blending did better: log loss 0.933 ours alone, 0.910 at 0.5, 0.908 at 0.3,
+# and the weight chosen on the earlier days also won on the later ones; not
+# yet conclusive (z -1.1), so a cautious 0.5. Over/under stays ours (the
+# check found the market no help there). The check runs nightly.
+FOOTBALL_1X2_OURS = 0.5
+
+
+def _blend_1x2(tip: Dict, odds: Dict) -> Dict:
+    """The model's 1X2 chances mixed with the bookmaker's (when it priced all
+    three), and the tips that follow from them; the model's own chances kept
+    as p_*_model (the blend check compares them, not the blend, to the market)."""
+    import fair_odds
+    import predictor as pr
+    try:
+        prices = [float(odds.get(k) or 0) for k in ("1", "X", "2")]
+    except (TypeError, ValueError):
+        return tip
+    ours = [tip.get("p_home"), tip.get("p_draw"), tip.get("p_away")]
+    if not all(o > 1.0 for o in prices) or not all(isinstance(x, (int, float)) for x in ours) or sum(ours) <= 0:
+        return tip
+    s = sum(ours)
+    market = fair_odds.fair(prices)
+    w = FOOTBALL_1X2_OURS
+    p_h, p_d, p_a = (w * o / s + (1 - w) * m for o, m in zip(ours, market))
+    p_o15, p_o25 = float(tip.get("p_over15") or 0), float(tip.get("p_over25") or 0)
+    return {**tip, **pr._rounded_probs(p_h, p_d, p_a, p_o15, p_o25), **pr.pick_tips(p_h, p_d, p_a, p_o15, p_o25),
+            "p_home_model": tip.get("p_home"), "p_draw_model": tip.get("p_draw"), "p_away_model": tip.get("p_away")}
+
+
 def _build_predictions(predictor, fixtures: list, live_odds: dict) -> list:
     """Turn upcoming fixtures + live odds into prediction dicts (with value-bet flags)."""
     predictions = []
@@ -1331,6 +1362,7 @@ def _build_predictions(predictor, fixtures: list, live_odds: dict) -> list:
             )
             if not tip:
                 continue
+            tip = _blend_1x2(tip, odds)
             _note_unknown_clubs(model, fx)
             # Value bet detection: model prob vs bookmaker implied prob
             tip_code = tip.get("tip_code", "?")

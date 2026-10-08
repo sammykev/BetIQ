@@ -50,7 +50,10 @@ def row(e: Dict) -> Optional[Dict]:
     if res.get("status") != "finished" or res.get("aet") or res.get("hg") is None or res.get("ag") is None:
         return None
     hg, ag = int(res["hg"]), int(res["ag"])
-    ours = [p.get("p_home"), p.get("p_draw"), p.get("p_away")]
+    # The model's own chances (kept as p_*_model since the site blends 1X2 with the market)
+    ours = [p.get("p_home_model"), p.get("p_draw_model"), p.get("p_away_model")]
+    if not all(isinstance(x, (int, float)) and x > 0 for x in ours):
+        ours = [p.get("p_home"), p.get("p_draw"), p.get("p_away")]
     if not all(isinstance(x, (int, float)) and x > 0 for x in ours):
         return None
     s = sum(ours)

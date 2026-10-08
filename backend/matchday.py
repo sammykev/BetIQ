@@ -19,7 +19,8 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 import grading
 
 # Prediction fields kept with each entry (what the pick and the grading need)
-_PRED_FIELDS = ("p_home", "p_draw", "p_away", "p_over15", "p_over25", "p_over35", "p_btts",
+_PRED_FIELDS = ("p_home", "p_draw", "p_away", "p_home_model", "p_draw_model", "p_away_model",
+                "p_over15", "p_over25", "p_over35", "p_btts",
                 "tip_1x2", "tip_code", "tip_confidence", "tip_goals", "goals_type", "goals_confidence",
                 "odds_home", "odds_draw", "odds_away", "value_edge", "is_value_bet")
 _HEADER_FIELDS = ("home", "away", "date", "time", "league", "league_name", "flag")

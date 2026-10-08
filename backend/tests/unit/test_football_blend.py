@@ -43,3 +43,23 @@ def test_a_noisy_model_is_told_to_lean_on_the_market():
     got = cfb.check(rows, cfb._losses_1x2)
     assert float(got["best"][1:]) <= 0.3 and got["grid"][got["best"]]["vs_ours_z"] < -2
     assert got["holdout"]["chosen_on_earlier"] <= 0.4
+
+
+def test_the_site_blends_1x2_half_and_half_with_the_market():
+    import fair_odds
+    import main
+    tip = {"p_home": 0.62, "p_draw": 0.22, "p_away": 0.16, "p_over15": 0.75, "p_over25": 0.5}
+    odds = {"1": 2.1, "X": 3.3, "2": 3.6}
+    b = main._blend_1x2(tip, odds)
+    m = fair_odds.fair([2.1, 3.3, 3.6])
+    assert abs(b["p_home"] - round(0.5 * 0.62 + 0.5 * m[0], 3)) < 1e-9
+    assert abs(b["p_home"] + b["p_draw"] + b["p_away"] - 1) < 0.005
+    assert b["p_home_model"] == 0.62 and b["p_over25"] == 0.5          # over/under stays ours
+    assert b["tip_code"] in ("1", "1X") and b["tip_confidence"] >= b["p_home"]
+    # Without all three prices the model's chances stand
+    assert main._blend_1x2(tip, {"1": 2.1}) is tip and main._blend_1x2(tip, {}) is tip
+    # The check reads the model's own chances, not the blend
+    import check_football_blend as cfb
+    e = {"date": "2026-10-09", "pred": {**b, "odds_home": 2.1, "odds_draw": 3.3, "odds_away": 3.6},
+         "result": {"status": "finished", "hg": 1, "ag": 0}}
+    assert abs(cfb.row(e)["ours"][0] - 0.62) < 1e-9
