@@ -219,6 +219,7 @@ export function BasketballDays({ preds, loading, onOpen }: {
               sport={"basketball"}
               items={shown}
               leagueOf={p => ({ id: p.league, name: p.league_name || p.league, flag: p.flag })}
+              badgeSport="Basketball"
               itemKey={(p, i) => p.sportybet_event_id || `${p.home}-${p.date}-${i}`}
               render={(p, i) => (
                 <Enter i={i} className="flex flex-col [&>*]:flex-1">

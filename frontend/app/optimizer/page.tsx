@@ -11,7 +11,7 @@ import { useBetSlip } from "@/lib/useBetSlip";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
 import { useAccess } from "@/lib/access";
 import { FAMILIES as BB_FAMILIES } from "@/lib/basketball";
-import { RK_FAMILIES } from "@/lib/racket";
+import { RK_FAMILIES, tournamentLabel, LOGO_SPORT } from "@/lib/racket";
 import { FeatureGate, Unavailable } from "@/components/FeatureGate";
 import type { SlipSelection } from "@/lib/slip";
 import { Tabs } from "@/components/ui/tabs";
@@ -516,8 +516,8 @@ export default function OptimizerPage() {
                   {optLeagues.map(l => (
                     <Chip key={`${l.sport}:${l.id}`} active={pickedLeagues.includes(l.id)} onClick={() => toggleLeague(l.id)}>
                       <span className="inline-flex items-center gap-1.5">
-                        <CompetitionBadge name={l.name} fallbackEmoji={l.flag || SPORT_EMOJI[l.sport]} size={14} />
-                        {l.name} <span className="tnum text-[10px] opacity-70">{l.matches}</span>
+                        <CompetitionBadge name={l.name} fallbackEmoji={l.flag || SPORT_EMOJI[l.sport]} size={14} {...(LOGO_SPORT[l.sport] ? { sport: LOGO_SPORT[l.sport] } : {})} />
+                        {l.sport === "tennis" || l.sport === "table_tennis" ? tournamentLabel(l.name) : l.name} <span className="tnum text-[10px] opacity-70">{l.matches}</span>
                       </span>
                     </Chip>
                   ))}
@@ -839,7 +839,7 @@ function SlipByLeague({ picks, row }: { picks: OptPick[]; row: (p: OptPick) => R
     const key = `${sport}:${id}`;
     const g = byLeague.find(x => x.key === key);
     if (g) g.items.push(p);
-    else byLeague.push({ key, sport, id, name: p.league, items: [p] });
+    else byLeague.push({ key, sport, id, name: sport === "tennis" || sport === "table_tennis" ? tournamentLabel(p.league) : p.league, items: [p] });
   }
   const groups = pinnedFirst(byLeague, g => (pinsOf[g.sport]?.[0] ?? []).indexOf(g.id));
   return (
@@ -852,7 +852,7 @@ function SlipByLeague({ picks, row }: { picks: OptPick[]; row: (p: OptPick) => R
             <div className="flex items-center gap-2 px-5 py-1.5 bg-surface-sunken/60">
               <button type="button" onClick={() => fold(g.key)} aria-expanded={open} className="flex min-w-0 flex-1 items-center gap-2 text-left">
                 <ChevronDown size={14} className={clsx("shrink-0 text-n-500 transition-transform", !open && "-rotate-90")} />
-                <CompetitionBadge name={g.name} fallbackEmoji={SPORT_ICON[g.sport] ?? "🏆"} size={16} />
+                <CompetitionBadge name={g.name} fallbackEmoji={SPORT_ICON[g.sport] ?? "🏆"} size={16} {...(LOGO_SPORT[g.sport] ? { sport: LOGO_SPORT[g.sport] } : {})} />
                 <span className="text-[12px] font-bold uppercase tracking-[0.06em] text-n-200 truncate">{g.name}</span>
                 <span className="text-[11px] text-n-500 tnum shrink-0">{g.items.length}</span>
               </button>

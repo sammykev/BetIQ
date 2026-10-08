@@ -13,7 +13,7 @@ import { RacketMatchList } from "@/components/RacketMatchList";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
 import { dayLabel, localDateStr } from "@/lib/matchTime";
 import { fetchRKMatchday, fetchRKStrip, RK_WORDS, type RacketPrediction, type RKDaySummary,
-         type RKMatchdayMatch, type RKMatchdayResponse, type RKStripResponse } from "@/lib/racket";
+         type RKMatchdayMatch, type RKMatchdayResponse, type RKStripResponse, tournamentLabel, LOGO_SPORT } from "@/lib/racket";
 import type { RacketSport } from "@/lib/tennis";
 import { Empty as EmptyState } from "@/components/ui/empty";
 import { Enter, EnterGroup } from "@/components/ui/enter";
@@ -207,8 +207,8 @@ export function RacketDays({ sport, preds, loading, onOpen }: {
                   const p = dayPreds.find(x => x.league === l)!;
                   return (
                     <button key={l} onClick={() => setLeague(l)} className={clsx("chip", activeLeague === l ? "chip-active" : "chip-idle")}>
-                      <CompetitionBadge name={p.league_name} fallbackEmoji={p.flag} size={14} />
-                      <span>{p.league_name}</span><Count n={n} active={activeLeague === l} />
+                      <CompetitionBadge name={tournamentLabel(p.league_name)} fallbackEmoji={p.flag} size={14} sport={LOGO_SPORT[sport]} />
+                      <span>{tournamentLabel(p.league_name)}</span><Count n={n} active={activeLeague === l} />
                     </button>
                   );
                 })}
@@ -220,7 +220,8 @@ export function RacketDays({ sport, preds, loading, onOpen }: {
             <LeagueSections
               sport={sport}
               items={shown}
-              leagueOf={p => ({ id: p.league, name: p.league_name || p.league, flag: p.flag })}
+              leagueOf={p => ({ id: p.league, name: tournamentLabel(p.league_name || p.league), flag: p.flag })}
+              badgeSport={LOGO_SPORT[sport]}
               itemKey={(p, i) => p.sportybet_event_id || `${p.home}-${p.date}-${i}`}
               render={(p, i) => (
                 <Enter i={i} className="flex flex-col [&>*]:flex-1">

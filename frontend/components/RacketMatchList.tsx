@@ -10,7 +10,7 @@ import { VerdictIcon } from "@/components/MatchdayList";
 import { localTime } from "@/lib/matchTime";
 import { TennisFacts } from "@/components/TennisFacts";
 import { PlayerRatings } from "@/components/Ratings";
-import { RK_WORDS, type RKMatchdayMatch } from "@/lib/racket";
+import { RK_WORDS, type RKMatchdayMatch, tournamentLabel, LOGO_SPORT } from "@/lib/racket";
 import type { RacketSport } from "@/lib/tennis";
 import { Reveal } from "@/components/ui/reveal";
 import { SportStats } from "@/components/LiveStats";
@@ -188,7 +188,7 @@ export function RacketMatchList({ matches, sport }: { matches: RKMatchdayMatch[]
     const id = m.league || m.league_name;
     const g = byLeague.find(x => x.id === id);
     if (g) g.items.push(m);
-    else byLeague.push({ id, name: m.league_name || m.league, flag: m.flag, items: [m] });
+    else byLeague.push({ id, name: tournamentLabel(m.league_name || m.league), flag: m.flag, items: [m] });
   }
   const groups = pinnedFirst(byLeague, g => pins.indexOf(g.id));
   return (
@@ -201,7 +201,7 @@ export function RacketMatchList({ matches, sport }: { matches: RKMatchdayMatch[]
             <header className={clsx("flex items-center gap-2 px-3 sm:px-4 py-1.5 bg-surface-sunken/60", !folded.has(g.id) && "border-b border-n-800")}>
               <button type="button" onClick={() => fold(g.id)} aria-expanded={!folded.has(g.id)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
                 <ChevronDown size={14} className={clsx("shrink-0 text-n-500 transition-transform", folded.has(g.id) && "-rotate-90")} />
-                <CompetitionBadge name={g.name} fallbackEmoji={g.flag} size={16} className="text-sm" />
+                <CompetitionBadge name={g.name} fallbackEmoji={g.flag} size={16} className="text-sm" sport={LOGO_SPORT[sport]} />
                 <span className="text-[12px] font-bold uppercase tracking-[0.06em] text-n-200 truncate">{g.name}</span>
               </button>
               <span className="text-[11px] text-n-500 tnum shrink-0">

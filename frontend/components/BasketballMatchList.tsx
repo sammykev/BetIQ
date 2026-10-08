@@ -192,7 +192,7 @@ export function BasketballMatchList({ matches, sport = "basketball" }: { matches
             <header className={clsx("flex items-center gap-2 px-3 sm:px-4 py-1.5 bg-surface-sunken/60", !folded.has(g.id) && "border-b border-n-800")}>
               <button type="button" onClick={() => fold(g.id)} aria-expanded={!folded.has(g.id)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
                 <ChevronDown size={14} className={clsx("shrink-0 text-n-500 transition-transform", folded.has(g.id) && "-rotate-90")} />
-                <CompetitionBadge name={g.name} fallbackEmoji={g.flag} size={16} className="text-sm" />
+                <CompetitionBadge name={g.name} fallbackEmoji={g.flag} size={16} className="text-sm" sport="Basketball" />
                 <span className="text-[12px] font-bold uppercase tracking-[0.06em] text-n-200 truncate">{g.name}</span>
               </button>
               <span className="text-[11px] text-n-500 tnum shrink-0">

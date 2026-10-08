@@ -135,3 +135,20 @@ export async function fetchRKMatch(f: Fetcher, sport: RacketSport, event: string
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 }
+
+/** A tournament's name for headers and chips: SportyBet's "Category · Name"
+ *  without the repeated category ("ITF · ITF M15 Quito" → "ITF M15 Quito"),
+ *  keeping the country where one name runs in several ("Ukraine · Setka Cup"
+ *  → "Setka Cup · Ukraine"). */
+export function tournamentLabel(league: string): string {
+  const parts = (league || "").split(" · ").map(s => s.trim()).filter(Boolean);
+  if (parts.length < 2) return league || "";
+  const [cat, ...rest] = parts;
+  const name = rest.join(" · ");
+  if (name.toLowerCase().startsWith(cat.toLowerCase().split(" ")[0].slice(0, 5))) return name;
+  if (/^(international|simulated reality|utr|atp|wta|itf|challenger)/i.test(cat)) return name;
+  return `${name} · ${cat}`;
+}
+
+/** TheSportsDB's sport name, for competition logos. */
+export const LOGO_SPORT: Record<string, string> = { tennis: "Tennis", table_tennis: "Table Tennis", basketball: "Basketball" };
