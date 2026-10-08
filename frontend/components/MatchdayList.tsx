@@ -4,6 +4,7 @@ import { useState } from "react";
 import clsx from "clsx";
 import { Check, ChevronDown, Minus, X as Cross } from "lucide-react";
 import { TeamBadge } from "@/components/PredictionCard";
+import { ThinHistoryBadge } from "@/components/ThinHistoryBadge";
 import { PinButton, pinnedFirst, useFolded, usePinnedLeagues } from "@/components/LeagueSections";
 import { CompetitionBadge } from "@/components/CompetitionBadge";
 import { localTime } from "@/lib/matchTime";
@@ -76,6 +77,7 @@ function Detail({ m, onOpen }: { m: MatchdayMatch; onOpen?: (m: MatchdayMatch) =
     <div className="px-3 sm:px-4 pb-4 pt-1 space-y-4 bg-surface-sunken/60">
       <div className="space-y-2">
         <p className="eyebrow">Before kick-off{m.locked ? "" : " · updates until kick-off"}</p>
+        {p.thin_history && <ThinHistoryBadge long />}
         <div className="flex h-1.5 rounded-full overflow-hidden gap-0.5">
           {segs.map(s => (
             <div key={s.key} style={{ width: `${s.w}%` }}

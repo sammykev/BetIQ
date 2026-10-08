@@ -7,6 +7,7 @@ import { useAuthedFetch } from "@/lib/useAuthedFetch";
 import type { MatchAnalysis, Market, MatchExplanation, MatchFacts, FactMatch, Prediction, TeamForm, TeamAverages } from "@/lib/api";
 import { kickoff } from "@/lib/matchTime";
 import { TeamBadge } from "@/components/PredictionCard";
+import { ThinHistoryBadge } from "@/components/ThinHistoryBadge";
 import { CompetitionBadge } from "@/components/CompetitionBadge";
 import { AppShell } from "@/components/shell/AppShell";
 import { useBetSlip } from "@/lib/useBetSlip";
@@ -723,6 +724,12 @@ function MatchContent() {
             )
           )}
         </div>
+
+        {prediction?.thin_history && (
+          <p className="relative -mt-2 pb-4 px-4 flex justify-center">
+            <ThinHistoryBadge long />
+          </p>
+        )}
 
         {prediction?.referee && (
           <p className="relative -mt-2 pb-4 px-4 text-center text-xs text-n-300 flex items-center justify-center gap-1.5 flex-wrap">

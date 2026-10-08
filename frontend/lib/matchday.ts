@@ -20,6 +20,8 @@ export interface MatchdayPred {
   is_value_bet?: boolean;
   corners_mean?: number; corners_over?: number; bookings_mean?: number; bookings_over?: number;
   referee?: string;
+  /** A club has fewer than 5 matches in the model's data */
+  thin_history?: boolean;
 }
 
 export interface MatchdayMatch {

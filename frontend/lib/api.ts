@@ -28,6 +28,8 @@ export interface Prediction {
   is_value_bet?: boolean;          // true when value_edge > 0.05
   /** Appointed referee (SofaScore), once named. cards_factor > 1: more cards than these teams usually get. */
   referee?: { name: string; games?: number; cards_factor?: number };
+  /** A club has fewer than 5 matches in the model's data: left out of slips. */
+  thin_history?: boolean;
 }
 
 export interface League {

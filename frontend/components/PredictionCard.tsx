@@ -6,6 +6,7 @@ import { useBetSlip } from "@/lib/useBetSlip";
 import { isSelected, selectionFromPrediction } from "@/lib/slip";
 import { useTeamLogo } from "@/lib/useTeamLogo";
 import { CompetitionBadge } from "./CompetitionBadge";
+import { ThinHistoryBadge } from "./ThinHistoryBadge";
 import { MatchBleed } from "./MatchBleed";
 import type { Prediction } from "@/lib/api";
 import { kickoff, localTime } from "@/lib/matchTime";
@@ -323,6 +324,7 @@ export function PredictionCard({ prediction: p, savedKeys, onClick, showDay = tr
         <div className="flex items-center gap-1.5 min-w-0">
           <CompetitionBadge name={p.league_name} fallbackEmoji={p.flag} size={14} className="text-sm" />
           <span className="eyebrow truncate">{p.league_name}</span>
+          {p.thin_history && <ThinHistoryBadge className="shrink-0" />}
         </div>
         <div className="flex items-center gap-2.5 shrink-0">
           <span className="font-mono text-[11px] text-n-200 uppercase">

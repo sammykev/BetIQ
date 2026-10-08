@@ -22,7 +22,7 @@ import grading
 _PRED_FIELDS = ("p_home", "p_draw", "p_away", "p_home_model", "p_draw_model", "p_away_model",
                 "p_over15", "p_over25", "p_over35", "p_btts",
                 "tip_1x2", "tip_code", "tip_confidence", "tip_goals", "goals_type", "goals_confidence",
-                "odds_home", "odds_draw", "odds_away", "value_edge", "is_value_bet")
+                "odds_home", "odds_draw", "odds_away", "value_edge", "is_value_bet", "thin_history")
 _HEADER_FIELDS = ("home", "away", "date", "time", "league", "league_name", "flag")
 # Main lines graded for corners and bookings (the model's side of each)
 SET_PIECE_LINES = {"corners": "9.5", "bookings": "4.5"}
@@ -60,6 +60,8 @@ def snapshot(pred: Dict) -> Dict[str, Any]:
     for f in _PRED_FIELDS:
         v = pred.get(f)
         out[f] = _num(v) if f.startswith(("p_", "odds_", "value_", "goals_conf", "tip_conf")) else v
+    if not out.get("thin_history"):
+        out.pop("thin_history", None)      # kept only where it's set
     sp = pred.get("set_pieces") or {}
     for stat, line in SET_PIECE_LINES.items():
         node = sp.get(stat) or {}
