@@ -9,10 +9,15 @@ interface Props {
   selected: string;
   onSelect: (code: string) => void;
   counts: Record<string, number>;
+  /** Leagues with matches that day but not in `leagues` (name and flag from their matches) */
+  extra?: League[];
 }
 
-export function LeagueTabs({ leagues, selected, onSelect, counts }: Props) {
-  const all = [{ code: "ALL", name: "All Leagues", flag: "⚽", country: "" }, ...leagues];
+/** Only the leagues with matches on the chosen day (counts), in the list's order. */
+export function LeagueTabs({ leagues, selected, onSelect, counts, extra = [] }: Props) {
+  const known = new Set(leagues.map(l => l.code));
+  const playing = [...leagues, ...extra.filter(l => !known.has(l.code))].filter(l => (counts[l.code] || 0) > 0);
+  const all = [{ code: "ALL", name: "All Leagues", flag: "⚽", country: "" }, ...playing];
 
   return (
     <div className="overflow-x-auto pb-1 -mx-4 px-4 sm:mx-0 sm:px-0">

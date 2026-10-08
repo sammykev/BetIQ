@@ -554,11 +554,18 @@ export default function HomePage() {
   const dayPredictions = validPredictions.filter(p => p.date === day && !started.has(matchKey(p.home, p.away)));
   const playedToday: MatchdayMatch[] = isToday ? (md?.matches ?? []).filter(underway) : [];
 
-  // Counts per league for tab badges (the chosen day)
+  // Counts per league for tab badges (the chosen day): the bar shows only these
   const counts: Record<string, number> = {};
+  const dayLeagues: Record<string, League> = {};
   for (const p of dayPredictions) {
     counts[p.league] = (counts[p.league] || 0) + 1;
+    dayLeagues[p.league] ??= { code: p.league, name: p.league_name || p.league, flag: p.flag || "⚽", country: "" } as League;
   }
+
+  // A day without the chosen league's matches goes back to all leagues
+  // (the bar only shows the day's leagues, so it couldn't be unpicked)
+  const leagueGone = selectedLeague !== "ALL" && dayPredictions.length > 0 && !counts[selectedLeague];
+  useEffect(() => { if (leagueGone) setSelectedLeague("ALL"); }, [leagueGone]);
 
   // League + confidence narrow the pool; the quick chips then slice it
   const pool = dayPredictions
@@ -795,6 +802,7 @@ export default function HomePage() {
               selected={selectedLeague}
               onSelect={setSelectedLeague}
               counts={counts}
+              extra={Object.values(dayLeagues)}
             />
 
             <div className="flex items-center gap-2 justify-between flex-wrap">
