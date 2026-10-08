@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { PredictionCard } from "@/components/PredictionCard";
 import { LeagueTabs } from "@/components/LeagueTabs";
+import { LeagueSections } from "@/components/LeagueSections";
 import { triggerRefresh } from "@/lib/api";
 import type { Prediction, League } from "@/lib/api";
 import { dayLabel, localDateStr } from "@/lib/matchTime";
@@ -590,9 +591,6 @@ export default function HomePage() {
     return a.date.localeCompare(b.date) || a.time.localeCompare(b.time);
   });
 
-  // Sorted by kick-off → group under "Today", "Tomorrow", "Sat 26 Sep"…
-  // One day at a time (the strip picks it), so no day headings
-  const groups: { label: string; items: Prediction[] }[] = [{ label: "", items: sorted }];
 
   const nextDay = strip?.days.find(d => d.date > day && d.total > 0)?.date;
   const openMatchday = (m: MatchdayMatch) => openMatch(m);
@@ -892,32 +890,24 @@ export default function HomePage() {
             />
           ) : (
             <EnterGroup>
-            <div className="space-y-8">
-              {groups.map(({ label, items }) => (
-                <section key={label || "all"} className="space-y-3">
-                  {label && (
-                    <div className="flex items-baseline gap-3">
-                      <h2 className="heading text-xl">{label}</h2>
-                      <span className="text-xs font-semibold text-n-500 tnum">{items.length} {items.length === 1 ? "match" : "matches"}</span>
-                      <span className="flex-1 h-px bg-n-800 self-center" />
-                    </div>
-                  )}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {items.map((p, i) => (
-                      <Enter key={`${p.home}-${p.away}-${p.date}-${i}`} i={i} className="flex flex-col [&>*]:flex-1">
-                        <PredictionCard
-                          prediction={p}
-                          savedKeys={savedKeys}
-                          onSaveToggle={onSaveToggle}
-                          showDay={!label}
-                          onClick={() => openMatch(p)}
-                        />
-                      </Enter>
-                    ))}
-                  </div>
-                </section>
-              ))}
-            </div>
+              {/* The day's matches under their league, pinned leagues first */}
+              <LeagueSections
+                sport="football"
+                items={sorted}
+                leagueOf={p => ({ id: p.league, name: p.league_name || p.league, flag: p.flag })}
+                itemKey={(p, i) => `${p.home}-${p.away}-${p.date}-${i}`}
+                render={(p, i) => (
+                  <Enter i={i} className="flex flex-col [&>*]:flex-1">
+                    <PredictionCard
+                      prediction={p}
+                      savedKeys={savedKeys}
+                      onSaveToggle={onSaveToggle}
+                      showDay={false}
+                      onClick={() => openMatch(p)}
+                    />
+                  </Enter>
+                )}
+              />
             </EnterGroup>
           )}
           </>}

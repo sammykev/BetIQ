@@ -3654,17 +3654,20 @@ def _leg_results(r, days: Dict[str, Dict]):
     the match-day store; tennis and table tennis by their SportyBet event."""
     bb_days: Dict[str, Dict] = {}
     rk_days: Dict[Tuple[str, str], Dict] = {}
+    md_days: Dict[Tuple[str, str], Dict] = {}
 
     def result_for(leg: Dict) -> Optional[Dict]:
         m = str(leg.get("market") or "")
         if m.startswith("bb_player_") or m == "anytime_scorer":
             return _props_result_for(leg)
+        # Basketball, tennis, table tennis: SportyBet's results feed, else the
+        # match-day store's final (some matches never reach the feed)
         if m.startswith("bb_"):
             if not leg.get("event_id") and leg.get("sb"):   # a daily pick: its SportyBet ids
                 leg = {**leg, "event_id": leg["sb"].get("eventId")}
-            return _bb_result_for(r, leg, bb_days)
+            return _bb_result_for(r, leg, bb_days) or _other_sport_md_result(r, leg, "basketball", md_days)
         if m.startswith("rk_"):
-            return _rk_result_for(r, leg, rk_days)
+            return _rk_result_for(r, leg, rk_days) or _other_sport_md_result(r, leg, _leg_sport(leg), md_days)
         e = _md_entry_for(r, leg, days)
         return e.get("result") if e else None
     return result_for
@@ -3849,14 +3852,10 @@ def _leg_sport(leg: Dict) -> str:
     return "football"
 
 
-def _other_sport_live(r, leg: Dict, sport: str, days: Dict[Tuple[str, str], Dict],
-                      stats: Dict[Tuple[str, str], Dict]) -> Optional[Dict]:
-    """A basketball, tennis or table tennis leg's match as it stands, by the
-    SportyBet event it was booked on: score, the period/set scores and the
-    live stats rows (live_stats.py)."""
-    import basketball_matchday as bbmd
-    import live_stats as ls
-    import racket_matchday as rmd
+def _other_sport_entry(r, leg: Dict, sport: str,
+                       days: Dict[Tuple[str, str], Dict]) -> Optional[Tuple[str, str, Dict]]:
+    """A basketball, tennis or table tennis leg's match-day entry, by the
+    SportyBet event it was booked on: (sport, date, entry), or None."""
     eid = str(leg.get("event_id") or (leg.get("sb") or {}).get("eventId") or "")
     try:
         d0 = date.fromisoformat(leg.get("date") or "")
@@ -3875,20 +3874,50 @@ def _other_sport_live(r, leg: Dict, sport: str, days: Dict[Tuple[str, str], Dict
                 days[(sp, ds)] = (_bbmd_load(r, ds) if sp == "basketball" else _rkmd_load(r, sp, ds)) \
                     if d <= date.today() else {}
             e = days[(sp, ds)].get(eid)
-            if not e:
-                continue
-            m = (bbmd if sp == "basketball" else rmd).public(e)
-            if m.get("status") not in ("live", "finished"):
-                return None
-            if (sp, ds) not in stats:
-                stats[(sp, ds)] = ls.load(r, sp, ds)
-            rows = (stats[(sp, ds)].get(eid) or {}).get("rows")
-            if not rows and not ls.sr_number(eid):
-                rows = ls.from_score(m.get("periods"), sp)
-            return {"status": m["status"], "minute": m.get("minute"), "score": m.get("score"),
-                    "aet": bool(m.get("aet")), "stats": None, "events": None, "sport": sp,
-                    "periods": m.get("periods"), "rows": rows or None}
+            if e:
+                return sp, ds, e
     return None
+
+
+def _other_sport_md_result(r, leg: Dict, sport: str, days: Dict[Tuple[str, str], Dict]) -> Optional[Dict]:
+    """A finished basketball/racket leg's result from its match-day entry, in
+    the settle format: for matches SportyBet's results feed never had."""
+    import basketball_matchday as bbmd
+    import racket_matchday as rmd
+    found = _other_sport_entry(r, leg, sport, days)
+    if not found:
+        return None
+    sp, _, e = found
+    res = e.get("result") or {}
+    if res.get("status") != "finished" or not res.get("score"):
+        return None
+    return bbmd._settle_result(res) if sp == "basketball" else rmd._settled(res)
+
+
+def _other_sport_live(r, leg: Dict, sport: str, days: Dict[Tuple[str, str], Dict],
+                      stats: Dict[Tuple[str, str], Dict]) -> Optional[Dict]:
+    """A basketball, tennis or table tennis leg's match as it stands, by the
+    SportyBet event it was booked on: score, the period/set scores and the
+    live stats rows (live_stats.py)."""
+    import basketball_matchday as bbmd
+    import live_stats as ls
+    import racket_matchday as rmd
+    found = _other_sport_entry(r, leg, sport, days)
+    if not found:
+        return None
+    sp, ds, e = found
+    eid = e.get("id") or str(leg.get("event_id") or (leg.get("sb") or {}).get("eventId") or "")
+    m = (bbmd if sp == "basketball" else rmd).public(e)
+    if m.get("status") not in ("live", "finished"):
+        return None
+    if (sp, ds) not in stats:
+        stats[(sp, ds)] = ls.load(r, sp, ds)
+    rows = (stats[(sp, ds)].get(eid) or {}).get("rows")
+    if not rows and not ls.sr_number(eid):
+        rows = ls.from_score(m.get("periods"), sp)
+    return {"status": m["status"], "minute": m.get("minute"), "score": m.get("score"),
+            "aet": bool(m.get("aet")), "stats": None, "events": None, "sport": sp,
+            "periods": m.get("periods"), "rows": rows or None}
 
 
 def _attach_live(r, items: List[Dict]) -> None:

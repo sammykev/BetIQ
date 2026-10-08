@@ -6,6 +6,7 @@ import { AlertTriangle, ArrowRight, CalendarDays, Loader2, SearchX } from "lucid
 import { DateStrip } from "@/components/DateStrip";
 import { DaySummaryBar } from "@/components/DaySummaryBar";
 import { SportCard, type SportPrediction } from "@/components/SportCard";
+import { LeagueSections } from "@/components/LeagueSections";
 import { CompetitionBadge } from "@/components/CompetitionBadge";
 import { RacketMatchList } from "@/components/RacketMatchList";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
@@ -198,13 +199,18 @@ export function RacketDays({ sport, preds, loading, onOpen }: {
             </div>
           )}
           <EnterGroup>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {shown.map((p, i) => (
-                <Enter key={p.sportybet_event_id || `${p.home}-${p.date}`} i={i} className="flex flex-col [&>*]:flex-1">
+            {/* The day's matches under their league, pinned leagues first */}
+            <LeagueSections
+              sport={sport}
+              items={shown}
+              leagueOf={p => ({ id: p.league, name: p.league_name || p.league, flag: p.flag })}
+              itemKey={(p, i) => p.sportybet_event_id || `${p.home}-${p.date}-${i}`}
+              render={(p, i) => (
+                <Enter i={i} className="flex flex-col [&>*]:flex-1">
                   <SportCard prediction={p as unknown as SportPrediction} onClick={() => onOpen(p)} />
                 </Enter>
-              ))}
-            </div>
+              )}
+            />
           </EnterGroup>
         </>}
       </>}

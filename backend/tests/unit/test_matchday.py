@@ -324,6 +324,31 @@ class TestSettling:
         assert main._ticket_needs_settling({"status": "lost", "legs": [{"date": d, "status": "pending"}]}, date.today())
 
 
+class TestSettlingFromMatchDays:
+    def test_basketball_and_racket_legs_settle_from_the_match_day_score(self, redis, monkeypatch):
+        d = (date.today() - timedelta(days=1)).isoformat()
+        redis.hmget = lambda key, fields: [None] * len(list(fields))     # SportyBet's results feed: empty
+        # Finished on our match days, but never in SportyBet's results feed
+        main._bbmd_save(redis, d, {"sr:match:74932474": {
+            "id": "sr:match:74932474", "home": "Haukar", "away": "Fjolnir",
+            "result": {"status": "finished", "score": [96, 65],
+                       "periods": [[38, 10], [17, 13], [21, 19], [20, 23]]}, "pred": {}}})
+        main._rkmd_save(redis, "tennis", d, {"sr:match:74983242": {
+            "id": "sr:match:74983242", "home": "Giustino", "away": "Donald",
+            "result": {"status": "finished", "score": [2, 0], "periods": [[6, 3], [6, 4]]}, "pred": {}}})
+        legs = [{"home": "Haukar", "away": "Fjolnir", "date": d, "market": "bb_handicap", "code": "H-15.5",
+                 "status": "pending", "sport": "basketball", "event_id": "sr:match:74932474"},
+                {"home": "Giustino", "away": "Donald", "date": d, "market": "rk_s1_total", "code": "U10.5",
+                 "status": "pending", "sport": "tennis", "event_id": "sr:match:74983242"}]
+        redis.set("betiq:user:a3:tickets", json.dumps([{"code": "MD1", "status": "pending", "created_at": d, "legs": legs}]))
+        redis.sadd(main.TICKETS_OPEN_KEY, "a3")
+        report = main._settle_tickets(redis)
+        got = json.loads(redis.kv["betiq:user:a3:tickets"])[0]
+        assert "errors" not in report
+        # 96-65 covers -15.5; the first set's 6-3 is 9 games, under 10.5
+        assert [l["status"] for l in got["legs"]] == ["won", "won"] and got["status"] == "won"
+
+
 class TestRefresh:
     def test_scores_come_in_and_tickets_settle(self, redis, monkeypatch):
         import curl_cffi.requests as cr
