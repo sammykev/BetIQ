@@ -78,8 +78,8 @@ def main() -> None:
         for sport in ("basketball", "tennis", "table_tennis"):
             raw = r.get({"basketball": "betiq:bb:predictions"}.get(sport, f"betiq:{sport}:predictions"))
             try:
-                ps = json.loads(raw) if raw else []
-                ps = ps.get("predictions", ps) if isinstance(ps, dict) else ps
+                import basketball_data as bd
+                ps = bd.decode(raw) if raw else []
             except Exception as e:
                 print(sport, "predictions unreadable:", e)
                 continue
