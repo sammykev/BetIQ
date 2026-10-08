@@ -15,6 +15,7 @@ import { RK_FAMILIES } from "@/lib/racket";
 import { FeatureGate, Unavailable } from "@/components/FeatureGate";
 import type { SlipSelection } from "@/lib/slip";
 import { Tabs } from "@/components/ui/tabs";
+import { CompetitionBadge } from "@/components/CompetitionBadge";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
 
@@ -316,6 +317,27 @@ export default function OptimizerPage() {
   const showTennis = tnOn && playing.includes("tennis");
   const showTT = ttOn && playing.includes("table_tennis");
   const panels = [showFootball, showBasketball, showTennis, showTT].filter(Boolean).length;
+  // League bar: the leagues with matches in the chosen days, for the sports in play.
+  // None picked = every league; pick one or more to keep the slip to them.
+  type OptLeague = { sport: OptSport; id: string; name: string; flag: string; matches: number };
+  const [optLeagues, setOptLeagues] = useState<OptLeague[]>([]);
+  const [pickedLeagues, setPickedLeagues] = useState<string[]>([]);
+  const sportsKey = (otherSports ? playing : ["football"]).join(",");
+  useEffect(() => {
+    const ctrl = new AbortController();
+    fetch(`${API}/api/optimizer/leagues?days=${days}&sports=${sportsKey}`, { signal: ctrl.signal })
+      .then(r => (r.ok ? r.json() : null))
+      .then((d: { leagues?: OptLeague[] } | null) => {
+        const list = d?.leagues ?? [];
+        setOptLeagues(list);
+        // A league with no matches in the new window drops out of the pick
+        setPickedLeagues(ps => ps.filter(id => list.some(l => l.id === id)));
+      })
+      .catch(() => {});
+    return () => ctrl.abort();
+  }, [days, sportsKey]);
+  const toggleLeague = (id: string) => setPickedLeagues(ps => ps.includes(id) ? ps.filter(x => x !== id) : [...ps, id]);
+  const SPORT_EMOJI: Record<string, string> = { football: "⚽", basketball: "🏀", tennis: "🎾", table_tennis: "🏓" };
   const bbChosen = bbShown.filter(f => bbFamilies.includes(f.id));
   const tnShown = RK_FAMILIES.tennis.filter(f => !off.has(f.id));
   const ttShown = RK_FAMILIES.table_tennis.filter(f => !off.has(f.id));
@@ -356,6 +378,7 @@ export default function OptimizerPage() {
                                sport: !otherSports ? "football" : playing.length === 1 ? playing[0] : "all",
                                bb_markets: bbFamilies.filter(f => !off.has(f)),
                                tn_markets: tnFamilies.filter(f => !off.has(f)), tt_markets: ttFamilies.filter(f => !off.has(f)),
+                               ...(pickedLeagues.length ? { leagues: pickedLeagues } : {}),
                                bookable_only: bookable }),
       });
       if (res.status === 401 || res.status === 402) { setLocked("build"); return; }
@@ -479,6 +502,27 @@ export default function OptimizerPage() {
                 className="w-full accent-[rgb(var(--accent))]" aria-label="Maximum games" />
             </div>
           </div>
+
+          {optLeagues.length > 1 && (
+            <div className="space-y-2">
+              <p className="eyebrow">Leagues {pickedLeagues.length ? `(${pickedLeagues.length} picked)` : "(all)"}</p>
+              <div className="overflow-x-auto pb-1 -mx-4 px-4 sm:mx-0 sm:px-0">
+                <div className="flex gap-1.5 min-w-max">
+                  <Chip active={!pickedLeagues.length} onClick={() => setPickedLeagues([])}>
+                    All leagues <span className="tnum text-[10px] opacity-70">{optLeagues.reduce((a, l) => a + l.matches, 0)}</span>
+                  </Chip>
+                  {optLeagues.map(l => (
+                    <Chip key={`${l.sport}:${l.id}`} active={pickedLeagues.includes(l.id)} onClick={() => toggleLeague(l.id)}>
+                      <span className="inline-flex items-center gap-1.5">
+                        <CompetitionBadge name={l.name} fallbackEmoji={l.flag || SPORT_EMOJI[l.sport]} size={14} />
+                        {l.name} <span className="tnum text-[10px] opacity-70">{l.matches}</span>
+                      </span>
+                    </Chip>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Markets: each sport in play side by side */}
           <div className={clsx("grid gap-4", panels > 1 && "lg:grid-cols-2")}>

@@ -8212,6 +8212,44 @@ def _optimizer_sports(body: Dict[str, Any]) -> List[str]:
     return [x for x in OPT_SPORTS if x in asked]
 
 
+@app.get("/api/optimizer/leagues")
+async def optimizer_leagues(request: Request, days: int = 3, sports: str = "football"):
+    """The leagues with matches the optimizer can pick from: in the next
+    `days` days, for the sports asked (comma-separated), with how many
+    matches each has, busiest first. The optimizer's `leagues` takes their ids."""
+    days = min(PREDICTION_DAYS, max(1, int(days)))
+    asked = _optimizer_sports({"sports": [s for s in sports.split(",") if s]})
+    now = datetime.now(timezone.utc)
+    today, last = now.date().isoformat(), (now.date() + timedelta(days=days - 1)).isoformat()
+    kicked_off = now.strftime("%H:%M")
+    out: Dict[Tuple[str, str], Dict[str, Any]] = {}
+
+    def add(sport: str, preds: Iterable[Dict]) -> None:
+        for p in preds:
+            d = p.get("date") or ""
+            if not today <= d <= last or (d == today and (p.get("time") or "99:99") <= kicked_off):
+                continue
+            lg = str(p.get("league") or "")
+            if not lg:
+                continue
+            row = out.setdefault((sport, lg), {"sport": sport, "id": lg, "name": p.get("league_name") or lg,
+                                               "flag": p.get("flag") or "", "matches": 0})
+            row["matches"] += 1
+    for sp in asked:
+        if sp != "football":
+            try:
+                await _check_sport_access(request, "basketball" if sp == "basketball" else _rk_url(sp))
+            except HTTPException:
+                continue
+        if sp == "football":
+            add(sp, (p for p in _predictions_cache if p.get("sport") in (None, "football")))
+        elif sp == "basketball":
+            add(sp, _bb_upcoming())
+        else:
+            add(sp, _rk_upcoming(sp))
+    return {"leagues": sorted(out.values(), key=lambda x: (-x["matches"], x["name"]))}
+
+
 @app.post("/api/optimizer")
 async def optimize_slip(request: Request, body: Dict[str, Any], _access=Depends(require_feature("optimizer"))):
     """
@@ -8437,8 +8475,7 @@ async def _optimize_request(body: Dict[str, Any],
     preds = [p for p in upcoming if not bookable_only or linked[id(p)]]
     bb_preds = [] if "basketball" not in on else [
         p for p in _bb_upcoming()
-        if (in_window(p) if window else today <= p["date"] <= last) and not (leagues and sport == "basketball"
-                                                                              and p.get("league") not in leagues)]
+        if (in_window(p) if window else today <= p["date"] <= last) and (not leagues or p.get("league") in leagues)]
     if bookable_only and upcoming and not preds and sport == "football":
         return {"error": (f"SportyBet hasn't listed any of the {len(upcoming)} matches in the next {days} "
                           f"day{'s' if days != 1 else ''} yet (or we haven't linked them since the last restart). "
@@ -8484,7 +8521,7 @@ async def _optimize_request(body: Dict[str, Any],
         for rk in rk_on:
             ps = [p for p in _rk_upcoming(rk)
                   if (in_window(p) if window else today <= p["date"] <= last)
-                  and not (leagues and sport == rk and p.get("league") not in leagues)]
+                  and (not leagues or p.get("league") in leagues)]
             rk_preds += ps
             groups += [racket_predictions.options(p, min_prob, rk_families[rk], lambda m, c: m not in paused)
                        for p in ps]

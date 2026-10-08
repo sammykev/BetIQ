@@ -267,3 +267,22 @@ class TestServer:
         mixed = c.post("/api/optimizer", json={**body, "sports": ["football", "basketball"]})
         assert mixed.status_code == 200 and mixed.json()["matches_considered"] == 4
         assert c.post("/api/optimizer", json={**body, "sports": ["basketball"]}).status_code == 404
+
+    def test_the_optimizer_lists_leagues_and_narrows_to_them(self, priced, monkeypatch):
+        import asyncio
+        import main
+        from fastapi.testclient import TestClient
+        from tests.unit.test_optimizer import pred
+        monkeypatch.setattr(main, "_predictions_cache", [pred(i, p_home=0.7, p_draw=0.2, p_away=0.1, odds_home=1.6,
+                                                              odds_draw=4.0, odds_away=6.0) for i in range(4)])
+        got = TestClient(main.app).get("/api/optimizer/leagues?days=3&sports=football,basketball").json()["leagues"]
+        by = {(x["sport"], x["id"]): x for x in got}
+        fb = [x for x in got if x["sport"] == "football"]
+        bb = [x for x in got if x["sport"] == "basketball"]
+        assert fb and bb and sum(x["matches"] for x in bb) == len(priced)
+        # Only the leagues picked, whatever the sports
+        body = {"min_odds": 1.5, "max_odds": 30, "min_prob": 0.6, "days": 3, "no_live_check": True,
+                "sports": ["football", "basketball"], "leagues": [bb[0]["id"]]}
+        r = asyncio.run(main._optimize_request(body))
+        assert r["matches_considered"] == bb[0]["matches"]
+        assert all(p.get("sport") == "basketball" for p in r["picks"])
