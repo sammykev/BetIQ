@@ -41,6 +41,22 @@ def main() -> None:
             except Exception as e:
                 live = str(e)
             print(f"{name!r} [{lg}] fixture crest: {crest} · cached: {cached} · /api/team-logo: {live}")
+    print("\nThe live site (/api/predictions), as a visitor's phone gets it:")
+    with httpx.Client(timeout=60) as c:
+        live = c.get(f"{BASE}/api/predictions", params={"limit": 500}).json().get("predictions", [])
+        print(f"  {len(live)} predictions")
+        seen = set()
+        for p in live:
+            for side in ("home", "away"):
+                n = p.get(side) or ""
+                if n in seen or not any(w in n.lower() for w in WATCH + ("werder",)):
+                    continue
+                seen.add(n)
+                logo = c.get(f"{BASE}/api/team-logo", params={"name": n}).json()
+                print(f"  {n!r} [{p.get('league')}] {side}_crest: {p.get(side + '_crest')!r} · /api/team-logo: {logo.get('logo')} ({logo.get('source')})")
+        for n in ("Werder Bremen", "SV Werder Bremen", "Borussia Dortmund", "RCD Espanyol de Barcelona", "Espanyol"):
+            logo = c.get(f"{BASE}/api/team-logo", params={"name": n}).json()
+            print(f"  lookup {n!r}: {logo.get('logo')} ({logo.get('source')})")
     print("\nAll fixture crests:")
     for name, (crest, lg) in sorted(crests.items(), key=lambda kv: (kv[1][1] or "", kv[0] or "")):
         print(f"  {lg:<5} {name!r}: {crest}")
