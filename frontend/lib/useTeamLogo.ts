@@ -10,15 +10,32 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.o
 const _cache = new Map<string, string | null>();
 const _inFlight = new Map<string, Promise<string | null>>();
 
+// Names asked for within one short window go to the server together
+// (/api/team-logos): a page full of badges is one request, not one each
+const _queue = new Map<string, (url: string | null) => void>();
+let _timer: ReturnType<typeof setTimeout> | null = null;
+
+function flush(): void {
+  _timer = null;
+  const batch = Array.from(_queue.entries());
+  _queue.clear();
+  for (let i = 0; i < batch.length; i += 100) {
+    const part = batch.slice(i, i + 100);
+    fetch(`${API_URL}/api/team-logos?names=${encodeURIComponent(part.map(([n]) => n).join("|"))}`)
+      .then(r => (r.ok ? r.json() : { logos: {} }))
+      .then(d => { for (const [n, done] of part) done((d?.logos ?? {})[n] ?? null); })
+      .catch(() => { for (const [, done] of part) done(null); });
+  }
+}
+
 async function fetchLogo(name: string): Promise<string | null> {
   if (_cache.has(name)) return _cache.get(name)!;
   if (_inFlight.has(name)) return _inFlight.get(name)!;
 
-  const promise = fetch(`${API_URL}/api/team-logo?name=${encodeURIComponent(name)}`)
-    .then(r => (r.ok ? r.json() : { logo: null }))
-    .then(d => (d.logo as string | null) ?? null)
-    .catch(() => null)
-    .finally(() => _inFlight.delete(name));
+  const promise = new Promise<string | null>(resolve => {
+    _queue.set(name, resolve);
+    if (!_timer) _timer = setTimeout(flush, 30);
+  }).finally(() => _inFlight.delete(name));
 
   _inFlight.set(name, promise);
   const result = await promise;

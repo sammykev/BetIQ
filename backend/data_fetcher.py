@@ -234,6 +234,15 @@ class FootballDataClient:
             raise RuntimeError(f"football-data.org request failed for competition {league_code!r}")
         return data.get("emblem")
 
+    async def fetch_competition_teams(self, league_code: str) -> List[Dict]:
+        """A competition's clubs this season: [{name, shortName, tla, crest}]
+        (empty if it can't be had)."""
+        url = f"{API_BASE}/competitions/{league_code}/teams"
+        async with httpx.AsyncClient(verify=_tls()) as client:
+            data = await self._get(client, url)
+        return [{k: t.get(k) for k in ("name", "shortName", "tla", "crest")}
+                for t in (data or {}).get("teams") or [] if t.get("name") and t.get("crest")]
+
     async def fetch_recent_results(
         self, league_code: str, days_back: int = 30
     ) -> pd.DataFrame:

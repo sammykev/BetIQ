@@ -6729,21 +6729,40 @@ async def get_team_logo(name: str, response: Response):
     for anything else (basketball, tennis, a team not yet seen in a fixture
     window). Cached server-side (Redis, 30 days) since badges don't change.
     """
-    from team_logos import lookup_team_logo
     key = ("team", name)
     hit = _logo_answer(response, key)
     if hit is not None:
         return hit
+    return _logo_answer(response, key, await _team_logo(name))
 
+
+async def _team_logo(name: str) -> Dict[str, Any]:
+    from team_logos import lookup_team_logo
     logo = await asyncio.to_thread(_get_cached_team_crest, name)
     source = "football-data.org" if logo else None
-
     if not logo:
-        r = _get_redis()
-        logo = await lookup_team_logo(name, redis_client=r)
+        logo = await lookup_team_logo(name, redis_client=_get_redis())
         source = "thesportsdb" if logo else None
+    return {"name": name, "logo": logo, "source": source}
 
-    return _logo_answer(response, key, {"name": name, "logo": logo, "source": source})
+
+@app.get("/api/team-logos")
+async def get_team_logos(names: str, response: Response):
+    """Several clubs' badges at once (names joined by "|", at most 120):
+    {"logos": {name: url or null}} — a page's badges in one request."""
+    wanted = list(dict.fromkeys(n.strip() for n in names.split("|") if n.strip()))[:120]
+    out: Dict[str, Optional[str]] = {}
+    missing = []
+    for n in wanted:
+        hit = _logo_answer(response, ("team", n))
+        if hit is None:
+            missing.append(n)
+        else:
+            out[n] = hit.get("logo")
+    for n, got in zip(missing, await asyncio.gather(*(_team_logo(n) for n in missing))):
+        out[n] = _logo_answer(response, ("team", n), got).get("logo")
+    response.headers["Cache-Control"] = f"public, max-age={LOGO_MISS_SECONDS}"
+    return {"logos": out}
 
 
 @app.get("/api/debug/team-logo")
@@ -6899,6 +6918,11 @@ def _cache_team_crests(fixtures: Iterable[Dict]) -> None:
     if not pairs:
         return
     try:
+        import crests
+        crests.save(r, {t: u for t, u in pairs.items() if "football-data.org" in u})
+    except Exception:
+        pass
+    try:
         pipe = r.pipeline(transaction=False)
         for team, url in pairs.items():
             pipe.setex(_team_crest_cache_key(team), 60 * 60 * 24 * 30, url)
@@ -6909,15 +6933,40 @@ def _cache_team_crests(fixtures: Iterable[Dict]) -> None:
 
 
 def _get_cached_team_crest(team_name: str) -> Optional[str]:
+    """The club's crest: its own fixture's, else football-data.org's team
+    lists by name (crests.py: whole words, never a guess from a city)."""
+    import crests
     if not team_name or not team_name.strip():
         return None
     r = _get_redis()
     if not r:
         return None
     try:
-        return r.get(_team_crest_cache_key(team_name)) or None
+        return r.get(_team_crest_cache_key(team_name)) or crests.lookup(r, team_name)
     except Exception:
         return None
+
+
+async def _crest_index_refresh() -> int:
+    """Every tracked competition's clubs and crests from football-data.org
+    (one request a competition, spaced for the rate limit) into crests.KEY."""
+    import crests
+    if not API_KEY:
+        return 0
+    client = FootballDataClient(API_KEY)
+    found: Dict[str, str] = {}
+    for code in LEAGUES:
+        if not_in_plan(code):
+            continue
+        try:
+            found.update(crests.entries(await client.fetch_competition_teams(code)))
+        except Exception as e:
+            print(f"[Crests] {code}: {e}")
+        await asyncio.sleep(7)
+    n = await asyncio.to_thread(crests.save, _get_redis(), found)
+    _logo_memo.clear()
+    print(f"[Crests] {n} club names with crests from football-data.org")
+    return n
 
 
 LOGO_SECONDS = 24 * 3600        # a badge found is kept this long (in memory, and by browsers)
@@ -9404,6 +9453,8 @@ async def startup():
     scheduler.add_job(_web_probe, "interval", hours=24, id="web_probe", max_instances=1, coalesce=True,
                       misfire_grace_time=900, next_run_time=datetime.now() + timedelta(seconds=75))
     # Tennis and table tennis: the nightly ratings, SportyBet's matches priced, live scores and finals
+    scheduler.add_job(_crest_index_refresh, "interval", hours=24, id="crest_index", max_instances=1, misfire_grace_time=600,
+                      coalesce=True, next_run_time=datetime.now() + timedelta(minutes=4))
     scheduler.add_job(_fb_calibration_load, "interval", hours=3, id="fb_calibration", max_instances=1, misfire_grace_time=300,
                       coalesce=True, next_run_time=datetime.now() + timedelta(seconds=20))
     scheduler.add_job(_rk_load_models, "interval", hours=3, id="racket_models", max_instances=1, misfire_grace_time=300, coalesce=True,

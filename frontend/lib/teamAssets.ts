@@ -24,31 +24,9 @@ const COUNTRY_CODES: Record<string, string> = {
   "Bosnia":"ba","Kosovo":"xk",
 };
 
-const CLUB_IDS: Record<string, number> = {
-  "Arsenal":57,"Aston Villa":58,"Brentford":402,"Brighton":397,"Burnley":328,
-  "Chelsea":61,"Crystal Palace":354,"Everton":62,"Fulham":63,"Ipswich":349,
-  "Leicester":338,"Liverpool":64,"Luton":389,"Manchester City":65,"Manchester United":66,
-  "Newcastle":67,"Nottm Forest":351,"Sheffield Utd":356,"Southampton":340,
-  "Tottenham":73,"West Ham":563,"Wolves":76,"Bournemouth":1044,"Sunderland":71,
-  "AC Milan":98,"Atalanta":102,"Bologna":103,"Cagliari":488,"Empoli":445,
-  "Fiorentina":99,"Frosinone":470,"Genoa":107,"Inter Milan":108,"Internazionale":108,
-  "Juventus":109,"Lazio":110,"Lecce":5890,"Milan":98,"Monza":5911,"Napoli":113,
-  "Roma":100,"Salernitana":5915,"Sassuolo":471,"Torino":586,"Udinese":115,
-  "Verona":450,"Venezia":454,"Parma":112,"Augsburg":16,"Bayer Leverkusen":3,
-  "Bayern Munich":5,"Bochum":29,"Borussia Dortmund":4,"Darmstadt":6,
-  "Eintracht Frankfurt":9,"Freiburg":8,"Gladbach":18,"Hamburg":20,"Heidenheim":10267,
-  "Hoffenheim":720,"Köln":1,"Mainz":15,"RB Leipzig":721,"Stuttgart":10,
-  "Union Berlin":28,"Wolfsburg":11,"Werder Bremen":13,"Athletic Club":77,
-  "Atletico Madrid":78,"Barcelona":81,"Betis":90,"Cadiz":8634,"Celta Vigo":558,
-  "Espanyol":80,"Getafe":82,"Girona":298,"Granada":83,"Las Palmas":275,
-  "Mallorca":89,"Osasuna":79,"Rayo Vallecano":87,"Real Madrid":86,
-  "Real Sociedad":92,"Sevilla":559,"Valencia":95,"Villarreal":94,"Alaves":263,
-  "Brest":532,"Clermont":528,"Le Havre":539,"Lens":546,"Lille":521,"Lorient":537,
-  "Lyon":523,"Marseille":516,"Metz":545,"Monaco":548,"Montpellier":518,"Nantes":543,
-  "Nice":522,"PSG":524,"Paris Saint-Germain":524,"Reims":547,"Rennes":529,
-  "Strasbourg":576,"Toulouse":511,"Benfica":1903,"Braga":5602,"Porto":503,
-  "Sporting CP":498,
-};
+// Club crests come from the server (football-data.org's own team lists,
+// matched by whole words: /api/team-logos) or the fixture feed — never a
+// hand-kept list of ids, which went stale and put wrong crests on clubs.
 
 const TEAM_COLORS: Record<string, string> = {
   "Arsenal":"#EF0107","Liverpool":"#C8102E","Chelsea":"#034694",
@@ -111,7 +89,6 @@ export function matchKey(name: string, keys: string[]): string | undefined {
 }
 
 const COUNTRY_KEYS = Object.keys(COUNTRY_CODES);
-const CLUB_KEYS = Object.keys(CLUB_IDS);
 
 // Crests the fixtures came with (football-data.org's own, by exact team
 // name): trusted over any guess from the maps below
@@ -131,9 +108,6 @@ export function getTeamAssets(name: string): TeamAssets {
   if (crest) return { imageUrl: crest, isFlag: false, color };
   const country = COUNTRY_CODES[name] ? name : matchKey(name, COUNTRY_KEYS);
   if (country) return { imageUrl: `https://flagcdn.com/w320/${COUNTRY_CODES[country]}.png`, isFlag: true, color };
-
-  const club = CLUB_IDS[name] ? name : matchKey(name, CLUB_KEYS);
-  if (club) return { imageUrl: `https://crests.football-data.org/${CLUB_IDS[club]}.png`, isFlag: false, color };
 
   return { imageUrl: "", isFlag: false, color };
 }
