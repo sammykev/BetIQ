@@ -54,9 +54,15 @@ def main() -> None:
                 seen.add(n)
                 logo = c.get(f"{BASE}/api/team-logo", params={"name": n}).json()
                 print(f"  {n!r} [{p.get('league')}] {side}_crest: {p.get(side + '_crest')!r} · /api/team-logo: {logo.get('logo')} ({logo.get('source')})")
-        for n in ("Werder Bremen", "SV Werder Bremen", "Borussia Dortmund", "RCD Espanyol de Barcelona", "Espanyol"):
-            logo = c.get(f"{BASE}/api/team-logo", params={"name": n}).json()
-            print(f"  lookup {n!r}: {logo.get('logo')} ({logo.get('source')})")
+        names = ["Werder Bremen", "SV Werder Bremen", "Borussia Dortmund", "Dortmund", "RCD Espanyol de Barcelona",
+                 "Espanyol", "FC Barcelona", "Málaga CF", "Ath Madrid", "Man United", "Nott'm Forest", "Crystal Palace",
+                 "Sunderland", "Metz", "Montpellier", "Toulouse", "Strasbourg", "Hamburger SV", "Real Sociedad"]
+        got = c.get(f"{BASE}/api/team-logos", params={"names": "|".join(names)})
+        print(f"  /api/team-logos: {got.status_code}")
+        for n, url in (got.json().get("logos") or {}).items() if got.status_code == 200 else []:
+            print(f"  {n!r}: {url}")
+        n_idx = r.hlen("betiq:crests")
+        print(f"  crest index: {n_idx} names")
     print("\nAll fixture crests:")
     for name, (crest, lg) in sorted(crests.items(), key=lambda kv: (kv[1][1] or "", kv[0] or "")):
         print(f"  {lg:<5} {name!r}: {crest}")
