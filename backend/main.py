@@ -6751,6 +6751,7 @@ async def get_team_logos(names: str, response: Response):
     """Several clubs' badges at once (names joined by "|", at most 120):
     {"logos": {name: url or null}} — a page's badges in one request."""
     wanted = list(dict.fromkeys(n.strip() for n in names.split("|") if n.strip()))[:120]
+    from team_logos import lookup_team_logo
     out: Dict[str, Optional[str]] = {}
     missing = []
     for n in wanted:
@@ -6759,7 +6760,19 @@ async def get_team_logos(names: str, response: Response):
             missing.append(n)
         else:
             out[n] = hit.get("logo")
-    for n, got in zip(missing, await asyncio.gather(*(_team_logo(n) for n in missing))):
+    # Crests in one worker thread for the lot (not a thread each: the pool is
+    # shared with every other request), then TheSportsDB for the rest, a few at a time
+    found = await asyncio.to_thread(lambda: {n: _get_cached_team_crest(n) for n in missing}) if missing else {}
+    gate = asyncio.Semaphore(4)
+
+    async def outside(n: str) -> Dict[str, Any]:
+        async with gate:
+            logo = await lookup_team_logo(n, redis_client=_get_redis())
+        return {"name": n, "logo": logo, "source": "thesportsdb" if logo else None}
+    rest = [n for n in missing if not found.get(n)]
+    more = dict(zip(rest, await asyncio.gather(*(outside(n) for n in rest)))) if rest else {}
+    for n in missing:
+        got = {"name": n, "logo": found[n], "source": "football-data.org"} if found.get(n) else more[n]
         out[n] = _logo_answer(response, ("team", n), got).get("logo")
     response.headers["Cache-Control"] = f"public, max-age={LOGO_MISS_SECONDS}"
     return {"logos": out}

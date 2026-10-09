@@ -43,6 +43,19 @@ def _hit(k: str, n: str) -> bool:
     return n == k or (len(k) >= 5 and n.startswith(k))
 
 
+_split: Dict[str, List[str]] = {}
+
+
+def _key_words(key: str) -> List[str]:
+    """A known name's words, worked out once (the index is matched on every badge request)."""
+    w = _split.get(key)
+    if w is None:
+        if len(_split) > 20000:
+            _split.clear()
+        w = _split[key] = _words(key)
+    return w
+
+
 def match(name: str, known: Iterable[str]) -> Optional[str]:
     """The known name `name` stands for, by whole words (None if unclear)."""
     nw = _words(name)
@@ -51,7 +64,7 @@ def match(name: str, known: Iterable[str]) -> Optional[str]:
     best: Optional[Tuple[int, int, str]] = None     # (-words matched, first position, key)
     wider = []
     for key in known:
-        kw = _words(key)
+        kw = _key_words(key)
         if not kw:
             continue
         if kw == nw:
