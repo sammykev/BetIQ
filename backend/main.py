@@ -6960,22 +6960,32 @@ def _get_cached_team_crest(team_name: str) -> Optional[str]:
         return None
 
 
+CREST_GAP_S = 15          # between team-list requests: well under football-data.org's 10 a minute
+
+
 async def _crest_index_refresh() -> int:
     """Every tracked competition's clubs and crests from football-data.org
     (one request a competition, spaced for the rate limit) into crests.KEY."""
     import crests
     if not API_KEY:
         return 0
+    if _is_training:
+        # The prediction pipeline is fetching fixtures: football-data.org allows
+        # 10 requests a minute between us, and its fixtures come first
+        print("[Crests] pipeline running — trying again later")
+        return 0
     client = FootballDataClient(API_KEY)
     found: Dict[str, str] = {}
     for code in LEAGUES:
         if not_in_plan(code):
             continue
+        if _is_training:
+            break
         try:
             found.update(crests.entries(await client.fetch_competition_teams(code)))
         except Exception as e:
             print(f"[Crests] {code}: {e}")
-        await asyncio.sleep(7)
+        await asyncio.sleep(CREST_GAP_S)
     n = await asyncio.to_thread(crests.save, _get_redis(), found)
     _logo_memo.clear()
     print(f"[Crests] {n} club names with crests from football-data.org")
@@ -9466,8 +9476,9 @@ async def startup():
     scheduler.add_job(_web_probe, "interval", hours=24, id="web_probe", max_instances=1, coalesce=True,
                       misfire_grace_time=900, next_run_time=datetime.now() + timedelta(seconds=75))
     # Tennis and table tennis: the nightly ratings, SportyBet's matches priced, live scores and finals
+    # Crests: long after the boot pipeline's fixture requests (the index persists in Redis meanwhile)
     scheduler.add_job(_crest_index_refresh, "interval", hours=24, id="crest_index", max_instances=1, misfire_grace_time=600,
-                      coalesce=True, next_run_time=datetime.now() + timedelta(minutes=4))
+                      coalesce=True, next_run_time=datetime.now() + timedelta(hours=3))
     scheduler.add_job(_fb_calibration_load, "interval", hours=3, id="fb_calibration", max_instances=1, misfire_grace_time=300,
                       coalesce=True, next_run_time=datetime.now() + timedelta(seconds=20))
     scheduler.add_job(_rk_load_models, "interval", hours=3, id="racket_models", max_instances=1, misfire_grace_time=300, coalesce=True,
