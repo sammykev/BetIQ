@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import { rememberCrests } from "@/lib/teamAssets";
 import { PredictionCard } from "@/components/PredictionCard";
 import { LeagueTabs } from "@/components/LeagueTabs";
 import { LeagueSections } from "@/components/LeagueSections";
@@ -331,6 +332,7 @@ export default function HomePage() {
     // Last visit's lists at once; the fresh ones replace them when they arrive
     const kept = peek<{ predictions: Prediction[]; last_updated: string | null; leagues: League[] }>("football:predictions");
     if (kept) {
+      rememberCrests(kept.predictions);
       setAllPredictions(kept.predictions);
       setLastUpdated(kept.last_updated);
       setLeagues(kept.leagues);
@@ -346,6 +348,7 @@ export default function HomePage() {
       ]);
       clearTimeout(timer);
       const predictions = Array.isArray(data?.predictions) ? data.predictions : [];
+      rememberCrests(predictions);
       setAllPredictions(predictions);
       setLastUpdated(data?.last_updated ?? null);
       setLeagues(Array.isArray(lgs) ? lgs : []);

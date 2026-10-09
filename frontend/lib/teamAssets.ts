@@ -113,8 +113,22 @@ export function matchKey(name: string, keys: string[]): string | undefined {
 const COUNTRY_KEYS = Object.keys(COUNTRY_CODES);
 const CLUB_KEYS = Object.keys(CLUB_IDS);
 
+// Crests the fixtures came with (football-data.org's own, by exact team
+// name): trusted over any guess from the maps below
+const KNOWN_CRESTS = new Map<string, string>();
+
+/** Remember the crests a list of predictions carries (home_crest/away_crest). */
+export function rememberCrests(preds: { home?: string; away?: string; home_crest?: string | null; away_crest?: string | null }[]): void {
+  for (const p of preds) {
+    if (p.home && p.home_crest) KNOWN_CRESTS.set(p.home, p.home_crest);
+    if (p.away && p.away_crest) KNOWN_CRESTS.set(p.away, p.away_crest);
+  }
+}
+
 export function getTeamAssets(name: string): TeamAssets {
   const color = TEAM_COLORS[name] || hashColor(name);
+  const crest = KNOWN_CRESTS.get(name);
+  if (crest) return { imageUrl: crest, isFlag: false, color };
   const country = COUNTRY_CODES[name] ? name : matchKey(name, COUNTRY_KEYS);
   if (country) return { imageUrl: `https://flagcdn.com/w320/${COUNTRY_CODES[country]}.png`, isFlag: true, color };
 

@@ -6,6 +6,7 @@ import { AccessError, fetchMatchAnalysis, fetchExplanation, fetchMatchFacts } fr
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
 import type { MatchAnalysis, Market, MatchExplanation, MatchFacts, FactMatch, Prediction, TeamForm, TeamAverages } from "@/lib/api";
 import { kickoff } from "@/lib/matchTime";
+import { rememberCrests } from "@/lib/teamAssets";
 import { TeamBadge } from "@/components/PredictionCard";
 import { ThinHistoryBadge } from "@/components/ThinHistoryBadge";
 import { CompetitionBadge } from "@/components/CompetitionBadge";
@@ -624,6 +625,7 @@ function MatchContent() {
       .then(r => r.json())
       .then(d => {
         const preds: Prediction[] = Array.isArray(d?.predictions) ? d.predictions : [];
+        rememberCrests(preds);
         const found = preds.find(p =>
           p.home === home && p.away === away && (!date || p.date === date)
         );
