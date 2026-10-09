@@ -63,24 +63,7 @@ def main() -> None:
             print(f"  {n!r}: {url}")
         n_idx = r.hlen("betiq:crests")
         print(f"  crest index: {n_idx} names")
-    print("\nAll fixture crests:")
-    for name, (crest, lg) in sorted(crests.items(), key=lambda kv: (kv[1][1] or "", kv[0] or "")):
-        print(f"  {lg:<5} {name!r}: {crest}")
-    ts = Path(__file__).resolve().parent.parent / "frontend" / "lib" / "teamAssets.ts"
-    if ts.exists():
-        s = ts.read_text()
-        blk = s[s.index("const CLUB_IDS"):]
-        blk = blk[:blk.index("};")]
-        ids = dict(re.findall(r'"([^"]+)":(\d+)', blk))
-        print("\nStatic crest ids vs the fixtures' own (fixture names containing the key):")
-        for key, cid in ids.items():
-            hits = {n: cr for n, (cr, _) in crests.items()
-                    if n and cr and re.search(rf"\b{re.escape(key.lower())}\b", n.lower())}
-            for n, cr in hits.items():
-                m = re.search(r"/(\d+)\.(png|svg)", cr)
-                fid = m.group(1) if m else cr
-                print(f"  {'OK ' if fid == cid else 'BAD'} {key}: static {cid} · {n!r} fixture {fid}")
-
+    print(f"\n{len(crests)} fixture crests (not listed)")
 
 if __name__ == "__main__":
     main()
