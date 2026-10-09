@@ -29,7 +29,7 @@ const CLUB_IDS: Record<string, number> = {
   "Chelsea":61,"Crystal Palace":354,"Everton":62,"Fulham":63,"Ipswich":349,
   "Leicester":338,"Liverpool":64,"Luton":389,"Manchester City":65,"Manchester United":66,
   "Newcastle":67,"Nottm Forest":351,"Sheffield Utd":356,"Southampton":340,
-  "Tottenham":73,"West Ham":563,"Wolves":76,"Bournemouth":1044,"Sunderland":356,
+  "Tottenham":73,"West Ham":563,"Wolves":76,"Bournemouth":1044,"Sunderland":71,
   "AC Milan":98,"Atalanta":102,"Bologna":103,"Cagliari":488,"Empoli":445,
   "Fiorentina":99,"Frosinone":470,"Genoa":107,"Inter Milan":108,"Internazionale":108,
   "Juventus":109,"Lazio":110,"Lecce":5890,"Milan":98,"Monza":5911,"Napoli":113,
@@ -44,9 +44,9 @@ const CLUB_IDS: Record<string, number> = {
   "Mallorca":89,"Osasuna":79,"Rayo Vallecano":87,"Real Madrid":86,
   "Real Sociedad":92,"Sevilla":559,"Valencia":95,"Villarreal":94,"Alaves":263,
   "Brest":532,"Clermont":528,"Le Havre":539,"Lens":546,"Lille":521,"Lorient":537,
-  "Lyon":523,"Marseille":516,"Metz":527,"Monaco":548,"Montpellier":527,"Nantes":543,
+  "Lyon":523,"Marseille":516,"Metz":545,"Monaco":548,"Montpellier":518,"Nantes":543,
   "Nice":522,"PSG":524,"Paris Saint-Germain":524,"Reims":547,"Rennes":529,
-  "Strasbourg":576,"Toulouse":576,"Benfica":1903,"Braga":5602,"Porto":503,
+  "Strasbourg":576,"Toulouse":511,"Benfica":1903,"Braga":5602,"Porto":503,
   "Sporting CP":498,
 };
 
@@ -78,28 +78,50 @@ export interface TeamAssets {
   color:    string;
 }
 
+const words = (s: string): string[] =>
+  s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+
+// A key's word is found in a name's word: the same word, or (for longer
+// words) the start of one ("Hamburg" in "Hamburger SV")
+const wordHit = (k: string, n: string) => n === k || (k.length >= 5 && n.startsWith(k));
+
+/**
+ * The map key a team name stands for, by whole words, never substrings:
+ * "Mali" is not in "Somalia", "Roma" is not "Romania". Every word of the key
+ * must be in the name; the key matching the most words wins, then the one
+ * that comes first in the name — so "RCD Espanyol de Barcelona" is Espanyol,
+ * not Barcelona. Failing that, a short name that is part of exactly one key
+ * ("Bayern" → "Bayern Munich").
+ */
+export function matchKey(name: string, keys: string[]): string | undefined {
+  const nw = words(name);
+  if (!nw.length) return undefined;
+  let best: { key: string; n: number; at: number } | undefined;
+  for (const key of keys) {
+    const kw = words(key);
+    if (!kw.length) continue;
+    const at = kw.map(k => nw.findIndex(n => wordHit(k, n)));
+    if (at.some(i => i < 0)) continue;
+    const first = Math.min(...at);
+    if (!best || kw.length > best.n || (kw.length === best.n && first < best.at)) best = { key, n: kw.length, at: first };
+  }
+  if (best) return best.key;
+  const wider = keys.filter(key => { const kw = words(key); return nw.every(n => kw.includes(n)); });
+  return wider.length === 1 ? wider[0] : undefined;
+}
+
+const COUNTRY_KEYS = Object.keys(COUNTRY_CODES);
+const CLUB_KEYS = Object.keys(CLUB_IDS);
+
 export function getTeamAssets(name: string): TeamAssets {
-  // Exact country match
-  const code = COUNTRY_CODES[name];
-  if (code) return { imageUrl: `https://flagcdn.com/w320/${code}.png`, isFlag: true, color: TEAM_COLORS[name] || hashColor(name) };
+  const color = TEAM_COLORS[name] || hashColor(name);
+  const country = COUNTRY_CODES[name] ? name : matchKey(name, COUNTRY_KEYS);
+  if (country) return { imageUrl: `https://flagcdn.com/w320/${COUNTRY_CODES[country]}.png`, isFlag: true, color };
 
-  // Partial country match
-  const countryKey = Object.keys(COUNTRY_CODES).find(k =>
-    name.toLowerCase().includes(k.toLowerCase()) || k.toLowerCase().includes(name.toLowerCase())
-  );
-  if (countryKey) return { imageUrl: `https://flagcdn.com/w320/${COUNTRY_CODES[countryKey]}.png`, isFlag: true, color: TEAM_COLORS[name] || hashColor(name) };
+  const club = CLUB_IDS[name] ? name : matchKey(name, CLUB_KEYS);
+  if (club) return { imageUrl: `https://crests.football-data.org/${CLUB_IDS[club]}.png`, isFlag: false, color };
 
-  // Exact club match
-  const id = CLUB_IDS[name];
-  if (id) return { imageUrl: `https://crests.football-data.org/${id}.png`, isFlag: false, color: TEAM_COLORS[name] || hashColor(name) };
-
-  // Partial club match
-  const clubKey = Object.keys(CLUB_IDS).find(k =>
-    name.toLowerCase().includes(k.toLowerCase()) || k.toLowerCase().includes(name.toLowerCase())
-  );
-  if (clubKey) return { imageUrl: `https://crests.football-data.org/${CLUB_IDS[clubKey]}.png`, isFlag: false, color: TEAM_COLORS[name] || hashColor(name) };
-
-  return { imageUrl: "", isFlag: false, color: TEAM_COLORS[name] || hashColor(name) };
+  return { imageUrl: "", isFlag: false, color };
 }
 
 export function getMatchGradient(home: string, away: string): string {
