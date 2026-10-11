@@ -26,6 +26,14 @@ LINES = {"shots": (20.5, 22.5, 24.5, 26.5, 28.5), "sot": (6.5, 7.5, 8.5, 9.5, 10
          "sot_home": (2.5, 3.5, 4.5, 5.5, 6.5), "sot_away": (1.5, 2.5, 3.5, 4.5, 5.5)}
 # Tuned walk-forward on 2023-24 (tune()), tested on 2024-25 (check())
 PARAMS = {"gamma": 0.8, "team_gamma": 1.1, "prior": 8.0, "decay": 0.95}
+# Thin-data guards (set_pieces.SetPieceModel): a competition first seen (an
+# ESPN cup) starts from the all-competition average, not its first match —
+# seeded from one amateur side's 4 home shots, every cup tie read as 5× a
+# team's level and promoted clubs came out near 50 shots a match; one match
+# moves a rating by at most 2.5× the average; and a team with few matches in
+# the fixture's league is pulled towards that league's average (4 matches'
+# worth). Neutral on the league CSVs' walk-forward (2024-25 Brier within 0.003).
+GUARDS = {"seed_leagues": True, "ratio_cap": 2.5, "league_prior": 4.0}
 
 
 def _counts(row) -> Optional[Dict[str, Tuple[float, float]]]:
@@ -48,7 +56,7 @@ class ShotModel(set_pieces.SetPieceModel):
     SCALE = True
 
     def __init__(self, params: Optional[Dict] = None):
-        super().__init__({**PARAMS, **(params or {}), "use_referees": False})
+        super().__init__({**PARAMS, **GUARDS, **(params or {}), "use_referees": False})
 
     @staticmethod
     def counts(row) -> Optional[Dict[str, Tuple[float, float]]]:
