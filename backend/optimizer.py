@@ -267,9 +267,12 @@ def _miss(total: float, lo: float, hi: float) -> float:
     return max(0.0, math.log(lo) - math.log(total), math.log(total) - math.log(hi))
 
 
-def _solve(groups: List[List[Option]], L: int, W: int, max_games: int) -> Optional[List[Option]]:
+def _solve(groups: List[List[Option]], L: int, W: int, max_games: int,
+           budget: Optional[float] = None) -> Optional[List[Option]]:
     """Exact group knapsack: ≤ one option per group, ≤ max_games picks,
-    rounded log-odds in [L, W], lowest Σ -log(p)."""
+    rounded log-odds in [L, W], lowest Σ -log(p). With `budget` (a most
+    Σ -log(p), i.e. a least win chance): the highest log-odds in [L, W]
+    whose lowest Σ -log(p) is within it."""
     inf = np.inf
     dp = np.full((max_games + 1, W + 1), inf)
     dp[0, 0] = 0.0
@@ -294,7 +297,15 @@ def _solve(groups: List[List[Option]], L: int, W: int, max_games: int) -> Option
     window = dp[1:, L:W + 1]
     if not np.isfinite(window).any():
         return None
-    gi, wi = np.unravel_index(np.argmin(window), window.shape)
+    if budget is not None:
+        fits = window <= budget + 1e-12
+        cols = np.where(fits.any(axis=0))[0]
+        if not len(cols):
+            return None
+        wi = int(cols[-1])                       # the highest odds within the chance
+        gi = int(np.argmin(np.where(fits[:, wi], window[:, wi], np.inf)))
+    else:
+        gi, wi = np.unravel_index(np.argmin(window), window.shape)
     n, w = int(gi) + 1, int(wi) + L
     picks: List[Option] = []
     for i in range(len(groups) - 1, -1, -1):
@@ -308,6 +319,38 @@ def _solve(groups: List[List[Option]], L: int, W: int, max_games: int) -> Option
 def worth_it(o: Option, min_edge: Optional[float] = MIN_EDGE) -> bool:
     """False for a pick at a real price clearly below what our chance is worth."""
     return min_edge is None or o.odds_source == "estimated" or o.prob * o.odds >= 1 + min_edge
+
+
+def _result(picks: List[Option], lo: float, hi: float) -> Dict:
+    picks = sorted(picks, key=lambda o: (o.date, o.time, o.home))
+    total = math.prod(o.odds for o in picks)
+    return {
+        "picks": [asdict(o) for o in picks],
+        "games": len(picks),
+        "total_odds": round(total, 2),
+        "win_chance": round(math.prod(o.prob for o in picks), 4),
+        "within_target": lo <= total <= hi,
+        "estimated_prices": sum(o.odds_source == "estimated" for o in picks),
+    }
+
+
+def optimize_safe(groups: List[List[Option]], min_chance: float, hi: float,
+                  max_games: int = MAX_GAMES, min_edge: Optional[float] = MIN_EDGE) -> Optional[Dict]:
+    """The slip with the highest total odds (up to `hi`) whose win chance —
+    every pick's chance multiplied — is at least `min_chance`; None if not
+    even one pick is that likely."""
+    if not 0 < min_chance < 1:
+        raise ValueError("the slip's chance must be between 0 and 1")
+    max_games = max(1, min(int(max_games), MAX_GAMES))
+    groups = [[o for o in g if worth_it(o, min_edge) and o.prob >= min_chance] for g in groups]
+    groups = sorted((g for g in groups if g), key=lambda g: -max(o.prob for o in g))[:MAX_MATCHES]
+    W = int(math.floor(math.log(max(hi, 1.02)) / STEP))
+    picks = _solve(groups, 1, W, max_games, budget=-math.log(min_chance)) if groups else None
+    if not picks:
+        return None
+    out = _result(picks, 1.0, hi)
+    out["min_chance"] = min_chance
+    return out
 
 
 def optimize(groups: List[List[Option]], lo: float, hi: float,
@@ -345,17 +388,7 @@ def optimize(groups: List[List[Option]], lo: float, hi: float,
             W -= int(math.ceil((math.log(total) - math.log(hi)) / STEP)) + 1
     if best is None:
         return None
-    picks = sorted(best, key=lambda o: (o.date, o.time, o.home))
-
-    total = math.prod(o.odds for o in picks)
-    return {
-        "picks": [asdict(o) for o in picks],
-        "games": len(picks),
-        "total_odds": round(total, 2),
-        "win_chance": round(math.prod(o.prob for o in picks), 4),
-        "within_target": lo <= total <= hi,
-        "estimated_prices": sum(o.odds_source == "estimated" for o in picks),
-    }
+    return _result(best, lo, hi)
 
 
 MARKET_NAMES = {m: n for m, n, *_ in _PICKS}

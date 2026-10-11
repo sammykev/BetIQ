@@ -266,3 +266,28 @@ class TestNegativeEdge:
         # A slightly short price (within MIN_EDGE) stays, and the filter can be switched off
         assert optimize([[self.opt(0.7, 1.38)]], 1.2, 1.4, 1)["games"] == 1
         assert optimize([[self.opt(0.7, 1.3)]], 1.2, 1.4, 1, min_edge=None)["games"] == 1
+
+
+class TestSlipChance:
+    """The highest odds whose whole-slip chance stays at or above a minimum."""
+
+    def test_highest_odds_that_keep_the_chance(self):
+        import optimizer
+        groups = [[option(1, 0.97, 1.05)], [option(2, 0.96, 1.06)], [option(3, 0.95, 1.08)],
+                  [option(4, 0.80, 1.40)], [option(5, 0.70, 1.60)]]
+        res = optimizer.optimize_safe(groups, 0.9, 1000, min_edge=None)
+        assert res["win_chance"] >= 0.9
+        assert {p["home"] for p in res["picks"]} == {"H2", "H3"} or res["total_odds"] >= 1.14
+        assert all(p["prob"] >= 0.9 for p in res["picks"])
+        # nothing better under the same chance: adding any other pick drops below 90%
+        assert res["win_chance"] * 0.97 < 0.9
+
+    def test_none_when_no_pick_is_that_likely(self):
+        import optimizer
+        assert optimizer.optimize_safe([[option(1, 0.8, 1.3)]], 0.9, 100, min_edge=None) is None
+
+    def test_max_odds_caps_it(self):
+        import optimizer
+        groups = [[option(i, 0.99, 1.2)] for i in range(10)]
+        res = optimizer.optimize_safe(groups, 0.9, 1.5, min_edge=None)
+        assert res["total_odds"] <= 1.5 * 1.02 and res["win_chance"] >= 0.9

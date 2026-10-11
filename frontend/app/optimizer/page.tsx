@@ -39,6 +39,8 @@ interface OptResult {
   picks?: OptPick[]; games?: number; total_odds?: number; win_chance?: number;
   within_target?: boolean; estimated_prices?: number; matches_considered?: number; bookable_picks?: number;
   target?: [number, number]; target_odds?: number; error?: string;
+  /** Set when the slip was built to a least win chance instead of target odds */
+  min_chance?: number;
   /** Matches left out: a club with fewer than 5 matches in our data */
   thin_history?: ThinMatch[];
   /** Each pick checked on SportyBet's match page as the slip was made */
@@ -94,7 +96,9 @@ function offBy(total: number, target: number) {
   return Math.abs(d) < 0.05 ? "exact" : `${d > 0 ? "+" : "−"}${Math.abs(d).toFixed(1)}%`;
 }
 const short = (x: number) => (x >= 1000 ? `${x / 1000}K` : `${x}x`);
-const CONFIDENCE = [0.5, 0.6, 0.7, 0.8];
+const CONFIDENCE = [0.5, 0.6, 0.7, 0.8, 0.9];
+// The whole slip's least chance to land (every pick's chance multiplied)
+const SLIP_CHANCE = [0.7, 0.8, 0.9];
 const DAYS = [{ label: "Today", n: 1 }, { label: "2 days", n: 2 }, { label: "3 days", n: 3 }, { label: "Week", n: 7 }];
 // Each chip covers one or more backend markets (optimizer.py _PICKS). `needs`
 // are the booking_slip.VERIFIED markets SportyBet must confirm before codes
@@ -271,6 +275,7 @@ export default function OptimizerPage() {
   const [typed, setTyped] = useState("10");
   const [tolerance, setTolerance] = useState(0.05);
   const [minProb, setMinProb] = useState(0.6);
+  const [slipChance, setSlipChance] = useState<number | null>(null);
   const [days, setDays] = useState(3);
   const [maxGames, setMaxGames] = useState(30);
   const [markets, setMarkets] = useState<string[]>(MARKETS.map(m => m.id));
@@ -402,6 +407,7 @@ export default function OptimizerPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ target_odds: targetOdds, min_odds: lo, max_odds: hi, min_prob: minProb, days, max_games: maxGames,
+                               ...(slipChance ? { min_slip_chance: slipChance } : {}),
                                ...request(),
                                sports: otherSports ? playing : ["football"],
                                // Servers from before multi-sport read one sport (or all)
@@ -514,6 +520,17 @@ export default function OptimizerPage() {
               {CONFIDENCE.map(c => (
                 <Chip key={c} active={minProb === c} onClick={() => setMinProb(c)}>{Math.round(c * 100)}% likely</Chip>
               ))}
+            </Setting>
+            <Setting label="Whole slip at least">
+              <Chip active={slipChance === null} onClick={() => setSlipChance(null)}>Off</Chip>
+              {SLIP_CHANCE.map(c => (
+                <Chip key={c} active={slipChance === c} onClick={() => setSlipChance(c)}>{Math.round(c * 100)}% to land</Chip>
+              ))}
+              {slipChance !== null && (
+                <span className="basis-full text-xs text-n-400">
+                  The highest odds (up to {odds(hi)}x) whose picks together land at least {Math.round(slipChance * 100)}% of the time.
+                </span>
+              )}
             </Setting>
             <Setting label="Matches from">
               {DAYS.map(d => <Chip key={d.n} active={days === d.n} onClick={() => setDays(d.n)}>{d.label}</Chip>)}
@@ -666,7 +683,7 @@ export default function OptimizerPage() {
           <button onClick={() => run()} disabled={busy || !validTarget || !marketsPicked}
             className="w-full sm:w-auto flex items-center justify-center gap-2 rounded-xl bg-brand-400 hover:bg-brand-300 text-ink font-bold px-6 py-3 disabled:opacity-50">
             {busy ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-            {busy ? "Optimizing…" : `Build a ${odds(targetOdds)}x slip`}
+            {busy ? "Optimizing…" : slipChance ? `Build a ${Math.round(slipChance * 100)}% likely slip` : `Build a ${odds(targetOdds)}x slip`}
           </button>
         </section>
 
@@ -701,13 +718,21 @@ export default function OptimizerPage() {
                   <p className="font-display font-extrabold text-2xl sm:text-3xl text-accent tnum mt-1">{pct(result.win_chance!)}</p>
                 </div>
               </div>
-              <p className={clsx("text-xs flex items-center gap-1.5", result.within_target ? "text-accent" : "text-warn")}>
-                {result.within_target ? <Check size={13} /> : <AlertTriangle size={13} />}
-                {result.within_target ? "On target" : "Closest to target"}: {odds(result.total_odds!)}x vs {odds(result.target_odds ?? targetOdds)}x
-                ({offBy(result.total_odds!, result.target_odds ?? targetOdds)}) · best of {result.matches_considered} matches
-              </p>
+              {result.min_chance ? (
+                <p className="text-xs flex items-center gap-1.5 text-accent">
+                  <Check size={13} />
+                  {pct(result.win_chance!)} to land (at least {pct(result.min_chance)}): the highest odds that keeps it · best of {result.matches_considered} matches
+                </p>
+              ) : (
+                <p className={clsx("text-xs flex items-center gap-1.5", result.within_target ? "text-accent" : "text-warn")}>
+                  {result.within_target ? <Check size={13} /> : <AlertTriangle size={13} />}
+                  {result.within_target ? "On target" : "Closest to target"}: {odds(result.total_odds!)}x vs {odds(result.target_odds ?? targetOdds)}x
+                  ({offBy(result.total_odds!, result.target_odds ?? targetOdds)}) · best of {result.matches_considered} matches
+                </p>
+              )}
               <p className="text-[11px] text-n-500">
-                &quot;All win&quot; is the model&apos;s chance every pick wins, treating matches as independent.
+                &quot;All win&quot; is the model&apos;s chance every pick wins, treating matches as independent; each
+                market&apos;s chances are corrected by how its past picks actually came in.
                 {result.estimated_prices! > 0 &&
                   ` ${result.estimated_prices} price${result.estimated_prices === 1 ? " is" : "s are"} estimated from our probabilities; SportyBet's own odds may differ.`}
               </p>

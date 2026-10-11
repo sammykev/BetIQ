@@ -236,6 +236,122 @@ function EdgeReport() {
 }
 
 const pctText = (x: number | null | undefined) => (x == null ? "—" : `${Math.round(x * 100)}%`);
+const pct1 = (x: number | null | undefined) => (x == null ? "—" : `${(x * 100).toFixed(1)}%`);
+const SPORT_LABEL: Record<string, string> = { football: "Football", basketball: "Basketball", tennis: "Tennis", table_tennis: "Table tennis" };
+
+/** The proof behind every market's correction (calibration.py): fitted on the
+ * earlier days, judged on later picks it never saw. Plus every real ticket. */
+function CorrectionProof() {
+  const { get } = useAdmin();
+  const [rep, setRep] = useState<any>(null);
+  const [all, setAll] = useState(false);
+  useEffect(() => { get("/api/admin/calibration").then(d => setRep(d ?? { error: true })).catch(() => setRep({ error: true })); }, [get]);
+  if (!rep) return <Skeleton rows={4} />;
+  if (rep.error) return <p className="text-xs text-n-400">Couldn&apos;t load the report.</p>;
+  const c = rep.calibration, t = rep.tickets;
+  const markets = c ? Object.entries(c.markets || {}).map(([k, v]: [string, any]) => ({ k, ...v }))
+    .filter((m: any) => (m.raw?.n ?? 0) > 0).sort((a: any, b: any) => (b.raw?.n ?? 0) - (a.raw?.n ?? 0)) : [];
+  const shown = all ? markets : markets.slice(0, 25);
+  const zTone = (z: number) => (z <= -2 ? "accent" : z < 0 ? "warn" : "danger");
+  return (
+    <div className="space-y-5">
+      {!c ? <p className="text-xs text-n-400">No report yet: it runs nightly (GitHub Actions, &quot;Train model&quot;).</p> : c.note ? (
+        <p className="text-xs text-n-400">{c.note}</p>
+      ) : (
+        <>
+          <p className="text-xs text-n-400">
+            {num(c.picks)} settled picks, {c.first_day} → {c.last_day}. Corrections fitted on the {num(c.train_picks)} picks
+            before {c.cut} and judged on the {num(c.test_picks)} after it, which they never saw. {c.corrected_live} markets
+            pass and are corrected live (server has {c.live_now} loaded).
+          </p>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <Stat label="Came in (later picks)" value={pct1(c.overall.raw.hit)} />
+            <Stat label="We said, raw" value={pct1(c.overall.raw.said)} />
+            <Stat label="We say, corrected" value={pct1(c.overall.live.said)} />
+            <Stat label="Proof (z, ≤ −2 = clear)" value={String(c.overall.vs_raw_z)} tone={zTone(c.overall.vs_raw_z)} />
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs tnum">
+              <thead><tr className="text-left text-n-500">
+                <th className="py-1.5 pr-2 font-medium">We said</th><th className="py-1.5 px-2 font-medium text-right">Picks</th>
+                <th className="py-1.5 px-2 font-medium text-right">Came in (raw)</th>
+                <th className="py-1.5 px-2 font-medium text-right">Picks</th><th className="py-1.5 pl-2 font-medium text-right">Came in (corrected)</th>
+              </tr></thead>
+              <tbody>
+                {(c.overall.bands_raw || []).map((b: any) => {
+                  const l = (c.overall.bands_live || []).find((x: any) => x.band === b.band);
+                  return (
+                    <tr key={b.band} className="border-t border-n-800">
+                      <td className="py-1.5 pr-2 text-n-200">{b.band}</td>
+                      <td className="py-1.5 px-2 text-right text-n-400">{num(b.n)}</td>
+                      <td className="py-1.5 px-2 text-right text-n-0">{pct1(b.hit)}</td>
+                      <td className="py-1.5 px-2 text-right text-n-400">{l ? num(l.n) : "—"}</td>
+                      <td className="py-1.5 pl-2 text-right text-n-0 font-semibold">{l ? pct1(l.hit) : "—"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {Object.entries(c.sports || {}).map(([s, v]: [string, any]) => (
+              <div key={s} className="rounded-lg bg-surface-sunken px-3 py-2 text-xs">
+                <p className="font-semibold text-n-0">{SPORT_LABEL[s] ?? s}</p>
+                <p className="text-n-400 mt-0.5">
+                  {num(v.raw.n)} later picks · came in {pct1(v.raw.hit)} · said {pct1(v.raw.said)} → {pct1(v.live.said)} ·
+                  log loss {v.raw.log_loss} → {v.live.log_loss} · <span className={clsx(v.vs_raw_z <= -2 ? "text-accent" : "text-n-300")}>z {v.vs_raw_z}</span>
+                </p>
+              </div>
+            ))}
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs tnum">
+              <thead><tr className="text-left text-n-500">
+                <th className="py-1.5 pr-2 font-medium">Market</th><th className="py-1.5 px-2 font-medium text-right">Later picks</th>
+                <th className="py-1.5 px-2 font-medium text-right">Came in</th><th className="py-1.5 px-2 font-medium text-right">Said raw</th>
+                <th className="py-1.5 px-2 font-medium text-right">Corrected</th><th className="py-1.5 pl-2 font-medium">Live</th>
+              </tr></thead>
+              <tbody>
+                {shown.map((m: any) => (
+                  <tr key={m.k} className="border-t border-n-800">
+                    <td className="py-1.5 pr-2 text-n-200">{SPORT_LABEL[m.sport] ?? m.sport} · {m.market}</td>
+                    <td className="py-1.5 px-2 text-right text-n-400">{num(m.raw.n)}</td>
+                    <td className="py-1.5 px-2 text-right text-n-0 font-semibold">{pct1(m.raw.hit)}</td>
+                    <td className="py-1.5 px-2 text-right text-n-300">{pct1(m.raw.said)}</td>
+                    <td className="py-1.5 px-2 text-right text-n-300">{pct1(m.corrected.said)}</td>
+                    <td className="py-1.5 pl-2">
+                      <span className={clsx(m.choice === "corrected" ? "text-accent" : "text-n-500")}>
+                        {m.choice === "corrected" ? "Corrected" : "As is"}
+                      </span>
+                      <span className="text-n-500"> · {m.decided_on}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {markets.length > 25 && (
+              <button onClick={() => setAll(a => !a)} className="mt-2 text-xs text-accent">{all ? "Show fewer" : `Show all ${markets.length}`}</button>
+            )}
+          </div>
+        </>
+      )}
+      {t && (
+        <div className="space-y-2 border-t border-n-800 pt-4">
+          <p className="eyebrow">Every ticket booked on the site ({t.first_ticket?.slice(0, 10)} → {t.last_ticket?.slice(0, 10)})</p>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <Stat label="Tickets won" value={`${t.tickets.won} of ${t.tickets.settled}`} />
+            <Stat label="Ticket win rate" value={pct1(t.tickets.win_rate)} />
+            <Stat label="Legs won" value={pct1(t.legs.win_rate)} />
+            <Stat label="Legs: we said" value={pct1(t.legs.avg_prob_given)} />
+          </div>
+          <p className="text-xs text-n-400">
+            By size: {Object.entries(t.tickets_by_legs || {}).map(([k, v]: [string, any]) => `${k}: ${v.won}/${v.settled}`).join(" · ")}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
 
 /** Every market's picks (outcomes rated ≥ 50%) over the last days, settled:
  * how often they came in vs what the model said (market_accuracy.py). */
@@ -876,6 +992,11 @@ export function PredictionsSection() {
       <Card title="Weekly accuracy review" icon={<Target size={15} />}
         subtitle="Markets whose picks come in clearly less often than we say are left out of slips until they recover">
         <WeeklyReview />
+      </Card>
+
+      <Card title="Market corrections: the proof" icon={<Target size={15} />}
+        subtitle="Each market's chances corrected by how its picks came in, judged on later picks the correction never saw (admin only)">
+        <CorrectionProof />
       </Card>
 
       <Card title="Accuracy by market" icon={<Target size={15} />}

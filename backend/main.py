@@ -3600,6 +3600,34 @@ async def edge_report(days: int = 60, _admin: str = Depends(require_admin)):
     return {"days": days, **price_book.report(entries)}
 
 
+@app.get("/api/admin/calibration")
+async def calibration_report(_admin: str = Depends(require_admin)):
+    """The proof behind each market's correction (calibration.py, nightly):
+    picks before the cut fit the maps, picks after it judge them — hit rate,
+    what we said raw and corrected, log loss and Brier score — and the
+    review of every ticket booked on the site (ticket_review.py)."""
+    import calibration
+    import ticket_review
+    r = _get_redis()
+    if not r:
+        raise HTTPException(status_code=503, detail="No Redis")
+
+    def load(k):
+        try:
+            raw = r.get(k)
+            return json.loads(raw) if raw else None
+        except Exception:
+            return None
+    rep, tickets = await asyncio.to_thread(lambda: (load(calibration.REPORT_KEY), load(ticket_review.REPORT_KEY)))
+    if rep:
+        rep = {**{k: v for k, v in rep.items() if k != "maps"}, "corrected_live": len(rep.get("maps") or {}),
+               "live_now": len(calibration.maps())}
+    if tickets:
+        tickets = {k: tickets.get(k) for k in ("at", "first_ticket", "last_ticket", "tickets", "legs", "tickets_by_legs",
+                                               "legs_by_sport", "legs_by_prob_given")}
+    return {"calibration": rep, "tickets": tickets}
+
+
 @app.get("/api/admin/market-accuracy")
 async def market_accuracy_report(days: int = 7, _admin: str = Depends(require_admin)):
     """Every market's picks (outcomes the model rated ≥ 50%) over the last
@@ -8199,7 +8227,7 @@ def _refresh_shot_blend() -> Dict[str, Any]:
 
 # ── Weekly accuracy review (market_review.py) ──
 REVIEW_KEY = "betiq:review"
-_review: Dict[str, Any] = {"mode": "auto", "overrides": {}, "latest": None, "history": [], "loaded": False}
+_review: Dict[str, Any] = {"mode": "flag", "overrides": {}, "latest": None, "history": [], "loaded": False}
 
 
 def _restore_review() -> None:
@@ -8207,6 +8235,10 @@ def _restore_review() -> None:
     if r and not _review.get("loaded"):
         try:
             _review.update(json.loads(r.get(REVIEW_KEY) or "{}"), loaded=True)
+            import market_review
+            if not _review.get("mode_chosen"):
+                # "auto" was only ever the old default: markets are corrected now, not paused
+                _review["mode"] = market_review.DEFAULT_MODE
         except Exception:
             pass
 
@@ -8257,7 +8289,7 @@ def _run_review() -> Dict[str, Any]:
 
 def _review_view() -> Dict[str, Any]:
     import market_review
-    return {"mode": _review.get("mode", "auto"), "overrides": _review.get("overrides") or {},
+    return {"mode": _review.get("mode", "flag"), "overrides": _review.get("overrides") or {},
             "latest": _review.get("latest"), "history": _review.get("history") or [],
             "blocked": sorted(market_review.blocked(_review)),
             "markets": [{"market": m, "name": n} for m, n in _market_names().items()],
@@ -8286,8 +8318,10 @@ async def put_market_review(body: Dict[str, Any], _admin: str = Depends(require_
         new = market_review.settings(body or {}, _review)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    before = {k: _review.get(k) for k in ("mode", "overrides")}
+    before = {k: _review.get(k) for k in ("mode", "overrides", "mode_chosen")}
     _review.update(new)
+    if "mode" in (body or {}):
+        _review["mode_chosen"] = True
     if not _save_review():
         _review.update(before)
         raise HTTPException(status_code=503, detail="Couldn't save: the database isn't connected")
@@ -8514,10 +8548,14 @@ async def _live_states(picks: List[Dict[str, Any]], events: Dict[Tuple, Optional
     return out
 
 
-async def _solve(groups, lo: float, hi: float, target: float, max_games: int) -> Optional[Dict]:
+async def _solve(groups, lo: float, hi: float, target: float, max_games: int,
+                 min_chance: Optional[float] = None) -> Optional[Dict]:
     """The best slip in [lo, hi]; failing that, the nearest within ±25% of the
-    target, flagged as off target (within_target is False)."""
+    target, flagged as off target (within_target is False). With `min_chance`:
+    the highest odds up to `hi` whose win chance is at least that."""
     import optimizer
+    if min_chance:
+        return await asyncio.to_thread(optimizer.optimize_safe, groups, min_chance, hi, max_games)
     res = await asyncio.to_thread(optimizer.optimize, groups, lo, hi, max_games)
     if res is None and lo <= target <= hi:
         for spread in (0.1, 0.25):
@@ -8530,7 +8568,8 @@ async def _solve(groups, lo: float, hi: float, target: float, max_games: int) ->
 
 async def _solve_checked(groups, lo: float, hi: float, target: float, max_games: int,
                          events: Dict[Tuple, Optional[Dict]],
-                         market_map: Dict[str, Dict[str, Any]]) -> Tuple[Optional[Dict], Dict[str, Any]]:
+                         market_map: Dict[str, Dict[str, Any]],
+                         min_chance: Optional[float] = None) -> Tuple[Optional[Dict], Dict[str, Any]]:
     """The slip, with every pick checked on SportyBet's match page as it is
     now: suspended, withdrawn or started ones are dropped and the slip solved
     again without them; the rest take SportyBet's current price (solved again
@@ -8538,7 +8577,7 @@ async def _solve_checked(groups, lo: float, hi: float, target: float, max_games:
     LIVE_CHECK_ROUNDS rounds. Returns (slip or None, what the check did)."""
     import booking_slip
     check: Dict[str, Any] = {"checked": 0, "removed": [], "repriced": 0, "unchecked": 0}
-    result = await _solve(groups, lo, hi, target, max_games)
+    result = await _solve(groups, lo, hi, target, max_games, min_chance)
     for _ in range(LIVE_CHECK_ROUNDS):
         if not result or not result.get("picks"):
             break
@@ -8564,7 +8603,7 @@ async def _solve_checked(groups, lo: float, hi: float, target: float, max_games:
                 k = _pick_key(asdict_option(o))
                 if k in moved:
                     o.odds, o.odds_source = round(moved[k], 2), "sportybet"
-        result = await _solve(groups, lo, hi, target, max_games)
+        result = await _solve(groups, lo, hi, target, max_games, min_chance)
     return result, check
 
 
@@ -8580,6 +8619,10 @@ async def _optimize_request(body: Dict[str, Any],
         target = float(body.get("target_odds") or (lo * hi) ** 0.5)
         max_games = int(body.get("max_games", optimizer.MAX_GAMES))
         min_prob = min(0.95, max(0.5, float(body.get("min_prob", 0.6))))
+        # The whole slip's least win chance (e.g. 0.9): the highest odds that keep it
+        min_chance = float(body["min_slip_chance"]) if body.get("min_slip_chance") else None
+        if min_chance is not None:
+            min_chance = min(0.99, max(0.5, min_chance))
         # Optional cap on each pick's price (the daily slips use it): picks at or above it are left out
         max_leg = float(body["max_leg_odds"]) if body.get("max_leg_odds") else None
         days = min(PREDICTION_DAYS, max(1, int(body.get("days", 3))))
@@ -8716,14 +8759,19 @@ async def _optimize_request(body: Dict[str, Any],
     # Every pick checked on SportyBet's current match page (_solve_checked)
     events = {(p["home"], p["away"], p.get("date")): ev for p, ev in pairs}
     if body.get("no_live_check"):
-        result = await _solve(groups, lo, hi, target, max_games)
+        result = await _solve(groups, lo, hi, target, max_games, min_chance)
         live_check: Dict[str, Any] = {"checked": 0, "removed": [], "repriced": 0, "unchecked": 0}
     else:
-        result, live_check = await _solve_checked(groups, lo, hi, target, max_games, events, _sb_market_map())
+        result, live_check = await _solve_checked(groups, lo, hi, target, max_games, events, _sb_market_map(),
+                                                  min_chance)
     if result is None and live_check["removed"]:
         return {"error": (f"{len(live_check['removed'])} of the picks were suspended on SportyBet and "
                           "no slip without them reaches the target. Try again in a few minutes, or widen the target."),
                 "live_check": live_check, "matches_considered": considered, "target": [lo, hi], "target_odds": target, "thin_history": thin}
+    if result is None and min_chance:
+        return {"error": (f"No pick among {considered} matches is {min_chance:.0%} likely on its own, so no slip "
+                          f"can be. Add markets, sports or days, or lower the slip's chance."),
+                "matches_considered": considered, "target": [lo, hi], "target_odds": target, "thin_history": thin}
     if result is None:
         return {"error": (f"No slip from {considered} matches gets near {target:,.2f}x. "
                           "Allow more games or days, add markets, or lower the minimum confidence."),

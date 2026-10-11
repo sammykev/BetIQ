@@ -129,7 +129,7 @@ class TestSettings:
 def server(monkeypatch):
     fake = FakeRedis()
     monkeypatch.setattr(main, "_get_redis", lambda: fake)
-    monkeypatch.setattr(main, "_review", {"mode": "auto", "overrides": {}, "latest": None, "history": [], "loaded": False})
+    monkeypatch.setattr(main, "_review", {"mode": "auto", "mode_chosen": True, "overrides": {}, "latest": None, "history": [], "loaded": False})
 
     async def identity(request):
         return "secret", None
@@ -199,3 +199,30 @@ class TestOptimizerLeavesPausedMarketsOut:
     def test_flag_mode_leaves_it_in(self):
         main._review["mode"] = "flag"
         assert "picks" in self.post(markets=["1x2"])
+
+
+def test_flag_is_the_default_unless_an_admin_chose_auto():
+    import main
+    assert mr.blocked({"latest": {"paused": ["goals_ou"]}}) == set()
+    assert mr.blocked({"mode": "auto", "latest": {"paused": ["goals_ou"]}}) == {"goals_ou"}
+
+    class R:
+        def __init__(self, state):
+            self.state = state
+
+        def get(self, k):
+            import json
+            return json.dumps(self.state)
+    old = main._review
+    try:
+        for state, want in (({"mode": "auto"}, "flag"), ({"mode": "auto", "mode_chosen": True}, "auto")):
+            main._review = {"mode": "flag", "overrides": {}, "latest": None, "history": [], "loaded": False}
+            orig = main._get_redis
+            main._get_redis = lambda: R(state)
+            try:
+                main._restore_review()
+            finally:
+                main._get_redis = orig
+            assert main._review["mode"] == want
+    finally:
+        main._review = old

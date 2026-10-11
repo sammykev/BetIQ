@@ -16,7 +16,8 @@ settled, so the next review sees whether it has recovered. A paused market
 comes back once it reviews "ok" (a "watch" or thin week keeps it paused).
 
 The admin chooses the mode ("auto" pauses, "flag" only reports) and can pin
-any market on or off (overrides).
+any market on or off (overrides). Flag is the default: a market that comes
+in under what we say is corrected (calibration.py), not left out.
 """
 
 import math
@@ -28,6 +29,7 @@ import optimizer
 WINDOW_DAYS = 28
 TOP = 0.8                 # the high-confidence picks, judged on their own too
 PAUSE_Z, WATCH_Z = -2.5, -1.5
+DEFAULT_MODE = "flag"
 PAUSE_GAP, WATCH_GAP = -0.05, -0.03
 BETTER_Z = 2.5
 MIN_MATCHES = 30          # matches with picks in the market before it can be paused
@@ -115,14 +117,14 @@ def blocked(state: Dict[str, Any]) -> Set[str]:
     paused ones that aren't pinned on."""
     overrides = state.get("overrides") or {}
     out = {m for m, v in overrides.items() if v == "off"}
-    if state.get("mode", "auto") == "auto":
+    if state.get("mode", DEFAULT_MODE) == "auto":
         out |= {m for m in ((state.get("latest") or {}).get("paused") or []) if overrides.get(m) != "on"}
     return out
 
 
 def settings(body: Dict[str, Any], current: Dict[str, Any]) -> Dict[str, Any]:
     """The mode and overrides from an admin's update (ValueError if bad)."""
-    mode = body.get("mode", current.get("mode", "auto"))
+    mode = body.get("mode", current.get("mode", DEFAULT_MODE))
     if mode not in MODES:
         raise ValueError(f"mode must be one of {', '.join(MODES)}")
     overrides = body.get("overrides", current.get("overrides") or {})
@@ -159,7 +161,7 @@ def alert(state: Dict[str, Any], age_days: Optional[float]) -> Optional[Dict[str
     if age_days is None or age_days > 7:
         return None
     failing = [m["market"] for m in latest.get("markets") or [] if m["status"] == "pause"]
-    if state.get("mode", "auto") == "flag":
+    if state.get("mode", DEFAULT_MODE) == "flag":
         if not failing:
             return None
         return {"level": "warn", "title": f"Accuracy review: {len(failing)} market{'s' if len(failing) != 1 else ''} falling short",
