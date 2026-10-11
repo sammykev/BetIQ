@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 from sklearn.calibration import CalibratedClassifierCV
 
-from predictor import FEATURE_COLS, NO_ODDS_COLS, LeaguePredictor
+from predictor import FEATURE_COLS, NO_ODDS_COLS, AveragedModel, LeaguePredictor
 
 
 def season(teams=("Arsenal", "Chelsea", "Leeds", "Hull", "Wolves", "Everton"), rounds=8, seed=1):
@@ -39,8 +39,10 @@ def test_no_odds_columns_drop_only_the_odds():
 
 
 def test_trains_both_model_sets_calibrated(model):
+    # Each is the calibrated XGBoost averaged with a logistic regression
     for name in ("win", "o15", "o25", "win_noodds", "o15_noodds", "o25_noodds"):
-        assert isinstance(model.models[name], CalibratedClassifierCV), name
+        assert isinstance(model.models[name], AveragedModel), name
+        assert isinstance(model.models[name].members[0], CalibratedClassifierCV), name
 
 
 def test_features_say_whether_odds_were_used(model):
