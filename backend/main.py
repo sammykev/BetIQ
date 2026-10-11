@@ -1847,7 +1847,8 @@ async def _run_pipeline():
             print(f"[Pipeline] Results index failed (non-fatal): {e}")
         global _set_pieces
         try:
-            _set_pieces = await asyncio.to_thread(lambda: set_pieces.SetPieceModel.fit(_with_club_referees(history)))
+            _set_pieces = await asyncio.to_thread(
+                lambda: set_pieces.SetPieceModel.fit(_with_club_referees(history), set_pieces.CLUB_GUARDS))
         except Exception as e:
             print(f"[Pipeline] Corners/bookings model failed (non-fatal): {e}")
         try:

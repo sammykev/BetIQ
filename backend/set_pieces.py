@@ -66,6 +66,12 @@ AVERAGE_BOOKINGS = 4.4
 SEED_LEAGUES = False
 RATIO_CAP = None
 LEAGUE_PRIOR = 0.0
+# The club model (main.py) uses the first two: its history has ESPN cup rows,
+# so a cup like the KNVB Beker would otherwise take its average from one
+# amateur side's first match. The cap is 3× (2.5× clips ordinary high-booking
+# games); no league prior, which cost 0.0017 Brier on home corners.
+# Walk-forward on the league CSVs, 2024-25: every stat within 0.0002 of off.
+CLUB_GUARDS = {"seed_leagues": True, "ratio_cap": 3.0}
 
 
 def _counts(row) -> Optional[Dict[str, Tuple[float, float]]]:
