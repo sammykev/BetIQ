@@ -118,3 +118,72 @@ class TestScoreGrid:
         gm = goal_markets(3.5, 0.3, 0.8, 0.9, 0.03)["goal_markets"]
         assert gm["handicap"]["home_-1.5"] <= HANDICAP_CAPS[1.5]
         assert gm["handicap"]["home_-2.5"] <= HANDICAP_CAPS[2.5]
+
+
+def ten_team_league(seasons=2, start="2023-08-05"):
+    """A ten-team league averaging about 6 home and 4 away corners, 5 bookings."""
+    teams = [f"Club {i}" for i in range(10)]
+    rows, day = [], pd.Timestamp(start)
+    for s in range(seasons):
+        for i, h in enumerate(teams):
+            for j, a in enumerate(teams):
+                if h != a:
+                    rows.append({"Date": day, "HomeTeam": h, "AwayTeam": a, "league": "DED",
+                                 "HC": 6 + (i - j) % 3 - 1, "AC": 4 + (j - i) % 3 - 1,
+                                 "HY": 2 + (i + j) % 2, "AY": 2 + (i + j + 1) % 2, "HR": 0, "AR": 0})
+                    day += pd.Timedelta(days=1)
+    return pd.DataFrame(rows), day
+
+
+def promoted_pair():
+    """Two promoted clubs whose history is a cup (its first match an amateur
+    side with 1 home corner) and three average league matches each."""
+    data, day = ten_team_league()
+    rows = [{"Date": day, "HomeTeam": "Amateurs", "AwayTeam": "Club 0", "league": "KNVB",
+             "HC": 1, "AC": 12, "HY": 0, "AY": 1, "HR": 0, "AR": 0}]
+    for i in range(4):
+        for team in ("Telstar", "ADO Den Haag"):
+            day += pd.Timedelta(days=5)
+            rows.append({"Date": day, "HomeTeam": f"Amateurs {i}", "AwayTeam": team, "league": "KNVB",
+                         "HC": 2, "AC": 10, "HY": 3, "AY": 1, "HR": 0, "AR": 0})
+            rows.append({"Date": day + pd.Timedelta(days=1), "HomeTeam": team, "AwayTeam": f"Village {i}",
+                         "league": "KNVB", "HC": 11, "AC": 1, "HY": 1, "AY": 4, "HR": 0, "AR": 0})
+    for team in ("Telstar", "ADO Den Haag"):
+        for opp in ("Club 1", "Club 2", "Club 3"):
+            day += pd.Timedelta(days=3)
+            rows.append({"Date": day, "HomeTeam": team, "AwayTeam": opp, "league": "DED",
+                         "HC": 6, "AC": 4, "HY": 2, "AY": 2, "HR": 0, "AR": 0})
+    return pd.concat([data, pd.DataFrame(rows)], ignore_index=True)
+
+
+class TestThinHistory:
+    """The club model's guards (set_pieces.CLUB_GUARDS, passed in by main.py)."""
+
+    def test_promoted_pair_stays_near_the_league_average(self):
+        model = SetPieceModel.fit(promoted_pair(), set_pieces.CLUB_GUARDS)
+        got = model.markets("Telstar", "ADO Den Haag", "DED")
+        average = sum(model.league["DED"]["corners"])
+        assert 9.5 < average < 11.5
+        assert abs(got["corners"]["mean"] - average) < 1.5
+        assert got["corners"]["over"]["11.5"] < 0.5
+        assert got["bookings"]["mean"] < 6
+
+    def test_the_cup_starts_from_all_competitions(self):
+        model = SetPieceModel.fit(promoted_pair(), set_pieces.CLUB_GUARDS)
+        home, away = model.league["KNVB"]["corners"]
+        assert home > 4 and away < 7       # not the amateurs' 1 v 12
+
+    def test_without_the_guards_the_cup_inflates_it(self):
+        # The bug this guards against: the cup's average seeded from its first match
+        model = SetPieceModel.fit(promoted_pair())
+        got = model.markets("Telstar", "ADO Den Haag", "DED")
+        assert got["corners"]["mean"] > 15 and got["bookings"]["mean"] > 7
+
+    def test_established_teams_barely_move(self):
+        on = SetPieceModel.fit(promoted_pair(), set_pieces.CLUB_GUARDS).markets("Club 1", "Club 2", "DED")
+        off = SetPieceModel.fit(promoted_pair()).markets("Club 1", "Club 2", "DED")
+        assert abs(on["corners"]["mean"] - off["corners"]["mean"]) < 0.5
+
+    def test_international_defaults_untouched(self):
+        assert set_pieces.RATIO_CAP is None and set_pieces.LEAGUE_PRIOR == 0.0 and not set_pieces.SEED_LEAGUES
+        assert all("ratio_cap" not in p and "league_prior" not in p for p in set_pieces.INTERNATIONAL_GRID)

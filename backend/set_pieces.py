@@ -57,6 +57,21 @@ REF_DECAY = 0.98
 REF_GAMMA = 1.0
 CAREER_PRIOR = 20.0   # games' worth of weight on the league-wide average
 AVERAGE_BOOKINGS = 4.4
+# Thin-data guards (off here; shots.py turns them on). A competition first
+# seen starts from the average over all competitions rather than its first
+# match (seed_leagues); one match moves a rating by at most RATIO_CAP × the
+# competition average (a cup tie against amateurs is not a team's level);
+# and a team with few matches in the fixture's own league has its ratings
+# shrunk towards that league's average by LEAGUE_PRIOR matches' worth.
+SEED_LEAGUES = False
+RATIO_CAP = None
+LEAGUE_PRIOR = 0.0
+# The club model (main.py) uses the first two: its history has ESPN cup rows,
+# so a cup like the KNVB Beker would otherwise take its average from one
+# amateur side's first match. The cap is 3× (2.5× clips ordinary high-booking
+# games); no league prior, which cost 0.0017 Brier on home corners.
+# Walk-forward on the league CSVs, 2024-25: every stat within 0.0002 of off.
+CLUB_GUARDS = {"seed_leagues": True, "ratio_cap": 3.0}
 
 
 def _counts(row) -> Optional[Dict[str, Tuple[float, float]]]:
@@ -249,6 +264,7 @@ class SetPieceModel:
         self.size: Dict[str, Optional[float]] = {s: None for s in self.all_stats()}  # NB size r
         self.scale: Dict[str, float] = {}                                           # see fit_scale
         self.league_of: Dict[str, str] = {}
+        self.league_games: Dict[str, Dict[str, int]] = {}  # team -> league -> matches there
 
     # ---------------------------------------------------------------- #
     def _league_avgs(self, league: str, stat: str) -> Optional[List[float]]:
@@ -257,7 +273,7 @@ class SetPieceModel:
     def _p(self, name: str):
         return self.params.get(name, globals()[name.upper()])
 
-    def _rating(self, team: str, stat: str) -> Tuple[float, float]:
+    def _rating(self, team: str, stat: str, league: Optional[str] = None) -> Tuple[float, float]:
         w, f, a = self.team.get(team, {}).get(stat, (0.0, 0.0, 0.0))
         prior = self._p("prior")
         start_f = start_a = 1.0
@@ -265,7 +281,14 @@ class SetPieceModel:
         if weight and STRENGTH is not None:
             import intl_elo
             start_f, start_a = intl_elo.strength_prior(STRENGTH(team, getattr(self, "_when", None)), weight)
-        return (f + prior * start_f) / (w + prior), (a + prior * start_a) / (w + prior)
+        rf, ra = (f + prior * start_f) / (w + prior), (a + prior * start_a) / (w + prior)
+        k = self._p("league_prior")
+        if k and league:
+            # Little history in this league (promoted, or known mostly from
+            # cups / a lower level): towards the league's own average
+            n = self.league_games.get(team, {}).get(league, 0)
+            rf, ra = (n * rf + k) / (n + k), (n * ra + k) / (n + k)
+        return rf, ra
 
     def referee_factor(self, referee: Optional[str], career: Optional[Dict] = None) -> float:
         """How many more (>1) or fewer bookings than usual this referee gives:
@@ -292,8 +315,8 @@ class SetPieceModel:
             avgs = self._league_avgs(league, stat)
             if not avgs:
                 return None
-            fh, ah = self._rating(home, stat)
-            fa, aa = self._rating(away, stat)
+            fh, ah = self._rating(home, stat, league)
+            fa, aa = self._rating(away, stat, league)
             out[stat] = (avgs[0] * (fh * aa) ** gamma, avgs[1] * (fa * ah) ** gamma)
             if stat in self.TEAM_OF:
                 out[f"{stat}_team"] = (avgs[0] * (fh * aa) ** team_gamma, avgs[1] * (fa * ah) ** team_gamma)
@@ -318,19 +341,22 @@ class SetPieceModel:
         for stat, (h, a) in counts.items():
             lg = self.league.setdefault(league, {})
             if stat not in lg:
-                seed = self.overall.get(stat) if self.params.get("seed_leagues") else None
+                seed = self.overall.get(stat) if self._p("seed_leagues") else None
                 lg[stat] = list(seed) if seed else [max(h, 0.5), max(a, 0.5)]
             lh, la = lg[stat]
+            cap = self._p("ratio_cap") or math.inf
             for team, gained, conceded, own, opp in ((home, h, a, lh, la), (away, a, h, la, lh)):
                 t = self.team.setdefault(team, {}).setdefault(stat, [0.0, 0.0, 0.0])
                 t[0] = t[0] * decay + 1
-                t[1] = t[1] * decay + gained / own
-                t[2] = t[2] * decay + conceded / opp
+                t[1] = t[1] * decay + min(gained / own, cap)
+                t[2] = t[2] * decay + min(conceded / opp, cap)
             lg[stat] = [lh * league_decay + h * (1 - league_decay), la * league_decay + a * (1 - league_decay)]
             ov = self.overall.setdefault(stat, [max(h, 0.5), max(a, 0.5)])
             self.overall[stat] = [ov[0] * 0.998 + h * 0.002, ov[1] * 0.998 + a * 0.002]
         for team in (home, away):
             self.matches[team] = self.matches.get(team, 0) + 1
+            games = self.league_games.setdefault(team, {})
+            games[league] = games.get(league, 0) + 1
         self.league_of[home] = self.league_of[away] = league
 
     # ---------------------------------------------------------------- #
