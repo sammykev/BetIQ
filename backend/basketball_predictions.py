@@ -20,10 +20,17 @@ MAX_LINES = 90           # per match, likeliest first
 # edge is thinner in the 4th quarter, when leads are managed and starters rest
 DEFAULT_MARGIN_SHARES = (0.52, 0.27, 0.26, 0.25, 0.22)
 
+# The quarters against each other (basketball_quarters.py)
+QUARTER_RACE = ("bb_hsq", "bb_hsq_total", "bb_lsq_total")
+# "Which quarter is highest" is a 4-way race (a pick is ~25–35% likely): when a
+# user asks for it, its picks go down to this, below the usual minimum
+QUARTER_RACE_MIN = 0.2
+
 # Families of markets, as the optimizer and the pages group them
 FAMILIES = {
     "bb_winner": "Winner", "bb_1x2": "1X2 (regulation)", "bb_handicap": "Handicap", "bb_total": "Total Points",
     "bb_team_total": "Team Points", "bb_halves": "Halves", "bb_quarters": "Quarters", "bb_overtime": "Overtime",
+    "bb_quarter_race": "Highest / lowest quarter",
     "bb_player": "Player props",
 }
 
@@ -35,7 +42,9 @@ def family(market: str) -> str:
         return "bb_team_total"
     if market.startswith(("bb_h1_", "bb_h2_")):
         return "bb_halves"
-    if market.startswith("bb_q") or market in ("bb_hsq", "bb_hsq_total", "bb_lsq_total"):
+    if market in QUARTER_RACE:
+        return "bb_quarter_race"
+    if market.startswith("bb_q"):
         return "bb_quarters"
     if market.startswith("bb_player_"):
         return "bb_player"
@@ -90,6 +99,8 @@ def predict(ev: Dict, lg: Optional[bm.League]) -> Optional[Dict[str, Any]]:
     p_home = match.p_win(True)
     keep = sorted((x for x in priced if KEEP_MIN <= x["prob"] <= KEEP_MAX), key=lambda x: -x["prob"])[:MAX_LINES]
     keep += [x for x in winner.values() if x not in keep]
+    # Every outcome of the highest scoring quarter (each is well under 50%)
+    keep += [x for x in priced if x["market"] == "bb_hsq" and x not in keep]
     t = ev.get("_tournament") or ""
     country, name = bd.split_tournament(t)
     tip_home = p_home >= 0.5
@@ -151,7 +162,9 @@ def options(pred: Dict, min_prob: float, families: Optional[set] = None,
             continue
         # Our chance through its market's correction (calibration.py; raw without one)
         prob = calibration.apply("basketball", x["market"], x["prob"])
-        if not min_prob <= prob < 0.995 or x["odds"] <= 1.01:
+        floor = min(min_prob, QUARTER_RACE_MIN) if (x["market"] == "bb_hsq" and families
+                                                    and "bb_quarter_race" in families) else min_prob
+        if not floor <= prob < 0.995 or x["odds"] <= 1.01:
             continue
         out.append(optimizer.Option(pred["home"], pred["away"], pred["date"], pred.get("time") or "",
                                     pred.get("league_name") or "", x["market"], x["market_name"], x["code"],

@@ -283,7 +283,8 @@ export default function OptimizerPage() {
   // SportyBet offers, priced by our model)
   type OptSport = "football" | "basketball" | "tennis" | "table_tennis";
   const [sports, setSports] = useState<OptSport[]>(["football"]);
-  const [bbFamilies, setBbFamilies] = useState<string[]>(BB_FAMILIES.map(f => f.id));
+  // "Highest / lowest quarter" starts off: its picks go below the usual minimum (a 4-way race)
+  const [bbFamilies, setBbFamilies] = useState<string[]>(BB_FAMILIES.map(f => f.id).filter(id => id !== "bb_quarter_race"));
   const [tnFamilies, setTnFamilies] = useState<string[]>(RK_FAMILIES.tennis.map(f => f.id));
   const [ttFamilies, setTtFamilies] = useState<string[]>(RK_FAMILIES.table_tennis.map(f => f.id));
   const bbOn = access.shown("sport.basketball");

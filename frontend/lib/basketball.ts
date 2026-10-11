@@ -8,7 +8,7 @@ import type { SideRatings, TeamRating } from "@/components/Ratings";
 
 export interface BBLine {
   market: string;         // bb_total, bb_q1_handicap, …
-  family: string;         // bb_winner | bb_1x2 | bb_handicap | bb_total | bb_team_total | bb_halves | bb_quarters | bb_overtime
+  family: string;         // bb_winner | bb_1x2 | bb_handicap | bb_total | bb_team_total | bb_halves | bb_quarters | bb_quarter_race | bb_overtime
   market_name: string;
   code: string;
   label: string;          // "Lakers -5.5", "Over 160.5 points", "1st quarter: Over 40.5 points"
@@ -50,6 +50,7 @@ export const FAMILIES: { id: string; name: string }[] = [
   { id: "bb_team_total", name: "Team points" },
   { id: "bb_halves", name: "Halves" },
   { id: "bb_quarters", name: "Quarters" },
+  { id: "bb_quarter_race", name: "Highest / lowest quarter" },
   { id: "bb_1x2", name: "1X2 (regulation)" },
   { id: "bb_overtime", name: "Overtime" },
 ];
