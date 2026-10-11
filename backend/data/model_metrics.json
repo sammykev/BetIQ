@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-23T08:03:03Z",
+ "generated_at": "2026-10-11T04:58:54Z",
  "period": {
   "from": "2024-08-02",
   "to": "2025-05-25"
@@ -20,9 +20,9 @@
  "match_result": {
   "n": 3222,
   "model": {
-   "log_loss": 0.9869,
-   "brier": 0.5893,
-   "accuracy": 0.5164
+   "log_loss": 0.9829,
+   "brier": 0.5864,
+   "accuracy": 0.5186
   },
   "market": {
    "log_loss": 0.9804,
@@ -33,8 +33,8 @@
  "over25": {
   "n": 3222,
   "model": {
-   "log_loss": 0.6808,
-   "brier": 0.2439
+   "log_loss": 0.6757,
+   "brier": 0.2415
   },
   "market": {
    "log_loss": 0.6697,
@@ -45,72 +45,72 @@
   {
    "from": 0.0,
    "to": 0.1,
-   "n": 424,
-   "predicted": 0.0636,
-   "actual": 0.0684
+   "n": 403,
+   "predicted": 0.072,
+   "actual": 0.0596
   },
   {
    "from": 0.1,
    "to": 0.2,
-   "n": 1035,
-   "predicted": 0.1587,
-   "actual": 0.1527
+   "n": 1322,
+   "predicted": 0.159,
+   "actual": 0.1604
   },
   {
    "from": 0.2,
    "to": 0.3,
-   "n": 3941,
-   "predicted": 0.2568,
-   "actual": 0.2644
+   "n": 3694,
+   "predicted": 0.2579,
+   "actual": 0.2645
   },
   {
    "from": 0.3,
    "to": 0.4,
-   "n": 1510,
-   "predicted": 0.3432,
-   "actual": 0.3338
+   "n": 1520,
+   "predicted": 0.3407,
+   "actual": 0.3382
   },
   {
    "from": 0.4,
    "to": 0.5,
-   "n": 1251,
-   "predicted": 0.4482,
-   "actual": 0.4309
+   "n": 1132,
+   "predicted": 0.4467,
+   "actual": 0.4373
   },
   {
    "from": 0.5,
    "to": 0.6,
-   "n": 776,
-   "predicted": 0.5472,
-   "actual": 0.5619
+   "n": 748,
+   "predicted": 0.5488,
+   "actual": 0.5481
   },
   {
    "from": 0.6,
    "to": 0.7,
-   "n": 410,
-   "predicted": 0.6436,
-   "actual": 0.6341
+   "n": 459,
+   "predicted": 0.6437,
+   "actual": 0.6187
   },
   {
    "from": 0.7,
    "to": 0.8,
-   "n": 204,
-   "predicted": 0.7382,
-   "actual": 0.7598
+   "n": 272,
+   "predicted": 0.7419,
+   "actual": 0.75
   },
   {
    "from": 0.8,
    "to": 0.9,
-   "n": 77,
-   "predicted": 0.8467,
-   "actual": 0.8182
+   "n": 108,
+   "predicted": 0.8477,
+   "actual": 0.8704
   },
   {
    "from": 0.9,
    "to": 1.0,
-   "n": 38,
-   "predicted": 0.9327,
-   "actual": 0.9474
+   "n": 8,
+   "predicted": 0.9106,
+   "actual": 1.0
   }
  ],
  "picks": {
@@ -118,18 +118,18 @@
    {
     "kind": "single",
     "tier": "strong",
-    "n": 733,
-    "won": 517,
-    "hit_rate": 0.7053,
-    "avg_prob": 0.706
+    "n": 850,
+    "won": 592,
+    "hit_rate": 0.6965,
+    "avg_prob": 0.7034
    },
    {
     "kind": "single",
     "tier": "lean",
-    "n": 351,
-    "won": 210,
-    "hit_rate": 0.5983,
-    "avg_prob": 0.5739
+    "n": 357,
+    "won": 211,
+    "hit_rate": 0.591,
+    "avg_prob": 0.5745
    },
    {
     "kind": "single",
@@ -142,26 +142,26 @@
    {
     "kind": "single",
     "tier": "all",
-    "n": 1084,
-    "won": 727,
-    "hit_rate": 0.6707,
-    "avg_prob": 0.6633
+    "n": 1207,
+    "won": 803,
+    "hit_rate": 0.6653,
+    "avg_prob": 0.6653
    },
    {
     "kind": "double",
     "tier": "strong",
-    "n": 128,
-    "won": 106,
-    "hit_rate": 0.8281,
-    "avg_prob": 0.8167
+    "n": 102,
+    "won": 83,
+    "hit_rate": 0.8137,
+    "avg_prob": 0.8119
    },
    {
     "kind": "double",
     "tier": "lean",
-    "n": 533,
-    "won": 423,
-    "hit_rate": 0.7936,
-    "avg_prob": 0.7734
+    "n": 531,
+    "won": 410,
+    "hit_rate": 0.7721,
+    "avg_prob": 0.7733
    },
    {
     "kind": "double",
@@ -174,40 +174,40 @@
    {
     "kind": "double",
     "tier": "all",
-    "n": 661,
-    "won": 529,
-    "hit_rate": 0.8003,
-    "avg_prob": 0.7818
+    "n": 633,
+    "won": 493,
+    "hit_rate": 0.7788,
+    "avg_prob": 0.7795
    }
   ],
   "by_code": [
    {
     "code": "1",
-    "n": 810,
-    "won": 545,
-    "hit_rate": 0.6728,
-    "avg_prob": 0.6696
+    "n": 874,
+    "won": 581,
+    "hit_rate": 0.6648,
+    "avg_prob": 0.6732
    },
    {
     "code": "2",
-    "n": 274,
-    "won": 182,
-    "hit_rate": 0.6642,
+    "n": 333,
+    "won": 222,
+    "hit_rate": 0.6667,
     "avg_prob": 0.6445
    },
    {
     "code": "1X",
-    "n": 487,
-    "won": 388,
-    "hit_rate": 0.7967,
-    "avg_prob": 0.7822
+    "n": 462,
+    "won": 364,
+    "hit_rate": 0.7879,
+    "avg_prob": 0.7807
    },
    {
     "code": "2X",
-    "n": 174,
-    "won": 141,
-    "hit_rate": 0.8103,
-    "avg_prob": 0.7808
+    "n": 171,
+    "won": 129,
+    "hit_rate": 0.7544,
+    "avg_prob": 0.7763
    }
   ]
  },
@@ -215,102 +215,188 @@
   "by_tip": [
    {
     "tip": "Over 1.0 (Asian)",
-    "n": 2393,
-    "won": 1786,
-    "lost": 160,
-    "push": 447,
-    "hit_rate": 0.9178,
-    "avg_prob": 0.7565
+    "n": 2229,
+    "won": 1651,
+    "lost": 152,
+    "push": 426,
+    "hit_rate": 0.9157,
+    "avg_prob": 0.7502
    },
    {
     "tip": "Over 1.5 Goals",
-    "n": 339,
-    "won": 293,
-    "lost": 46,
+    "n": 488,
+    "won": 432,
+    "lost": 56,
     "push": 0,
-    "hit_rate": 0.8643,
-    "avg_prob": 0.841
+    "hit_rate": 0.8852,
+    "avg_prob": 0.8466
    },
    {
     "tip": "Over 2.0 (Asian)",
-    "n": 457,
-    "won": 275,
-    "lost": 86,
-    "push": 96,
-    "hit_rate": 0.7618,
-    "avg_prob": 0.6087
+    "n": 405,
+    "won": 238,
+    "lost": 80,
+    "push": 87,
+    "hit_rate": 0.7484,
+    "avg_prob": 0.605
    },
    {
     "tip": "Under 3.0 (Asian)",
-    "n": 12,
-    "won": 7,
+    "n": 26,
+    "won": 18,
     "lost": 3,
-    "push": 2,
-    "hit_rate": 0.7,
-    "avg_prob": 0.6609
+    "push": 5,
+    "hit_rate": 0.8571,
+    "avg_prob": 0.646
    }
   ],
   "by_tier": [
    {
     "tier": "strong",
-    "n": 1688,
-    "won": 1326,
-    "lost": 134,
-    "push": 228,
-    "hit_rate": 0.9082,
-    "avg_prob": 0.7917
+    "n": 1652,
+    "won": 1330,
+    "lost": 130,
+    "push": 192,
+    "hit_rate": 0.911,
+    "avg_prob": 0.7983
    },
    {
     "tier": "lean",
-    "n": 1310,
-    "won": 914,
-    "lost": 121,
-    "push": 275,
-    "hit_rate": 0.8831,
-    "avg_prob": 0.7068
+    "n": 1292,
+    "won": 887,
+    "lost": 123,
+    "push": 282,
+    "hit_rate": 0.8782,
+    "avg_prob": 0.7028
    },
    {
     "tier": "weak",
-    "n": 203,
-    "won": 121,
-    "lost": 40,
-    "push": 42,
-    "hit_rate": 0.7516,
-    "avg_prob": 0.5879
+    "n": 204,
+    "won": 122,
+    "lost": 38,
+    "push": 44,
+    "hit_rate": 0.7625,
+    "avg_prob": 0.5898
    }
   ],
   "all": {
-   "n": 3201,
-   "won": 2361,
-   "lost": 295,
-   "push": 545,
-   "hit_rate": 0.8889,
-   "avg_prob": 0.744
+   "n": 3148,
+   "won": 2339,
+   "lost": 291,
+   "push": 518,
+   "hit_rate": 0.8894,
+   "avg_prob": 0.7456
   }
  },
  "betting": {
   "all_straight_tips": {
-   "bets": 1084,
-   "won": 727,
-   "profit": -31.92,
-   "roi": -0.0294
+   "bets": 1207,
+   "won": 803,
+   "profit": -36.89,
+   "roi": -0.0306
   },
   "value_bets": {
-   "bets": 80,
-   "won": 57,
-   "profit": 9.97,
-   "roi": 0.1246
+   "bets": 22,
+   "won": 18,
+   "profit": 9.28,
+   "roi": 0.4218
   },
-  "edge_threshold": 0.05
+  "edge_threshold": 0.05,
+  "value_scan": {
+   "1x2": [
+    {
+     "min_ev": 0.0,
+     "bets": 2019,
+     "won": 657,
+     "profit": -154.88,
+     "roi": -0.0767,
+     "avg_odds": 3.61
+    },
+    {
+     "min_ev": 0.03,
+     "bets": 1188,
+     "won": 348,
+     "profit": -88.93,
+     "roi": -0.0749,
+     "avg_odds": 3.95
+    },
+    {
+     "min_ev": 0.05,
+     "bets": 811,
+     "won": 217,
+     "profit": -77.41,
+     "roi": -0.0955,
+     "avg_odds": 4.23
+    },
+    {
+     "min_ev": 0.08,
+     "bets": 461,
+     "won": 119,
+     "profit": -33.1,
+     "roi": -0.0718,
+     "avg_odds": 4.6
+    },
+    {
+     "min_ev": 0.12,
+     "bets": 219,
+     "won": 46,
+     "profit": -13.88,
+     "roi": -0.0634,
+     "avg_odds": 5.48
+    }
+   ],
+   "ou25": [
+    {
+     "min_ev": 0.0,
+     "bets": 1918,
+     "won": 834,
+     "profit": -137.89,
+     "roi": -0.0719,
+     "avg_odds": 2.24
+    },
+    {
+     "min_ev": 0.03,
+     "bets": 1298,
+     "won": 556,
+     "profit": -69.8,
+     "roi": -0.0538,
+     "avg_odds": 2.32
+    },
+    {
+     "min_ev": 0.05,
+     "bets": 968,
+     "won": 388,
+     "profit": -86.57,
+     "roi": -0.0894,
+     "avg_odds": 2.39
+    },
+    {
+     "min_ev": 0.08,
+     "bets": 624,
+     "won": 239,
+     "profit": -54.47,
+     "roi": -0.0873,
+     "avg_odds": 2.5
+    },
+    {
+     "min_ev": 0.12,
+     "bets": 332,
+     "won": 112,
+     "profit": -46.56,
+     "roi": -0.1402,
+     "avg_odds": 2.67
+    }
+   ]
+  }
  },
  "by_league": [
   {
    "league": "BL1",
    "n": 306,
    "model": {
-    "log_loss": 0.9881,
-    "brier": 0.589,
-    "accuracy": 0.5033
+    "log_loss": 0.9904,
+    "brier": 0.5909,
+    "accuracy": 0.5065
    },
    "market": {
     "log_loss": 0.9883,
@@ -322,9 +408,9 @@
    "league": "BL2",
    "n": 306,
    "model": {
-    "log_loss": 1.0632,
-    "brier": 0.6424,
-    "accuracy": 0.4346
+    "log_loss": 1.0559,
+    "brier": 0.6371,
+    "accuracy": 0.4641
    },
    "market": {
     "log_loss": 1.0557,
@@ -336,9 +422,9 @@
    "league": "DED",
    "n": 306,
    "model": {
-    "log_loss": 0.9524,
-    "brier": 0.5664,
-    "accuracy": 0.5261
+    "log_loss": 0.9514,
+    "brier": 0.5657,
+    "accuracy": 0.5229
    },
    "market": {
     "log_loss": 0.9494,
@@ -350,9 +436,9 @@
    "league": "ELC",
    "n": 552,
    "model": {
-    "log_loss": 1.0315,
-    "brier": 0.6207,
-    "accuracy": 0.4783
+    "log_loss": 1.0296,
+    "brier": 0.6195,
+    "accuracy": 0.4764
    },
    "market": {
     "log_loss": 1.0309,
@@ -364,9 +450,9 @@
    "league": "FL1",
    "n": 306,
    "model": {
-    "log_loss": 0.9795,
-    "brier": 0.5798,
-    "accuracy": 0.5392
+    "log_loss": 0.9704,
+    "brier": 0.5728,
+    "accuracy": 0.5425
    },
    "market": {
     "log_loss": 0.9601,
@@ -378,9 +464,9 @@
    "league": "PD",
    "n": 380,
    "model": {
-    "log_loss": 0.9706,
-    "brier": 0.5764,
-    "accuracy": 0.5342
+    "log_loss": 0.9609,
+    "brier": 0.5697,
+    "accuracy": 0.5395
    },
    "market": {
     "log_loss": 0.9534,
@@ -392,9 +478,9 @@
    "league": "PL",
    "n": 380,
    "model": {
-    "log_loss": 0.9728,
-    "brier": 0.5797,
-    "accuracy": 0.5605
+    "log_loss": 0.9742,
+    "brier": 0.5812,
+    "accuracy": 0.5526
    },
    "market": {
     "log_loss": 0.9708,
@@ -406,9 +492,9 @@
    "league": "PPL",
    "n": 306,
    "model": {
-    "log_loss": 0.9474,
-    "brier": 0.5642,
-    "accuracy": 0.5425
+    "log_loss": 0.9376,
+    "brier": 0.557,
+    "accuracy": 0.5458
    },
    "market": {
     "log_loss": 0.9353,
@@ -420,9 +506,9 @@
    "league": "SA",
    "n": 380,
    "model": {
-    "log_loss": 0.9557,
-    "brier": 0.5701,
-    "accuracy": 0.5395
+    "log_loss": 0.9528,
+    "brier": 0.5675,
+    "accuracy": 0.5342
    },
    "market": {
     "log_loss": 0.9548,
@@ -436,8 +522,8 @@
   "match_result": {
    "n": 3222,
    "model": {
-    "log_loss": 1.0094,
-    "brier": 0.6044,
+    "log_loss": 1.0062,
+    "brier": 0.6023,
     "accuracy": 0.5025
    },
    "market": {
@@ -449,18 +535,18 @@
   "straight": {
    "kind": "single",
    "tier": "all",
-   "n": 950,
-   "won": 607,
-   "hit_rate": 0.6389,
-   "avg_prob": 0.657
+   "n": 1072,
+   "won": 681,
+   "hit_rate": 0.6353,
+   "avg_prob": 0.66
   },
   "double": {
    "kind": "double",
    "tier": "all",
-   "n": 613,
-   "won": 457,
-   "hit_rate": 0.7455,
-   "avg_prob": 0.7766
+   "n": 600,
+   "won": 452,
+   "hit_rate": 0.7533,
+   "avg_prob": 0.7742
   }
  }
 }
