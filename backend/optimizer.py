@@ -228,14 +228,16 @@ def candidates(pred: Dict, sportybet_event: Optional[Dict] = None,
     # (market_blend.py): blended where SportyBet prices the whole set, and
     # those chances aren't calibrated again (the maps are fitted on ours alone)
     blended = set()
-    if calibrate and market_blend.weights:
+    if calibrate:
+        # Every market SportyBet prices in full: with its fitted weight, or else
+        # pulled towards SportyBet by how far we disagree (market_blend.shrink)
         by_market: Dict[str, List[int]] = {}
         for i, r in enumerate(rows):
-            if r[0] in market_blend.weights and r[6] == "sportybet" and r[5]:
+            if r[6] == "sportybet" and r[5]:
                 by_market.setdefault(r[0], []).append(i)
         for market, ix in by_market.items():
             got = market_blend.apply(market, {rows[i][2]: rows[i][4] for i in ix},
-                                     {rows[i][2]: rows[i][5] for i in ix})
+                                     {rows[i][2]: rows[i][5] for i in ix}, shrink_rest=True)
             for i in ix:
                 if got[rows[i][2]] != rows[i][4]:
                     rows[i][4] = got[rows[i][2]]

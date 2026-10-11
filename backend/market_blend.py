@@ -9,8 +9,8 @@ off (fair_odds.py) and the blended chances still add up to 1:
 
     chance = w * ours + (1 - w) * SportyBet's fair chance
 
-`w` (our share) is per market, from the nightly check; a market without a
-weight there is left as the model has it. 1X2 is blended where predictions
+`w` (our share) is per market, from the nightly check. A market without a
+weight there is pulled towards SportyBet by how far we disagree (shrink). 1X2 is blended where predictions
 are built (main._blend_1x2), so it isn't in here.
 """
 
@@ -68,12 +68,35 @@ def blend(ours: Sequence[float], odds: Sequence[float], w: float, method: str = 
     return [w * a / s + (1 - w) * b for a, b in zip(ours, fair)]
 
 
+# When we disagree with SportyBet: settled outcomes from 45 days (edge_check.py,
+# 11 Oct 2026, 1,700 priced) came in about 65% of the way from SportyBet's fair
+# chance to ours while the gap was small, and no more than ~10 points above
+# SportyBet's however far ours went (ours 72.7% vs its 37.5%: 46.7% came in)
+AGREE_SHARE = 0.65
+GAP_KNEE = 0.15
+
+
+def shrink(ours: Sequence[float], odds: Sequence[float]) -> List[float]:
+    """A complete set's chances pulled towards SportyBet's fair ones by how
+    far they disagree: fair + share × (ours − fair), the share falling past
+    GAP_KNEE so the gap counts for at most AGREE_SHARE × GAP_KNEE."""
+    s = sum(ours)
+    fair = fair_odds.fair(list(odds))
+    out = []
+    for a, b in zip(ours, fair):
+        gap = a / s - b
+        share = AGREE_SHARE if abs(gap) <= GAP_KNEE else AGREE_SHARE * GAP_KNEE / abs(gap)
+        out.append(b + share * gap)
+    t = sum(out)
+    return [x / t for x in out]
+
+
 def apply(market: str, probs: Dict[str, float], odds: Dict[str, Optional[float]],
-          w: Optional[Dict[str, float]] = None) -> Dict[str, float]:
+          w: Optional[Dict[str, float]] = None, shrink_rest: bool = False) -> Dict[str, float]:
     """{code: chance} for one market's outcomes, blended in each complete set
     SportyBet prices fully, if the market has a weight."""
     share = (weights if w is None else w).get(market)
-    if share is None or share >= 1.0:
+    if (share is None or share >= 1.0) and not shrink_rest:
         return probs
     codes = list(probs)
     out = dict(probs)
@@ -81,6 +104,7 @@ def apply(market: str, probs: Dict[str, float], odds: Dict[str, Optional[float]]
         cs = [codes[i] for i in ix]
         ours, os_ = [probs[c] for c in cs], [odds.get(c) for c in cs]
         if complete(ours, os_):
-            for c, p in zip(cs, blend(ours, os_, share)):
+            got = blend(ours, os_, share) if share is not None and share < 1.0 else shrink(ours, os_)
+            for c, p in zip(cs, got):
                 out[c] = p
     return out
