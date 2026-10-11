@@ -35,7 +35,7 @@ def family(market: str) -> str:
         return "bb_team_total"
     if market.startswith(("bb_h1_", "bb_h2_")):
         return "bb_halves"
-    if market.startswith("bb_q"):
+    if market.startswith("bb_q") or market in ("bb_hsq", "bb_hsq_total", "bb_lsq_total"):
         return "bb_quarters"
     if market.startswith("bb_player_"):
         return "bb_player"
@@ -71,9 +71,16 @@ def predict(ev: Dict, lg: Optional[bm.League]) -> Optional[Dict[str, Any]]:
     lines = bmk.main_lines(offs)
     if match is None:
         return None
+    # The quarters against each other: from trends in previous games and meetings (basketball_quarters.py)
+    qodds = None
+    if any(o["kind"] in bmk.QUARTER_KINDS for o in offs):
+        import basketball_quarters as bq
+        qodds = bq.odds_for(ev.get("_tournament") or "", home, away, match.home_pts, match.away_pts,
+                            match.sigma.get("total", 17.0), match.q_shares,
+                            (lg.sigma.get("q_total") if lg else None) or bm.DEFAULT_SIGMA["q_total"])
     priced = []
     for o in offs:
-        p = bmk.probability(match, o)
+        p = bmk.quarter_probability(qodds, o) if o["kind"] in bmk.QUARTER_KINDS else bmk.probability(match, o)
         if p is None:
             continue
         priced.append({"market": o["market"], "family": family(o["market"]), "market_name": bmk.market_name(o["market"]),
@@ -106,6 +113,8 @@ def predict(ev: Dict, lg: Optional[bm.League]) -> Optional[Dict[str, Any]]:
         "exp_home_pts": round(match.home_pts, 1), "exp_away_pts": round(match.away_pts, 1),
         "model": match.source, "model_detail": match.detail,
         "rated": bool(lg and lg.known(home) and lg.known(away)),
+        **({"quarters": {"expected": qodds.expected, "highest": {k: round(v, 3) for k, v in qodds.highest().items()}}}
+           if qodds else {}),
         "bb_markets": keep,
     }
 

@@ -5512,10 +5512,30 @@ def _bb_fit_sync() -> Dict[str, Any]:
     leagues = bd.fit_all(results, backtest=backtest, elo_report=elo_report, history=history)
     _bb_leagues.clear()
     _bb_leagues.update(leagues)
+    # Quarter trends (highest / lowest scoring quarter): every quarter-scored
+    # game of each league, the long history included, and its teams' meetings
+    quarters = 0
+    try:
+        import basketball_quarters as bq
+        if r:
+            bq.CONFIG.update(bq.load_config(r))
+        long_games = bd.games_by_league(history if history is not None else results)
+        models = {}
+        for name in leagues:
+            m = bq.fit(name, long_games.get(name) or [])
+            if m:
+                models[name] = m
+        bq.MODELS.clear()
+        bq.MODELS.update(models)
+        quarters = len(models)
+        if r and models:
+            bq.save(r, models)
+    except Exception as e:
+        print(f"[Basketball] quarter models not fitted: {e}")
     _bb_index_set(results)
     if r and leagues:
         r.set(BB_MODEL_KEY, bd.encode([lg.to_json() for lg in leagues.values()]))
-    return {"games": len(results), "leagues": len(leagues),
+    return {"games": len(results), "leagues": len(leagues), "quarter_models": quarters,
             "teams": sum(len(lg.attack) for lg in leagues.values())}
 
 

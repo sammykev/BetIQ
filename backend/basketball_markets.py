@@ -15,6 +15,9 @@ Our codes (stored with tickets, used to settle):
     bb_h1_home_total / bb_h1_away_total
     bb_q{1-4}_1x2 / _handicap / _total / _home_total / _away_total
     bb_overtime        OT-Y / OT-N
+    bb_hsq             Q1 / Q2 / Q3 / Q4 / EQ       highest scoring quarter (EQ: a tie for it), regulation
+    bb_hsq_total       O47.5 / U47.5                the highest scoring quarter's points
+    bb_lsq_total       O33.5 / U33.5                the lowest scoring quarter's points
 """
 
 import re
@@ -46,16 +49,24 @@ MARKETS: Dict[str, Tuple[str, str, str, bool]] = {
     "236": ("total", "q", "total", False),
     "756": ("home_total", "q", "home_total", False),
     "757": ("away_total", "q", "away_total", False),
+    # Quarters against each other (regulation): priced from basketball_quarters.py
+    "234": ("bb_hsq", "full", "hsq", False),
+    "1193": ("bb_hsq_total", "full", "hsq_total", False),
+    "1195": ("bb_lsq_total", "full", "lsq_total", False),
 }
+QUARTER_KINDS = ("hsq", "hsq_total", "lsq_total")
 # Asked for in SportyBet's listing (every line of each)
 LISTING_MARKETS = ",".join(MARKETS)
 
 PART_NAMES = {"full": "", "h1": "1st half", "h2": "2nd half", "q1": "1st quarter", "q2": "2nd quarter",
               "q3": "3rd quarter", "q4": "4th quarter"}
 KIND_NAMES = {"winner": "Winner", "1x2": "1X2", "handicap": "Handicap", "total": "Total Points",
-              "home_total": "Home Team Points", "away_total": "Away Team Points", "overtime": "Overtime"}
+              "home_total": "Home Team Points", "away_total": "Away Team Points", "overtime": "Overtime",
+              "hsq": "Highest Scoring Quarter", "hsq_total": "Highest Scoring Quarter Points",
+              "lsq_total": "Lowest Scoring Quarter Points"}
 _OUT = {"4": "1", "5": "2", "1": "1", "2": "X", "3": "2", "1714": "H", "1715": "A",
-        "12": "O", "13": "U", "74": "Y", "76": "N"}
+        "12": "O", "13": "U", "74": "Y", "76": "N",
+        "920": "Q1", "921": "Q2", "922": "Q3", "923": "Q4", "924": "EQ"}
 
 
 def _spec(spec: Optional[str]) -> Dict[str, str]:
@@ -105,7 +116,7 @@ def offers(ev: Dict) -> List[Dict[str, Any]]:
             part = f"q{n}"
             market = f"bb_{part}_{market}"
         line = _num(sp.get("hcp") or sp.get("total") or "")
-        if kind in ("handicap", "total", "home_total", "away_total") and line is None:
+        if kind in ("handicap", "total", "home_total", "away_total", "hsq_total", "lsq_total") and line is None:
             continue
         for o in m.get("outcomes") or []:
             if not o.get("isActive", 1):
@@ -117,7 +128,7 @@ def offers(ev: Dict) -> List[Dict[str, Any]]:
             if kind == "handicap":
                 # The specifier is the home side's handicap
                 code = f"H{_fmt(line)}" if side == "H" else f"A{_fmt(-line)}"
-            elif kind in ("total", "home_total", "away_total"):
+            elif kind in ("total", "home_total", "away_total", "hsq_total", "lsq_total"):
                 code = f"{side}{line:g}"
             elif kind == "overtime":
                 code = f"OT-{side}"
@@ -147,14 +158,36 @@ def label(o: Dict, home: str, away: str) -> str:
     elif kind in ("home_total", "away_total"):
         team = home if kind == "home_total" else away
         body = f"{team} {'over' if code[0] == 'O' else 'under'} {code[1:]} points"
+    elif kind == "hsq":
+        body = "Highest scoring quarter: " + ({"Q1": "1st", "Q2": "2nd", "Q3": "3rd", "Q4": "4th"}.get(code, "") + " quarter"
+                                              if code != "EQ" else "a tie")
+    elif kind in ("hsq_total", "lsq_total"):
+        body = (f"{'Highest' if kind == 'hsq_total' else 'Lowest'} scoring quarter "
+                f"{'over' if code[0] == 'O' else 'under'} {code[1:]} points")
     else:
         body = "Overtime" if code == "OT-Y" else "No overtime"
     return pre + body
 
 
+def quarter_probability(q, o: Dict) -> Optional[float]:
+    """Our chance of a quarters-against-each-other offer, from the match's
+    simulated quarters (basketball_quarters.QuarterOdds)."""
+    kind, code, line = o["kind"], o["code"], o["line"]
+    if q is None:
+        return None
+    if kind == "hsq":
+        return q.highest().get(code)
+    if kind in ("hsq_total", "lsq_total") and line is not None:
+        over = q.p_high_over(line) if kind == "hsq_total" else q.p_low_over(line)
+        return over if code[0] == "O" else 1.0 - over
+    return None
+
+
 def probability(m: Match, o: Dict) -> Optional[float]:
     """Our chance of one offer."""
     kind, code, part, line = o["kind"], o["code"], o["part"], o["line"]
+    if kind in QUARTER_KINDS:
+        return None                       # priced from the quarters model (quarter_probability)
     if kind == "winner":
         return m.p_win(code == "1")
     if kind == "overtime":
@@ -211,6 +244,18 @@ def settle(market: str, code: str, result: Optional[Dict]) -> str:
         return "pending"
     fh, fa = result["final"]
     periods = result.get("periods") or []
+    if market in ("bb_hsq", "bb_hsq_total", "bb_lsq_total"):
+        if len(periods) < 4:
+            return "void"                  # no quarter scores to settle from
+        q = [periods[i][0] + periods[i][1] for i in range(4)]
+        if market == "bb_hsq":
+            top = max(q)
+            got = "EQ" if q.count(top) > 1 else f"Q{q.index(top) + 1}"
+            return "won" if got == code else "lost"
+        value, line = (max(q) if market == "bb_hsq_total" else min(q)), float(code[1:])
+        if value == line:
+            return "void"
+        return "won" if (value > line) == (code[0] == "O") else "lost"
     m = re.match(r"^bb_(?:(h1|h2|q[1-4])_)?(.+)$", market)
     if not m:
         return "void"
