@@ -85,6 +85,11 @@ def main() -> None:
                 continue
             leagues = _C(p.get("league") for p in ps if isinstance(p, dict))
             print(f"{sport}: {len(ps)} predictions in {len(leagues)} leagues: {leagues.most_common(12)}")
+            if sport == "basketball":
+                from collections import Counter as _M
+                mk = _M(x.get("market") for p in ps if isinstance(p, dict) for x in (p.get("bb_markets") or p.get("top_lines") or []))
+                print("   basketball lines kept, by market:", sorted(mk.items()))
+                print("   matches with quarter odds:", sum(1 for p in ps if isinstance(p, dict) and p.get("quarters")))
             if ps and isinstance(ps[0], dict):
                 print("   one:", {k: ps[0].get(k) for k in ("league", "league_name", "flag", "home", "away")})
         md = r.get("betiq:md:status")
