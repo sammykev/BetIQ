@@ -8337,8 +8337,8 @@ async def paused_markets():
     _restore_review()
     latest = {m["market"]: m for m in (_review.get("latest") or {}).get("markets") or []}
     return {"paused": [{"market": m, "name": _market_names().get(m, m),
-                        "why": (latest.get(m) or {}).get("why") if (_review.get("overrides") or {}).get(m) != "off"
-                        else "switched off by the admin"}
+                        "why": "switched off by the admin" if (_review.get("overrides") or {}).get(m) == "off"
+                        else (latest.get(m) or {}).get("why") or market_review.DEFAULT_OFF.get(m)}
                        for m in sorted(market_review.blocked(_review))]}
 
 

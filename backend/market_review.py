@@ -37,6 +37,9 @@ MIN_WATCH = 15
 HISTORY = 12              # past reviews kept
 MODES = ("auto", "flag")
 OVERRIDES = ("on", "off")
+# Off unless an admin pins them on, whatever the mode: {market: why}
+DEFAULT_OFF = {"corners_1x2": "left out of slips: its picks came in 54.8% against 65.1% said "
+                              "(31 picks, 5-10 Oct 2026), the one market clearly under"}
 
 Row = Tuple[int, float, bool]   # (match index, prob, won)
 
@@ -113,10 +116,11 @@ def review(entries: Iterable[Dict], paused_before: Iterable[str] = ()) -> Dict[s
 
 
 def blocked(state: Dict[str, Any]) -> Set[str]:
-    """Markets not to pick from: pinned off, plus (in auto mode) the review's
-    paused ones that aren't pinned on."""
+    """Markets not to pick from: pinned off, the DEFAULT_OFF ones not pinned
+    on, plus (in auto mode) the review's paused ones that aren't pinned on."""
     overrides = state.get("overrides") or {}
     out = {m for m, v in overrides.items() if v == "off"}
+    out |= {m for m in DEFAULT_OFF if overrides.get(m) != "on"}
     if state.get("mode", DEFAULT_MODE) == "auto":
         out |= {m for m in ((state.get("latest") or {}).get("paused") or []) if overrides.get(m) != "on"}
     return out

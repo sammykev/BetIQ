@@ -105,8 +105,12 @@ class TestSettings:
     def test_blocked(self):
         state = {"mode": "auto", "overrides": {"btts": "off", "goals_ou": "on"},
                  "latest": {"paused": ["goals_ou", "corners_ou"]}}
-        assert mr.blocked(state) == {"btts", "corners_ou"}
-        assert mr.blocked({**state, "mode": "flag"}) == {"btts"}
+        assert mr.blocked(state) == {"btts", "corners_ou", "corners_1x2"}
+        assert mr.blocked({**state, "mode": "flag"}) == {"btts", "corners_1x2"}
+
+    def test_most_corners_is_off_unless_pinned_on(self):
+        assert "corners_1x2" in mr.blocked({})
+        assert "corners_1x2" not in mr.blocked({"overrides": {"corners_1x2": "on"}})
 
     def test_validation(self):
         new = mr.settings({"mode": "flag", "overrides": {"btts": "off", "1x2": "auto"}}, {})
@@ -150,17 +154,18 @@ class TestServer:
         assert result["paused"] == ["goals_ou"]
         saved = json.loads(server.kv[main.REVIEW_KEY])
         assert saved["latest"]["paused"] == ["goals_ou"] and len(saved["history"]) == 1
-        assert main._paused_markets() == {"goals_ou"}
+        assert main._paused_markets() == {"goals_ou", "corners_1x2"}
 
     def test_admin_settings_and_public_list(self, server):
         c = TestClient(main.app)
         main._review.update(latest={"paused": ["goals_ou"], "markets": [
             {"market": "goals_ou", "status": "pause", "why": "came in 40% vs 75% said, over 60 matches"}]})
-        assert c.get("/api/admin/market-review").json()["blocked"] == ["goals_ou"]
+        assert c.get("/api/admin/market-review").json()["blocked"] == ["corners_1x2", "goals_ou"]
         paused = c.get("/api/market-review/paused").json()["paused"]
-        assert paused == [{"market": "goals_ou", "name": "Total Goals", "why": "came in 40% vs 75% said, over 60 matches"}]
+        assert paused[1] == {"market": "goals_ou", "name": "Total Goals", "why": "came in 40% vs 75% said, over 60 matches"}
+        assert paused[0]["market"] == "corners_1x2" and paused[0]["why"] == mr.DEFAULT_OFF["corners_1x2"]
         r = c.put("/api/admin/market-review", json={"overrides": {"goals_ou": "on", "btts": "off"}}).json()
-        assert r["blocked"] == ["btts"] and r["overrides"] == {"goals_ou": "on", "btts": "off"}
+        assert r["blocked"] == ["btts", "corners_1x2"] and r["overrides"] == {"goals_ou": "on", "btts": "off"}
         assert json.loads(server.kv[main.REVIEW_KEY])["overrides"]["btts"] == "off"
         assert c.get("/api/market-review/paused").json()["paused"][0]["why"] == "switched off by the admin"
         assert c.put("/api/admin/market-review", json={"mode": "never"}).status_code == 400
@@ -203,8 +208,8 @@ class TestOptimizerLeavesPausedMarketsOut:
 
 def test_flag_is_the_default_unless_an_admin_chose_auto():
     import main
-    assert mr.blocked({"latest": {"paused": ["goals_ou"]}}) == set()
-    assert mr.blocked({"mode": "auto", "latest": {"paused": ["goals_ou"]}}) == {"goals_ou"}
+    assert mr.blocked({"latest": {"paused": ["goals_ou"]}}) == {"corners_1x2"}
+    assert mr.blocked({"mode": "auto", "latest": {"paused": ["goals_ou"]}}) == {"goals_ou", "corners_1x2"}
 
     class R:
         def __init__(self, state):
