@@ -10,12 +10,12 @@ import check_basketball_blend as cbb
 def test_snapshot_keeps_both_lines():
     snap = bmd.snapshot({"p_home": 0.6, "model_detail": {"model_margin": 4.2, "market_margin": 3.0,
                                                          "model_total": 160.0, "market_total": 158.5}})
-    assert snap["lines"] == {"model_margin": 4.2, "market_margin": 3.0, "model_total": 160.0, "market_total": 158.5}
-    assert "lines" not in bmd.snapshot({"p_home": 0.6})
+    assert snap["expect"] == {"model_margin": 4.2, "market_margin": 3.0, "model_total": 160.0, "market_total": 158.5}
+    assert "expect" not in bmd.snapshot({"p_home": 0.6})
 
 
 def _e(ours, market, hs, as_, d, ot=False):
-    return {"date": d, "pred": {"lines": {"model_margin": ours, "market_margin": market,
+    return {"date": d, "pred": {"expect": {"model_margin": ours, "market_margin": market,
                                           "model_total": 160.0, "market_total": 158.0}},
             "result": {"status": "finished", "score": [hs, as_], "ot": ot}}
 

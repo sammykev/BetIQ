@@ -24,6 +24,7 @@ _HEADER = ("home", "away", "date", "time", "league", "league_name", "flag", "hom
 _PRED = ("p_home", "p_away", "tip_1x2", "tip_code", "tip_confidence", "tip_goals", "p_over_line", "total_line",
          "handicap_line", "exp_home_pts", "exp_away_pts", "odds_home", "odds_away", "rated", "model")
 GRADES = ("tip", "points", "best")
+LINES_KEPT = 60
 
 
 def kickoff(e: Dict) -> Optional[datetime]:
@@ -47,15 +48,21 @@ def best_line(pred: Dict) -> Optional[Dict]:
 def snapshot(pred: Dict) -> Dict[str, Any]:
     out = {k: pred.get(k) for k in _PRED}
     out["best"] = best_line(pred)
+    # Every line we priced before the start, [market, code, chance] — settled
+    # at full time for the market corrections (calibration.py)
+    lines = [[x.get("market"), x.get("code"), x.get("prob")] for x in (pred.get("bb_markets") or pred.get("top_lines") or [])
+             if x.get("market") and not str(x.get("market")).startswith("bb_player") and isinstance(x.get("prob"), (int, float))]
+    if lines:
+        out["lines"] = lines[:LINES_KEPT]
     detail = pred.get("model_detail") or {}
     ratings = detail.get("ratings")
     if ratings:   # each side's rating before the start (the site shows them)
         out["ratings"] = ratings
     # Our margin and total and the market's, before blending (check_basketball_blend.py)
-    lines = {k: detail[k] for k in ("model_margin", "model_total", "market_margin", "market_total")
-             if isinstance(detail.get(k), (int, float))}
-    if lines:
-        out["lines"] = lines
+    expect = {k: detail[k] for k in ("model_margin", "model_total", "market_margin", "market_total")
+              if isinstance(detail.get(k), (int, float))}
+    if expect:
+        out["expect"] = expect
     return out
 
 

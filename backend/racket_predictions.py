@@ -192,6 +192,7 @@ def build(events: List[Dict], sport: str, model: Optional[Dict], now: Optional[d
 def options(pred: Dict, min_prob: float, families: Optional[set] = None,
             allowed: Optional[Callable[[str, str], bool]] = None) -> List:
     """The optimizer's choices on one match (at most one is picked a match)."""
+    import calibration
     import optimizer
     out = []
     for x in pred.get("rk_markets") or []:
@@ -199,10 +200,12 @@ def options(pred: Dict, min_prob: float, families: Optional[set] = None,
             continue
         if allowed and not allowed(x["market"], x["code"]):
             continue
-        if not min_prob <= x["prob"] < 0.995 or x["odds"] <= 1.01:
+        # Our chance through its market's correction (calibration.py; raw without one)
+        prob = calibration.apply(pred["sport"], x["market"], x["prob"])
+        if not min_prob <= prob < 0.995 or x["odds"] <= 1.01:
             continue
         out.append(optimizer.Option(pred["home"], pred["away"], pred["date"], pred.get("time") or "",
                                     pred.get("league_name") or "", x["market"], x["market_name"], x["code"],
-                                    x["label"], x["prob"], x["odds"], "sportybet", sb=x["sb"], sport=pred["sport"],
+                                    x["label"], round(prob, 4), x["odds"], "sportybet", sb=x["sb"], sport=pred["sport"],
                                     league_id=str(pred.get("league") or "")))
     return out

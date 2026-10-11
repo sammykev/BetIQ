@@ -204,6 +204,7 @@ def candidates(pred: Dict, sportybet_event: Optional[Dict] = None,
     `allowed(market, code)` can veto picks (e.g. markets SportyBet codes can't take yet).
     Chances go through each market's calibration map (football_calibration)
     unless `calibrate` is False (the accuracy records the maps are fitted on)."""
+    import calibration
     import football_calibration
     import market_blend
     if not all(isinstance(pred.get(k), (int, float))
@@ -242,7 +243,9 @@ def candidates(pred: Dict, sportybet_event: Optional[Dict] = None,
     out = []
     for i, (market, market_name, code, label, prob, odds, source) in enumerate(rows):
         if calibrate and i not in blended:
-            prob = football_calibration.apply(market, prob)
+            # Every market's correction (calibration.py); the older football-only maps until it has run
+            prob = calibration.apply("football", market, prob) if calibration.maps() \
+                else football_calibration.apply(market, prob)
         if not min_prob <= prob < 0.995:
             continue
         if not odds:

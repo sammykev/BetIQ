@@ -5813,6 +5813,8 @@ async def _fb_calibration_load() -> int:
         if r is None:
             return 0
         football_calibration.set_maps(football_calibration.load(r))
+        import calibration
+        calibration.set_maps(calibration.load(r))
         # and each market's blend with SportyBet's prices (check_market_blend.py)
         try:
             raw = r.get(market_blend.REPORT_KEY)
@@ -5824,8 +5826,9 @@ async def _fb_calibration_load() -> int:
         return len(football_calibration.maps())
     import market_blend
     got = await asyncio.to_thread(load)
-    print(f"[Calibration] football maps loaded: {got} markets; blended with SportyBet: "
-          f"{market_blend.weights or 'none'}")
+    import calibration
+    print(f"[Calibration] corrected markets: {len(calibration.maps())} (all sports; football-only maps: {got}); "
+          f"blended with SportyBet: {market_blend.weights or 'none'}")
     return got
 
 

@@ -6,7 +6,7 @@ Every prediction mixes our expected margin and total with the market's
     margin = w * ours + (1 - w) * market's      (and the same for the total)
 
 The match-day store keeps both before mixing (basketball_matchday.snapshot,
-"lines"); this scores each weight on settled games that ended in regulation
+"expect"); this scores each weight on settled games that ended in regulation
 by the squared error of the margin and of the total (lower is better), with
 the weight chosen on the earlier days scored on the later ones.
 
@@ -26,7 +26,8 @@ MIN_GAMES = 100
 
 def row(e: Dict) -> Optional[Dict]:
     res, p = e.get("result") or {}, e.get("pred") or {}
-    lines = p.get("lines") or {}
+    # "expect" (named "lines" in the first days' snapshots)
+    lines = p.get("expect") or (p.get("lines") if isinstance(p.get("lines"), dict) else None) or {}
     score = res.get("score")
     if res.get("status") != "finished" or res.get("ot") or not isinstance(score, list) or len(score) != 2:
         return None

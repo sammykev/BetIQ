@@ -54,3 +54,10 @@ jobs:
         env:
           UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
         run: python football_calibration.py
+
+      # Every market's correction in every sport, switched on only where it
+      # beat our raw chances on later picks it never saw (backend/calibration.py)
+      - name: Market calibration (all sports)
+        env:
+          UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
+        run: python calibration.py

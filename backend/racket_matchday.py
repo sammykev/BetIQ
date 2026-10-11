@@ -25,6 +25,7 @@ _HEADER = ("home", "away", "date", "time", "league", "league_name", "flag", "sur
 _PRED = ("p_home", "p_away", "tip_1x2", "tip_code", "tip_confidence", "tip_goals", "p_over_line", "total_line",
          "odds_home", "odds_away", "rated", "model")
 GRADES = ("tip", "games", "best")
+LINES_KEPT = 60
 _SET = re.compile(r"^\s*(\d+)\s*:\s*(\d+)")
 _ENDED = re.compile(r"ended|finished|retired|walkover|aet|^ft$", re.I)
 _NOT_STARTED = re.compile(r"not\s*start|scheduled|postponed|cancel", re.I)
@@ -53,6 +54,11 @@ def best_line(pred: Dict) -> Optional[Dict]:
 def snapshot(pred: Dict) -> Dict[str, Any]:
     out = {k: pred.get(k) for k in _PRED}
     out["best"] = best_line(pred)
+    # Every line we priced before the start, for the market corrections (calibration.py)
+    lines = [[x.get("market"), x.get("code"), x.get("prob")] for x in pred.get("rk_markets") or []
+             if x.get("market") and isinstance(x.get("prob"), (int, float))]
+    if lines:
+        out["lines"] = lines[:LINES_KEPT]
     ratings = (pred.get("model_detail") or {}).get("ratings")
     if ratings:   # each side's rating before the start (the site shows them)
         out["ratings"] = ratings
