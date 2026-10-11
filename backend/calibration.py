@@ -47,6 +47,7 @@ MIN_TEST = 40
 MIN_DAYS = 6
 LO, HI = 0.5, 0.995
 B_RANGE = (0.3, 2.5)
+MAX_LIFT_TO = 0.95
 SPORTS = ("football", "basketball", "tennis", "table_tennis")
 # Ticket legs before this carry the optimizer's raw chances (basketball and
 # racket had no correction then); later ones are already corrected
@@ -98,7 +99,10 @@ def apply(sport: str, market: str, p: float, maps: Optional[Dict[str, Map]] = No
     m = (_maps if maps is None else maps).get(key(sport, market))
     if not m or not LO <= p < HI:
         return p
-    return min(0.99, max(0.01, _sig(m[0] + m[1] * _logit(p))))
+    q = _sig(m[0] + m[1] * _logit(p))
+    # The maps are fitted mostly on 50–85% picks: they may lower a high chance,
+    # but never lift one past MAX_LIFT_TO (or past ours, if that's higher already)
+    return min(max(p, MAX_LIFT_TO), max(0.01, q))
 
 
 def set_maps(maps: Dict[str, Map]) -> None:
