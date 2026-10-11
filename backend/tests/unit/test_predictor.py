@@ -414,3 +414,43 @@ class TestTipConfidence:
             assert "tip_confidence" in res
             if res["tip_confidence"] is not None:
                 assert 0.0 <= res["tip_confidence"] <= 1.0
+
+
+# ── XGBoost + logistic average (_fit_calibrated) ───────────────────────────
+
+
+class TestAveragedModel:
+    @staticmethod
+    def data(n=300, seed=0):
+        rng = np.random.default_rng(seed)
+        X = pd.DataFrame({"a": rng.normal(size=n), "b": rng.normal(size=n)})
+        y3 = pd.Series(np.digitize(X["a"] + rng.normal(scale=0.8, size=n), [-0.5, 0.5]))
+        return X, y3
+
+    def test_result_model_is_the_mean_of_xgboost_and_logistic(self):
+        import predictor
+        X, y = self.data()
+        model = predictor._fit_calibrated(X, y, multiclass=True)
+        assert isinstance(model, predictor.AveragedModel) and len(model.members) == 2
+        got = model.predict_proba(X.head(5))
+        want = (model.members[0].predict_proba(X.head(5)) + model.members[1].predict_proba(X.head(5))) / 2
+        assert np.allclose(got, want)
+        assert np.allclose(got.sum(axis=1), 1.0)
+        assert list(model.classes_) == [0, 1, 2]
+
+    def test_binary_model_gives_two_columns(self):
+        import predictor
+        X, y = self.data()
+        p = predictor._fit_calibrated(X, (y == 2).astype(int)).predict_proba(X.head(3))
+        assert p.shape == (3, 2) and np.allclose(p.sum(axis=1), 1.0)
+
+    def test_falls_back_to_xgboost_when_logistic_fails(self, monkeypatch):
+        import predictor
+
+        def broken():
+            raise ValueError("no")
+        monkeypatch.setattr(predictor, "_logistic", broken)
+        X, y = self.data()
+        model = predictor._fit_calibrated(X, y, multiclass=True)
+        assert not isinstance(model, predictor.AveragedModel)
+        assert model.predict_proba(X.head(2)).shape == (2, 3)

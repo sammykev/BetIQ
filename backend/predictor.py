@@ -2,7 +2,7 @@
 Improved sports prediction engine.
 Key upgrades over original:
 - Elo rating system (dynamic team strength)
-- XGBoost (better calibrated probabilities than RandomForest)
+- XGBoost averaged with a logistic regression (_fit_calibrated)
 - Exponentially weighted form (recent games matter more)
 - Goals-against feature (defence strength)
 - Attack vs Defence matchup features
@@ -25,7 +25,7 @@ from team_names import TeamResolver
 warnings.filterwarnings("ignore")
 
 MODEL_CACHE_PATH = os.path.join(os.path.dirname(__file__), "data", "model_cache.joblib")
-MODEL_CACHE_VERSION = 7  # bump when FEATURE_COLS or saved fields change
+MODEL_CACHE_VERSION = 8  # bump when FEATURE_COLS or saved fields change (8: XGBoost + logistic average)
 
 
 # ── FIFA ranking-calibrated starting Elo for national teams ───────────────
@@ -383,7 +383,32 @@ _XGB_BASE = dict(
 )
 
 
-def _fit_calibrated(X: pd.DataFrame, y: pd.Series, multiclass: bool = False):
+class AveragedModel:
+    """The mean of its members' predict_proba (the members share one label
+    encoding, so their columns line up). Saved with the model."""
+
+    def __init__(self, members):
+        self.members = members
+
+    @property
+    def classes_(self):
+        return self.members[0].classes_
+
+    def predict_proba(self, X):
+        return sum(m.predict_proba(X) for m in self.members) / len(self.members)
+
+
+def _logistic():
+    """Standardised logistic regression, lightly regularised (C=0.1). Its
+    probabilities come out calibrated as fitted, so no isotonic step."""
+    from sklearn.impute import SimpleImputer
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
+    return make_pipeline(SimpleImputer(), StandardScaler(), LogisticRegression(C=0.1, max_iter=2000))
+
+
+def _fit_xgb(X: pd.DataFrame, y: pd.Series, multiclass: bool = False):
     """XGBoost with 3-fold isotonic calibration (plain XGBoost when data is too
     thin to calibrate). The goals models used to skip calibration and ran
     overconfident — Over 1.5 said 86% and hit 83% in the 2024-25 backtest."""
@@ -400,6 +425,21 @@ def _fit_calibrated(X: pd.DataFrame, y: pd.Series, multiclass: bool = False):
     return xgb.XGBClassifier(**params).fit(X, y)
 
 
+def _fit_calibrated(X: pd.DataFrame, y: pd.Series, multiclass: bool = False):
+    """The calibrated XGBoost averaged with a logistic regression on the same
+    features. Walk-forward on 2024-25 (3,222 matches, retrained monthly), log
+    loss vs XGBoost alone: 1X2 0.9874 → 0.9829 and over 2.5 0.6790 → 0.6757,
+    both better in 95% of bootstrap resamples (Bet365: 0.9804, 0.6697).
+    LightGBM and CatBoost alone were no clear gain. XGBoost alone if the
+    logistic fit fails."""
+    boosted = _fit_xgb(X, y, multiclass)
+    try:
+        return AveragedModel([boosted, _logistic().fit(X, y)])
+    except Exception as e:
+        print(f"[Predictor] Logistic fit failed (using XGBoost alone): {e}")
+        return boosted
+
+
 class LeaguePredictor:
     """
     Per-league predictor. Call train() once, then predict_match() for each fixture.
@@ -409,7 +449,7 @@ class LeaguePredictor:
     def __init__(self):
         self.elo = EloSystem()
         self.team_stats: Dict[str, dict] = {}
-        self.models: Dict[str, xgb.XGBClassifier] = {}
+        self.models: Dict[str, AveragedModel] = {}
         self._ready = False
         self._league_home_goals: List[float] = []
         self._league_away_goals: List[float] = []
