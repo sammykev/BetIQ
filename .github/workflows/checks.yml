@@ -1,0 +1,96 @@
+# Checks on every push and pull request: a red X on GitHub (and an email)
+# when a change breaks the backend's tests, the frontend's types or tests,
+# or commits a secret. Dependency audits report without blocking (see the
+# job's summary): known issues in pinned versions are tracked separately.
+name: Checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - run: python -m pytest -q -p no:cacheprovider
+
+  frontend:
+    name: Frontend types and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - name: Type check
+        run: npx tsc --noEmit
+      - name: Unit tests
+        run: npx jest --ci
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Gitleaks (the commits in this push or PR)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  audit:
+    name: Dependency audit (report only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Python packages (pip-audit)
+        run: |
+          pip install -q pip-audit
+          pip-audit -r backend/requirements.txt --progress-spinner off 2>&1 | tee pip-audit.txt || true
+      - name: Frontend packages (npm audit, production, high and above)
+        working-directory: frontend
+        run: npm audit --omit=dev --audit-level=high 2>&1 | tee ../npm-audit.txt || true
+      - name: Summary
+        run: |
+          {
+            echo "## Dependency audit"
+            echo "### Python"; echo '```'; tail -n 25 pip-audit.txt; echo '```'
+            echo "### Frontend"; echo '```'; tail -n 12 npm-audit.txt; echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
