@@ -9501,6 +9501,7 @@ async def startup():
     for found, meant in _mangled_settings():
         print(f'[Settings] WARNING: .env has "{found}" — did you mean "{meant}"? It is unset until the name is fixed.')
     r = _get_redis()            # says loudly, right away, if the database is missing
+    error_tracking.init_from_redis(r)
     if r:
         try:
             r.delete(OLD_LEADERBOARD_KEY)   # self-reported wins; the leaderboard now reads tickets
@@ -9518,6 +9519,7 @@ async def startup():
     asyncio.create_task(_load_fbref_data())
     # results fetcher runs via scheduler only — not on boot to avoid API contention with pipeline
     scheduler.add_job(_run_pipeline, "interval", hours=12, id="refresh")
+    scheduler.add_job(lambda: error_tracking.init_from_redis(_get_redis()), "interval", hours=1, id="sentry_dsn")
     scheduler.add_job(_load_fbref_data, "interval", days=7, id="fbref_refresh")
     scheduler.add_job(_fetch_and_save_results, "interval", hours=3, id="results_refresh")
     scheduler.add_job(_link_sportybet_events, "interval", minutes=SB_LINK_MINUTES, id="sportybet_links")
