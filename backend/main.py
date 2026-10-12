@@ -39,6 +39,8 @@ import shots
 from scrapers.fbref import load_cards, load_corners, refresh as scrape_fbref, CORNERS_CSV, CARDS_CSV
 
 load_dotenv()
+import error_tracking
+error_tracking.init()
 
 API_KEY = os.getenv("FOOTBALL_DATA_API_KEY", "")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
@@ -70,7 +72,7 @@ KNOWN_SETTINGS = ("UPSTASH_REDIS_URL", "CLERK_ISSUER", "CLERK_SECRET_KEY", "CLER
                   "ADMIN_SECRET", "ADMIN_USER_IDS", "TRAFFIC_KEY", "FOOTBALL_DATA_API_KEY", "FRONTEND_URL",
                   "APIFOOTBALL_KEY", "ODDS_API_KEY", "GROQ_API_KEY", "PAYSTACK_SECRET_KEY",
                   "X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN", "X_ACCESS_SECRET",
-                  "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID")
+                  "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "SENTRY_DSN")
 _STARTED_AT = time.time()
 
 

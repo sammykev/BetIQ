@@ -1,4 +1,4 @@
-# Checks on every push and pull request: a red X on GitHub (and an email)
+# Checks on every push to main and every pull request: a red X on GitHub (and an email)
 # when a change breaks the backend's tests, the frontend's types or tests,
 # or commits a secret. Dependency audits report without blocking (see the
 # job's summary): known issues in pinned versions are tracked separately.
@@ -6,6 +6,7 @@ name: Checks
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 

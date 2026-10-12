@@ -7,6 +7,7 @@ import { themeInitScript } from "@/lib/theme";
 import { ThemeSync } from "@/components/ThemeToggle";
 import { BetSlipProvider } from "@/lib/useBetSlip";
 import { TrafficBeacon } from "@/components/TrafficBeacon";
+import { ErrorTracking } from "@/components/ErrorTracking";
 import { MotionProvider } from "@/components/ui/motion-provider";
 
 const inter = Inter({
@@ -117,6 +118,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <body className="antialiased">
           <ThemeSync />
           <TrafficBeacon />
+          <ErrorTracking />
           <MotionProvider>
             <BetSlipProvider>{children}</BetSlipProvider>
           </MotionProvider>

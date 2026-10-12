@@ -116,8 +116,8 @@ def checks(get: Get, state: Dict, now: datetime) -> Tuple[List[Dict], Dict]:
     for name, path in (("basketball", "/api/basketball/matchday/strip"), ("tennis", "/api/tennis/matchday/strip"),
                        ("table tennis", "/api/table-tennis/matchday/strip")):
         code, body, _ = get(API + path)
-        if code in (401, 403):
-            continue                                   # switched off or kept for testers
+        if code in (401, 402, 403) or (isinstance(body, dict) and body.get("detail") == "feature_off"):
+            continue                                   # switched off, or kept for testers / a tier
         days = body.get("days") if isinstance(body, dict) else None
         if code != 200 or not isinstance(days, list):
             add(name, False, f"{path} {code or 'unreachable'}")

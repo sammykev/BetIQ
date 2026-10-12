@@ -23,6 +23,8 @@ def _site(preds=30, updated="2026-10-12T06:00:00Z", paused=(), health=200, bb=5,
                                                          {"date": "2026-10-12", "total": bb}]}, 0.1
         if "table-tennis" in path:
             return 200, {"today": "2026-10-12", "days": [{"date": "2026-10-12", "total": 40}]}, 0.1
+        if tennis_code == 404:
+            return 404, {"detail": "feature_off"}, 0.1
         return tennis_code, {"today": "2026-10-12", "days": [{"date": "2026-10-13", "total": 12}]}, 0.1
     return get
 
@@ -44,6 +46,7 @@ def test_each_problem_is_named():
     assert _failed(_site(bb=0))[0] == {"basketball"}               # yesterday's games don't count
     assert _failed(_site(health=502))[0] == {"api"}
     assert _failed(_site(tennis_code=403))[0] == set()              # tennis kept for testers: skipped
+    assert _failed(_site(tennis_code=404))[0] == set()              # switched off: skipped
 
 
 def test_a_collapse_in_football_predictions():
