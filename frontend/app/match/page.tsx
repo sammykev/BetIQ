@@ -604,7 +604,7 @@ function MatchContent() {
   const [facts, setFacts] = useState<MatchFacts | null>(null);
   const slip = useBetSlip();
   const refetched = useRef(false);
-  const refetchTimer = useRef<ReturnType<typeof setTimeout>>();
+  const refetchTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     if (!home || !away) return;

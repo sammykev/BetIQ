@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type JSX } from "react";
 import clsx from "clsx";
 import { ChevronDown, FlaskConical, Layers, Search, ToggleRight, Trophy, UserPlus, X } from "lucide-react";
 import { API, Btn, Card, Pill, Skeleton, inputClass, useAdmin } from "../ui";
