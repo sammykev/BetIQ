@@ -1,0 +1,48 @@
+# Site monitor (backend/monitor.py), every 15 minutes: the web app and API
+# answer, football predictions are fresh and haven't collapsed, no league is
+# paused, basketball / tennis / table tennis have upcoming games. A problem
+# seen twice in a row opens a "Site monitor" issue (GitHub emails it); the
+# issue is closed when everything passes again. Needs no secrets.
+name: Site monitor
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: site-monitor
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: backend/monitor.py
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -q httpx
+      # Recent totals and the failure streak, from the previous run
+      - uses: actions/cache/restore@v4
+        with:
+          path: monitor-state.json
+          key: monitor-state-${{ github.run_id }}
+          restore-keys: monitor-state-
+      - name: Check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python backend/monitor.py
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: monitor-state.json
+          key: monitor-state-${{ github.run_id }}
