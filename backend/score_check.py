@@ -125,12 +125,23 @@ def main() -> None:
     if r is None:
         raise SystemExit("UPSTASH_REDIS_URL isn't set")
     today = datetime.now(timezone.utc).date()
-    days = sys.argv[1:] or [(today - timedelta(days=i)).isoformat() for i in (1, 2)]
-    async def run():
-        for d in days:
-            await check_day(r, d)
-    asyncio.run(run())
+    args = sys.argv[1:]
+    fix = "--fix" in args
+    n = int(args[args.index("--days") + 1]) if "--days" in args else 14
+    days = [a for a in args if a[:2] == "20"] or [(today - timedelta(days=i)).isoformat()
+                                                    for i in (range(0, n + 1) if fix else (1, 2))]
 
+    async def run():
+        total = 0
+        for d in days:
+            total += await check_day(r, d, fix)
+        return total
+    total = asyncio.run(run())
+    if fix:
+        if total:
+            r.set(MD_CORRECTED_KEY, datetime.now(timezone.utc).isoformat(timespec="seconds"))
+        print(f"\n{total} scores corrected" + (": the server grades their tickets again at its next "
+                                                "settling (within 15 minutes)" if total else ""))
 
 if __name__ == "__main__":
     main()
