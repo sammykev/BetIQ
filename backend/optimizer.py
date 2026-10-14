@@ -201,6 +201,33 @@ def _bookmaker_price(pred: Dict, market: str, code: str) -> Optional[float]:
 # Markets that aren't about the result or goals
 NOT_GOALS = re.compile(r"corner|card|shot|sot")
 
+# Our share when 1X2 is blended with the market (main.FOOTBALL_1X2_OURS)
+OURS_1X2 = 0.5
+
+
+def _with_market_1x2(pred: Dict, sportybet_event: Optional[Dict]) -> Dict:
+    """A prediction made without odds (so its 1X2 chances weren't blended
+    with the market's where it was built, main._blend_1x2) with them blended
+    with SportyBet's 1X2 — the result chances double chance and draw no bet
+    come from too. Unchanged when it has odds or SportyBet doesn't price 1X2."""
+    import fair_odds
+    if not sportybet_event or all(isinstance(pred.get(k), (int, float)) and pred[k] > 1
+                                  for k in ("odds_home", "odds_draw", "odds_away")):
+        return pred
+    prices = []
+    for code in ("1", "X", "2"):
+        ids = sportybet_ids("1x2", code)
+        o = _event_odds(sportybet_event, ids) if ids else None
+        if not o or o <= 1:
+            return pred
+        prices.append(float(o))
+    ours = [pred["p_home"], pred["p_draw"], pred["p_away"]]
+    s = sum(ours)
+    if s <= 0:
+        return pred
+    got = [OURS_1X2 * a / s + (1 - OURS_1X2) * b for a, b in zip(ours, fair_odds.fair(prices))]
+    return {**pred, "p_home": got[0], "p_draw": got[1], "p_away": got[2]}
+
 
 def candidates(pred: Dict, sportybet_event: Optional[Dict] = None,
                min_prob: float = 0.6, markets: Optional[set] = None,
@@ -215,6 +242,8 @@ def candidates(pred: Dict, sportybet_event: Optional[Dict] = None,
     if not all(isinstance(pred.get(k), (int, float))
                for k in ("p_home", "p_draw", "p_away", "p_over15", "p_over25")):
         return []
+    if calibrate:                        # the raw records (calibrate=False) keep ours alone
+        pred = _with_market_1x2(pred, sportybet_event)
     rows = []
     goals_only = bool(pred.get("goals_only"))
     for market, market_name, code, label, prob_of in _PICKS:

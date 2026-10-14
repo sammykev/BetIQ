@@ -1392,9 +1392,10 @@ def _build_predictions(predictor, fixtures: list, live_odds: dict) -> list:
                     continue      # not priced on SportyBet yet: it waits (_publish_waiting_europe)
             elif fx.get("sb_odds") and not all(float(odds.get(k) or 0) > 1 for k in ("1", "X", "2")):
                 odds = _sb_1x2(fx) or fx["sb_odds"]       # group B: the catalog's prices, fresher once linked
-            elif fx.get("league") in MAIN_EXTRA_LEAGUES and not all(float(odds.get(k) or 0) > 1 for k in ("1", "X", "2")):
-                # No odds feed for these leagues: SportyBet's prices once linked
-                # (_price_extra_leagues), the no-odds model till then
+            elif not all(float(odds.get(k) or 0) > 1 for k in ("1", "X", "2")):
+                # No odds from the feed (the leagues it doesn't cover, cup ties
+                # it skips): SportyBet's prices once linked (_price_unpriced),
+                # the no-odds model till then
                 odds = _sb_1x2(fx) or odds
             model = _europe_predictor if (predictor is _predictor and _europe_covers(fx.get("league", ""))) \
                 else predictor
@@ -7921,7 +7922,7 @@ async def _link_sportybet_events_now(trigger: str) -> Dict[str, Any]:
     except Exception as e:
         status["report"].append(f"Europa/Conference from SportyBet's odds: {type(e).__name__}: {e}")
     try:
-        status["leagues_priced"] = await asyncio.to_thread(_price_extra_leagues)
+        status["leagues_priced"] = await asyncio.to_thread(_price_unpriced)
     except Exception as e:
         status["report"].append(f"More European leagues from SportyBet's odds: {type(e).__name__}: {e}")
     status["seconds"] = round(time.monotonic() - started, 1)
@@ -8049,18 +8050,21 @@ def _publish_sb_leagues(events: List[Dict]) -> List[Dict]:
     return new
 
 
-def _price_extra_leagues() -> int:
-    """The published matches of the leagues no odds feed covers
-    (MAIN_EXTRA_LEAGUES) that were predicted without odds and SportyBet now
-    prices, predicted again with its prices; returns how many."""
+def _price_unpriced() -> int:
+    """The published matches not yet started that were predicted without
+    odds (no feed for their league, or a cup tie it skipped) and SportyBet
+    now prices, predicted again with its prices — so their chances are
+    blended with the market's (_blend_1x2); returns how many."""
     global _predictions_cache, _last_updated
+    import live_learning
     if _predictor is None or not _predictions_cache:
         return 0
     unknown = dict(_unknown_clubs)           # _build_predictions starts that list afresh
+    now = datetime.now(timezone.utc)
     out, redone = [], 0
     try:
         for p in _predictions_cache:
-            if p.get("league") in MAIN_EXTRA_LEAGUES and not p.get("odds_home"):
+            if not p.get("odds_home") and not live_learning.kicked_off(p, now):
                 odds = _sb_1x2(p)
                 new = _build_predictions(_predictor, [p], {f"{p['home']}:{p['away']}:{p.get('date', '')}": odds}) \
                     if odds else []
