@@ -3340,6 +3340,14 @@ async def _refresh_matchdays(days_back: int = 1, trigger: str = "schedule") -> D
         report["tickets"] = {"skipped": "no new scores"}
     else:
         _md_last_settle[0] = time.time()
+        if trigger != "live":
+            # Finals for the basketball / racket legs no other source scored
+            _md_status["stage"] = "asking Sportradar for missing finals"
+            try:
+                import sr_results
+                report["sportradar"] = await asyncio.wait_for(sr_results.refresh(r), 60)
+            except Exception as e:
+                report["sportradar"] = {"error": f"{type(e).__name__}: {e}"[:200]}
         _md_status["stage"] = "settling tickets"
         try:
             report["tickets"] = await asyncio.wait_for(asyncio.to_thread(_settle_tickets, r), 90)
@@ -3840,12 +3848,25 @@ def _leg_results(r, days: Dict[str, Dict]):
         if m.startswith("bb_"):
             if not leg.get("event_id") and leg.get("sb"):   # a daily pick: its SportyBet ids
                 leg = {**leg, "event_id": leg["sb"].get("eventId")}
-            return _bb_result_for(r, leg, bb_days) or _other_sport_md_result(r, leg, "basketball", md_days)
+            return (_bb_result_for(r, leg, bb_days) or _other_sport_md_result(r, leg, "basketball", md_days)
+                    or _sr_result_for(r, leg, "basketball"))
         if m.startswith("rk_"):
-            return _rk_result_for(r, leg, rk_days) or _other_sport_md_result(r, leg, _leg_sport(leg), md_days)
+            return (_rk_result_for(r, leg, rk_days) or _other_sport_md_result(r, leg, _leg_sport(leg), md_days)
+                    or _sr_result_for(r, leg, _leg_sport(leg)))
         e = _md_entry_for(r, leg, days)
         return e.get("result") if e else None
     return result_for
+
+
+def _sr_result_for(r, leg: Dict, sport: str) -> Optional[Dict]:
+    """Last resort: Sportradar's final for the leg's event (sr_results), read
+    by the sweep; a leg with none yet is noted for the next sweep to read."""
+    import sr_results
+    eid = leg.get("event_id") or (leg.get("sb") or {}).get("eventId")
+    res = sr_results.stored(r, eid)
+    if res is None:
+        sr_results.want(r, eid, sport)
+    return res
 
 
 SETTLE_LEGS_DAYS = 30         # a settled ticket's other legs are still graded this long after its last match

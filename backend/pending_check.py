@@ -65,6 +65,7 @@ def main_() -> None:
     reasons: Counter = Counter()
     examples: Dict[str, List[str]] = {}
     tickets_hit, legs_hit = set(), 0
+    no_result: Dict[str, str] = {}      # event id -> sport, for the Sportradar check
 
     def look(leg, where, owner):
         nonlocal legs_hit
@@ -74,6 +75,10 @@ def main_() -> None:
         if not ko or now - ko < timedelta(hours=GRACE_HOURS) or now - ko > timedelta(days=DAYS_BACK):
             return
         why = f"{where} · " + reason(main, r, leg, result_for, md_days)
+        if why.endswith("no result for its event"):
+            eid = leg.get("event_id") or (leg.get("sb") or {}).get("eventId")
+            if eid:
+                no_result[eid] = main._leg_sport(leg)
         reasons[why] += 1
         legs_hit += 1
         tickets_hit.add(owner)
@@ -104,6 +109,40 @@ def main_() -> None:
         print(f"{n:5}  {why}")
         for ex in examples[why]:
             print(f"         {ex}")
+    if no_result:
+        sportradar(no_result)
+
+
+def sportradar(events: Dict[str, str]) -> None:
+    """What Sportradar's match info says for the events nothing else scored."""
+    import asyncio
+    import live_stats
+    import sr_results
+
+    async def go():
+        out = {}
+        for eid, sport in events.items():
+            num = live_stats.sr_number(eid) if str(eid).startswith("sr:") else None
+            out[eid] = (sport, await sr_results._read(num) if num else "not a Sportradar id")
+        return out
+    print(f"\nSportradar match info for {len(events)} events with no result:")
+    shown = False
+    for eid, (sport, body) in asyncio.run(go()).items():
+        if isinstance(body, str) or body is None:
+            print(f"  {eid} ({sport}): {body or 'unreadable'}")
+            continue
+        data = live_stats.doc_data(body)
+        m = data.get("match") if isinstance(data, dict) else None
+        if not isinstance(m, dict):
+            print(f"  {eid} ({sport}): no match in {str(body)[:300]}")
+            continue
+        if not shown:
+            shown = True
+            print(f"  (match keys: {sorted(m)})")
+        st = m.get("status")
+        print(f"  {eid} ({sport}): status={st if not isinstance(st, dict) else st.get('name')} "
+              f"matchstatus={m.get('matchstatus')} result={m.get('result')} periods={m.get('periods')} "
+              f"→ {sr_results.parse(body, sport)}")
 
 
 if __name__ == "__main__":
