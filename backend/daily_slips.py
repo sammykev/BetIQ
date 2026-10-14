@@ -98,15 +98,71 @@ def grade(s: Dict[str, Any], result_for: Callable[[Dict], Optional[Dict]]) -> bo
     for p in s["picks"]:
         if p.get("status") != "pending":
             continue
-        verdict = tickets.grade_leg(p.get("market", ""), p.get("code", ""), result_for(p))
+        res = result_for(p)
+        verdict = tickets.grade_leg(p.get("market", ""), p.get("code", ""), res)
         if verdict != "pending":
             p["status"] = verdict
+            if tickets._football(p.get("market", "")) and tickets._score_mark(res):
+                p["graded_on"] = tickets._score_mark(res)
             changed = True
     new = status(s["picks"])
     if new != s["status"]:
         s["status"] = new
         changed = True
     return changed
+
+
+def recheck(s: Dict[str, Any], result_for: Callable[[Dict], Optional[Dict]]) -> bool:
+    """After a score correction (matchday.corrects): a slip's football picks
+    graded on the old score graded again, and its picks still pending graded
+    (a cut slip isn't graded any more once cut). True if anything changed."""
+    if s.get("status") in (None, "none"):
+        return False
+    changed = False
+    for p in s.get("picks") or []:
+        res = result_for(p)
+        if p.get("status") == "pending":
+            verdict = tickets.grade_leg(p.get("market", ""), p.get("code", ""), res)
+        elif tickets._football(p.get("market", "")) and res and res.get("corrected") \
+                and p.get("graded_on") != tickets._score_mark(res):
+            verdict = tickets.grade_leg(p.get("market", ""), p.get("code", ""), res)
+            if verdict != "pending" and verdict != p.get("status"):
+                p["regraded"] = {"was": p.get("status"), "score": tickets._score_mark(res)}
+        else:
+            continue
+        if verdict != "pending":
+            if verdict != p.get("status"):
+                changed = True
+            p["status"] = verdict
+            if tickets._football(p.get("market", "")) and tickets._score_mark(res):
+                changed = changed or p.get("graded_on") != tickets._score_mark(res)
+                p["graded_on"] = tickets._score_mark(res)
+    new = status(s["picks"])
+    if new != s.get("status"):
+        s["status"] = new
+        changed = True
+    return changed
+
+
+def recheck_day(doc: Dict[str, Any], result_for: Callable[[Dict], Optional[Dict]]) -> List[Tuple[str, str, str]]:
+    """recheck() on every slip of a day, cut ones too. A cut slip that wasn't
+    really lost is marked cut_in_error, and so is the note on the slip made in
+    its place (which stands: it was booked and may have been played).
+    Returns [(target, status before, status after)] for slips that changed."""
+    moved = []
+    for s in (doc.get("slips") or []) + (doc.get("cut") or []):
+        before = s.get("status")
+        if recheck(s, result_for) and s.get("status") != before:
+            moved.append((str(int(s["target"])), before, s["status"]))
+    for c in doc.get("cut") or []:
+        if c.get("status") != "lost" and not c.get("cut_in_error"):
+            c["cut_in_error"] = True
+            code = (c.get("booking") or {}).get("code")
+            for s in doc.get("slips") or []:
+                rep = s.get("replaces")
+                if s.get("target") == c.get("target") and rep and rep.get("code") == code:
+                    rep["in_error"], rep["cut_by"] = True, None
+    return moved
 
 
 def _kickoff(p: Dict) -> Optional[datetime]:

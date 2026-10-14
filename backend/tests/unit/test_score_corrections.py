@@ -70,3 +70,23 @@ def test_tickets_on_a_corrected_match_are_graded_again():
     assert tickets.settle(t, lambda l: res, recheck=True)
     assert t["status"] == "won" and leg["regraded"] == {"was": "lost", "score": "3-0"}
     assert not tickets.settle(t, lambda l: res, recheck=True)         # once
+
+
+def test_daily_slips_are_graded_again_and_a_wrong_cut_is_marked():
+    import daily_slips
+    pick = lambda h, a: {"home": h, "away": a, "date": "2026-10-13", "market": "1x2", "code": "1", "status": "pending"}
+    cut = {"target": 10, "status": "pending", "picks": [pick("Arsenal FC", "Lille OSC"), pick("Inter", "Brugge")],
+           "booking": {"code": "OLD1"}}
+    results = {"Arsenal FC": {"status": "finished", "hg": 2, "ag": 3, "source": "sportybet"}, "Inter": None}
+    daily_slips.grade(cut, lambda p: results[p["home"]])
+    assert cut["status"] == "lost" and cut["picks"][0]["graded_on"] == "2-3"
+    new = {"target": 10, "status": "pending", "picks": [pick("Leipzig", "PSV")],
+           "replaces": {"code": "OLD1", "cut_by": "Arsenal FC v Lille OSC"}}
+    doc = {"slips": [new], "cut": [cut]}
+    results = {"Arsenal FC": {"status": "finished", "hg": 3, "ag": 0, "source": "espn", "corrected": {"was": [2, 3]}},
+               "Inter": {"status": "finished", "hg": 2, "ag": 0, "source": "espn"}, "Leipzig": None}
+    moved = daily_slips.recheck_day(doc, lambda p: results[p["home"]])
+    assert moved == [("10", "lost", "won")]
+    assert cut["cut_in_error"] and cut["picks"][0]["regraded"] == {"was": "lost", "score": "3-0"}
+    assert new["replaces"]["in_error"] and new["replaces"]["cut_by"] is None and new["status"] == "pending"
+    assert daily_slips.recheck_day(doc, lambda p: results[p["home"]]) == []      # once

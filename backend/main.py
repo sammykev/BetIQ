@@ -9118,12 +9118,53 @@ async def track_daily_slip(request: Request, body: Dict[str, Any], _access=Depen
     return {"tracked": True, "code": code}
 
 
+DAILY_RECHECKED_KEY = "betiq:daily:rechecked_at"
+
+
+def _recheck_daily_after_correction(r) -> Optional[Dict[str, Any]]:
+    """After a score correction (MD_CORRECTED_KEY newer than the last
+    recheck): the last RECHECK_TICKET_DAYS days of slips graded again on the
+    corrected scores, the record moved to match. Under _daily_lock."""
+    import daily_slips
+    corrected = r.get(MD_CORRECTED_KEY)
+    done = r.get(DAILY_RECHECKED_KEY)
+    if not corrected or (done and done >= corrected):
+        return None
+    result_for = _leg_results(r, {})
+    out: Dict[str, Any] = {"slips": 0}
+    today = date.fromisoformat(daily_slips.today())
+    for i in range(RECHECK_TICKET_DAYS + 1):
+        doc = _daily_load(r, (today - timedelta(days=i)).isoformat())
+        if not doc:
+            continue
+        before = json.dumps(doc, sort_keys=True)
+        for target, was, now in daily_slips.recheck_day(doc, result_for):
+            out["slips"] += 1
+            if was in ("won", "lost"):
+                r.hincrby(DAILY_RECORD_KEY, f"{target}:{was}", -1)
+            if now in ("won", "lost"):
+                r.hincrby(DAILY_RECORD_KEY, f"{target}:{now}", 1)
+        if json.dumps(doc, sort_keys=True) != before:
+            _daily_save(r, doc)
+    r.set(DAILY_RECHECKED_KEY, corrected)
+    return out
+
+
 async def _daily_tick() -> None:
     """Every few minutes, for today and (from just before midnight in Lagos)
     tomorrow: make the day's slips if they aren't made yet, settle them, make
     a new slip in place of any that was cut, book any slip without a code,
-    and post today's."""
+    and post today's; after a score correction, past slips graded again."""
     import daily_slips
+    r = _get_redis()
+    if r:
+        try:
+            async with _daily_lock:
+                got = await asyncio.to_thread(_recheck_daily_after_correction, r)
+            if got:
+                print(f"[Daily] graded again after a score correction: {got}")
+        except Exception as e:
+            print(f"[Daily] recheck after correction failed: {e}")
     for day in daily_slips.days_to_run(daily_slips.now_utc()):
         try:
             r = _get_redis()

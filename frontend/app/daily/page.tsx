@@ -36,9 +36,11 @@ interface Slip {
   total_odds?: number; win_chance?: number; games?: number; within_target?: boolean;
   days?: number; bookable?: boolean; picks: Pick[]; booking?: Booking;
   /** Made in place of a cut slip */
-  replaces?: { code: string | null; cut_by: string | null; total_odds?: number | null };
+  replaces?: { code: string | null; cut_by: string | null; total_odds?: number | null; in_error?: boolean };
   /** On a cut slip: "none" when no new slip could be made (no matches left) */
   remade?: string;
+  /** On a cut slip: cut by a wrong score, since corrected (graded again) */
+  cut_in_error?: boolean;
 }
 interface DailyResponse {
   date: string; today: string; built_at: string | null; slips: Slip[];
@@ -131,8 +133,14 @@ function SlipView({ s, isToday, date, retry, minProb, cut }: {
       {s.replaces && (
         <p className="mx-4 sm:mx-5 mb-3 text-xs text-n-300 flex items-start gap-1.5">
           <RefreshCw size={12} className="text-accent shrink-0 mt-0.5" />
-          <span>New slip: the earlier {s.target}x{s.replaces.code ? ` (${s.replaces.code})` : ""} was cut
-            {s.replaces.cut_by ? ` by ${s.replaces.cut_by}` : ""}, so we made this one from the matches still to play.</span>
+          {s.replaces.in_error ? (
+            <span>New slip: the earlier {s.target}x{s.replaces.code ? ` (${s.replaces.code})` : ""} was marked cut by a
+              wrong score from our results feed. The score has been corrected and that slip graded again (below);
+              this one stands too.</span>
+          ) : (
+            <span>New slip: the earlier {s.target}x{s.replaces.code ? ` (${s.replaces.code})` : ""} was cut
+              {s.replaces.cut_by ? ` by ${s.replaces.cut_by}` : ""}, so we made this one from the matches still to play.</span>
+          )}
         </p>
       )}
       {s.status === "lost" && s.remade === "none" && (
@@ -213,7 +221,9 @@ function SlipView({ s, isToday, date, retry, minProb, cut }: {
             <p key={i} className="text-xs text-n-400 flex flex-wrap gap-x-2">
               <span className="font-mono font-bold text-n-300">{c.booking?.code || "No code"}</span>
               <span className="tnum">{c.total_odds?.toFixed(2)}x</span>
-              {cutBy(c) && <span>cut by {cutBy(c)}</span>}
+              {c.cut_in_error
+                ? <span>marked cut by a wrong score, since corrected · now {STATUS[c.status]?.label ?? c.status}</span>
+                : cutBy(c) && <span>cut by {cutBy(c)}</span>}
             </p>
           ))}
         </div>
