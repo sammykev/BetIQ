@@ -3811,7 +3811,7 @@ def _leg_results(r, days: Dict[str, Dict]):
     return result_for
 
 
-SETTLE_LEGS_DAYS = 14         # a settled ticket's other legs are still graded this long after its last match
+SETTLE_LEGS_DAYS = 30         # a settled ticket's other legs are still graded this long after its last match
 TICKETS_RESCAN_HOURS = 6      # how often every account's tickets are looked through for legs left pending
 _tickets_rescan_at = [0.0]
 
@@ -9202,7 +9202,7 @@ def _grade_daily(r, doc: Dict[str, Any]) -> bool:
     return changed
 
 
-DAILY_SWEEP_DAYS = 14
+DAILY_SWEEP_DAYS = 30           # past the 7-day expiry, so every pick ends graded or "unknown"
 DAILY_SWEEP_MINUTES = 60
 _daily_swept = [0.0]
 
