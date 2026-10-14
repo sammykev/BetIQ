@@ -115,3 +115,12 @@ describe("honest slip chance", () => {
     expect(oneIn(0.6)).toBeNull();
   });
 });
+
+describe("competition badge dark variant", () => {
+  const { darkVariant } = require("@/components/CompetitionBadge");
+  it("swaps ESPN's league logos to their dark version", () => {
+    expect(darkVariant("https://a.espncdn.com/i/leaguelogos/soccer/500/2310.png"))
+      .toBe("https://a.espncdn.com/i/leaguelogos/soccer/500-dark/2310.png");
+    expect(darkVariant("https://r2.thesportsdb.com/images/x.png")).toBeNull();
+  });
+});

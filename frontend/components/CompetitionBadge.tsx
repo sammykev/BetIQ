@@ -21,23 +21,33 @@ interface Props {
  * /api/competition-logo lookup finds one, otherwise falls back to the emoji
  * exactly as before. Safe to use anywhere the emoji was used inline with text.
  */
+/** ESPN's dark-background version of one of its league logos, else null. */
+export function darkVariant(url: string): string | null {
+  const m = url.match(/^(https:\/\/a\.espncdn\.com\/i\/leaguelogos\/soccer\/)500(\/\d+\.png)$/);
+  return m ? `${m[1]}500-dark${m[2]}` : null;
+}
+
 export function CompetitionBadge({ name, fallbackEmoji, size = 14, className, sport = "Soccer" }: Props) {
   const [broken, setBroken] = useState(false);
   const logo = useCompetitionLogo(name, !!name, sport);
 
   if (logo && !broken) {
-    return (
+    const img = (src: string, cls?: string) => (
       <img
-        src={logo}
+        src={src}
         alt={name}
         title={name}
-        className={clsx("inline-block object-contain shrink-0", className)}
+        className={clsx("inline-block object-contain shrink-0", cls, className)}
         style={{ width: size, height: size }}
         // Some badge hosts refuse hotlinked images based on the Referer
         referrerPolicy="no-referrer"
         onError={() => setBroken(true)}
       />
     );
+    // ESPN's competition logos come in a version drawn for dark backgrounds
+    const dark = darkVariant(logo);
+    if (dark) return <>{img(logo, "dark:hidden")}{img(dark, "hidden dark:inline-block")}</>;
+    return img(logo);
   }
   return <span className={clsx("leading-none", className)}>{fallbackEmoji}</span>;
 }

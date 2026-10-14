@@ -16,7 +16,8 @@ async function fetchLogo(name: string, sport: string): Promise<string | null> {
   if (_cache.has(key)) return _cache.get(key)!;
   if (_inFlight.has(key)) return _inFlight.get(key)!;
 
-  const params = new URLSearchParams({ name, sport });
+  // v: bumped when the badges change, so browsers don't keep the old answer for a day
+  const params = new URLSearchParams({ name, sport, v: "2" });
   const promise = fetch(`${API_URL}/api/competition-logo?${params}`)
     .then(r => (r.ok ? r.json() : { logo: null }))
     .then(d => (d.logo as string | null) ?? null)

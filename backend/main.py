@@ -1360,6 +1360,10 @@ def _build_predictions(predictor, fixtures: list, live_odds: dict) -> list:
         try:
             key = f"{fx['home']}:{fx['away']}:{fx.get('date','')}"
             odds = live_odds.get(key, {})
+            if fx.get("needs_odds") and not all(float(odds.get(k) or 0) > 1 for k in ("1", "X", "2")):
+                odds = _sb_1x2(fx)
+                if not odds:
+                    continue      # not priced on SportyBet yet: it waits (_publish_waiting_europe)
             model = _europe_predictor if (predictor is _predictor and _europe_covers(fx.get("league", ""))) \
                 else predictor
             tip = model.predict_match(
@@ -1374,7 +1378,7 @@ def _build_predictions(predictor, fixtures: list, live_odds: dict) -> list:
             if not tip:
                 continue
             tip = _blend_1x2(tip, odds)
-            if _note_unknown_clubs(model, fx):
+            if _note_unknown_clubs(model, fx) or fx.get("needs_odds"):
                 tip = {**tip, "thin_history": True}
             # Value bet detection: model prob vs bookmaker implied prob
             tip_code = tip.get("tip_code", "?")
@@ -1504,7 +1508,10 @@ def _remember_competition_logos(fixtures: list) -> None:
 def _international_competition_logo(name: str) -> Optional[str]:
     """The captured badge for one of our international competitions, by the
     display name the site shows ("AFCON Qualifiers"), else None."""
+    import europe_fixtures
     code = {display: c for c, display, _, _ in intl.COMPETITIONS}.get(name)
+    if code is None:
+        code = {display: c for c, (_slug, display, *_r) in europe_fixtures.COMPETITIONS.items()}.get(name)
     if code is None and name == intl.LEAGUE_INFO["name"]:
         code = intl.LEAGUE_CODE
     if code is None:
@@ -1538,10 +1545,18 @@ async def _fetch_international_fixtures() -> list:
 _europe_status: Dict[str, Any] = {"at": None, "fixtures": 0, "published": 0, "skipped": [], "errors": []}
 
 
+# Europa / Conference League matches with a club our data barely knows
+# (europe_fixtures.known): held until SportyBet prices them, then predicted
+# with its 1X2 odds as the model's input and half the published chance
+# (_blend_1x2), and shown with the thin-history badge (kept out of slips)
+_europe_waiting: List[Dict] = []
+
+
 async def _fetch_europe_fixtures(predictor, training: pd.DataFrame) -> list:
-    """Upcoming Europa and Conference League fixtures from ESPN, only those
-    where the model that will predict them (the Europe model when adopted)
-    has recent matches for both clubs (europe_fixtures.known)."""
+    """Upcoming Europa and Conference League fixtures from ESPN: those whose
+    clubs the model knows (europe_fixtures.known), and the others marked
+    needs_odds — published once SportyBet prices them (_sb_1x2)."""
+    global _europe_waiting
     import europe_fixtures
     try:
         report = await europe_fixtures.fetch(PREDICTION_DAYS)
@@ -1563,13 +1578,16 @@ async def _fetch_europe_fixtures(predictor, training: pd.DataFrame) -> list:
                           published=len(keep), skipped=skipped, errors=report["errors"],
                           sources=report["sources"],
                           model={c: "europe" if _europe_covers(c) else "main" for c in europe_fixtures.COMPETITIONS})
-    _remember_competition_logos(keep)
+    _remember_competition_logos(report["fixtures"])
+    kept = {(f["home"], f["away"], f.get("date")) for f in keep}
+    _europe_waiting = [{**f, "needs_odds": True} for f in report["fixtures"]
+                       if (f["home"], f["away"], f.get("date")) not in kept]
     print(f"[Europe] {len(report['fixtures'])} Europa/Conference League fixtures ({report['sources']}, "
           f"read by {report.get('how')}), "
-          f"{len(keep)} published; {len(skipped)} skipped (a club with under "
-          f"{europe_fixtures.MIN_MATCHES} recent matches in our data)"
+          f"{len(keep)} from our data; {len(_europe_waiting)} with a club under "
+          f"{europe_fixtures.MIN_MATCHES} recent matches in our data, priced from SportyBet's odds once it lists them"
           f"{'; errors ' + str(report['errors']) if report['errors'] else ''}")
-    return keep
+    return keep + _europe_waiting
 
 
 def _load_europe_model() -> None:
@@ -7158,7 +7176,14 @@ async def get_competition_logo(name: str, response: Response, sport: str = "Socc
         logo = await lookup_competition_logo(name, redis_client=r, sport=sport)
         source = "thesportsdb" if logo else None
 
-    return _logo_answer(response, key, {"name": name, "sport": sport, "logo": logo, "source": source})
+    found = {"name": name, "sport": sport, "logo": logo, "source": source}
+    import europe_fixtures
+    if name in {display for _slug, display, *_r in europe_fixtures.COMPETITIONS.values()}:
+        # ESPN's badge arrives with the first Europe fixtures read after a
+        # restart: until then the fallback is answered, not remembered
+        response.headers["Cache-Control"] = "public, max-age=300"
+        return found
+    return _logo_answer(response, key, found)
 
 
 @app.get("/api/debug/competition-logo")
@@ -7777,6 +7802,9 @@ async def _link_sportybet_events_now(trigger: str) -> Dict[str, Any]:
     preds = [p for p in _predictions_cache
              if p.get("sport") in (None, "football") and p.get("home") and p.get("away")
              and today <= p.get("date", "") and _within_window(p.get("date", ""))]
+    have = {_sb_key(p["home"], p["away"], p.get("date", "")) for p in preds}
+    preds += [fx for fx in _europe_waiting if today <= fx.get("date", "") and _within_window(fx.get("date", ""))
+              and _sb_key(fx["home"], fx["away"], fx.get("date", "")) not in have]
     started = time.monotonic()
     status: Dict[str, Any] = {"at": datetime.now(timezone.utc).isoformat(), "trigger": trigger,
                               "deploy": (os.getenv("RENDER_GIT_COMMIT") or "")[:7] or None,
@@ -7810,6 +7838,10 @@ async def _link_sportybet_events_now(trigger: str) -> Dict[str, Any]:
             status["market_map"] = _sb_link_status.get("market_map") or {}
     else:
         status["error"] = "No upcoming predictions to link yet."
+    try:
+        status["europe_priced"] = await asyncio.to_thread(_publish_waiting_europe)
+    except Exception as e:
+        status["report"].append(f"Europa/Conference from SportyBet's odds: {type(e).__name__}: {e}")
     status["seconds"] = round(time.monotonic() - started, 1)
     for p in _predictions_cache:
         p["sportybet"] = _sb_key(p.get("home", ""), p.get("away", ""), p.get("date", "")) in _sb_links
@@ -7844,6 +7876,46 @@ async def sportybet_status():
             "predictions": s.get("predictions", 0), "every_minutes": SB_LINK_MINUTES,
             "markets": {kind: bool((confirmed.get(kind) or {}).get("ok")) for kind in booking_slip.VERIFIED},
             "coverage": {kind: coverage.get(str(mid), 0) for kind, mid in ids.items() if mid}}
+
+
+def _sb_1x2(fx: Dict[str, Any]) -> Dict[str, float]:
+    """SportyBet's 1X2 prices for a linked fixture ({"1", "X", "2"}), or {}."""
+    import booking_slip
+    ev = _linked_event(fx)
+    if not ev:
+        return {}
+    out = {}
+    for code in ("1", "X", "2"):
+        ids = booking_slip.sportybet_ids("1x2", code)
+        o = booking_slip._event_odds(ev, ids) if ids else None
+        if o and o > 1:
+            out[code] = float(o)
+    return out if len(out) == 3 else {}
+
+
+def _publish_waiting_europe() -> int:
+    """The held-back Europa / Conference League matches SportyBet now prices,
+    predicted and added to the published list; returns how many."""
+    global _predictions_cache, _last_updated
+    if not _europe_waiting or _predictor is None:
+        return 0
+    have = {_sb_key(p.get("home", ""), p.get("away", ""), p.get("date", "")) for p in _predictions_cache}
+    todo = [fx for fx in _europe_waiting if _within_window(fx.get("date", ""))
+            and _sb_key(fx["home"], fx["away"], fx.get("date", "")) not in have and _sb_1x2(fx)]
+    if not todo:
+        return 0
+    unknown = dict(_unknown_clubs)           # _build_predictions starts that list afresh
+    try:
+        new = _build_predictions(_predictor, todo, {})
+    finally:
+        _unknown_clubs.update(unknown)
+    for p in new:
+        p["sportybet"] = True
+    if new:
+        _predictions_cache = _predictions_cache + new
+        _last_updated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        _save_predictions_cache()
+    return len(new)
 
 
 def _linked_event(selection: Dict[str, Any]) -> Optional[Dict]:
