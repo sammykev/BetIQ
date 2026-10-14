@@ -370,9 +370,9 @@ def run(matches: List[Dict]) -> Dict:
     rep = {"matches": len(matches), "test_matches": n_test, "split": SPLIT, "base_alpha": base_alpha,
            "alpha": best_aw[0], "xg_weight": best_aw[1], "attack_power": best_bc[0], "regulars_power": best_bc[1],
            "table": table}
-    xg_wins = table["with xG"]["z_1x2"] < 0 and table["with xG"]["z_o25"] <= 0.5
+    xg_wins = table["with xG"]["z_1x2"] < -2 and table["with xG"]["z_o25"] <= 0.5
     xi = table["with xG + lineups"]
-    xi_wins = best_bc != (0.0, 0.0) and _z(xi_rows, xg_rows, 1) < 0
+    xi_wins = best_bc != (0.0, 0.0) and _z(xi_rows, xg_rows, 1) < -2
     rep["z_lineups_vs_xg"] = {"1x2": _z(xi_rows, xg_rows, 1), "o25": _z(xi_rows, xg_rows, 2)}
     rep["use"] = {"xg_weight": best_aw[1] if xg_wins else 0.0, "alpha": best_aw[0] if xg_wins else base_alpha,
                   "attack_power": best_bc[0] if xi_wins else 0.0, "regulars_power": best_bc[1] if xi_wins else 0.0}
@@ -414,7 +414,8 @@ def main() -> None:
     print(f"On the live model re-trained month by month over 2024-25, published as half the bookmaker's: {bt}")
     # The server mixes the xG model into our half of the 1X2 only if that
     # helped on the later matches of the backtest (the bigger test)
-    use_overlay = bt.get("weight", 0) > 0 and bt.get("z", 0) < 0 and bt.get("with_xg", 9) < bt.get("published", 0)
+    # (a clear gain: z below -2, as for every other correction)
+    use_overlay = bt.get("weight", 0) > 0 and bt.get("z", 0) < -2 and bt.get("with_xg", 9) < bt.get("published", 0)
     ov = {"stored": ov, "backtest": bt}
     rep["use"]["overlay_weight"] = bt["weight"] if use_overlay else 0.0
     print(f"  → xG mixed into our 1X2 at {rep['use']['overlay_weight']}")
