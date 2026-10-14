@@ -1,5 +1,5 @@
 """
-Daily odds: five slips a day at about 10x, 15x, 20x, 50x and 100x, built by the
+Daily odds: three slips a day at about 10x, 15x and 20x, built by the
 optimizer only from the day's own matches (football and basketball: see
 BB_FAMILIES for basketball's markets), and only from picks the model
 rates 80% or more, none of them priced at 2.0 odds or more (a long price on
@@ -26,7 +26,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import tickets
 
-TARGETS = (10, 15, 20, 50, 100)   # the 50x and 100x need many legs: some days have no slip for them
+TARGETS = (10, 15, 20)   # 50x and 100x were dropped (14 Oct 2026): they need so many legs they almost never land
 MIN_PROB = 0.80
 MAX_LEG_ODDS = 2.0      # every pick priced under this
 SPREAD = 0.07          # total odds within ±7% of the target

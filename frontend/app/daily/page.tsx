@@ -11,7 +11,7 @@ import { LegRow, nextRefresh } from "@/components/TicketsList";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
 import { API, type LegLive, type LegStatus } from "@/lib/matchday";
 
-// Daily odds (backend daily_slips.py): five slips a day at about 10x to 100x
+// Daily odds (backend daily_slips.py): three slips a day at about 10x, 15x and 20x
 // from the day's own matches, only from picks the model rates 80%+ and
 // priced under 2.0 each, each slip with its honest chance.
 // The server makes them just before midnight (Lagos) and books each on
@@ -53,7 +53,7 @@ const notStarted = (p: Pick) => p.status === "pending" && !p.live &&
   !(Date.parse(`${p.date}T${p.time || "23:59"}:00Z`) <= Date.now());
 
 const PERKS = [
-  "Five slips out at midnight every day, at about 10, 15, 20, 50 and 100 odds",
+  "Three slips out at midnight every day, at about 10, 15 and 20 odds",
   "A new slip and code when one is cut",
   "Today's football and basketball only, every pick rated 80% or more and under 2.0 odds",
   "A ready SportyBet booking code with every slip",
@@ -325,7 +325,7 @@ export default function DailyPage() {
     <AppShell>
       <div className="space-y-6 animate-fade-in">
         <PageHeader eyebrow="Out at midnight" title="Daily odds"
-          description="Five slips a day at about 10, 15, 20, 50 and 100 odds, from that day's football, basketball, tennis and table tennis matches only and picks our model rates 80% or more (none at 2.0 odds or more), each with its SportyBet and football.com booking codes." />
+          description="Three slips a day at about 10, 15 and 20 odds, from that day's football, basketball, tennis and table tennis matches only and picks our model rates 80% or more (none at 2.0 odds or more), each with its SportyBet and football.com booking codes." />
         <FeatureGate feature="daily_slips" title="Daily odds" perks={PERKS}>
           <Daily />
         </FeatureGate>
