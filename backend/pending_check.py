@@ -66,6 +66,7 @@ def main_() -> None:
     examples: Dict[str, List[str]] = {}
     tickets_hit, legs_hit = set(), 0
     no_result: Dict[str, str] = {}      # event id -> sport, for the Sportradar check
+    no_result_legs: Dict[tuple, str] = {}   # (date, home, away) -> sport, for the Flashscore check
 
     def look(leg, where, owner):
         nonlocal legs_hit
@@ -79,6 +80,7 @@ def main_() -> None:
             eid = leg.get("event_id") or (leg.get("sb") or {}).get("eventId")
             if eid:
                 no_result[eid] = main._leg_sport(leg)
+            no_result_legs[(leg.get("date"), leg.get("home"), leg.get("away"))] = main._leg_sport(leg)
         reasons[why] += 1
         legs_hit += 1
         tickets_hit.add(owner)
@@ -111,6 +113,8 @@ def main_() -> None:
             print(f"         {ex}")
     if no_result:
         sportradar(no_result)
+    if no_result_legs:
+        flashscore(no_result_legs, now)
 
 
 def sportradar(events: Dict[str, str]) -> None:
@@ -143,6 +147,71 @@ def sportradar(events: Dict[str, str]) -> None:
         print(f"  {eid} ({sport}): status={st if not isinstance(st, dict) else st.get('name')} "
               f"matchstatus={m.get('matchstatus')} result={m.get('result')} periods={m.get('periods')} "
               f"→ {sr_results.parse(body, sport)}")
+
+
+def flashscore(legs: Dict[tuple, str], now: datetime) -> None:
+    """Probe: Flashscore's day feeds, and the records in them for the legs nothing scored."""
+    import asyncio
+    import re
+    import httpx
+
+    hosts = ["https://local-global.flashscore.ninja/2/x/feed/", "https://global.flashscore.ninja/2/x/feed/",
+             "https://d.flashscore.com/x/feed/", "https://www.flashscore.com/x/feed/"]
+    head = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+                          "Chrome/131.0 Safari/537.36",
+            "x-fsign": "SW9D1eZo", "Referer": "https://www.flashscore.com/", "Accept": "*/*"}
+    sports = {"basketball": [3], "tennis": [2], "table_tennis": [25], "racket": [2, 25]}
+
+    def toks(name):
+        return {t for t in re.sub(r"[^a-z0-9 ]+", " ", (name or "").lower()).split() if len(t) >= 3}
+
+    async def go():
+        async with httpx.AsyncClient(timeout=15, headers=head, follow_redirects=True) as c:
+            base = None
+            for h in hosts:
+                try:
+                    resp = await c.get(h + "f_3_-1_0_en_1")
+                    print(f"  {h}: {resp.status_code} {len(resp.text)} bytes · {resp.text[:200]!r}")
+                    if resp.status_code == 200 and "AA÷" in resp.text and base is None:
+                        base = h
+                except Exception as exc:
+                    print(f"  {h}: {type(exc).__name__} {exc}")
+            if not base:
+                return
+            print(f"  using {base}")
+            feeds = {}
+            for (day, home, away), sport in legs.items():
+                try:
+                    off = (datetime.fromisoformat(day).date() - now.date()).days
+                except (TypeError, ValueError):
+                    continue
+                found = False
+                for sid in sports.get(sport, [3]):
+                    for o in (off - 1, off, off + 1):
+                        if (sid, o) not in feeds:
+                            try:
+                                resp = await c.get(f"{base}f_{sid}_{o}_0_en_1")
+                                feeds[(sid, o)] = resp.text if resp.status_code == 200 else ""
+                                if resp.status_code != 200:
+                                    print(f"  f_{sid}_{o}: {resp.status_code}")
+                            except Exception as exc:
+                                feeds[(sid, o)] = ""
+                                print(f"  f_{sid}_{o}: {type(exc).__name__}")
+                        for rec in feeds[(sid, o)].split("~"):
+                            f = dict(x.split("÷", 1) for x in rec.split("¬") if "÷" in x)
+                            if "AA" not in f:
+                                continue
+                            if toks(home) & toks(f.get("AE", "") + " " + f.get("CX", "")) and \
+                                    toks(away) & toks(f.get("AF", "") + " " + f.get("FK", "")):
+                                found = True
+                                print(f"  {day} {home} v {away} ({sport}) · f_{sid}_{o}: {rec[:700]}")
+                if not found:
+                    print(f"  {day} {home} v {away} ({sport}): not in the feeds")
+            for (sid, o), text in sorted(feeds.items()):
+                print(f"  f_{sid}_{o}: {len(text)} bytes, {text.count('~AA÷')} events")
+
+    print(f"\nFlashscore for {len(legs)} matches with no result:")
+    asyncio.run(go())
 
 
 if __name__ == "__main__":
