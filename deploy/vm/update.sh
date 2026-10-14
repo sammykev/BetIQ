@@ -14,5 +14,5 @@ echo "$(date -u +%FT%TZ) deploying $(git rev-parse --short origin/main)"
 # settings in the untracked .env), so a hard reset is safe
 git reset -q --hard origin/main
 cd "$HERE"
-sudo docker compose up -d --build
+sudo docker compose up -d --build --remove-orphans
 sudo docker image prune -f >/dev/null
