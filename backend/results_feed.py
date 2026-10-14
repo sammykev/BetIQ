@@ -309,10 +309,27 @@ _SB_HALF = re.compile(r"half\s*time|^ht$|pause|break", re.I)
 SB_LIVE_LISTS = (("/factsCenter/liveOrPrematchEvents", {}), ("/factsCenter/wapConfigurableIndexLiveEvents", {}))
 
 
+# Not the senior men's match: youth (the UEFA Youth League plays the same
+# two clubs hours before the Champions League game), women, reserves, and
+# simulated or e-sport copies (SportyBet's "SRL" games). Their scores must
+# never land on the real match.
+_SB_NOT_SENIOR = re.compile(
+    r"youth|junior|\bu-?(1[5-9]|2[0-3])\b|under[\s-]?(1[5-9]|2[0-3])|women|female|\bw\b|ladies|feminin|"
+    r"reserve|\bii\b|amateur|srl|simulated|e-?soccer|e-?football|esports?|electronic|cyber|virtual", re.I)
+
+
+def not_senior(ev: Dict) -> bool:
+    text = " ".join(str(ev.get(k) or "") for k in ("homeTeamName", "awayTeamName", "_tournament"))
+    return bool(_SB_NOT_SENIOR.search(text))
+
+
 def parse_sportybet(ev: Dict) -> Optional[Dict]:
     """A football event from SportyBet's live list or results, as a match-day
-    result; None when it hasn't started or has no score."""
+    result; None when it hasn't started or has no score, or isn't a senior
+    men's match (not_senior)."""
     home, away = (ev.get("homeTeamName") or "").strip(), (ev.get("awayTeamName") or "").strip()
+    if not_senior(ev):
+        return None
     try:
         ko = datetime.fromtimestamp(int(ev["estimateStartTime"]) / 1000, timezone.utc)
     except (KeyError, TypeError, ValueError):
@@ -322,7 +339,8 @@ def parse_sportybet(ev: Dict) -> Optional[Dict]:
     if not home or not away:
         return None
     base = {"date": ko.date().isoformat(), "home": home, "away": away, "minute": None, "aet": False,
-            "corners": None, "bookings": None, "source": "sportybet", "sb_id": str(ev.get("eventId") or "") or None}
+            "corners": None, "bookings": None, "source": "sportybet", "sb_id": str(ev.get("eventId") or "") or None,
+            "ko": ko.isoformat(timespec="minutes")}
     if _SB_OFF.search(status_text):
         return {**base, "status": "postponed", "hg": None, "ag": None}
     try:

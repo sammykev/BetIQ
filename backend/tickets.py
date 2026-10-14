@@ -173,16 +173,44 @@ def new_ticket(code: str, selections: List[Dict], picks: List[Dict], source: str
             "legs": legs, "total_odds": total_odds, "status": "pending", "settled_at": None}
 
 
-def settle(ticket: Dict, result_for) -> bool:
+def _football(market: str) -> bool:
+    return not (market.startswith(("bb_", "rk_")) or market == "anytime_scorer")
+
+
+def _score_mark(result: Optional[Dict]) -> Optional[str]:
+    """The football score a leg was graded on ("2-1"), to notice a correction."""
+    if not result or result.get("hg") is None or result.get("ag") is None:
+        return None
+    return f"{result['hg']}-{result['ag']}" + ("aet" if result.get("aet") else "")
+
+
+def settle(ticket: Dict, result_for, recheck: bool = False) -> bool:
     """Grade a ticket's pending legs; `result_for(leg)` → the matchday
-    result or None. True if anything changed."""
+    result or None. With `recheck`, football legs already graded are graded
+    again when their match's score was corrected since (matchday.corrects).
+    True if anything changed."""
     changed = False
     for leg in ticket.get("legs") or []:
+        market = leg.get("market", "")
         if leg.get("status") not in (None, "pending"):
+            if not (recheck and _football(market)):
+                continue
+            res = result_for(leg)
+            if not (res and res.get("corrected")) or leg.get("graded_on") == _score_mark(res):
+                continue
+            status = grade_leg(market, leg.get("code", ""), res)
+            if status != "pending":
+                if status != leg.get("status"):
+                    leg["regraded"] = {"was": leg.get("status"), "score": _score_mark(res)}
+                leg["status"], leg["graded_on"] = status, _score_mark(res)
+                changed = True
             continue
-        status = grade_leg(leg.get("market", ""), leg.get("code", ""), result_for(leg))
+        res = result_for(leg)
+        status = grade_leg(market, leg.get("code", ""), res)
         if status != "pending":
             leg["status"] = status
+            if _football(market) and _score_mark(res):
+                leg["graded_on"] = _score_mark(res)
             changed = True
     status = ticket_status(ticket.get("legs") or [])
     if status != ticket.get("status"):

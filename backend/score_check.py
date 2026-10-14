@@ -5,6 +5,11 @@ and where that came from, next to what ESPN and SportyBet say now. Lists
 the disagreements first. Reads only.
 
     python score_check.py [YYYY-MM-DD ...]   (GitHub Actions: "Basketball data", job scores)
+    python score_check.py --fix [--days N]   (job scores_fix: the last N days, default 14)
+
+--fix puts ESPN's final on every match whose final came from a weaker source
+and disagrees (matchday.corrects), regrades it, and tells the server to
+grade the tickets on those matches again (MD_CORRECTED_KEY).
 """
 
 import asyncio
@@ -20,6 +25,8 @@ import model_store
 import results_feed
 
 MD_KEY = "betiq:md:{}"
+MD_TTL = 120 * 86400
+MD_CORRECTED_KEY = "betiq:md:corrected_at"
 
 
 def _score(res: Optional[Dict]) -> str:
@@ -66,12 +73,12 @@ async def _raw_lookalikes(d: str, wrong: List[Dict]) -> None:
                 print(f"   {e['home']} v {e['away']} ← {json.dumps(keep, ensure_ascii=False)[:900]}")
 
 
-async def check_day(r, d: str) -> None:
+async def check_day(r, d: str, fix: bool = False) -> int:
     raw = r.get(MD_KEY.format(d))
     entries = json.loads(raw) if raw else {}
     print(f"\n=== {d}: {len(entries)} matches on the site ===")
     if not entries:
-        return
+        return 0
     src = await _sources(entries, d)
     print(f"  ESPN results: {len(src['espn'])} · SportyBet results: {len(src['sportybet'])}")
     found = {name: dict(matchday.match_results(entries, rows)) for name, rows in src.items()}
@@ -96,8 +103,21 @@ async def check_day(r, d: str) -> None:
     counts = {f: sum(1 for t in rows if t[0] == f) for f in order}
     print(f"  → {counts}")
     wrong = [t[1] for t in rows if t[0] == "WRONG"]
-    if wrong:
+    fixed = 0
+    if fix:
+        espn = found["espn"]
+        for k, e in entries.items():
+            res = espn.get(k)
+            if res and matchday.corrects(e.get("result") or {}, res) and matchday.apply_result(e, res):
+                fixed += 1
+                c = e["result"]["corrected"]
+                print(f"  FIXED   {e['home']} v {e['away']}: {c['was'][0]}-{c['was'][1]} ({c['from']}) → "
+                      f"{e['result']['hg']}-{e['result']['ag']} (espn)")
+        if fixed:
+            r.set(MD_KEY.format(d), json.dumps(entries, separators=(",", ":")), ex=MD_TTL)
+    elif wrong:
         await _raw_lookalikes(d, wrong)
+    return fixed
 
 
 def main() -> None:

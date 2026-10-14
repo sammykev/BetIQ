@@ -188,7 +188,17 @@ def apply_result(entry: Dict, res: Dict) -> bool:
     # scheduled mustn't wipe the live score another source gave
     if res.get("status") not in (FINISHED, LIVE, POSTPONED) and old.get("status") == LIVE:
         return got_id
-    if old.get("status") == FINISHED:
+    if old.get("status") == FINISHED and corrects(old, res):
+        # A trusted source's final over a different one from a weaker source
+        # (SportyBet once gave a youth game's score): the score is replaced
+        new = {k: v for k, v in old.items() if k not in ("at", "corrected")}
+        new.update({k: res[k] for k in ("hg", "ag", "aet", "source") if res.get(k) is not None})
+        new["aet"] = bool(res.get("aet"))
+        if not new["aet"]:
+            new.pop("aet")
+        new["corrected"] = {"was": [old.get("hg"), old.get("ag")], "from": old.get("source"),
+                            "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    elif old.get("status") == FINISHED:
         # Final already: a second source only fills in stats it lacked
         if res.get("status") != FINISHED:
             return got_id
@@ -210,12 +220,27 @@ def apply_result(entry: Dict, res: Dict) -> bool:
     return True
 
 
-def needs_result(entry: Dict, now: datetime) -> bool:
-    """Kicked off (or due within 15 minutes) and not finished with stats."""
+TRUSTED = ("espn", "football-data.co.uk")      # sources whose final can correct another's
+RECHECK = timedelta(hours=36)                   # a weaker source's final is checked against them this long
+
+
+def corrects(old: Dict, res: Dict) -> bool:
+    """`res` (a feed result) is a trusted final that disagrees with a final
+    from a weaker source."""
+    return (res.get("status") == FINISHED and res.get("source") in TRUSTED
+            and old.get("source") not in TRUSTED and res.get("hg") is not None and res.get("ag") is not None
+            and (res.get("hg"), res.get("ag")) != (old.get("hg"), old.get("ag")))
+
+
+def needs_result(entry: Dict, now: datetime, recheck: bool = True) -> bool:
+    """Kicked off (or due within 15 minutes) and not finished with stats, or
+    (`recheck`) finished from a weaker source and still within RECHECK."""
     res = entry.get("result") or {}
     ko = kickoff(entry)
     if ko is None or ko > now + timedelta(minutes=15):
         return False
+    if recheck and res.get("status") == FINISHED and res.get("source") not in TRUSTED and now - ko < RECHECK:
+        return True
     if res.get("status") == FINISHED:
         missing_stats = any(res.get(s) is None for s in SET_PIECE_LINES if (entry.get("pred") or {}).get(f"{s}_over") is not None)
         return missing_stats and now - ko < timedelta(days=4)
@@ -231,21 +256,37 @@ def _similar(a: str, b: str) -> float:
     return team_similarity(a, b)
 
 
+KO_GAP = timedelta(hours=3)     # a feed result whose kick-off is further off is another match
+
+
+def _feed_ko(res: Dict) -> Optional[datetime]:
+    try:
+        t = datetime.fromisoformat(res["ko"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+
+
 def match_results(entries: Dict[str, Dict], results: List[Dict]) -> List[Tuple[str, Dict]]:
     """[(entry key, feed result)] — both teams clearly the same, same side,
-    kick-off within a day."""
+    kick-off within a day, and within KO_GAP when both kick-off times are
+    known (the same two clubs' youth or women's sides play the same day)."""
     out = []
     for k, e in entries.items():
         try:
             d = date.fromisoformat(e["date"])
         except (KeyError, TypeError, ValueError):
             continue
+        ko = kickoff(e) if e.get("time") else None
         best, best_score = None, 0.0
         for res in results:
             try:
                 if abs((date.fromisoformat(res["date"]) - d).days) > 1:
                     continue
             except (KeyError, TypeError, ValueError):
+                continue
+            fko = _feed_ko(res)
+            if ko and fko and abs(fko - ko) > KO_GAP:
                 continue
             sh, sa = _similar(e["home"], res["home"]), _similar(e["away"], res["away"])
             if min(sh, sa) < 0.75 or sh + sa <= best_score:

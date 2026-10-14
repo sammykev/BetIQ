@@ -3157,7 +3157,10 @@ async def _refresh_matchdays(days_back: int = 1, trigger: str = "schedule") -> D
                 added.append(d)
         except Exception as e:
             print(f"[MatchDay] couldn't store {d}'s predictions: {e}")
-    need = {d: {k: e for k, e in day.items() if matchday.needs_result(e, now)} for d, day in days.items()}
+    # Finals from SportyBet or the backups are checked against ESPN by the
+    # 3-hourly sweeps (not the 3-minute live runs)
+    need = {d: {k: e for k, e in day.items() if matchday.needs_result(e, now, recheck=trigger != "live")}
+            for d, day in days.items()}
     need = {d: v for d, v in need.items() if v}
     report: Dict[str, Any] = {"dates": sorted(need), "matches": sum(len(v) for v in need.values()),
                               "updated": 0, "requests": 0, "errors": [], "unmatched": 0}
@@ -3221,9 +3224,16 @@ async def _refresh_matchdays(days_back: int = 1, trigger: str = "schedule") -> D
                 for k, res in matchday.match_results(entries, source):
                     matched.add(k)
                     before = {f: (day[k].get("result") or {}).get(f) for f in ("status", "hg", "ag")}
+                    was_corrected = (day[k].get("result") or {}).get("corrected")
                     if matchday.apply_result(day[k], res):
                         changed = True
                         report["updated"] += 1
+                        fix = day[k]["result"].get("corrected")
+                        if fix and fix != was_corrected:
+                            report.setdefault("corrected", []).append(
+                                f"{day[k]['home']} v {day[k]['away']}: {fix['was'][0]}-{fix['was'][1]} → "
+                                f"{day[k]['result']['hg']}-{day[k]['result']['ag']}")
+                            r.set(MD_CORRECTED_KEY, now.isoformat(timespec="seconds"))
                         if before != {f: day[k]["result"].get(f) for f in ("status", "hg", "ag")}:
                             report["scores"] = report.get("scores", 0) + 1
             report["unmatched"] += sum(1 for k in entries if k not in matched
@@ -3779,9 +3789,52 @@ def _rescan_open_tickets(r, today: date) -> int:
     return added
 
 
+MD_CORRECTED_KEY = "betiq:md:corrected_at"     # when a final score was last corrected (matchday.corrects)
+TICKETS_RECHECKED_KEY = "betiq:tickets:rechecked_at"
+RECHECK_TICKET_DAYS = 14
+
+
+def _recheck_corrected_tickets(r, today: date, result_for) -> Optional[Dict[str, int]]:
+    """After a score correction: every account's tickets with a leg in the
+    last RECHECK_TICKET_DAYS, their football legs graded again on the
+    corrected scores (and the win/loss tallies moved to match)."""
+    import tickets
+    corrected = r.get(MD_CORRECTED_KEY)
+    done = r.get(TICKETS_RECHECKED_KEY)
+    if not corrected or (done and done >= corrected):
+        return None
+    since = (today - timedelta(days=RECHECK_TICKET_DAYS)).isoformat()
+    out = {"tickets": 0, "legs": 0}
+    for key in r.scan_iter(match="betiq:user:*:tickets", count=500):
+        try:
+            items = json.loads(r.get(key) or "[]")
+        except ValueError:
+            continue
+        changed = False
+        for t in items:
+            if not isinstance(t, dict) or max((l.get("date") or "" for l in t.get("legs") or []), default="") < since:
+                continue
+            was = t.get("status")
+            before = [l.get("status") for l in t.get("legs") or []]
+            if tickets.settle(t, result_for, recheck=True):
+                changed = True
+                out["legs"] += sum(1 for a, l in zip(before, t.get("legs") or []) if a != l.get("status"))
+                if t.get("status") != was:
+                    out["tickets"] += 1
+                    if was in ("won", "lost", "void"):
+                        r.hincrby(TICKETS_STATS_KEY, was, -1)
+                    if t["status"] in ("won", "lost", "void"):
+                        r.hincrby(TICKETS_STATS_KEY, t["status"], 1)
+        if changed:
+            r.set(key, json.dumps(items, separators=(",", ":")), ex=365 * 86400)
+    r.set(TICKETS_RECHECKED_KEY, corrected)
+    return out
+
+
 def _settle_tickets(r) -> Dict[str, int]:
     """Grade the legs of every ticket still being played, and the legs left
-    pending on settled ones (_ticket_needs_settling), whose matches have finished."""
+    pending on settled ones (_ticket_needs_settling), whose matches have finished;
+    after a score correction, the legs graded on the old score again."""
     import tickets
     today = date.today()
     report: Dict[str, Any] = {"settled": 0, "legs": 0}
@@ -3792,6 +3845,12 @@ def _settle_tickets(r) -> Dict[str, int]:
     report["accounts"] = len(uids)
     days: Dict[str, Dict] = {}
     result_for = _leg_results(r, days)
+    try:
+        rechecked = _recheck_corrected_tickets(r, today, result_for)
+        if rechecked is not None:
+            report["rechecked_after_correction"] = rechecked
+    except Exception as e:
+        report.setdefault("errors", []).append(f"recheck: {e}"[:200])
 
     for uid in uids:
         try:
