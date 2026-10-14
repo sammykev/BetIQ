@@ -11,8 +11,11 @@ services:
       # This server's Redis (the api uses UPSTASH_REDIS_URL from .env; this
       # one is for copying the data across: backend/redis_copy.py)
       LOCAL_REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env (openssl rand -hex 24)}@redis:6379/0
+      # The headless Chrome below, for SofaScore (backend/sofa_browser.py)
+      SOFA_BROWSER_URL: http://browser:8100
     depends_on:
       - redis
+      - browser
     volumes:
       - betiq-data:/app/backend/data   # trained model, predictions, synced CSVs
     expose:
@@ -35,6 +38,17 @@ services:
       - "127.0.0.1:6379:6379"
     volumes:
       - redis-data:/data
+
+  # Headless Chrome that reads SofaScore's API for the api (SofaScore turns
+  # this server's address away unless it's a real browser). Reachable by the
+  # api only; closes Chrome when unused for 15 minutes.
+  browser:
+    build: ./browser
+    restart: unless-stopped
+    mem_limit: 1500m
+    shm_size: 512m
+    expose:
+      - "8100"
 
   caddy:
     image: caddy:2

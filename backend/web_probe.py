@@ -140,6 +140,7 @@ async def sofascore() -> Dict[str, Any]:
     import httpx
     from curl_cffi.requests import AsyncSession
     import international_fixtures as intl
+    import sofa_browser
     out: Dict[str, Any] = {"access": {}, "lookups": []}
     today = datetime.now(timezone.utc).date().isoformat()
     usable = None
@@ -152,12 +153,28 @@ async def sofascore() -> Dict[str, Any]:
                     {"head": (res.get("head") or "")[:120]}
                 if usable is None and res.get("status") == 200 and res.get("json"):
                     usable = (sess, kw, host)
-        if not usable:
+        browser = None
+        if sofa_browser.on():
+            res = await sofa_browser.get(f"/api/v1/sport/basketball/scheduled-events/{today}")
+            body = res.get("body") or ""
+            out["access"]["browser"] = {"status": res.get("status"), "bytes": len(body),
+                                        "error": res.get("error"), "head": body[:120]}
+            browser = res.get("status") == 200 and body.lstrip().startswith("{")
+        else:
+            out["access"]["browser"] = {"error": "SOFA_BROWSER_URL isn't set"}
+        if not usable and not browser:
             return out
-        sess, kw, host = usable
-        out["using"] = host
+        if usable:
+            sess, kw, host = usable
+            out["using"] = host
+        else:
+            out["using"] = "browser"
         for sport, day, words in SOFA_LOOKUPS:
-            res = await _get(sess, f"{host}/sport/{sport}/scheduled-events/{day}", **kw)
+            if usable:
+                res = await _get(sess, f"{host}/sport/{sport}/scheduled-events/{day}", **kw)
+            else:
+                data, err = await sofa_browser.get_json(f"/api/v1/sport/{sport}/scheduled-events/{day}")
+                res = {"json": data, "status": 200 if data else err}
             evs = (res.get("json") or {}).get("events") or []
             for e in evs:
                 names = f"{(e.get('homeTeam') or {}).get('name')} {(e.get('awayTeam') or {}).get('name')}".lower()
