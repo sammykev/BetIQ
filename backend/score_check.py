@@ -124,6 +124,8 @@ def main() -> None:
     r = model_store._client()
     if r is None:
         raise SystemExit("UPSTASH_REDIS_URL isn't set")
+    for k in (MD_CORRECTED_KEY, "betiq:tickets:rechecked_at", "betiq:daily:rechecked_at"):
+        print(f"{k}: {r.get(k)}")
     today = datetime.now(timezone.utc).date()
     args = sys.argv[1:]
     fix = "--fix" in args
