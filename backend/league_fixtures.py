@@ -76,14 +76,14 @@ async def fetch(days_ahead: int, today: Optional[date] = None, client=None) -> D
     return report
 
 
-def unproven(r) -> set:
-    """League codes whose walk-forward check didn't pass (published with a warning)."""
+def unproven(r, codes: Optional[set] = None) -> set:
+    """Of `codes` (default: COMPETITIONS), those whose walk-forward check
+    didn't pass or hasn't run (published with a warning)."""
     import json
+    codes = set(COMPETITIONS) if codes is None else set(codes)
     try:
         got = json.loads(r.get(UNPROVEN_KEY) or "{}") if r else {}
     except Exception:
-        return set(COMPETITIONS)
-    if not got:
-        return set(COMPETITIONS)            # not checked yet: unproven
-    return {code for code, v in (got.get("leagues") or {}).items() if not v.get("pass")} | \
-        (set(COMPETITIONS) - set(got.get("leagues") or {}))
+        return codes
+    leagues = got.get("leagues") or {}
+    return {c for c in codes if not (leagues.get(c) or {}).get("pass")}

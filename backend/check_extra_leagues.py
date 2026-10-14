@@ -12,6 +12,12 @@ no more than it does in the leagues we train on (plus MARGIN). One that
 doesn't is still published, with a warning, and kept out of slips
 (league_fixtures.unproven).
 
+The top flights only SportyBet covers (sb_league_fixtures.py) have no odds
+in their history, so they're replayed without odds: a league passes when it
+has MIN_MATCHES scored and our 1X2 log loss beats knowing nothing (the main
+leagues' home/draw/away shares) by at least SB_SHARE of what it does in the
+main leagues, predicted the same way.
+
     python check_extra_leagues.py      (GitHub Actions: "Basketball data", job extra_leagues)
 """
 
@@ -27,6 +33,7 @@ WINDOW_DAYS = 365
 MIN_MATCHES = 100
 MARGIN = 0.01
 SEASONS = 3
+SB_SHARE = 0.5
 
 
 def make_model(groups: set):
@@ -73,6 +80,32 @@ def verdicts(records: List[Dict], groups: set) -> Dict:
     return {"main": main, "bar": round(bar, 4), "leagues": leagues}
 
 
+def sb_verdicts(records: List[Dict], groups: set) -> Dict:
+    """Per league (no odds): matches, model log loss, the know-nothing log
+    loss, the gain over it, and whether it passes against the main leagues' gain."""
+    from backtest import _model_1x2, _scores_1x2
+    main = [r for r in records if r["league"] not in groups and not str(r["league"]).startswith("SB-")]
+    n = max(len(main), 1)
+    base = [sum(r["result"] == k for r in main) / n for k in "HDA"] if main else [0.45, 0.26, 0.29]
+
+    def score(rs):
+        m = _scores_1x2([_model_1x2(r) for r in rs], [r["result"] for r in rs])
+        b = _scores_1x2([base for _ in rs], [r["result"] for r in rs])
+        gain = round(b["log_loss"] - m["log_loss"], 4) if rs else None
+        return {"matches": len(rs), "model": m, "know_nothing": b, "gain": gain}
+
+    main_s = score(main)
+    bar = round(SB_SHARE * (main_s["gain"] or 0.0), 4)
+    leagues = {}
+    for code in sorted(groups):
+        s = score([r for r in records if r["league"] == code])
+        s["pass"] = bool(s["matches"] >= MIN_MATCHES and s["gain"] is not None and s["gain"] >= bar)
+        s["why"] = (f"only {s['matches']} matches" if s["matches"] < MIN_MATCHES else
+                    f"gains {s['gain']} on knowing nothing (bar {bar})" if not s["pass"] else "ok")
+        leagues[code] = s
+    return {"main": main_s, "bar": bar, "base": [round(x, 3) for x in base], "leagues": leagues}
+
+
 def main() -> int:
     import main as app
     import model_store
@@ -105,6 +138,25 @@ def main() -> int:
               f"model {s['model']['log_loss']} / acc {s['model']['accuracy']}  "
               f"bookmaker {s['bookmaker']['log_loss']} / acc {s['bookmaker']['accuracy']}  ({s['why']})")
     print(f"Trained leagues: gap {out['main']['gap']} over {out['main']['matches']} matches; bar {out['bar']}")
+
+    # The SportyBet-only leagues: no odds in their history, so all replayed without
+    sb_groups = {lg for lg in combined["league"].dropna().unique() if str(lg).startswith("SB-")}
+    if sb_groups:
+        both = groups | sb_groups
+        frame = combined.copy()
+        frame.loc[frame["league"].isin(sb_groups) & (frame["Date"] >= start), "Context"] = False
+        frame.loc[frame["league"].isin(groups), "Context"] = True
+        print(f"[Extra] SportyBet-only leagues, without odds: {', '.join(sorted(sb_groups))}")
+        sb_records = walk_forward(frame, start, end, make_model=make_model(both), log=print, hide_odds=True)
+        sb_out = sb_verdicts(sb_records, sb_groups)
+        out["sportybet"] = {k: v for k, v in sb_out.items() if k != "leagues"}
+        out["leagues"].update(sb_out["leagues"])
+        for code, s in sb_out["leagues"].items():
+            print(f"{code:7} {'PASS' if s['pass'] else 'warn'}  {s['matches']:4} matches  "
+                  f"model {s['model']['log_loss']} / acc {s['model']['accuracy']}  "
+                  f"know-nothing {s['know_nothing']['log_loss']}  ({s['why']})")
+        print(f"Main leagues without odds: gain {sb_out['main']['gain']} over {sb_out['main']['matches']} "
+              f"matches; bar {sb_out['bar']}")
     r = model_store._client()
     if r is None:
         print("UPSTASH_REDIS_URL isn't set: not saved")

@@ -916,6 +916,28 @@ def _load_new_league_csv(path: str, league: str) -> pd.DataFrame:
 MAIN_EXTRA_LEAGUES = {"BSA", "JPL", "SPL", "GSL", "TSL", "AUT", "SUI", "DEN", "NOR", "SWE", "POL", "ROU"}
 # Leagues whose walk-forward check hasn't passed: published with a warning, kept out of slips
 _unproven_leagues: set = set()
+# Group B (sb_league_fixtures.py): fixtures from SportyBet's catalog, kept between linking runs
+_sb_fixtures: List[Dict] = []
+SB_FIXTURES_KEY = "betiq:sb_league_fixtures:v1"
+
+
+def _sb_league_rows(known: set) -> pd.DataFrame:
+    """SportyBet's top flights (collect_sb_leagues.py) as context rows."""
+    import europe_model
+    import model_store
+    try:
+        return europe_model.sb_leagues(known, model_store._client())
+    except Exception as e:
+        print(f"[Data] SportyBet leagues not read: {e}")
+        return pd.DataFrame()
+
+
+def _sb_model_name(predictor, name: str, league: str) -> str:
+    """The name a group B club trains under: with its league added when it
+    clashes with a club elsewhere (europe_model.sb_leagues)."""
+    tagged = f"{name} ({league})"
+    ratings = getattr(getattr(predictor, "elo", None), "ratings", None) or {}
+    return tagged if tagged in ratings else name
 
 
 def _load_extra_leagues(known: Optional[set] = None, leagues: Optional[set] = None) -> pd.DataFrame:
@@ -1368,14 +1390,19 @@ def _build_predictions(predictor, fixtures: list, live_odds: dict) -> list:
                 odds = _sb_1x2(fx)
                 if not odds:
                     continue      # not priced on SportyBet yet: it waits (_publish_waiting_europe)
+            elif fx.get("sb_odds") and not all(float(odds.get(k) or 0) > 1 for k in ("1", "X", "2")):
+                odds = _sb_1x2(fx) or fx["sb_odds"]       # group B: the catalog's prices, fresher once linked
             elif fx.get("league") in MAIN_EXTRA_LEAGUES and not all(float(odds.get(k) or 0) > 1 for k in ("1", "X", "2")):
                 # No odds feed for these leagues: SportyBet's prices once linked
                 # (_price_extra_leagues), the no-odds model till then
                 odds = _sb_1x2(fx) or odds
             model = _europe_predictor if (predictor is _predictor and _europe_covers(fx.get("league", ""))) \
                 else predictor
+            goals_only = bool(fx.get("goals_only"))
+            names = (_sb_model_name(model, fx["home"], fx["league"]), _sb_model_name(model, fx["away"], fx["league"])) \
+                if goals_only else (fx["home"], fx["away"])
             tip = model.predict_match(
-                fx["home"], fx["away"],
+                *names,
                 odds_home=float(odds.get("1") or 0),
                 odds_draw=float(odds.get("X") or 0),
                 odds_away=float(odds.get("2") or 0),
@@ -1403,7 +1430,8 @@ def _build_predictions(predictor, fixtures: list, live_odds: dict) -> list:
 
             value_edge = round(model_p - implied, 3) if (model_p is not None and implied is not None) else None
 
-            extras, referee = _set_piece_extras(fx, predictor)
+            # Group B: no corners, cards or shots data, so result and goals markets only
+            extras, referee = _set_piece_extras(fx, predictor) if not goals_only else (None, None)
 
             predictions.append({
                 **fx, **tip,
@@ -1572,7 +1600,8 @@ async def _fetch_more_leagues() -> list:
     except Exception as e:
         print(f"[Leagues] fetch failed: {e}")
         return []
-    _unproven_leagues = league_fixtures.unproven(_get_redis())
+    _unproven_leagues = league_fixtures.unproven(_get_redis(), set(league_fixtures.COMPETITIONS)
+                                                 | {f["league"] for f in _sb_fixtures})
     print(f"[Leagues] {report['sources']}{'; errors ' + str(report['errors']) if report['errors'] else ''}")
     return report["fixtures"]
 
@@ -1733,6 +1762,9 @@ def _assemble_training_data():
     # changes. The European extra leagues feed the Europe model only
     # (europe_model.py), which is judged on European matches.
     extra_df = _load_extra_leagues(club_names | nation_names, leagues=MAIN_EXTRA_LEAGUES)
+    # The top flights only SportyBet covers (sb_league_fixtures.py), the same way
+    sb_df = _sb_league_rows(club_names | nation_names | (
+        set(extra_df["HomeTeam"]) | set(extra_df["AwayTeam"]) if not extra_df.empty else set()))
     if not ucl_df.empty and club_names:
         ucl_df = TeamResolver(club_names, aliases=UCL_ALIASES).resolve_frame(ucl_df)
     if not ucl_df.empty:
@@ -1741,7 +1773,7 @@ def _assemble_training_data():
     # European competitions and domestic cups from ESPN (club_cups.py), the
     # sets the nightly check found to improve the league predictions
     cups_df = _club_cup_rows(club_names)
-    parts = [df for df in [fd_df, epl_df, ucl_df, intl_df, cups_df, extra_df] if not df.empty]
+    parts = [df for df in [fd_df, epl_df, ucl_df, intl_df, cups_df, extra_df, sb_df] if not df.empty]
     if not parts:
         print("[Pipeline] No training data found!")
         return None
@@ -1963,8 +1995,12 @@ async def _run_pipeline():
             await asyncio.to_thread(_save_predictions_cache)
             print(f"[Pipeline] +EL/UECL: {len(europe)} Europa/Conference League fixtures published.")
 
-        # ── More European leagues (ESPN fixtures; league_fixtures.py) ──
+        # ── More European leagues (ESPN fixtures; league_fixtures.py), and
+        # the top flights only SportyBet covers (the linker's catalog; sb_league_fixtures.py) ──
+        if not _sb_fixtures:
+            await asyncio.to_thread(_load_sb_fixtures)
         more = await _fetch_more_leagues()
+        more += [fx for fx in _sb_fixtures if _within_window(fx.get("date", ""))]
         if more:
             fixtures.extend(more)
             await asyncio.to_thread(_cache_team_crests, more)
@@ -7853,6 +7889,11 @@ async def _link_sportybet_events_now(trigger: str) -> Dict[str, Any]:
             events, status["report"] = [], [f"{type(e).__name__}: {e}"]
         status["events"] = len(events)
         status["catalog"] = _catalog_summary(events)
+        if events:
+            try:
+                preds += await asyncio.to_thread(_publish_sb_leagues, events)
+            except Exception as e:
+                status["report"].append(f"SportyBet-only leagues: {type(e).__name__}: {e}")
         if events:  # an empty catalog (SportyBet unreachable) keeps the last links
             unlinked: List[Dict] = []
             links = await asyncio.to_thread(_match_predictions_to_events, preds, events, unlinked)
@@ -7957,6 +7998,55 @@ def _publish_waiting_europe() -> int:
         _last_updated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
         _save_predictions_cache()
     return len(new)
+
+
+def _load_sb_fixtures() -> None:
+    r = _get_redis()
+    try:
+        _sb_fixtures[:] = json.loads(r.get(SB_FIXTURES_KEY) or "[]") if r else []
+    except Exception as e:
+        print(f"[SB leagues] stored fixtures not read: {e}")
+
+
+def _publish_sb_leagues(events: List[Dict]) -> List[Dict]:
+    """Group B's upcoming matches from the linker's SportyBet catalog
+    (sb_league_fixtures.py), predicted and published in place of the last
+    run's not-yet-started ones; returns the new predictions (for linking)."""
+    global _predictions_cache, _last_updated, _unproven_leagues
+    import collect_sb_leagues
+    import league_fixtures
+    import live_learning
+    import sb_league_fixtures
+    r = _get_redis()
+    if r is None:
+        return []
+    picked = sb_league_fixtures.leagues(collect_sb_leagues.load(r))
+    fixtures = sb_league_fixtures.from_catalog(events, picked, days_ahead=PREDICTION_DAYS)
+    if not fixtures:
+        return []
+    _sb_fixtures[:] = fixtures
+    try:
+        r.set(SB_FIXTURES_KEY, json.dumps(fixtures), ex=3 * 86400)
+    except Exception as e:
+        print(f"[SB leagues] fixtures not saved: {e}")
+    _unproven_leagues = (_unproven_leagues - set(picked)) | league_fixtures.unproven(r, set(picked))
+    if _predictor is None:
+        return []
+    unknown = dict(_unknown_clubs)           # _build_predictions starts that list afresh
+    try:
+        new = _build_predictions(_predictor, fixtures, {})
+    finally:
+        _unknown_clubs.update(unknown)
+    now = datetime.now(timezone.utc)
+    keep = [p for p in _predictions_cache if not (str(p.get("league", "")).startswith("SB-")
+                                                  and not live_learning.kicked_off(p, now))]
+    started = {_sb_key(p.get("home", ""), p.get("away", ""), p.get("date", "")) for p in keep}
+    new = [p for p in new if _sb_key(p["home"], p["away"], p.get("date", "")) not in started]
+    _predictions_cache = keep + new
+    _last_updated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    _save_predictions_cache()
+    print(f"[SB leagues] {len(new)} matches published from {len(picked)} leagues")
+    return new
 
 
 def _price_extra_leagues() -> int:

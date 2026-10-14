@@ -337,6 +337,9 @@ def inputs(app, seasons: int = 2) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFr
         # National teams have nothing to do with European club matches: left
         # out, the model is smaller and quicker to train and load
         league = league[~league["league"].isin(EUROPE_CODES | {"INT"})]
+    if "league" in league.columns:
+        # The extra leagues and SportyBet's come in below (as context rows), once
+        league = league[~(league["league"].isin(EXTRA_LEAGUES) | league["league"].astype(str).str.startswith("SB-"))]
     league = league.drop(columns=["StrengthOnly", "Source"], errors="ignore")
     ucl = ucl.drop(columns=["StrengthOnly", "Source", "Context"], errors="ignore")
     names = set(league["HomeTeam"]) | set(league["AwayTeam"])

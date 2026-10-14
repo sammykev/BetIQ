@@ -24,6 +24,7 @@ from our probability with a typical bookmaker margin, marked "estimated".
 Win chance treats the matches as independent and is the model's estimate.
 """
 
+import re
 import math
 from dataclasses import asdict, dataclass
 from typing import Any, Callable, Dict, List, Optional
@@ -197,6 +198,10 @@ def _bookmaker_price(pred: Dict, market: str, code: str) -> Optional[float]:
     return None
 
 
+# Markets that aren't about the result or goals
+NOT_GOALS = re.compile(r"corner|card|shot|sot")
+
+
 def candidates(pred: Dict, sportybet_event: Optional[Dict] = None,
                min_prob: float = 0.6, markets: Optional[set] = None,
                allowed: Optional[Callable[[str, str], bool]] = None, calibrate: bool = True) -> List[Option]:
@@ -211,9 +216,12 @@ def candidates(pred: Dict, sportybet_event: Optional[Dict] = None,
                for k in ("p_home", "p_draw", "p_away", "p_over15", "p_over25")):
         return []
     rows = []
+    goals_only = bool(pred.get("goals_only"))
     for market, market_name, code, label, prob_of in _PICKS:
         if markets and market not in markets:
             continue
+        if goals_only and NOT_GOALS.search(market):
+            continue                     # a league with no corners/cards/shots data (sb_league_fixtures.py)
         if allowed and not allowed(market, code):
             continue
         prob = prob_of(pred)
