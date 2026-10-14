@@ -33,8 +33,22 @@ async def main() -> None:
             missing = {f["match_id"] for f in daily} - {f["match_id"] for f in rng}
             if missing:
                 print(f"  the range read missed {len(missing)}")
-            for p in (pages or [])[:3]:
-                print(f"  range page: {len(p.get('events') or [])} events, keys {list(p)[:6]}")
+            for p in (pages or [])[:1]:
+                for lg in p.get("leagues") or []:
+                    for l in lg.get("logos") or []:
+                        r = await c.get(l.get("href"))
+                        print(f"  ESPN logo {l.get('rel')} {l.get('width')}x{l.get('height')}: {l.get('href')} "
+                              f"→ {r.status_code}, {len(r.content)} bytes")
+        import os
+        base = os.getenv("SITE_URL", "https://13-140-188-212.sslip.io").rstrip("/")
+        for name in ("Europa League", "Conference League", "Champions League"):
+            try:
+                got = (await c.get(f"{base}/api/competition-logo", params={"name": name})).json()
+                img = await c.get(got.get("logo")) if got.get("logo") else None
+                print(f"\nSite badge for {name}: {got} → {img.status_code if img else '-'}, "
+                      f"{len(img.content) if img else 0} bytes")
+            except Exception as e:
+                print(f"\nSite badge for {name}: {type(e).__name__}: {e}")
 
 
 if __name__ == "__main__":
