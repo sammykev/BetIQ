@@ -47,13 +47,32 @@ async def _sources(entries: Dict[str, Dict], d: str) -> Dict[str, List[Dict]]:
     return out
 
 
-def check_day(r, d: str) -> None:
+async def _raw_lookalikes(d: str, wrong: List[Dict]) -> None:
+    """SportyBet's raw events that look like the wrong matches (names within
+    the matcher's reach), to see which one gave the score."""
+    import sportybet
+    session = sportybet.shared_session()
+    start = datetime.fromisoformat(d).replace(tzinfo=timezone.utc)
+    events, _, _ = await sportybet._paged(session, "/factsCenter/eventResultList", {
+        "pageSize": 100, "sportId": sportybet.FOOTBALL, "startTime": int(start.timestamp() * 1000),
+        "endTime": int((start + timedelta(days=1)).timestamp() * 1000)}, 60)
+    print(f"\n  Raw SportyBet results that look like the wrong matches ({len(events)} events that day):")
+    for e in wrong:
+        for ev in events:
+            h, a = ev.get("homeTeamName") or "", ev.get("awayTeamName") or ""
+            if min(matchday._similar(e["home"], h), matchday._similar(e["away"], a)) >= 0.75:
+                keep = {k: v for k, v in ev.items() if k not in ("markets", "bgEvents", "eventSource") and
+                        not isinstance(v, (list, dict))}
+                print(f"   {e['home']} v {e['away']} ← {json.dumps(keep, ensure_ascii=False)[:900]}")
+
+
+async def check_day(r, d: str) -> None:
     raw = r.get(MD_KEY.format(d))
     entries = json.loads(raw) if raw else {}
     print(f"\n=== {d}: {len(entries)} matches on the site ===")
     if not entries:
         return
-    src = asyncio.run(_sources(entries, d))
+    src = await _sources(entries, d)
     print(f"  ESPN results: {len(src['espn'])} · SportyBet results: {len(src['sportybet'])}")
     found = {name: dict(matchday.match_results(entries, rows)) for name, rows in src.items()}
     rows = []
@@ -76,6 +95,9 @@ def check_day(r, d: str) -> None:
         print(line)
     counts = {f: sum(1 for t in rows if t[0] == f) for f in order}
     print(f"  → {counts}")
+    wrong = [t[1] for t in rows if t[0] == "WRONG"]
+    if wrong:
+        await _raw_lookalikes(d, wrong)
 
 
 def main() -> None:
@@ -84,8 +106,10 @@ def main() -> None:
         raise SystemExit("UPSTASH_REDIS_URL isn't set")
     today = datetime.now(timezone.utc).date()
     days = sys.argv[1:] or [(today - timedelta(days=i)).isoformat() for i in (1, 2)]
-    for d in days:
-        check_day(r, d)
+    async def run():
+        for d in days:
+            await check_day(r, d)
+    asyncio.run(run())
 
 
 if __name__ == "__main__":
