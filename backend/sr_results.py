@@ -6,8 +6,8 @@ same ids: SportyBet's event ids are "sr:match:N").
     https://stats.fn.sportradar.com/common/en/Etc:UTC/gismo/match_info/N
 
 answers {"doc": [{"data": {"match": {"result": {"home", "away"}, "periods":
-{"p1": {"home", "away"}, …, "ot": {…}}, "status": {"name"}, "canceled",
-"postponed", "retired", "walkover", …}}}]}. For basketball the periods are
+{"p1": {"home", "away"}, …, "ot": {…}}, "matchstatus": "result" once over, "cancelled",
+"postponed", "walkover", …}}}]}. For basketball the periods are
 quarters; for tennis and table tennis, the games (points) of each set.
 
 Grading never waits on this: a leg the grader finds no result for is
@@ -53,7 +53,7 @@ def _numbered(ps: Dict[str, tuple]) -> list:
     return [list(v) for _, v in nums]
 
 
-ENDED = {"ended", "aet", "aot", "ap", "after overtime", "after extra time", "finished",
+ENDED = {"result", "ended", "aet", "aot", "ap", "after overtime", "after extra time", "finished",
          "retired", "walkover", "ft"}
 
 
@@ -69,7 +69,7 @@ def parse(body: Any, sport: str) -> Optional[Dict]:
     isn't over (or was called off: those legs stay with the other sources)."""
     data = live_stats.doc_data(body)
     m = data.get("match") if isinstance(data, dict) else None
-    if not isinstance(m, dict) or m.get("canceled") or m.get("postponed"):
+    if not isinstance(m, dict) or m.get("canceled") or m.get("cancelled") or m.get("postponed") or m.get("removed"):
         return None
     if not _ended(m):
         return None

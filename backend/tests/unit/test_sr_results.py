@@ -57,6 +57,20 @@ class TestParse:
                                     periods={"p1": p(6, 3), "p2": p(2, 1)}), "tennis")
         assert res["ret"] is True
 
+    def test_real_shape(self):
+        # As Sportradar answered for a finished match (no status name; an "ft" period)
+        res = sr_results.parse(body(status={}, matchstatus="result", cancelled=False, postponed=False,
+                                    result={"home": 69, "away": 83, "winner": "away"},
+                                    periods={"p1": p(20, 25), "p2": p(8, 23), "p3": p(20, 17), "p4": p(21, 18),
+                                             "ft": p(69, 83)}), "basketball")
+        assert res == {"status": "finished", "final": [69, 83],
+                       "periods": [[20, 25], [8, 23], [20, 17], [21, 18]], "ot": False}
+        assert basketball_markets.settle("bb_q4_1x2", "1", res) == "won"
+        # Over, but Sportradar has no score for it
+        assert sr_results.parse(body(matchstatus="result", result={"home": None, "away": None}), "basketball") is None
+        assert sr_results.parse(body(matchstatus="upcoming", result=p(0, 0)), "basketball") is None
+        assert sr_results.parse(body(matchstatus="result", result=p(80, 70), cancelled=True), "basketball") is None
+
     def test_not_over_or_called_off(self):
         assert sr_results.parse(body(status={"name": "2nd quarter"}, result=p(30, 28)), "basketball") is None
         assert sr_results.parse(body(status={"name": "Ended"}, result=p(0, 0), canceled=True), "basketball") is None
