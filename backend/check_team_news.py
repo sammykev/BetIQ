@@ -204,17 +204,25 @@ LEAGUE_CODES = {"PL": "Premier League", "PD": "LaLiga", "BL1": "Bundesliga", "SA
 OVERLAY_WEIGHTS = tuple(round(0.1 * i, 1) for i in range(11))
 
 
-def find(probs: Dict[Tuple, Tuple], league: str, day: str, home: str, away: str) -> Optional[Tuple]:
-    """The xG model's chances for a stored match: same league, a day either side, both names alike."""
+def index(probs: Dict[Tuple, Tuple]) -> Dict[Tuple[str, str], List]:
+    """The xG model's chances by (league, date), for find()."""
+    out: Dict[Tuple[str, str], List] = {}
+    for (lg, d, h, a), p in probs.items():
+        out.setdefault((lg, d), []).append((h, a, p))
+    return out
+
+
+def find(idx: Dict[Tuple[str, str], List], league: str, day: str, home: str, away: str) -> Optional[Tuple]:
+    """The xG model's chances for a match: same league, a day either side, both names alike."""
     import matchday
+    from datetime import timedelta
     d0 = date.fromisoformat(day)
     best, score = None, 0.0
-    for (lg, d, h, a), p in probs.items():
-        if lg != league or abs((date.fromisoformat(d) - d0).days) > 1:
-            continue
-        sh, sa = matchday._similar(home, h), matchday._similar(away, a)
-        if min(sh, sa) >= 0.75 and sh + sa > score:
-            best, score = p, sh + sa
+    for off in (0, -1, 1):
+        for h, a, p in idx.get((league, (d0 + timedelta(days=off)).isoformat()), []):
+            sh, sa = matchday._similar(home, h), matchday._similar(away, a)
+            if min(sh, sa) >= 0.75 and sh + sa > score:
+                best, score = p, sh + sa
     return best
 
 
@@ -235,10 +243,68 @@ def blended(e: Dict, xg: Tuple, v: float) -> Optional[Tuple[float, float, float]
     return tuple(x / s for x in out) if s > 0 else None
 
 
+def _judge(rows: List[Tuple], split: str) -> Dict:
+    """rows: (date, published (h, d, a), model (h, d, a) or None, xg (h, d, a), outcome).
+    The weight on the xG model (inside our half of the published 1X2) chosen
+    before `split`, judged after it; z against the published 1X2."""
+    ll = lambda p, o: -math.log(min(max(p[o], 1e-4), 1 - 1e-4))
+
+    def mix(pub, model, xg, v):
+        if model:
+            out = [p - 0.5 * m + 0.5 * ((1 - v) * m + v * x) for p, m, x in zip(pub, model, xg)]
+        else:
+            out = [(1 - v) * p + v * x for p, x in zip(pub, xg)]
+        s = sum(out)
+        return [x / s for x in out]
+    early = [r for r in rows if r[0] < split]
+    late = [r for r in rows if r[0] >= split]
+    if len(early) < 100 or len(late) < 100:
+        return {"matches": len(rows), "note": "too few"}
+    mean_ll = lambda part, v: sum(ll(mix(r[1], r[2], r[3], v), r[4]) for r in part) / len(part)
+    best = min(OVERLAY_WEIGHTS, key=lambda v: mean_ll(early, v))
+    d = [ll(mix(r[1], r[2], r[3], best), r[4]) - ll(mix(r[1], r[2], r[3], 0.0), r[4]) for r in late]
+    mean = sum(d) / len(d)
+    sd = math.sqrt(sum((x - mean) ** 2 for x in d) / (len(d) - 1))
+    return {"matches": len(rows), "test": len(late), "split": split, "weight": best,
+            "published": round(mean_ll(late, 0.0), 4), "with_xg": round(mean_ll(late, best), 4),
+            "z": round(mean / (sd / math.sqrt(len(d))), 2) if sd > 0 else 0.0}
+
+
+def backtest_overlay(probs: Dict[Tuple, Tuple], start: str = "2024-10-15", end: str = "2025-06-30",
+                     split: str = "2025-03-01") -> Dict:
+    """The live model re-trained month by month (backtest.walk_forward) over
+    2024-25: its 1X2 mixed half and half with the bookmaker's (as published),
+    with and without the xG model inside our half."""
+    import backtest
+    import fair_odds
+    from main import _load_football_data_csvs
+    idx = index(probs)
+    recs = backtest.walk_forward(_load_football_data_csvs(), start, end, log=lambda s: None)
+    rows = []
+    for rec in recs:
+        lg = LEAGUE_CODES.get(rec.get("league") or "")
+        if not lg:
+            continue
+        xg = find(idx, lg, rec["date"], rec["home"], rec["away"])
+        if not xg:
+            continue
+        model = (rec["p_home"], rec["p_draw"], rec["p_away"])
+        odds = [rec.get("odds_home"), rec.get("odds_draw"), rec.get("odds_away")]
+        if all(o and o > 1 for o in odds):
+            market = fair_odds.fair(odds)
+            pub = tuple(0.5 * m + 0.5 * k for m, k in zip(model, market))
+            rows.append((rec["date"], pub, model, xg, "HDA".index(rec["result"])))
+        else:
+            rows.append((rec["date"], model, None, xg, "HDA".index(rec["result"])))
+    rows.sort(key=lambda t: t[0])
+    return _judge(rows, split)
+
+
 def overlay(r, probs: Dict[Tuple, Tuple], days_back: int = 120) -> Dict:
     """Does mixing the xG model into our published 1X2 help? Weight chosen on
     the earlier half of the stored matches, judged on the later half."""
     from datetime import timedelta
+    idx = index(probs)
     rows = []
     today = date.today()
     for i in range(1, days_back + 1):
@@ -249,7 +315,7 @@ def overlay(r, probs: Dict[Tuple, Tuple], days_back: int = 120) -> Dict:
             res = e.get("result") or {}
             if not lg or res.get("status") != "finished" or res.get("hg") is None:
                 continue
-            xg = find(probs, lg, e["date"], e["home"], e["away"])
+            xg = find(idx, lg, e["date"], e["home"], e["away"])
             if xg:
                 outcome = 0 if res["hg"] > res["ag"] else 1 if res["hg"] == res["ag"] else 2
                 rows.append((e["date"], e, xg, outcome))
@@ -344,10 +410,13 @@ def main() -> None:
     probs, _ = xg_probs(matches, rep["alpha"], rep["xg_weight"] or 0.75)
     ov = overlay(r, probs)
     print(f"\nOn our published 1X2 (stored before kick-off), top five leagues: {ov}")
+    bt = backtest_overlay(probs)
+    print(f"On the live model re-trained month by month over 2024-25, published as half the bookmaker's: {bt}")
     # The server mixes the xG model into our half of the 1X2 only if that
-    # helped on the later stored matches
-    use_overlay = ov.get("weight", 0) > 0 and ov.get("z", 0) < 0 and ov.get("with_xg", 9) < ov.get("published", 0)
-    rep["use"]["overlay_weight"] = ov["weight"] if use_overlay else 0.0
+    # helped on the later matches of the backtest (the bigger test)
+    use_overlay = bt.get("weight", 0) > 0 and bt.get("z", 0) < 0 and bt.get("with_xg", 9) < bt.get("published", 0)
+    ov = {"stored": ov, "backtest": bt}
+    rep["use"]["overlay_weight"] = bt["weight"] if use_overlay else 0.0
     print(f"  → xG mixed into our 1X2 at {rep['use']['overlay_weight']}")
     r.set(CONFIG_KEY, json.dumps({**rep["use"], "report": {**{k: rep[k] for k in ("matches", "test_matches", "table",
                                                                                    "z_lineups_vs_xg")}, "overlay": ov},
