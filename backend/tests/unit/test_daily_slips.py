@@ -311,11 +311,14 @@ class TestCut:
         matchday.apply_result(d["arsenal|chelsea"], finished(0, 0))
         main._md_save(self.api, self.today, d)
 
-    def test_a_cut_slip_is_remade_and_booked(self, day, sportybet):
+    def test_a_cut_slip_is_remade_and_booked(self, day, sportybet, monkeypatch):
         import asyncio
         self.next = [("Spurs", "Leeds", day, "1x2", "1X")]
         self.cut()
-        asyncio.run(main._daily_tick())
+        asyncio.run(main._daily_tick())                              # 11am Lagos: not yet
+        assert TestClient(main.app).get("/api/daily-slips").json()["cut"] == []
+        monkeypatch.setattr(daily_slips, "now_utc", lambda: daily_slips.second_at(day) + timedelta(minutes=1))
+        asyncio.run(main._daily_tick())                              # 12pm: the second slip
         got = TestClient(main.app).get("/api/daily-slips").json()
         five = got["slips"][0]
         assert (five["status"], five["picks"][0]["home"], five["booking"]["code"]) == ("pending", "Spurs", "CODE2")
@@ -328,16 +331,18 @@ class TestCut:
         asyncio.run(main._daily_tick())
         assert len(TestClient(main.app).get("/api/daily-slips").json()["cut"]) == 1 and len(sportybet[1]) == 2
 
-    def test_no_matches_left_keeps_the_cut_slip(self, day, sportybet):
+    def test_no_matches_left_keeps_the_cut_slip(self, day, sportybet, monkeypatch):
         import asyncio
         self.next = []
         self.cut()
+        monkeypatch.setattr(daily_slips, "now_utc", lambda: daily_slips.second_at(day) + timedelta(minutes=1))
         built = len(self.windows)
         asyncio.run(main._daily_tick())
         asyncio.run(main._daily_tick())
         got = TestClient(main.app).get("/api/daily-slips").json()
         assert got["cut"] == [] and got["slips"][0]["status"] == "lost" and got["slips"][0]["remade"] == "none"
-        assert len(self.windows) - built == len(daily_slips.ATTEMPTS)   # tried once, not every tick
+        # Tried once at 12pm, not every tick: the cut 5x, and the 10x and 20x that had no slip at 12am
+        assert len(self.windows) - built == 3 * len(daily_slips.ATTEMPTS)
 
 
 def test_at_most_max_remakes_a_day():
@@ -377,3 +382,59 @@ def test_a_slip_below_break_even_isnt_offered(monkeypatch):
     got = asyncio.run(main._optimize_request({**body, "min_win_chance": 0.1}))
     assert "at least 10% likely" in got["error"] and got["best_win_chance"] == 0.07
     assert "error" not in asyncio.run(main._optimize_request(body))          # no floor asked: offered
+
+
+def test_a_slip_still_running_at_noon_gets_no_second():
+    day = "2030-06-15"
+    noon = daily_slips.second_at(day)
+    running = {"target": 5, "status": "pending", "picks": [{"home": "A", "away": "B", "date": day, "status": "won"}]}
+    doc = {"date": day, "slips": [running]}
+    assert not daily_slips.needs_remake(doc, running, noon - timedelta(minutes=1))
+    assert not daily_slips.needs_remake(doc, running, noon)
+    assert daily_slips.second_decided(doc, noon) and running["second"] == "not needed"
+    running["status"] = "lost"                                       # cut after 12pm: still no second
+    assert not daily_slips.needs_remake(doc, running, noon + timedelta(hours=3))
+
+
+def test_a_cut_slip_and_a_missing_one_get_their_second_at_noon():
+    day = "2030-06-15"
+    noon = daily_slips.second_at(day)
+    assert noon.hour == 11 and noon.tzinfo is not None             # 12pm Lagos is 11:00 UTC
+    cut = {"target": 5, "status": "lost", "picks": []}
+    none = {"target": 20, "status": "none", "picks": []}
+    doc = {"date": day, "slips": [cut, none]}
+    assert daily_slips.needs_remake(doc, cut, noon) and daily_slips.needs_remake(doc, none, noon)
+    new = {"target": 20, "status": "pending", "picks": [{"home": "C", "away": "D", "date": day}]}
+    assert daily_slips.remake(doc, 1, new, "t") and doc["slips"][1]["second"] == "first try at 12pm"
+    assert not daily_slips.needs_remake(doc, doc["slips"][1], noon)
+
+
+def test_no_match_on_two_targets(monkeypatch, api, sportybet):
+    import asyncio
+    today = date.today().isoformat()
+    monkeypatch.setattr(main, "_predictions_cache", [pred(d=today)])
+    seen = []
+
+    async def optimize(body, window=None):
+        seen.append(sorted(map(tuple, body["exclude_matches"])))
+        home = f"Home{int(body['target_odds'])}"
+        return result(body["target_odds"], [(home, "Away", today, "goals_ou", "O15")], time="23:59")
+    monkeypatch.setattr(main, "_optimize_request", optimize)
+    asyncio.run(main._build_daily(today))
+    assert seen == [[], [("Home5", "Away", today)], [("Home10", "Away", today), ("Home5", "Away", today)]]
+
+
+def test_admin_sees_every_daily_ticket(api, monkeypatch):
+    today = daily_slips.today()
+    api.kv[main.DAILY_KEY.format(today)] = json.dumps({"date": today, "built_at": "x", "slips": [
+        {"target": 5, "status": "pending", "picks": [], "replaces": {"code": "OLD"}, "booking": {"code": "NEW"}},
+        {"target": 10, "status": "won", "picks": [], "booking": {"code": "TEN"}}],
+        "cut": [{"target": 5, "status": "lost", "picks": [], "booking": {"code": "OLD"}}]})
+    main.app.dependency_overrides[main.require_admin] = lambda: "admin"
+    try:
+        got = TestClient(main.app).get("/api/admin/daily-slips?days=3").json()
+    finally:
+        main.app.dependency_overrides.pop(main.require_admin, None)
+    [day] = [d for d in got["days"] if d["date"] == today]
+    assert [(s["target"], s["slot"], s.get("was_cut", False), s["booking"]["code"]) for s in day["slips"]] == [
+        (5, "12am", True, "OLD"), (5, "12pm", False, "NEW"), (10, "12am", False, "TEN")]

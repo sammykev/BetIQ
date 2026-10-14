@@ -15,9 +15,9 @@ import { API, type LegLive, type LegStatus } from "@/lib/matchday";
 // from the day's own matches, only from picks the model rates 80%+ and
 // priced under 2.0 each, each slip with its honest chance.
 // The server makes them just before midnight (Lagos) and books each on
-// SportyBet: every visitor gets the same slips and booking codes. When a slip
-// is cut (a pick loses), the server makes and books a new one from the
-// matches still to play; the cut one is kept.
+// SportyBet: every visitor gets the same slips and booking codes. At 12pm a
+// slip that was cut (a pick lost) gets one second slip from the matches still
+// to play; one still running doesn't. No match is on two targets' slips.
 
 interface Pick {
   home: string; away: string; date: string; time?: string; league?: string;
@@ -32,13 +32,15 @@ interface Booking {
   football_com?: { code: string; share_url?: string | null; total_odds?: number | null } | null;
 }
 interface Slip {
-  target: number; status: "pending" | "won" | "lost" | "void" | "none"; error?: string;
+  target: number; status: "pending" | "won" | "lost" | "void" | "none" | "open"; error?: string;
   total_odds?: number; win_chance?: number; games?: number; within_target?: boolean;
   days?: number; bookable?: boolean; picks: Pick[]; booking?: Booking;
   /** Made in place of a cut slip */
   replaces?: { code: string | null; cut_by: string | null; total_odds?: number | null; in_error?: boolean };
   /** On a cut slip: "none" when no new slip could be made (no matches left) */
   remade?: string;
+  /** At 12pm: "not needed" (still running), "tried" / "first try at 12pm" (had no slip at 12am) */
+  second?: string;
   /** On a cut slip: cut by a wrong score, since corrected (graded again) */
   cut_in_error?: boolean;
 }
@@ -54,7 +56,7 @@ const notStarted = (p: Pick) => p.status === "pending" && !p.live &&
 
 const PERKS = [
   "Three slips out at midnight every day, at about 5, 10 and 20 odds, each at least break-even",
-  "A new slip and code when one is cut",
+  "A second slip at 12pm if one is cut",
   "Today's football and basketball only, every pick rated 80% or more and under 2.0 odds",
   "A ready SportyBet booking code with every slip",
   "Every slip graded, with a public record",
@@ -67,6 +69,7 @@ const STATUS: Record<Slip["status"], { label: string; cls: string }> = {
   lost: { label: "Lost", cls: "bg-danger/15 text-danger border-danger/30" },
   void: { label: "Void", cls: "bg-n-800 text-n-300 border-n-700" },
   none: { label: "No slip", cls: "bg-n-800 text-n-400 border-n-700" },
+  open: { label: "Won what we could settle", cls: "bg-n-800 text-n-300 border-n-700" },
 };
 
 function daysBefore(iso: string, n: number): string[] {
@@ -138,14 +141,14 @@ function SlipView({ s, isToday, date, retry, minProb, cut }: {
               wrong score from our results feed. The score has been corrected and that slip graded again (below);
               this one stands too.</span>
           ) : (
-            <span>New slip: the earlier {s.target}x{s.replaces.code ? ` (${s.replaces.code})` : ""} was cut
+            <span>Second slip, made at 12pm: the earlier {s.target}x{s.replaces.code ? ` (${s.replaces.code})` : ""} was cut
               {s.replaces.cut_by ? ` by ${s.replaces.cut_by}` : ""}, so we made this one from the matches still to play.</span>
           )}
         </p>
       )}
       {s.status === "lost" && s.remade === "none" && (
-        <p className="mx-4 sm:mx-5 mb-3 text-xs text-n-400">Cut{cutBy(s) ? ` by ${cutBy(s)}` : ""}. No new slip: not enough matches
-          left to play {isToday ? "today" : "that day"}.</p>
+        <p className="mx-4 sm:mx-5 mb-3 text-xs text-n-400">Cut{cutBy(s) ? ` by ${cutBy(s)}` : ""}. No second slip at 12pm: not enough
+          matches left to play {isToday ? "today" : "that day"}.</p>
       )}
       <section className="mx-4 sm:mx-5 mb-4 rounded-xl [box-shadow:var(--ring-control)] bg-surface-sunken p-3 sm:p-4 space-y-2">
         <p className="eyebrow flex items-center gap-1.5"><Ticket size={12} /> Booking code{b?.football_com?.code ? "s" : ""}: SportyBet{b?.football_com?.code ? " & football.com" : ""}</p>
@@ -313,8 +316,9 @@ function Daily() {
         <Info size={14} className="text-n-500 shrink-0 mt-0.5" />
         <p>Every pick is one our model rates {pct(data.min_prob)} or more, but a slip only wins if all of them do, so its
           own chance is much lower. That&apos;s the percentage on each slip. Slips come out at midnight (Lagos), booked on
-          SportyBet for you, and graded at full time. When one is cut, we make a new one from the matches still to play;
-          the record counts every slip, cut ones too. 18+ · Bet responsibly.</p>
+          SportyBet for you, and graded at full time. At most two a day for each odds: if one is cut by 12pm, a second
+          comes out then from the matches still to play; one still running at 12pm gets none. No match is on two slips
+          the same day, so one result can&apos;t cut them all. The record counts every slip, cut ones too. 18+ · Bet responsibly.</p>
       </div>
     </div>
   );
@@ -325,7 +329,7 @@ export default function DailyPage() {
     <AppShell>
       <div className="space-y-6 animate-fade-in">
         <PageHeader eyebrow="Out at midnight" title="Daily odds"
-          description="Three slips a day at about 5, 10 and 20 odds, each one only if our chances say it lands at least 1 in its odds,, from that day's football, basketball, tennis and table tennis matches only and picks our model rates 80% or more (none at 2.0 odds or more), each with its SportyBet and football.com booking codes." />
+          description="Three slips a day at about 5, 10 and 20 odds, each one only if our chances say it lands at least 1 in its odds, from that day's football, basketball, tennis and table tennis matches only and picks our model rates 80% or more (none at 2.0 odds or more), each with its SportyBet and football.com booking codes." />
         <FeatureGate feature="daily_slips" title="Daily odds" perks={PERKS}>
           <Daily />
         </FeatureGate>

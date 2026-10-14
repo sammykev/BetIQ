@@ -11,7 +11,7 @@ settle them), otherwise pending.
 """
 
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 MAX_TICKETS = 200  # per account
@@ -184,6 +184,18 @@ def _score_mark(result: Optional[Dict]) -> Optional[str]:
     return f"{result['hg']}-{result['ag']}" + ("aet" if result.get("aet") else "")
 
 
+EXPIRE_DAYS = 7     # a leg still ungradeable this long after kick-off: "unknown" (no source has its result or stat)
+
+
+def expired(leg: Dict, now: Optional[datetime] = None) -> bool:
+    """Kicked off more than EXPIRE_DAYS ago (by its date and time, UTC)."""
+    try:
+        ko = datetime.fromisoformat(f"{leg['date']}T{(leg.get('time') or '23:59')[:5]}:00+00:00")
+    except (KeyError, TypeError, ValueError):
+        return False
+    return (now or datetime.now(timezone.utc)) - ko > timedelta(days=EXPIRE_DAYS)
+
+
 def settle(ticket: Dict, result_for, recheck: bool = False) -> bool:
     """Grade a ticket's pending legs; `result_for(leg)` → the matchday
     result or None. With `recheck`, football legs already graded are graded
@@ -207,6 +219,9 @@ def settle(ticket: Dict, result_for, recheck: bool = False) -> bool:
             continue
         res = result_for(leg)
         status = grade_leg(market, leg.get("code", ""), res)
+        if status == "pending" and expired(leg):
+            status = "unknown"
+            leg["unsettled"] = f"no result{' or stat' if res else ''} for it {EXPIRE_DAYS} days after kick-off"
         if status != "pending":
             leg["status"] = status
             if _football(market) and _score_mark(res):

@@ -3774,7 +3774,7 @@ def _leg_results(r, days: Dict[str, Dict]):
     return result_for
 
 
-SETTLE_LEGS_DAYS = 7          # a settled ticket's other legs are still graded this long after its last match
+SETTLE_LEGS_DAYS = 14         # a settled ticket's other legs are still graded this long after its last match
 TICKETS_RESCAN_HOURS = 6      # how often every account's tickets are looked through for legs left pending
 _tickets_rescan_at = [0.0]
 
@@ -8891,6 +8891,11 @@ async def _optimize_request(body: Dict[str, Any],
                        for p in ps]
     if max_leg:
         groups = [[o for o in g if o.odds < max_leg] for g in groups]
+    # Matches already on another slip (the daily slips: no match in two categories)
+    taken = {tuple(str(x) for x in m[:3]) for m in body.get("exclude_matches") or []
+             if isinstance(m, (list, tuple)) and len(m) >= 3}
+    if taken:
+        groups = [[o for o in g if (o.home, o.away, o.date) not in taken] for g in groups]
     if bookable_only:
         # Shots are on some matches and lines only: bookable when SportyBet priced that very line
         groups = [[o for o in g if o.market not in booking_slip.LISTED_ONLY or o.odds_source == "sportybet"]
@@ -9021,8 +9026,9 @@ def _daily_save(r, doc: Dict[str, Any]) -> None:
             print(f"[Daily] couldn't save {doc['date']}: {e}")
 
 
-async def _daily_slip(target: float, day: str) -> Dict[str, Any]:
-    """One slip for the Lagos day `day`, from its matches not kicked off yet."""
+async def _daily_slip(target: float, day: str, exclude: Optional[List] = None) -> Dict[str, Any]:
+    """One slip for the Lagos day `day`, from its matches not kicked off yet
+    and not on `exclude` ([home, away, date]: the day's other slips)."""
     import daily_slips
     built: Dict[str, Any] = {}
     for attempt in daily_slips.ATTEMPTS:
@@ -9031,7 +9037,8 @@ async def _daily_slip(target: float, day: str) -> Dict[str, Any]:
             feats = _features()
             # Racket sports not open to everyone stay out of the daily slips
             off = [rk for rk in RK_SPORTS if feats[access.SPORT_FEATURES[rk]]["state"] != "on"]
-            res = await _optimize_request({**daily_slips.request(target, attempt), "_rk_off": off},
+            res = await _optimize_request({**daily_slips.request(target, attempt), "_rk_off": off,
+                                           "exclude_matches": exclude or []},
                                           window=daily_slips.window(day))
         except HTTPException as e:
             res = {"error": str(e.detail)}
@@ -9054,7 +9061,11 @@ async def _build_daily(day: str, force: bool = False) -> Optional[Dict[str, Any]
                 return doc
         if not _predictions_cache:
             return None
-        slips = [await _daily_slip(target, day) for target in daily_slips.TARGETS]
+        # In turn, each leaving out the matches the ones before took: no match
+        # on two targets' slips, so one result can't cut them all
+        slips: List[Dict[str, Any]] = []
+        for target in daily_slips.TARGETS:
+            slips.append(await _daily_slip(target, day, daily_slips.match_keys({"slips": slips})))
         doc = {"date": day, "built_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "slips": slips}
         await _book_daily(doc)
         _daily_save(r, doc)
@@ -9109,13 +9120,35 @@ def _grade_daily(r, doc: Dict[str, Any]) -> bool:
         return False
     result_for = _leg_results(r, {})
     changed = False
-    for s in doc.get("slips") or []:
+    for s in (doc.get("slips") or []) + (doc.get("cut") or []):
         before = s.get("status")
         if daily_slips.grade(s, result_for):
             changed = True
             if before == "pending" and s["status"] in ("won", "lost"):
                 r.hincrby(DAILY_RECORD_KEY, f"{int(s['target'])}:{s['status']}", 1)
     return changed
+
+
+DAILY_SWEEP_DAYS = 14
+DAILY_SWEEP_MINUTES = 60
+_daily_swept = [0.0]
+
+
+def _sweep_daily(r) -> int:
+    """Every past day's slips graded again (results and stats arrive late;
+    a cut slip's other picks), hourly. Returns the days that changed."""
+    import daily_slips
+    if not r or time.time() - _daily_swept[0] < DAILY_SWEEP_MINUTES * 60:
+        return 0
+    _daily_swept[0] = time.time()
+    today = date.fromisoformat(daily_slips.today())
+    n = 0
+    for i in range(1, DAILY_SWEEP_DAYS + 1):
+        doc = _daily_load(r, (today - timedelta(days=i)).isoformat())
+        if doc and _grade_daily(r, doc):
+            _daily_save(r, doc)
+            n += 1
+    return n
 
 
 async def _remake_cut(doc: Dict[str, Any]) -> bool:
@@ -9128,12 +9161,14 @@ async def _remake_cut(doc: Dict[str, Any]) -> bool:
         if not daily_slips.needs_remake(doc, s):
             continue
         at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        new = await _daily_slip(s["target"], doc["date"])
+        new = await _daily_slip(s["target"], doc["date"], daily_slips.match_keys(doc))
         made = daily_slips.remake(doc, i, new, at)
         changed = True
-        print(f"[Daily] {doc['date']}: {int(s['target'])}x cut by {daily_slips.cut_by(s)}: "
-              + ("new slip made" if made else f"no new slip ({new.get('error') or 'no matches left'})"))
-    return changed
+        why = f"cut by {daily_slips.cut_by(s)}" if s.get("status") == "lost" else "no slip at 12am"
+        print(f"[Daily] {doc['date']} 12pm: {int(s['target'])}x {why}: "
+              + ("second slip made" if made else f"no second slip ({new.get('error') or 'no matches left'})"))
+    # The rest (still running, or won) get no second slip today
+    return daily_slips.second_decided(doc) or changed
 
 
 def _daily_public(s: Dict[str, Any]) -> Dict[str, Any]:
@@ -9213,6 +9248,36 @@ async def get_daily_slips(day: str = Query("", alias="date"), _access=Depends(re
             "retry_minutes": daily_slips.RETRY_MINUTES}
 
 
+@app.get("/api/admin/daily-slips")
+async def admin_daily_slips(days: int = 30, _admin: str = Depends(require_admin)):
+    """Admin: every daily odds ticket of the last `days` days — the 12am
+    slips, the 12pm second ones and the cut ones they replaced — with their
+    booking codes, picks and how each settled; and the record by target."""
+    import daily_slips
+    r = _get_redis()
+    today = date.fromisoformat(daily_slips.today())
+    out = []
+    for i in range(-1, max(1, min(int(days), daily_slips.KEEP_DAYS))):
+        d = (today - timedelta(days=i)).isoformat()
+        doc = await asyncio.to_thread(_daily_load, r, d)
+        if not doc:
+            continue
+        rows = []
+        for s in doc.get("slips") or []:
+            rows.append({**s, "slot": "12pm" if s.get("replaces") or s.get("second") == "first try at 12pm" else "12am"})
+        for s in doc.get("cut") or []:
+            rows.append({**s, "slot": "12am", "was_cut": True})
+        rows.sort(key=lambda s: (float(s.get("target") or 0), s["slot"] != "12am"))
+        out.append({"date": d, "built_at": doc.get("built_at"), "slips": rows})
+    record: Dict[str, Dict[str, int]] = {}
+    for k, v in ((r.hgetall(DAILY_RECORD_KEY) if r else None) or {}).items():
+        k = k.decode() if isinstance(k, bytes) else str(k)
+        target, _, outcome = k.partition(":")
+        record.setdefault(target, {"won": 0, "lost": 0})[outcome] = int(v)
+    return {"days": out, "record": record, "targets": list(daily_slips.TARGETS),
+            "second_at": f"{daily_slips.SECOND_AT_HOUR}:00 Lagos"}
+
+
 @app.post("/api/daily-slips/track")
 async def track_daily_slip(request: Request, body: Dict[str, Any], _access=Depends(require_feature("daily_slips"))):
     """Add a daily slip's booking code to the account's tickets (Dashboard →
@@ -9278,6 +9343,13 @@ async def _daily_tick() -> None:
     import daily_slips
     r = _get_redis()
     if r:
+        try:
+            async with _daily_lock:
+                swept = await asyncio.to_thread(_sweep_daily, r)
+            if swept:
+                print(f"[Daily] graded again: {swept} past day(s) changed")
+        except Exception as e:
+            print(f"[Daily] sweep failed: {e}")
         try:
             async with _daily_lock:
                 got = await asyncio.to_thread(_recheck_daily_after_correction, r)

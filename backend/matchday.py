@@ -193,6 +193,11 @@ def apply_result(entry: Dict, res: Dict) -> bool:
         # (SportyBet once gave a youth game's score): the score is replaced
         new = {k: v for k, v in old.items() if k not in ("at", "corrected")}
         new.update({k: res[k] for k in ("hg", "ag", "aet", "source") if res.get(k) is not None})
+        # The weaker source's stats may be another match's: the trusted one's replace them
+        for stat in (*RESULT_STATS, *LIVE_FIELDS):
+            new.pop(stat, None)
+            if res.get(stat) is not None:
+                new[stat] = res[stat]
         new["aet"] = bool(res.get("aet"))
         if not new["aet"]:
             new.pop("aet")

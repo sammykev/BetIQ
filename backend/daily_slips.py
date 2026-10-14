@@ -16,9 +16,14 @@ before it starts (BUILD_EARLY_MINUTES before midnight), so they're out by
 same booking code with the slip. A slip SportyBet couldn't book then is tried
 again every RETRY_MINUTES until its matches start.
 
-When a slip is cut (a pick loses), a new slip for the same target is made
-from that day's matches that haven't kicked off, and booked; the cut slip is
-kept, and both count in the record. At most MAX_REMAKES a slip a day.
+Two slips at most per target a day: the first by 12am, the second at 12pm
+(SECOND_AT_HOUR, Lagos) only if the first was cut by then (a pick lost) —
+made from the matches still to play, and booked; if the first is still
+running at 12pm there's no second. A target with no slip at 12am gets its
+try at 12pm too. The cut slip is kept, and both count in the record.
+
+No match is on two targets' slips the same day (exclude_matches), so one
+result can't cut them all.
 """
 
 from datetime import date, datetime, timedelta, timezone
@@ -37,7 +42,8 @@ KEEP_DAYS = 120
 TZ = timezone(timedelta(hours=1))   # Lagos (WAT: no daylight saving)
 BUILD_EARLY_MINUTES = 10  # the next day's slips are made this long before midnight: out by 12am
 RETRY_MINUTES = 15      # a slip without a booking code is tried again after this
-MAX_REMAKES = 3         # new slips for one target in a day, after cuts
+MAX_REMAKES = 1         # a second slip per target a day, at most
+SECOND_AT_HOUR = 12     # Lagos time the second slip is decided
 
 # Today's matches only. Tried in order until one gives a slip: the ones
 # SportyBet lists first (so the slip can be booked), then all of today's
@@ -91,12 +97,16 @@ def status(picks: List[Dict]) -> str:
         return "lost"
     if states and all(s in ("won", "void") for s in states):
         return "void" if all(s == "void" for s in states) else "won"
+    if states and all(s in ("won", "void", "unknown") for s in states):
+        return "open"       # every pick we could settle won; some no source could settle
     return "pending"
 
 
 def grade(s: Dict[str, Any], result_for: Callable[[Dict], Optional[Dict]]) -> bool:
-    """Settle a slip's picks from the results; True if anything changed."""
-    if s.get("status") not in ("pending",):
+    """Settle a slip's picks from the results — a cut slip's other picks too
+    (its status stays lost) — and a pick no source can settle within
+    tickets.EXPIRE_DAYS as "unknown". True if anything changed."""
+    if s.get("status") in (None, "none"):
         return False
     changed = False
     for p in s["picks"]:
@@ -104,15 +114,18 @@ def grade(s: Dict[str, Any], result_for: Callable[[Dict], Optional[Dict]]) -> bo
             continue
         res = result_for(p)
         verdict = tickets.grade_leg(p.get("market", ""), p.get("code", ""), res)
+        if verdict == "pending" and tickets.expired(p):
+            verdict = "unknown"
         if verdict != "pending":
             p["status"] = verdict
             if tickets._football(p.get("market", "")) and tickets._score_mark(res):
                 p["graded_on"] = tickets._score_mark(res)
             changed = True
-    new = status(s["picks"])
-    if new != s["status"]:
-        s["status"] = new
-        changed = True
+    if s["status"] in ("pending", "open"):
+        new = status(s["picks"])
+        if new != s["status"]:
+            s["status"] = new
+            changed = True
     return changed
 
 
@@ -237,18 +250,58 @@ def cut_by(s: Dict[str, Any]) -> Optional[str]:
     return f"{p['home']} v {p['away']}" if p else None
 
 
-def needs_remake(doc: Dict[str, Any], s: Dict[str, Any]) -> bool:
-    """A cut slip not yet dealt with, whose target hasn't had MAX_REMAKES."""
-    if s.get("status") != "lost" or s.get("remade"):
+def second_at(day: str) -> datetime:
+    """When a day's second slips are decided (UTC)."""
+    return window(day)[0] + timedelta(hours=SECOND_AT_HOUR)
+
+
+def match_keys(doc: Dict[str, Any]) -> List[List[str]]:
+    """[home, away, date] of every match on any of the day's slips, cut ones too."""
+    seen = []
+    for s in (doc.get("slips") or []) + (doc.get("cut") or []):
+        for p in s.get("picks") or []:
+            k = [p.get("home"), p.get("away"), p.get("date")]
+            if k not in seen:
+                seen.append(k)
+    return seen
+
+
+def needs_remake(doc: Dict[str, Any], s: Dict[str, Any], now: Optional[datetime] = None) -> bool:
+    """At 12pm (second_at): a slip cut by then, or a target that had no slip,
+    gets its second; a slip still running doesn't. Decided once (s["second"])."""
+    now = now or now_utc()
+    if s.get("second") or s.get("remade") or s.get("replaces") or now < second_at(doc["date"]):
         return False
-    return sum(1 for c in doc.get("cut") or [] if c.get("target") == s.get("target")) < MAX_REMAKES
+    if sum(1 for c in doc.get("cut") or [] if c.get("target") == s.get("target")) >= MAX_REMAKES:
+        return False
+    return s.get("status") in ("lost", "none")
+
+
+def second_decided(doc: Dict[str, Any], now: Optional[datetime] = None) -> bool:
+    """At 12pm, marks every slip that gets no second (still running, or won):
+    s["second"] = "not needed". True if anything was marked."""
+    now = now or now_utc()
+    if now < second_at(doc["date"]):
+        return False
+    changed = False
+    for s in doc.get("slips") or []:
+        if not s.get("second") and not s.get("remade") and not s.get("replaces") and s.get("status") not in ("lost", "none"):
+            s["second"] = "not needed"
+            changed = True
+    return changed
 
 
 def remake(doc: Dict[str, Any], i: int, new: Dict[str, Any], at: str) -> bool:
     """Put `new` in place of the cut slip doc["slips"][i] (kept in doc["cut"]).
-    Without a new slip (no matches left), the cut slip stays, marked. True if
-    a new slip went in."""
+    Without a new slip (no matches left), the cut slip stays, marked. A
+    target that had no slip just takes `new`. True if a new slip went in."""
     old = doc["slips"][i]
+    if old.get("status") == "none":
+        old["second"] = "tried"
+        if new.get("status") == "none":
+            return False
+        doc["slips"][i] = {**new, "made_at": at, "second": "first try at 12pm"}
+        return True
     if new.get("status") == "none":
         old["remade"] = "none"
         return False

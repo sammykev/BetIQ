@@ -5,7 +5,7 @@ import dynamic from "next/dynamic";
 import clsx from "clsx";
 import { useAuth } from "@clerk/nextjs";
 import {
-  AlertTriangle, Banknote, CheckCircle2, Cpu, Gauge, Globe2, LineChart as LineIcon,
+  AlertTriangle, Banknote, CalendarDays, CheckCircle2, Cpu, Gauge, Globe2, LineChart as LineIcon,
   Loader2, Megaphone, RefreshCw, Shield, Ticket, ToggleRight, Users,
 } from "lucide-react";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
@@ -17,6 +17,7 @@ import { UsersSection } from "@/components/admin/sections/Users";
 import { AccessSection } from "@/components/admin/sections/Access";
 import { PredictionsSection } from "@/components/admin/sections/Predictions";
 import { SportyBetSection } from "@/components/admin/sections/SportyBet";
+import { DailyOddsSection } from "@/components/admin/sections/DailyOdds";
 import { MessagingSection } from "@/components/admin/sections/Messaging";
 import { SystemSection } from "@/components/admin/sections/System";
 import { SecuritySection } from "@/components/admin/sections/Security";
@@ -34,6 +35,7 @@ const TABS = [
   { id: "access", label: "Access", icon: ToggleRight },
   { id: "predictions", label: "Predictions", icon: LineIcon },
   { id: "sportybet", label: "SportyBet", icon: Ticket },
+  { id: "daily", label: "Daily odds", icon: CalendarDays },
   { id: "messaging", label: "Messaging", icon: Megaphone },
   { id: "system", label: "System", icon: Cpu },
   { id: "security", label: "Security", icon: Shield },
@@ -164,6 +166,7 @@ export default function AdminPage() {
       case "access": return <AccessSection />;
       case "predictions": return <PredictionsSection />;
       case "sportybet": return <SportyBetSection />;
+      case "daily": return <DailyOddsSection />;
       case "messaging": return <MessagingSection />;
       case "system": return <SystemSection />;
       case "security": return <SecuritySection />;

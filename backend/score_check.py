@@ -108,7 +108,18 @@ async def check_day(r, d: str, fix: bool = False) -> int:
         espn = found["espn"]
         for k, e in entries.items():
             res = espn.get(k)
-            if res and matchday.corrects(e.get("result") or {}, res) and matchday.apply_result(e, res):
+            old = e.get("result") or {}
+            # Stats (corners, cards, shots) ESPN has and the stored final lacks: filled in
+            if res and old.get("status") == "finished" and res.get("status") == "finished" \
+                    and (old.get("hg"), old.get("ag")) == (res.get("hg"), res.get("ag")):
+                got = {s: res[s] for s in matchday.RESULT_STATS if old.get(s) is None and res.get(s) is not None}
+                if got:
+                    e["result"] = {**old, **got}
+                    e["grades"] = matchday.grade(e)
+                    fixed += 1
+                    print(f"  STATS   {e['home']} v {e['away']}: {', '.join(sorted(got))} from ESPN")
+                continue
+            if res and matchday.corrects(old, res) and matchday.apply_result(e, res):
                 fixed += 1
                 c = e["result"]["corrected"]
                 print(f"  FIXED   {e['home']} v {e['away']}: {c['was'][0]}-{c['was'][1]} ({c['from']}) → "

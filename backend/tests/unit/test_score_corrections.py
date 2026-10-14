@@ -99,3 +99,32 @@ def test_slip_reliability_keeps_bands_with_enough_legs():
     got = main.slip_reliability(rep)
     assert got == [{"lo": 0.7, "hi": 0.8, "said": 0.737, "won": 0.674, "settled": 690}]
     assert main.slip_reliability(None) == []
+
+
+def test_a_correction_takes_the_trusted_sources_stats():
+    e = _entry((2, 3), "sportybet")
+    e["result"]["corners"] = [9, 9]                       # the youth game's
+    matchday.apply_result(e, {"status": "finished", "hg": 3, "ag": 0, "source": "espn", "corners": [7, 2],
+                              "shots": [20, 5]})
+    assert e["result"]["corners"] == [7, 2] and e["result"]["shots"] == [20, 5]
+
+
+def test_a_cut_slips_other_picks_are_graded_and_its_status_stays_lost():
+    import daily_slips
+    pick = lambda h: {"home": h, "away": "X", "date": "2026-10-13", "market": "1x2", "code": "1", "status": "pending"}
+    s = {"target": 5, "status": "lost", "picks": [{**pick("A"), "status": "lost"}, pick("B")]}
+    assert daily_slips.grade(s, lambda p: {"status": "finished", "hg": 1, "ag": 0})
+    assert s["picks"][1]["status"] == "won" and s["status"] == "lost"
+
+
+def test_a_leg_no_source_settles_in_a_week_is_unknown():
+    import daily_slips
+    old = {"home": "A", "away": "B", "date": "2026-09-01", "time": "18:00", "market": "corners_ou", "code": "O95",
+           "status": "pending"}
+    t = {"status": "pending", "legs": [dict(old), {**old, "home": "C", "market": "1x2", "code": "1"}]}
+    results = {"A": {"status": "finished", "hg": 1, "ag": 0}, "C": {"status": "finished", "hg": 1, "ag": 0}}
+    tickets.settle(t, lambda l: results[l["home"]])                # no corners came in
+    assert [l["status"] for l in t["legs"]] == ["unknown", "won"] and t["status"] == "open"
+    s = {"target": 5, "status": "pending", "picks": [dict(old)]}
+    daily_slips.grade(s, lambda p: results[p["home"]])
+    assert s["picks"][0]["status"] == "unknown" and s["status"] == "open"
