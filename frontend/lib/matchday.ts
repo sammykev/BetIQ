@@ -22,6 +22,7 @@ export interface MatchdayPred {
   referee?: string;
   /** A club has fewer than 5 matches in the model's data */
   thin_history?: boolean;
+  league_unproven?: boolean;
 }
 
 export interface MatchdayMatch {

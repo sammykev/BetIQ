@@ -911,7 +911,11 @@ def _load_new_league_csv(path: str, league: str) -> pd.DataFrame:
     return out[out["Result"].isin(["H", "D", "A"])]
 
 
-MAIN_EXTRA_LEAGUES = {"BSA"}
+# The Brasileirão and the European leagues we publish (league_fixtures.py):
+# context rows — ratings and form, no training rows
+MAIN_EXTRA_LEAGUES = {"BSA", "JPL", "SPL", "GSL", "TSL", "AUT", "SUI", "DEN", "NOR", "SWE", "POL", "ROU"}
+# Leagues whose walk-forward check hasn't passed: published with a warning, kept out of slips
+_unproven_leagues: set = set()
 
 
 def _load_extra_leagues(known: Optional[set] = None, leagues: Optional[set] = None) -> pd.DataFrame:
@@ -1364,6 +1368,10 @@ def _build_predictions(predictor, fixtures: list, live_odds: dict) -> list:
                 odds = _sb_1x2(fx)
                 if not odds:
                     continue      # not priced on SportyBet yet: it waits (_publish_waiting_europe)
+            elif fx.get("league") in MAIN_EXTRA_LEAGUES and not all(float(odds.get(k) or 0) > 1 for k in ("1", "X", "2")):
+                # No odds feed for these leagues: SportyBet's prices once linked
+                # (_price_extra_leagues), the no-odds model till then
+                odds = _sb_1x2(fx) or odds
             model = _europe_predictor if (predictor is _predictor and _europe_covers(fx.get("league", ""))) \
                 else predictor
             tip = model.predict_match(
@@ -1380,6 +1388,8 @@ def _build_predictions(predictor, fixtures: list, live_odds: dict) -> list:
             tip = _blend_1x2(tip, odds)
             if _note_unknown_clubs(model, fx) or fx.get("needs_odds"):
                 tip = {**tip, "thin_history": True}
+            if fx.get("league") in _unproven_leagues:
+                tip = {**tip, "league_unproven": True}
             # Value bet detection: model prob vs bookmaker implied prob
             tip_code = tip.get("tip_code", "?")
             if tip_code == "1" and odds.get("1") and float(odds.get("1", 0)) > 1:
@@ -1550,6 +1560,21 @@ _europe_status: Dict[str, Any] = {"at": None, "fixtures": 0, "published": 0, "sk
 # with its 1X2 odds as the model's input and half the published chance
 # (_blend_1x2), and shown with the thin-history badge (kept out of slips)
 _europe_waiting: List[Dict] = []
+
+
+async def _fetch_more_leagues() -> list:
+    """Upcoming fixtures of the European leagues in league_fixtures (ESPN);
+    and which of them haven't passed their check yet."""
+    global _unproven_leagues
+    import league_fixtures
+    try:
+        report = await league_fixtures.fetch(PREDICTION_DAYS)
+    except Exception as e:
+        print(f"[Leagues] fetch failed: {e}")
+        return []
+    _unproven_leagues = league_fixtures.unproven(_get_redis())
+    print(f"[Leagues] {report['sources']}{'; errors ' + str(report['errors']) if report['errors'] else ''}")
+    return report["fixtures"]
 
 
 async def _fetch_europe_fixtures(predictor, training: pd.DataFrame) -> list:
@@ -1937,6 +1962,18 @@ async def _run_pipeline():
             _last_updated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
             await asyncio.to_thread(_save_predictions_cache)
             print(f"[Pipeline] +EL/UECL: {len(europe)} Europa/Conference League fixtures published.")
+
+        # ── More European leagues (ESPN fixtures; league_fixtures.py) ──
+        more = await _fetch_more_leagues()
+        if more:
+            fixtures.extend(more)
+            await asyncio.to_thread(_cache_team_crests, more)
+            predictions = await asyncio.to_thread(_build_predictions, predictor, fixtures, {})
+            _predictions_cache = predictions
+            _last_updated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+            await asyncio.to_thread(_save_predictions_cache)
+            print(f"[Pipeline] +{len(more)} fixtures from Belgium, Scotland, Greece, Turkey and the rest "
+                  f"({len(_unproven_leagues)} leagues still unproven).")
 
         if API_KEY:
             client = FootballDataClient(API_KEY)
@@ -7842,6 +7879,10 @@ async def _link_sportybet_events_now(trigger: str) -> Dict[str, Any]:
         status["europe_priced"] = await asyncio.to_thread(_publish_waiting_europe)
     except Exception as e:
         status["report"].append(f"Europa/Conference from SportyBet's odds: {type(e).__name__}: {e}")
+    try:
+        status["leagues_priced"] = await asyncio.to_thread(_price_extra_leagues)
+    except Exception as e:
+        status["report"].append(f"More European leagues from SportyBet's odds: {type(e).__name__}: {e}")
     status["seconds"] = round(time.monotonic() - started, 1)
     for p in _predictions_cache:
         p["sportybet"] = _sb_key(p.get("home", ""), p.get("away", ""), p.get("date", "")) in _sb_links
@@ -7916,6 +7957,36 @@ def _publish_waiting_europe() -> int:
         _last_updated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
         _save_predictions_cache()
     return len(new)
+
+
+def _price_extra_leagues() -> int:
+    """The published matches of the leagues no odds feed covers
+    (MAIN_EXTRA_LEAGUES) that were predicted without odds and SportyBet now
+    prices, predicted again with its prices; returns how many."""
+    global _predictions_cache, _last_updated
+    if _predictor is None or not _predictions_cache:
+        return 0
+    unknown = dict(_unknown_clubs)           # _build_predictions starts that list afresh
+    out, redone = [], 0
+    try:
+        for p in _predictions_cache:
+            if p.get("league") in MAIN_EXTRA_LEAGUES and not p.get("odds_home"):
+                odds = _sb_1x2(p)
+                new = _build_predictions(_predictor, [p], {f"{p['home']}:{p['away']}:{p.get('date', '')}": odds}) \
+                    if odds else []
+                if new:
+                    out.append({**{k: v for k, v in p.items() if k not in ("thin_history", "league_unproven")},
+                                **new[0]})
+                    redone += 1
+                    continue
+            out.append(p)
+    finally:
+        _unknown_clubs.update(unknown)
+    if redone:
+        _predictions_cache = out
+        _last_updated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        _save_predictions_cache()
+    return redone
 
 
 def _linked_event(selection: Dict[str, Any]) -> Optional[Dict]:
@@ -8828,9 +8899,11 @@ async def _optimize_request(body: Dict[str, Any],
                 and (not leagues or p.get("league") in leagues)]
     # A club the model has (next to) no matches for: its chances are mostly
     # guesswork, so the match stays out (the page lists what was left out)
-    thin = [{k: p.get(k) for k in ("home", "away", "date", "time", "league", "league_name", "flag")}
-            for p in upcoming if p.get("thin_history")]
-    upcoming = [p for p in upcoming if not p.get("thin_history")]
+    # A league whose check hasn't passed (league_unproven) is left out the same way
+    thin = [{**{k: p.get(k) for k in ("home", "away", "date", "time", "league", "league_name", "flag")},
+             **({"league_unproven": True} if p.get("league_unproven") and not p.get("thin_history") else {})}
+            for p in upcoming if p.get("thin_history") or p.get("league_unproven")]
+    upcoming = [p for p in upcoming if not (p.get("thin_history") or p.get("league_unproven"))]
     # Bookable = linked to a SportyBet event. Asked of the stored links, not
     # the prediction's "sportybet" flag: a predictions rebuild replaces the
     # predictions (flags and all) minutes before the next linking run.

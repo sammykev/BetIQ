@@ -369,6 +369,21 @@ def test_the_optimizer_leaves_out_thin_history_matches_and_lists_them(monkeypatc
     assert [(m["home"], m["away"]) for m in res["thin_history"]] == [("B", "B2")]
 
 
+def test_the_optimizer_leaves_out_unproven_leagues_too(monkeypatch):
+    import asyncio
+    day = "2030-06-15"
+    monkeypatch.setattr(main, "_predictions_cache", [
+        {**pred(home="A", away="A2", d=day, t="18:00"), "sport": "football"},
+        {**pred(home="C", away="C2", d=day, t="18:00"), "sport": "football", "league_unproven": True}])
+    monkeypatch.setattr(main, "_get_redis", lambda: None)
+    seen = []
+    monkeypatch.setattr(main, "_linked_event", lambda p: seen.append(p["home"]) or None)
+    res = asyncio.run(main._optimize_request({"min_odds": 2, "max_odds": 3, "bookable_only": True},
+                                             window=daily_slips.window(day)))
+    assert seen == ["A"]
+    assert [(m["home"], m.get("league_unproven")) for m in res["thin_history"]] == [("C", True)]
+
+
 def test_a_slip_below_break_even_isnt_offered(monkeypatch):
     import asyncio
     today = date.today().isoformat()

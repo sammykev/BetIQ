@@ -28,3 +28,13 @@ def test_keeps_league_rows_and_uefa_clubs():
     assert sbl.selected(data) == {"SB-CRO": "HNL"}                                 # the top flight, not Prva NL
     df = sbl.rows_frame(data)
     assert len(df) == 2 and set(df["league"]) == {"SB-CRO"} and list(df["Result"]) == ["H", "D"]
+
+
+def test_a_cup_stored_earlier_is_never_the_top_flight():
+    import collect_sb_leagues as c
+    data = c.empty()
+    data["uefa"] = {"Riga FC": "2025-08-01", "RFS": "2025-08-01"}
+    row = lambda t, d: {"Date": d, "HomeTeam": "Riga FC", "AwayTeam": "RFS", "FTHG": 1, "FTAG": 0,
+                        "Result": "H", "league": "SB-LVA", "tournament": t}
+    data["rows"] = {"1": row("Latvijas Kauss", "2025-05-01"), "2": row("Virsliga", "2025-06-01")}
+    assert c.selected(data) == {"SB-LVA": "Virsliga"}

@@ -47,6 +47,7 @@ COUNTRIES: Dict[str, str] = {
 }
 UEFA = re.compile(r"uefa (champions league|europa league|europa conference league|conference league)", re.I)
 NOT_LEAGUE = re.compile(r"cup|pokal|kupa|\bkup\b|coppa|copa|coupe|beker|taca|puchar|kupok|super ?cup|"
+                        r"kauss|pohar|kupi|kubok|winter|tournament|turnir|"
                         r"play-?off|qualif|friendl|relegation|promotion", re.I)
 
 
@@ -111,6 +112,8 @@ def selected(data: Dict[str, Any]) -> Dict[str, str]:
     teams: Dict[tuple, set] = {}
     for r in (data.get("rows") or {}).values():
         k = (r["league"], r.get("tournament") or "")
+        if NOT_LEAGUE.search(k[1]):
+            continue                      # a cup stored before the filter knew its name
         teams.setdefault(k, set()).update((r["HomeTeam"], r["AwayTeam"]))
     best: Dict[str, tuple] = {}
     for (code, name), ts in teams.items():

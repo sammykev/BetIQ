@@ -727,9 +727,9 @@ function MatchContent() {
           )}
         </div>
 
-        {prediction?.thin_history && (
+        {(prediction?.thin_history || prediction?.league_unproven) && (
           <p className="relative -mt-2 pb-4 px-4 flex justify-center">
-            <ThinHistoryBadge long />
+            <ThinHistoryBadge long league={!prediction?.thin_history} />
           </p>
         )}
 

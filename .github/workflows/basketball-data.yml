@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       job:
-        description: "backtest, elo_check, insights, fair_odds, football_blend, market_blend, basketball_blend, clubs, crests, ticket_review, market_calibration, edge_check, bb_quarters, calibration, tickets, site, scores, scores_fix, europe, europe_probe, europe_stored, sb_leagues (minutes: how long), pending, team_news, sentry, history (10 seasons of games), history_sample, props, props_sample, probe, or read_probe (the server's web probe)"
+        description: "backtest, elo_check, insights, fair_odds, football_blend, market_blend, basketball_blend, clubs, crests, ticket_review, market_calibration, edge_check, bb_quarters, calibration, tickets, site, scores, scores_fix, europe, europe_probe, europe_stored, sb_leagues (minutes: how long), extra_leagues, pending, team_news, sentry, history (10 seasons of games), history_sample, props, props_sample, probe, or read_probe (the server's web probe)"
         default: "backtest"
       minutes:
         description: "props: minutes of collection"
@@ -172,6 +172,14 @@ jobs:
         env:
           UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
         run: python score_check.py --fix
+
+      # Football: do our predictions hold up in Belgium, Scotland, Greece, Turkey and the
+      # other leagues we publish from ESPN? Saves which pass (check_extra_leagues.py)
+      - name: Extra leagues check
+        if: github.event.inputs.job == 'extra_leagues'
+        env:
+          UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
+        run: python check_extra_leagues.py
 
       # Football: do xG and the starting XI beat goals-only ratings? (check_team_news.py)
       - name: Team news check

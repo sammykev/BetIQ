@@ -30,8 +30,11 @@ ESPN_SLUGS = {
     "PL": "eng.1", "ELC": "eng.2", "PD": "esp.1", "SA": "ita.1", "BL1": "ger.1", "BL2": "ger.2",
     "FL1": "fra.1", "DED": "ned.1", "PPL": "por.1", "BSA": "bra.1",
     "CL": "uefa.champions", "EL": "uefa.europa", "UECL": "uefa.europa.conf", "EC": "uefa.euro", "WC": "fifa.world",
+    "JPL": "bel.1", "SPL": "sco.1", "GSL": "gre.1", "TSL": "tur.1", "AUT": "aut.1", "SUI": "sui.1",
+    "DEN": "den.1", "NOR": "nor.1", "SWE": "swe.1", "POL": "pol.1", "ROU": "rou.1",
 }
 CSV_DIR = os.path.join(os.path.dirname(__file__), "data", "football")
+EXTRA_CSV_DIR = os.path.join(os.path.dirname(__file__), "data", "football_extra")   # Belgium, Scotland, Greece, Turkey
 
 
 def slugs_for(league: str) -> List[str]:
@@ -269,6 +272,8 @@ def csv_results(days: Set[str], csv_dir: str = CSV_DIR) -> List[Dict]:
     the given dates (the current and last season's files)."""
     import pandas as pd
     files = sorted(glob.glob(os.path.join(csv_dir, "*.csv")))[-40:]
+    if csv_dir == CSV_DIR:
+        files += sorted(glob.glob(os.path.join(EXTRA_CSV_DIR, "*.csv")))[-12:]
     stamp = tuple((f, os.path.getmtime(f)) for f in files)
     if _csv_cache["key"] != stamp:
         rows = []

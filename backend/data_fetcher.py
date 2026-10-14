@@ -36,7 +36,7 @@ API_BASE = "https://api.football-data.org/v4"
 # SKIP_HOURS and then asked for again; it used to be skipped until the
 # server restarted, which left the site with no Premier League, La Liga,
 # Serie A... for days after one bad answer.
-ESPN_ONLY = {"EL", "UECL"}
+ESPN_ONLY = {"EL", "UECL", "JPL", "SPL", "GSL", "TSL", "AUT", "SUI", "DEN", "NOR", "SWE", "POL", "ROU"}
 NOT_IN_PLAN: set = set(ESPN_ONLY)
 SKIP_HOURS = 6
 _skipped_at: Dict[str, float] = {}
@@ -80,6 +80,18 @@ LEAGUES: Dict[str, Dict] = {
     "ELC": {"name": "Championship",     "country": "England", "flag": "🏴󠁧󠁢󠁥󠁮󠁧󠁿"},
     # Fixtures from ESPN (europe_fixtures.py): not in football-data.org's free plan
     "UECL": {"name": "Conference League", "country": "Europe", "flag": "🟢"},
+    # Fixtures from ESPN, history from football-data.co.uk (league_fixtures.py)
+    "JPL": {"name": "Belgian Pro League", "country": "Belgium", "flag": "🇧🇪"},
+    "SPL": {"name": "Scottish Premiership", "country": "Scotland", "flag": "🏴󠁧󠁢󠁳󠁣󠁴󠁿"},
+    "GSL": {"name": "Greek Super League", "country": "Greece", "flag": "🇬🇷"},
+    "TSL": {"name": "Süper Lig", "country": "Turkey", "flag": "🇹🇷"},
+    "AUT": {"name": "Austrian Bundesliga", "country": "Austria", "flag": "🇦🇹"},
+    "SUI": {"name": "Swiss Super League", "country": "Switzerland", "flag": "🇨🇭"},
+    "DEN": {"name": "Danish Superliga", "country": "Denmark", "flag": "🇩🇰"},
+    "NOR": {"name": "Eliteserien", "country": "Norway", "flag": "🇳🇴"},
+    "SWE": {"name": "Allsvenskan", "country": "Sweden", "flag": "🇸🇪"},
+    "POL": {"name": "Ekstraklasa", "country": "Poland", "flag": "🇵🇱"},
+    "ROU": {"name": "Romanian Liga I", "country": "Romania", "flag": "🇷🇴"},
 }
 
 

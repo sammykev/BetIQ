@@ -30,6 +30,8 @@ export interface Prediction {
   referee?: { name: string; games?: number; cards_factor?: number };
   /** A club has fewer than 5 matches in the model's data: left out of slips. */
   thin_history?: boolean;
+  /** A league whose walk-forward check hasn't passed: published with a warning, left out of slips. */
+  league_unproven?: boolean;
   /** The clubs' crests as the fixture feed gives them */
   home_crest?: string | null;
   away_crest?: string | null;
