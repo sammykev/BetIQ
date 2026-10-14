@@ -47,3 +47,4 @@ npm-debug.log*
 # Claude Code internal files (the design skills are kept: npx skills add …)
 .claude/*
 !.claude/skills/
+!.claude/settings.json
