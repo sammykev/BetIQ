@@ -185,6 +185,92 @@ def walk(matches: List[Dict], alpha: float, w: float, b: float, c: float) -> Lis
     return out
 
 
+def xg_probs(matches: List[Dict], alpha: float, w: float) -> Tuple[Dict[Tuple, Tuple], "Ratings"]:
+    """{(league, date, home, away): (p_home, p_draw, p_away)} from the ratings
+    before each match, and the ratings after the last one (for what's next)."""
+    R = Ratings(alpha)
+    out = {}
+    for m in matches:
+        mh, ma = R.expected(m, w)
+        g = grid(mh, ma)
+        out[(m["league"], m["date"], m["home"], m["away"])] = (float(g[DIFF > 0].sum()), float(g[DIFF == 0].sum()),
+                                                                float(g[DIFF < 0].sum()))
+        R.update(m)
+    return out, R
+
+
+# ── on our published predictions ───────────────────────────────────────────
+LEAGUE_CODES = {"PL": "Premier League", "PD": "LaLiga", "BL1": "Bundesliga", "SA": "Serie A", "FL1": "Ligue 1"}
+OVERLAY_WEIGHTS = tuple(round(0.1 * i, 1) for i in range(11))
+
+
+def find(probs: Dict[Tuple, Tuple], league: str, day: str, home: str, away: str) -> Optional[Tuple]:
+    """The xG model's chances for a stored match: same league, a day either side, both names alike."""
+    import matchday
+    d0 = date.fromisoformat(day)
+    best, score = None, 0.0
+    for (lg, d, h, a), p in probs.items():
+        if lg != league or abs((date.fromisoformat(d) - d0).days) > 1:
+            continue
+        sh, sa = matchday._similar(home, h), matchday._similar(away, a)
+        if min(sh, sa) >= 0.75 and sh + sa > score:
+            best, score = p, sh + sa
+    return best
+
+
+def blended(e: Dict, xg: Tuple, v: float) -> Optional[Tuple[float, float, float]]:
+    """The published 1X2 with `v` of the model's own half replaced by the xG
+    model's: published = ours_share·model + (1 − ours_share)·market."""
+    pred = e.get("pred") or {}
+    pub = [pred.get(k) for k in ("p_home", "p_draw", "p_away")]
+    if not all(isinstance(x, (int, float)) for x in pub):
+        return None
+    model = [pred.get(k) for k in ("p_home_model", "p_draw_model", "p_away_model")]
+    if all(isinstance(x, (int, float)) for x in model):
+        share = 0.5                                   # main.FOOTBALL_1X2_OURS
+        out = [p - share * m + share * ((1 - v) * m + v * x) for p, m, x in zip(pub, model, xg)]
+    else:
+        out = [(1 - v) * p + v * x for p, x in zip(pub, xg)]
+    s = sum(out)
+    return tuple(x / s for x in out) if s > 0 else None
+
+
+def overlay(r, probs: Dict[Tuple, Tuple], days_back: int = 120) -> Dict:
+    """Does mixing the xG model into our published 1X2 help? Weight chosen on
+    the earlier half of the stored matches, judged on the later half."""
+    from datetime import timedelta
+    rows = []
+    today = date.today()
+    for i in range(1, days_back + 1):
+        d = (today - timedelta(days=i)).isoformat()
+        raw = r.get(f"betiq:md:{d}")
+        for e in (json.loads(raw).values() if raw else []):
+            lg = LEAGUE_CODES.get(e.get("league") or "")
+            res = e.get("result") or {}
+            if not lg or res.get("status") != "finished" or res.get("hg") is None:
+                continue
+            xg = find(probs, lg, e["date"], e["home"], e["away"])
+            if xg:
+                outcome = 0 if res["hg"] > res["ag"] else 1 if res["hg"] == res["ag"] else 2
+                rows.append((e["date"], e, xg, outcome))
+    rows.sort(key=lambda t: t[0])
+    if len(rows) < 60:
+        return {"matches": len(rows), "note": "too few stored top-five-league matches"}
+    half = len(rows) // 2
+    ll = lambda p, o: -math.log(min(max(p[o], 1e-4), 1 - 1e-4))
+
+    def losses(v, part):
+        return [ll(b, o) for _, e, xg, o in part if (b := blended(e, xg, v))]
+    best = min(OVERLAY_WEIGHTS, key=lambda v: sum(losses(v, rows[:half])) / max(1, len(losses(v, rows[:half]))))
+    base, cand = losses(0.0, rows[half:]), losses(best, rows[half:])
+    d = [c - b for b, c in zip(base, cand)]
+    mean = sum(d) / len(d)
+    sd = math.sqrt(sum((x - mean) ** 2 for x in d) / (len(d) - 1)) if len(d) > 1 else 0
+    z = round(mean / (sd / math.sqrt(len(d))), 2) if sd > 0 else 0.0
+    return {"matches": len(rows), "test": len(d), "weight": best, "published": round(sum(base) / len(base), 4),
+            "with_xg": round(sum(cand) / len(cand), 4), "z": z}
+
+
 def _mean(rows, i, after: bool) -> float:
     xs = [r[i] for r in rows if (r[0] >= SPLIT) == after]
     return sum(xs) / len(xs) if xs else float("nan")
@@ -255,8 +341,16 @@ def main() -> None:
           f"attack power {rep['attack_power']}, regulars power {rep['regulars_power']}")
     print(f"  lineups vs xG alone: z {rep['z_lineups_vs_xg']}")
     print(f"  → use: {rep['use']}")
-    r.set(CONFIG_KEY, json.dumps({**rep["use"], "report": {k: rep[k] for k in ("matches", "test_matches", "table",
-                                                                                "z_lineups_vs_xg")},
+    probs, _ = xg_probs(matches, rep["alpha"], rep["xg_weight"] or 0.75)
+    ov = overlay(r, probs)
+    print(f"\nOn our published 1X2 (stored before kick-off), top five leagues: {ov}")
+    # The server mixes the xG model into our half of the 1X2 only if that
+    # helped on the later stored matches
+    use_overlay = ov.get("weight", 0) > 0 and ov.get("z", 0) < 0 and ov.get("with_xg", 9) < ov.get("published", 0)
+    rep["use"]["overlay_weight"] = ov["weight"] if use_overlay else 0.0
+    print(f"  → xG mixed into our 1X2 at {rep['use']['overlay_weight']}")
+    r.set(CONFIG_KEY, json.dumps({**rep["use"], "report": {**{k: rep[k] for k in ("matches", "test_matches", "table",
+                                                                                   "z_lineups_vs_xg")}, "overlay": ov},
                                   "at": date.today().isoformat()}))
 
 
