@@ -133,4 +133,4 @@ def test_cancelled_run_keeps_seasons_read():
     except asyncio.CancelledError:
         pass
     assert state["report"]["requests"] == 2
-    assert len(state["done"]) >= 1
+    assert "at" in state and state["done"] == []      # the first reads are the current season, never "done"
