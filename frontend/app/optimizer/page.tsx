@@ -80,7 +80,10 @@ interface BookResult { code: string | null; share_url: string | null; total_odds
 const MIN_TARGET = 1.5;
 const MAX_TARGET = 100_000;
 const SLIDER_STEPS = 1000;
-const QUICK = [2, 5, 10, 50, 100, 1000, 10_000];
+const QUICK = [2, 5, 10, 20, 50, 100, 1000, 10_000];
+// The daily odds' targets: picking one asks, by default, for a slip that's at
+// least break-even on our chances (1 in its odds), as the daily slips do
+const BREAK_EVEN_TARGETS = [5, 10, 20];
 const TOLERANCES = [0.02, 0.05, 0.1];
 
 const toSlider = (t: number) =>
@@ -276,6 +279,7 @@ export default function OptimizerPage() {
   const [tolerance, setTolerance] = useState(0.05);
   const [minProb, setMinProb] = useState(0.6);
   const [slipChance, setSlipChance] = useState<number | null>(null);
+  const [breakEven, setBreakEven] = useState(true);
   const [days, setDays] = useState(3);
   const [maxGames, setMaxGames] = useState(30);
   const [markets, setMarkets] = useState<string[]>(MARKETS.map(m => m.id));
@@ -390,7 +394,10 @@ export default function OptimizerPage() {
   const [booked, setBooked] = useState<BookResult | null>(null);
   const [copied, setCopied] = useState(false);
 
-  const setTarget = (t: number) => { setTargetOdds(t); setTyped(String(Number(t.toFixed(2)))); };
+  const setTarget = (t: number) => {
+    setTargetOdds(t); setTyped(String(Number(t.toFixed(2))));
+    setBreakEven(BREAK_EVEN_TARGETS.includes(t));
+  };
   const lo = Math.max(1.01, targetOdds * (1 - tolerance));
   const hi = targetOdds * (1 + tolerance);
   const validTarget = targetOdds >= MIN_TARGET && targetOdds <= MAX_TARGET;
@@ -409,6 +416,7 @@ export default function OptimizerPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ target_odds: targetOdds, min_odds: lo, max_odds: hi, min_prob: minProb, days, max_games: maxGames,
                                ...(slipChance ? { min_slip_chance: slipChance } : {}),
+                               ...(!slipChance && breakEven ? { min_win_chance: 1 / targetOdds } : {}),
                                ...request(),
                                sports: otherSports ? playing : ["football"],
                                // Servers from before multi-sport read one sport (or all)
@@ -497,7 +505,7 @@ export default function OptimizerPage() {
                   onChange={e => {
                     setTyped(e.target.value);
                     const v = Number(e.target.value.replace(/,/g, ""));
-                    if (v >= MIN_TARGET && v <= MAX_TARGET) setTargetOdds(v);
+                    if (v >= MIN_TARGET && v <= MAX_TARGET) { setTargetOdds(v); setBreakEven(BREAK_EVEN_TARGETS.includes(v)); }
                   }}
                   className="w-24 rounded-lg bg-surface-sunken border border-n-800 px-2 py-1.5 text-n-0 tnum outline-none focus:border-accent" />
               </label>
@@ -523,10 +531,19 @@ export default function OptimizerPage() {
               ))}
             </Setting>
             <Setting label="Whole slip at least">
-              <Chip active={slipChance === null} onClick={() => setSlipChance(null)}>Off</Chip>
+              <Chip active={slipChance === null && !breakEven} onClick={() => { setSlipChance(null); setBreakEven(false); }}>Off</Chip>
+              <Chip active={slipChance === null && breakEven} onClick={() => { setSlipChance(null); setBreakEven(true); }}>
+                Break-even (1 in {odds(targetOdds)})
+              </Chip>
               {SLIP_CHANCE.map(c => (
-                <Chip key={c} active={slipChance === c} onClick={() => setSlipChance(c)}>{Math.round(c * 100)}% to land</Chip>
+                <Chip key={c} active={slipChance === c} onClick={() => { setSlipChance(c); setBreakEven(false); }}>{Math.round(c * 100)}% to land</Chip>
               ))}
+              {slipChance === null && breakEven && (
+                <span className="basis-full text-xs text-n-400">
+                  Only a {odds(targetOdds)}x slip that lands at least {(100 / targetOdds).toFixed(targetOdds > 20 ? 1 : 0)}% of the
+                  time on our chances, break-even for its odds. If none does, we say so rather than build a long shot.
+                </span>
+              )}
               {slipChance !== null && (
                 <span className="basis-full text-xs text-n-400">
                   The highest odds (up to {odds(hi)}x) whose picks together land at least {Math.round(slipChance * 100)}% of the time.

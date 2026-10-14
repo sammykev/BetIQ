@@ -1,5 +1,5 @@
 """
-Daily odds: three slips a day at about 10x, 15x and 20x, built by the
+Daily odds: three slips a day at about 5x, 10x and 20x, built by the
 optimizer only from the day's own matches (football and basketball: see
 BB_FAMILIES for basketball's markets), and only from picks the model
 rates 80% or more, none of them priced at 2.0 odds or more (a long price on
@@ -26,7 +26,10 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import tickets
 
-TARGETS = (10, 15, 20)   # 50x and 100x were dropped (14 Oct 2026): they need so many legs they almost never land
+TARGETS = (5, 10, 20)    # 50x and 100x were dropped (14 Oct 2026): they need so many legs they almost never land
+# A slip goes out only if it's at least break-even on our (corrected) chances:
+# 1 in its odds (5x: 20%, 10x: 10%, 20x: 5%). Otherwise that target has no slip that day
+BREAK_EVEN = 1.0
 MIN_PROB = 0.80
 MAX_LEG_ODDS = 2.0      # every pick priced under this
 SPREAD = 0.07          # total odds within ±7% of the target
@@ -56,7 +59,8 @@ def request(target: float, attempt: Dict[str, Any]) -> Dict[str, Any]:
     return {"target_odds": target, "min_odds": round(target * (1 - SPREAD), 2),
             "max_odds": round(target * (1 + SPREAD), 2), "min_prob": MIN_PROB, "max_leg_odds": MAX_LEG_ODDS,
             "max_games": 30, "sport": "all", "bb_markets": list(BB_FAMILIES), "tn_markets": list(RK_FAMILIES),
-            "tt_markets": list(RK_FAMILIES), "no_props": True, **attempt}
+            "tt_markets": list(RK_FAMILIES), "no_props": True, "min_win_chance": round(BREAK_EVEN / target, 4),
+            **attempt}
 
 
 def _selection(p: Dict[str, Any]) -> Dict[str, Any]:

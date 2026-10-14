@@ -8705,6 +8705,11 @@ async def _optimize_request(body: Dict[str, Any],
         min_chance = float(body["min_slip_chance"]) if body.get("min_slip_chance") else None
         if min_chance is not None:
             min_chance = min(0.99, max(0.5, min_chance))
+        # A floor on the target-odds slip's win chance (e.g. 0.1 for a 10x slip:
+        # break-even); a slip below it isn't offered. The daily slips use 1/target
+        min_win = float(body["min_win_chance"]) if body.get("min_win_chance") else None
+        if min_win is not None:
+            min_win = min(0.5, max(0.0001, min_win))
         # Optional cap on each pick's price (the daily slips use it): picks at or above it are left out
         max_leg = float(body["max_leg_odds"]) if body.get("max_leg_odds") else None
         days = min(PREDICTION_DAYS, max(1, int(body.get("days", 3))))
@@ -8853,6 +8858,12 @@ async def _optimize_request(body: Dict[str, Any],
     if result is None and min_chance:
         return {"error": (f"No pick among {considered} matches is {min_chance:.0%} likely on its own, so no slip "
                           f"can be. Add markets, sports or days, or lower the slip's chance."),
+                "matches_considered": considered, "target": [lo, hi], "target_odds": target, "thin_history": thin}
+    if result is not None and min_win and not min_chance and (result.get("win_chance") or 0) < min_win:
+        return {"error": (f"No {target:,.0f}x slip from {considered} matches is at least {min_win:.0%} likely "
+                          f"(break-even for its odds): the best lands {result.get('win_chance', 0):.1%} of the time. "
+                          "Try a lower target, or more days, markets or sports."),
+                "best_win_chance": result.get("win_chance"), "min_win_chance": min_win,
                 "matches_considered": considered, "target": [lo, hi], "target_odds": target, "thin_history": thin}
     if result is None:
         return {"error": (f"No slip from {considered} matches gets near {target:,.2f}x. "
@@ -9100,7 +9111,7 @@ async def get_slip_reliability():
 
 @app.get("/api/daily-slips")
 async def get_daily_slips(day: str = Query("", alias="date"), _access=Depends(require_feature("daily_slips"))):
-    """A day's 10x / 15x / 20x slips with their SportyBet booking codes, each
+    """A day's 5x / 10x / 20x slips with their SportyBet booking codes, each
     pick graded and, while it's being played, its live score; and the record
     of every slip so far, and the day's cut slips (each replaced by a new
     one). Read-only: the slips and codes are made by the daily tick
@@ -9142,7 +9153,7 @@ async def track_daily_slip(request: Request, body: Dict[str, Any], _access=Depen
     try:
         target = float(body.get("target"))
     except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail="target must be 10, 15, 20, 50 or 100")
+        raise HTTPException(status_code=400, detail="target must be a slip's odds, e.g. 5, 10 or 20")
     doc = _daily_load(_get_redis(), d)
     s = next((x for x in (doc or {}).get("slips") or [] if float(x.get("target", 0)) == target), None)
     code = ((s or {}).get("booking") or {}).get("code")

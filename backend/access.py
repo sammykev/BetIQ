@@ -23,7 +23,7 @@ MAX_ALLOWED = 200   # accounts per feature
 # id, label, group, what it covers, default state, default tier
 REGISTRY: List[Dict[str, str]] = [
     {"id": "daily_slips", "label": "Daily odds", "group": "Pages",
-     "about": "Daily 10, 15 and 20 odds slips from picks the model rates 85%+",
+     "about": "Daily 5, 10 and 20 odds slips from picks the model rates 80%+, each at least break-even",
      "state": "on", "tier": "premium"},
     {"id": "optimizer", "label": "Optimizer: build a slip", "group": "Pages",
      "about": "Build a slip for a target odds", "state": "on", "tier": "premium"},

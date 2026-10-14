@@ -49,7 +49,7 @@ class TestSlips:
         assert sels[0]["sb"] == sb
 
     def test_five_slips_a_day(self):
-        assert daily_slips.TARGETS == (10, 15, 20)
+        assert daily_slips.TARGETS == (5, 10, 20)
 
     def test_only_the_days_own_matches(self):
         assert all(a["days"] == 1 for a in daily_slips.ATTEMPTS)
@@ -118,14 +118,16 @@ def test_built_once_booked_graded_and_recorded(api, monkeypatch, sportybet):
 
     asyncio.run(main._build_daily(today))
     got = c.get("/api/daily-slips").json()
-    ten, fifteen, twenty = got["slips"]
-    assert [s["target"] for s in got["slips"]] == [10, 15, 20]
-    assert (ten["target"], ten["status"], ten["win_chance"]) == (10, "pending", 0.16)
+    five, ten, twenty = got["slips"]
+    assert [s["target"] for s in got["slips"]] == [5, 10, 20]
+    assert (five["target"], five["status"], five["win_chance"]) == (5, "pending", 0.16)
     assert twenty["status"] == "none" and len([b for b in calls if b["target_odds"] == 20]) == len(daily_slips.ATTEMPTS)
+    # Each asks for at least break-even: 1 in its odds
+    assert {b["target_odds"]: b["min_win_chance"] for b in calls} == {5: 0.2, 10: 0.1, 20: 0.05}
     # Booked by the server, one code per slip, the same for everyone
-    assert ten["booking"]["code"] == "CODE1" and fifteen["booking"]["code"] == "CODE2"
-    assert ten["booking"]["football_com"]["code"] == "FC1"
-    assert (ten["booking"]["booked"], ten["booking"]["of"]) == (1, 1) and "on_code" not in ten["booking"]
+    assert five["booking"]["code"] == "CODE1" and ten["booking"]["code"] == "CODE2"
+    assert five["booking"]["football_com"]["code"] == "FC1"
+    assert (five["booking"]["booked"], five["booking"]["of"]) == (1, 1) and "on_code" not in five["booking"]
     assert "booking" not in twenty and len(sportybet[1]) == 2
     # Kept: asking again (or the tick running again) doesn't rebuild or rebook
     n = len(calls)
@@ -142,7 +144,7 @@ def test_built_once_booked_graded_and_recorded(api, monkeypatch, sportybet):
     assert [s["status"] for s in got["slips"]] == ["won", "won", "none"]
     assert got["slips"][0]["picks"][0]["live"]["score"] == [2, 1]
     c.get("/api/daily-slips")
-    assert c.get("/api/daily-slips").json()["record"] == {"10": {"won": 1, "lost": 0}, "15": {"won": 1, "lost": 0}}
+    assert c.get("/api/daily-slips").json()["record"] == {"5": {"won": 1, "lost": 0}, "10": {"won": 1, "lost": 0}}
     saved = json.loads(api.kv[f"betiq:daily:{today}"])
     assert "live" not in saved["slips"][0]["picks"][0]          # live scores are never stored
 
@@ -252,7 +254,7 @@ def test_an_account_can_track_the_slip(api, monkeypatch, sportybet):
     today = date.today().isoformat()
     asyncio.run(main._build_daily(today))
     c = TestClient(main.app)
-    r = c.post("/api/daily-slips/track", json={"date": today, "target": 10, "uid": "user_abc"}).json()
+    r = c.post("/api/daily-slips/track", json={"date": today, "target": 5, "uid": "user_abc"}).json()
     assert r == {"tracked": True, "code": "CODE1"}
     [ticket] = json.loads(api.kv[main._ukey("user_abc", "tickets")])
     assert ticket["code"] == "CODE1" and ticket["source"] == "daily" and ticket["legs"][0]["odds"] == 1.2
@@ -292,18 +294,18 @@ class TestCut:
 
         async def optimize(body, window=None):
             self.windows.append(window)
-            if body["target_odds"] != 10:
+            if body["target_odds"] != 5:
                 return {"error": "Not enough picks"}
             if not self.next:
                 return {"error": "No matches left today"}
-            return result(10, self.next, time="23:59")
+            return result(5, self.next, time="23:59")
         monkeypatch.setattr(main, "_optimize_request", optimize)
         asyncio.run(main._build_daily(today))
         self.today, self.api = today, api
         return today
 
     def cut(self):
-        """Arsenal v Chelsea ends 0-0: over 1.5 loses, the 10x slip is cut."""
+        """Arsenal v Chelsea ends 0-0: over 1.5 loses, the 5x slip is cut."""
         d = {}
         matchday.merge_predictions(d, [pred(d=self.today, t="00:00")], NOW - timedelta(days=1))
         matchday.apply_result(d["arsenal|chelsea"], finished(0, 0))
@@ -315,12 +317,12 @@ class TestCut:
         self.cut()
         asyncio.run(main._daily_tick())
         got = TestClient(main.app).get("/api/daily-slips").json()
-        ten = got["slips"][0]
-        assert (ten["status"], ten["picks"][0]["home"], ten["booking"]["code"]) == ("pending", "Spurs", "CODE2")
-        assert ten["replaces"] == {"code": "CODE1", "cut_by": "Arsenal v Chelsea", "total_odds": 10}
+        five = got["slips"][0]
+        assert (five["status"], five["picks"][0]["home"], five["booking"]["code"]) == ("pending", "Spurs", "CODE2")
+        assert five["replaces"] == {"code": "CODE1", "cut_by": "Arsenal v Chelsea", "total_odds": 5}
         [old] = got["cut"]
         assert (old["status"], old["booking"]["code"]) == ("lost", "CODE1")
-        assert got["record"]["10"] == {"won": 0, "lost": 1}          # the cut slip counts
+        assert got["record"]["5"] == {"won": 0, "lost": 1}           # the cut slip counts
         assert self.windows[-1] == daily_slips.window(day)          # the same Lagos day
         # Settled once: another tick doesn't remake or rebook it
         asyncio.run(main._daily_tick())
@@ -360,3 +362,18 @@ def test_the_optimizer_leaves_out_thin_history_matches_and_lists_them(monkeypatc
                                              window=daily_slips.window(day)))
     assert seen == ["A"]
     assert [(m["home"], m["away"]) for m in res["thin_history"]] == [("B", "B2")]
+
+
+def test_a_slip_below_break_even_isnt_offered(monkeypatch):
+    import asyncio
+    today = date.today().isoformat()
+    monkeypatch.setattr(main, "_predictions_cache", [{**pred(d=today), "sport": "football"}])
+    monkeypatch.setattr(main, "_get_redis", lambda: None)
+
+    async def solve(*a, **k):
+        return {"picks": [], "total_odds": 10.0, "win_chance": 0.07, "within_target": True}
+    monkeypatch.setattr(main, "_solve", solve)
+    body = {"target_odds": 10, "min_odds": 9.3, "max_odds": 10.7, "min_prob": 0.5, "no_live_check": True}
+    got = asyncio.run(main._optimize_request({**body, "min_win_chance": 0.1}))
+    assert "at least 10% likely" in got["error"] and got["best_win_chance"] == 0.07
+    assert "error" not in asyncio.run(main._optimize_request(body))          # no floor asked: offered
