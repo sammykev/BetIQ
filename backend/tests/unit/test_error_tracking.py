@@ -31,3 +31,9 @@ def test_from_redis_only_when_there_is_one(monkeypatch):
     assert error_tracking.init_from_redis(_R(None)) is False and seen == []
     assert error_tracking.init_from_redis(_R(b"https://k@o1.ingest.sentry.io/2")) is True
     assert seen == ["https://k@o1.ingest.sentry.io/2"]
+
+
+def test_scrub_drops_cancelled_tasks():
+    import asyncio
+    assert error_tracking._scrub({"message": "x"}, {"exc_info": (asyncio.CancelledError, None, None)}) is None
+    assert error_tracking._scrub({"message": "x"}, {"exc_info": (ValueError, None, None)}) is not None

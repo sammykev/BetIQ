@@ -9,6 +9,7 @@ Nothing about visitors is sent: no cookies, no headers, no query strings, no
 request bodies, no IP addresses.
 """
 
+import asyncio
 import logging
 import os
 
@@ -17,7 +18,10 @@ DSN_KEY = "betiq:settings:sentry_dsn"
 _started = False
 
 
-def _scrub(event, _hint):
+def _scrub(event, hint):
+    exc = (hint or {}).get("exc_info")
+    if exc and exc[0] is not None and issubclass(exc[0], asyncio.CancelledError):
+        return None                               # a task stopped by a shutdown or redeploy, not a bug
     req = event.get("request")
     if isinstance(req, dict):
         for k in ("headers", "cookies", "query_string", "data", "env"):

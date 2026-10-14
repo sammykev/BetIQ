@@ -74,6 +74,16 @@ async def collect_past(get_json, state: Dict[str, Any], today: date, sleep, paus
     done = set(state.get("done") or [])
     report: Dict[str, Any] = {"requests": 0, "found": 0, "failed": []}
     current = season_start(today)
+    try:
+        await _read_seasons(get_json, state, today, sleep, pause, max_requests, refs, done, report, current)
+    finally:                                      # also when cancelled (a redeploy): keep what was read
+        state["done"] = sorted(done)
+        state["at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        state["report"] = report
+    return report
+
+
+async def _read_seasons(get_json, state, today, sleep, pause, max_requests, refs, done, report, current) -> None:
     for code, season in seasons_to_read(state, today):
         if report["requests"] >= max_requests:
             break
@@ -92,7 +102,3 @@ async def collect_past(get_json, state: Dict[str, Any], today: date, sleep, paus
                 refs[k] = m["referee"]
         if season != current:
             done.add(f"{code}|{season}")
-    state["done"] = sorted(done)
-    state["at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    state["report"] = report
-    return report

@@ -112,3 +112,25 @@ class TestServer:
         out = main._with_club_referees(history)
         assert out.loc[0, "Referee"] == "Simon Hooper"
         assert main._fd_refs_status["refs"] == 1 and main._fd_refs_status["seasons_done"] == 1
+
+
+def test_cancelled_run_keeps_seasons_read():
+    import asyncio
+    from datetime import date
+    calls = []
+
+    async def get_json(url):
+        calls.append(url)
+        return {"matches": []}
+
+    async def sleep(_):
+        if len(calls) >= 2:
+            raise asyncio.CancelledError
+
+    state = {}
+    try:
+        asyncio.run(rs.collect_past(get_json, state, date(2026, 10, 14), sleep))
+    except asyncio.CancelledError:
+        pass
+    assert state["report"]["requests"] == 2
+    assert len(state["done"]) >= 1

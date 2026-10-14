@@ -8425,9 +8425,15 @@ async def _collect_fd_referees(trigger: str = "schedule") -> Dict[str, Any]:
         return {"skipped": "no Redis"}
     state = await asyncio.to_thread(_fd_refs_load, r)
     fd = FootballDataClient(API_KEY)
-    async with httpx.AsyncClient() as hc:
-        report = await referee_sources.collect_past(lambda url: fd._get(hc, url), state, date.today(), asyncio.sleep)
-    await asyncio.to_thread(lambda: r.set(referee_sources.REFS_KEY, gzip.compress(json.dumps(state, separators=(",", ":")).encode())))
+    def save():
+        r.set(referee_sources.REFS_KEY, gzip.compress(json.dumps(state, separators=(",", ":")).encode()))
+    try:
+        async with httpx.AsyncClient() as hc:
+            report = await referee_sources.collect_past(lambda url: fd._get(hc, url), state, date.today(), asyncio.sleep)
+    except asyncio.CancelledError:                # the server is stopping (a redeploy): keep the seasons read so far
+        save()
+        raise
+    await asyncio.to_thread(save)
     _fd_refs_status.update(at=state.get("at"), report=report, refs=len(state.get("refs") or {}),
                            seasons_done=len(state.get("done") or []), trigger=trigger)
     print(f"[Referees] football-data.org: {report['found']} new past referees, {report['requests']} requests")
