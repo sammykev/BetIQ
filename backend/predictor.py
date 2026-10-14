@@ -94,6 +94,36 @@ LEAGUE_OFFSET_PRIOR = {"PL": 0.0, "PD": -15.0, "SA": -25.0, "BL1": -25.0, "FL1":
                        "POL": -200.0, "SWE": -210.0, "ROU": -230.0,
                        "CZE": -170.0, "ISR": -220.0, "CYP": -220.0, "FIN": -320.0, "IRL": -330.0,
                        "NIR": -420.0, "MLT": -430.0, "WAL": -450.0}
+# SportyBet's top flights (group B: collect_sb_leagues, as context rows) are
+# islands — their clubs only meet each other, so a Bosnian title contender's
+# Elo reads like a Premier League side's. Their offsets apply always (with
+# LEAGUE_STRENGTH off: measured from SB_REFERENCE, the level of the leagues
+# these clubs meet in Europe — Greece, Turkey, Austria, Switzerland), started
+# from UEFA's country ranking and, with LEAGUE_STRENGTH on, moved by results.
+SB_LEAGUE_PRIOR = {"SB-SRB": -200.0, "SB-CRO": -190.0, "SB-UKR": -200.0, "SB-HUN": -260.0, "SB-SVK": -270.0,
+                   "SB-SVN": -290.0, "SB-BUL": -280.0, "SB-AZE": -300.0, "SB-KAZ": -320.0, "SB-BIH": -330.0,
+                   "SB-ISL": -330.0, "SB-GEO": -340.0, "SB-BLR": -340.0, "SB-MDA": -360.0, "SB-ALB": -360.0,
+                   "SB-ARM": -380.0, "SB-LVA": -380.0, "SB-KOS": -380.0, "SB-LTU": -390.0, "SB-MKD": -390.0,
+                   "SB-MNE": -390.0, "SB-EST": -400.0, "SB-LUX": -420.0, "SB-FRO": -420.0, "SB-LIE": -450.0,
+                   "SB-GIB": -520.0, "SB-AND": -520.0, "SB-SMR": -560.0}
+SB_DEFAULT_PRIOR = -380.0
+SB_REFERENCE = -150.0
+
+
+def is_sb_league(league) -> bool:
+    return str(league or "").startswith("SB-")
+
+
+def domestic(league) -> bool:
+    return league in DOMESTIC_LEAGUES or is_sb_league(league)
+
+
+def offset_prior(league: str) -> float:
+    if is_sb_league(league):
+        return SB_LEAGUE_PRIOR.get(league, SB_DEFAULT_PRIOR)
+    return LEAGUE_OFFSET_PRIOR.get(league, 0.0)
+
+
 LEAGUE_K = 6.0          # league offset learning rate per cross-league match
 STRENGTH_TEAM_K = 0.5   # share of the normal Elo K a strength-only match moves the teams by
 
@@ -465,13 +495,12 @@ class LeaguePredictor:
 
     # ── league strength ──────────────────────────────────────────────────
     def _offset(self, team: str) -> float:
-        if not getattr(self, "use_league_strength", False):
-            return 0.0
         league = getattr(self, "team_league", {}).get(team)
         if league is None:
             return 0.0
-        offsets = self.league_offset
-        return offsets.get(league, LEAGUE_OFFSET_PRIOR.get(league, 0.0))
+        if not getattr(self, "use_league_strength", False):
+            return offset_prior(league) - SB_REFERENCE if is_sb_league(league) else 0.0
+        return self.league_offset.get(league, offset_prior(league))
 
     def strength(self, team: str) -> float:
         """Elo on one scale across leagues: the team's Elo plus its league's offset."""
@@ -479,7 +508,7 @@ class LeaguePredictor:
 
     def _note_league(self, team: str, league: str) -> None:
         """Record a team's domestic league; on a change, carry its strength over."""
-        if not league or league not in DOMESTIC_LEAGUES:
+        if not league or not domestic(league):
             return
         old = self.team_league.get(team)
         if old == league:
@@ -507,7 +536,7 @@ class LeaguePredictor:
         lh, la = self.team_league.get(home), self.team_league.get(away)
         if getattr(self, "use_league_strength", False) and lh and la and lh != la:
             for lg, sign in ((lh, 1.0), (la, -1.0)):
-                self.league_offset[lg] = self.league_offset.get(lg, LEAGUE_OFFSET_PRIOR.get(lg, 0.0)) + sign * LEAGUE_K * delta
+                self.league_offset[lg] = self.league_offset.get(lg, offset_prior(lg)) + sign * LEAGUE_K * delta
 
     def context_update(self, r) -> None:
         """A context row (a league CSV row): ratings and form, no training
@@ -715,7 +744,7 @@ class LeaguePredictor:
             home, away = self.canon(home), self.canon(away)
         self._init(home)
         self._init(away)
-        if competition in DOMESTIC_LEAGUES:
+        if domestic(competition):
             self._note_league(home, competition)
             self._note_league(away, competition)
         # Shots on target, where the source has them (the league CSVs, ESPN)

@@ -113,3 +113,35 @@ class TestContextRows:
         assert "Flamengo" not in plain.team_stats
         assert len(withctx.team_stats["Flamengo"]["gf"]) == 80
         assert withctx.elo.get("Flamengo") != 1500 and withctx._league_home_goals == plain._league_home_goals
+
+
+class TestSportyBetLeagues:
+    """Group B (SportyBet-only) leagues: their offsets apply even with league strength off."""
+
+    def test_off_measured_from_the_reference(self):
+        m = model(on=False)
+        m._note_league("Borac Banja Luka", "SB-BIH")
+        m._note_league("Arsenal", "PL")
+        assert m.strength("Arsenal") == m.elo.get("Arsenal")
+        assert m.strength("Borac Banja Luka") - m.elo.get("Borac Banja Luka") == \
+            pr.SB_LEAGUE_PRIOR["SB-BIH"] - pr.SB_REFERENCE
+
+    def test_on_uses_the_prior_then_learns(self):
+        m = model(on=True)
+        m._note_league("Borac Banja Luka", "SB-BIH")
+        m._note_league("Panathinaikos", "GSL")
+        assert m.strength("Borac Banja Luka") - m.elo.get("Borac Banja Luka") == pr.SB_LEAGUE_PRIOR["SB-BIH"]
+        m._strength_update("Panathinaikos", "Borac Banja Luka", "A")
+        assert m.league_offset["SB-BIH"] > pr.SB_LEAGUE_PRIOR["SB-BIH"]
+
+    def test_unknown_country_gets_the_default(self):
+        m = model(on=True)
+        m._note_league("FC Nowhere", "SB-XYZ")
+        assert m.strength("FC Nowhere") - m.elo.get("FC Nowhere") == pr.SB_DEFAULT_PRIOR
+
+    def test_same_league_match_unchanged(self):
+        m = model(on=False)
+        for t in ("Borac Banja Luka", "Zrinjski"):
+            m._note_league(t, "SB-BIH")
+        assert m.strength("Borac Banja Luka") - m.strength("Zrinjski") == \
+            m.elo.get("Borac Banja Luka") - m.elo.get("Zrinjski")
