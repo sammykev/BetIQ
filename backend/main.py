@@ -9780,6 +9780,21 @@ async def _load_fbref_data():
     print(f"[fbref] Loaded cards data ({len(_cards_df)} teams), corners data ({len(_corners_df)} teams)")
 
 
+async def _clubelo_refresh() -> None:
+    import clubelo
+    r = _get_redis()
+    if not r:
+        return
+    def run():
+        with httpx.Client(follow_redirects=True, headers={"User-Agent": "BetIQ/1.0"}) as c:
+            return clubelo.refresh(r, c)
+    try:
+        st = await asyncio.to_thread(run)
+        print(f"[ClubElo] {st}")
+    except Exception as e:
+        print(f"[ClubElo] refresh failed: {e}")
+
+
 @app.on_event("startup")
 async def startup():
     # `docker compose kill -s SIGUSR1 api` prints every thread's stack to the
@@ -9811,6 +9826,9 @@ async def startup():
     asyncio.create_task(_load_fbref_data())
     # results fetcher runs via scheduler only — not on boot to avoid API contention with pipeline
     scheduler.add_job(_run_pipeline, "interval", hours=12, id="refresh")
+    # ClubElo (clubelo.py): today's ratings, and the weekly history a few at a time
+    scheduler.add_job(_clubelo_refresh, "interval", hours=2, id="clubelo",
+                      next_run_time=datetime.now() + timedelta(minutes=4))
     scheduler.add_job(lambda: error_tracking.init_from_redis(_get_redis()), "interval", hours=1, id="sentry_dsn")
     scheduler.add_job(_load_fbref_data, "interval", days=7, id="fbref_refresh")
     scheduler.add_job(_fetch_and_save_results, "interval", hours=3, id="results_refresh")

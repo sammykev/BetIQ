@@ -59,6 +59,13 @@ jobs:
           UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
         run: python collect_club_cups.py --leagues --minutes ${{ github.event.inputs.league_minutes || '45' }}
 
+      # The other countries' top flights from SportyBet's results (collect_sb_leagues.py)
+      - name: Collect SportyBet leagues
+        if: github.event.inputs.probe != 'true'
+        env:
+          UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
+        run: python collect_sb_leagues.py --minutes 20
+
       - name: Check, then train and publish if adopted
         if: github.event.inputs.probe != 'true'
         env:

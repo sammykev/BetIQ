@@ -346,6 +346,11 @@ def inputs(app, seasons: int = 2) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFr
                          set(extras.get("AwayTeam", [])))
     if not small.empty:
         extras = pd.concat([extras, small], ignore_index=True) if not extras.empty else small
+    # The top flights of the other countries with clubs in Europe, from
+    # SportyBet's results (collect_sb_leagues.py): Bulgaria, Croatia, Serbia…
+    sb = sb_leagues(names | set(extras.get("HomeTeam", [])) | set(extras.get("AwayTeam", [])), r)
+    if not sb.empty:
+        extras = pd.concat([extras, sb], ignore_index=True) if not extras.empty else sb
     espn = club_cups.rows_frame(club_cups.load(r), EUROPE_CODES)
     return league, extras, espn, ucl
 
@@ -364,6 +369,27 @@ def espn_leagues(data: Dict[str, Any], known: set) -> pd.DataFrame:
         df[col] = [f"{n} ({lg})" if normalise(n) in clash else n for n, lg in zip(df[col], df["league"])]
     df["Context"] = True
     print(f"[Europe] ESPN leagues: {len(df)} matches for ratings only "
+          f"({', '.join(f'{k} {v}' for k, v in df['league'].value_counts().items())})")
+    return df
+
+
+def sb_leagues(known: set, r) -> pd.DataFrame:
+    """SportyBet's top flights of the countries no other source covers, as
+    context rows (ratings and form only); name clashes get the league added."""
+    import collect_sb_leagues
+    from team_names import normalise
+    try:
+        df = collect_sb_leagues.rows_frame(collect_sb_leagues.load(r))
+    except Exception as e:
+        print(f"[Europe] SportyBet leagues not read: {e}")
+        return pd.DataFrame()
+    if df.empty:
+        return df
+    clash = {normalise(n) for n in known}
+    for col in ("HomeTeam", "AwayTeam"):
+        df[col] = [f"{n} ({lg})" if normalise(n) in clash else n for n, lg in zip(df[col], df["league"])]
+    df["Context"] = True
+    print(f"[Europe] SportyBet leagues: {len(df)} matches for ratings only "
           f"({', '.join(f'{k} {v}' for k, v in df['league'].value_counts().items())})")
     return df
 

@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       job:
-        description: "backtest, elo_check, insights, fair_odds, football_blend, market_blend, basketball_blend, clubs, crests, ticket_review, market_calibration, edge_check, bb_quarters, calibration, tickets, site, scores, scores_fix, europe, europe_probe, pending, team_news, sentry, history (10 seasons of games), history_sample, props, props_sample, probe, or read_probe (the server's web probe)"
+        description: "backtest, elo_check, insights, fair_odds, football_blend, market_blend, basketball_blend, clubs, crests, ticket_review, market_calibration, edge_check, bb_quarters, calibration, tickets, site, scores, scores_fix, europe, europe_probe, europe_stored, sb_leagues (minutes: how long), pending, team_news, sentry, history (10 seasons of games), history_sample, props, props_sample, probe, or read_probe (the server's web probe)"
         default: "backtest"
       minutes:
         description: "props: minutes of collection"
@@ -151,10 +151,19 @@ jobs:
 
       # Wider European league data: ClubElo, API-Football's leagues and quota, SportyBet's results depth
       - name: Europe data probe
-        if: github.event.inputs.job == 'europe_probe'
+        if: github.event.inputs.job == 'europe_probe' || github.event.inputs.job == 'europe_stored'
         env:
           APIFOOTBALL_KEY: ${{ secrets.APIFOOTBALL_KEY }}
+          UPSTASH_REDIS_URL: ${{ github.event.inputs.job == 'europe_stored' && secrets.UPSTASH_REDIS_URL || '' }}
         run: python europe_data_probe.py
+
+      # Top flights of the European countries no other source covers, from SportyBet's
+      # results (collect_sb_leagues.py): nightly a few minutes; by hand, the backfill
+      - name: SportyBet leagues
+        if: github.event_name == 'schedule' || github.event.inputs.job == 'sb_leagues'
+        env:
+          UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
+        run: python collect_sb_leagues.py --minutes ${{ github.event.inputs.job == 'sb_leagues' && github.event.inputs.minutes || '10' }}
 
       # Repair: ESPN's final on every match a weaker source scored wrong (last 14 days);
       # the server then grades those tickets again

@@ -72,7 +72,22 @@ async def sportybet_depth():
             print(f"SportyBet results {back} days back: {type(e).__name__}: {e}")
 
 
+def stored() -> bool:
+    """What the server and the collectors have stored, when Redis is reachable."""
+    import model_store
+    r = model_store._client()
+    if r is None:
+        return False
+    import clubelo as ce
+    import collect_sb_leagues as sbl
+    print(f"ClubElo (fetched by the server): {r.get(ce.STATUS_KEY)}; {len(ce.latest(r))} clubs in the latest")
+    print(f"SportyBet leagues: {sbl.summary(sbl.load(r))}")
+    return True
+
+
 async def main():
+    if stored():
+        return
     async with httpx.AsyncClient(follow_redirects=True) as c:
         await clubelo(c)
         await api_football(c)
