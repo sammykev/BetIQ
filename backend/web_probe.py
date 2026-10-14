@@ -9,6 +9,8 @@ data" workflow's read_probe job prints them.
    whether its API is SportyBet's (same paths, Sportradar event ids).
 2. SportyBet tennis and table tennis: a day's results (their fields, set
    and point scores) and the markets on a listed match.
+3. SofaScore: whether it answers this server (plain and as Chrome), and its
+   basketball finals for the legs no other source has scored.
 """
 
 import json
@@ -128,9 +130,53 @@ async def sportybet_racket() -> Dict[str, Any]:
     return out
 
 
+SOFA_HOSTS = ("https://api.sofascore.com/api/v1", "https://www.sofascore.com/api/v1")
+# Legs still pending with no result anywhere else: (sport, day, words in the names)
+SOFA_LOOKUPS = [("basketball", "2026-10-07", ("bourges", "chartres")),
+                ("basketball", "2026-10-08", ("fribourg", "kleinbasel", "baren"))]
+
+
+async def sofascore() -> Dict[str, Any]:
+    import httpx
+    from curl_cffi.requests import AsyncSession
+    import international_fixtures as intl
+    out: Dict[str, Any] = {"access": {}, "lookups": []}
+    today = datetime.now(timezone.utc).date().isoformat()
+    usable = None
+    async with httpx.AsyncClient(timeout=20, headers={"User-Agent": "Mozilla/5.0"}) as plain, \
+            AsyncSession(impersonate=intl.IMPERSONATE, timeout=20) as chrome:
+        for host in SOFA_HOSTS:
+            for name, sess, kw in (("plain", plain, {}), ("chrome", chrome, {"headers": intl._SOFASCORE_HEADERS})):
+                res = await _get(sess, f"{host}/sport/basketball/scheduled-events/{today}", **kw)
+                out["access"][f"{name} {host}"] = {k: res.get(k) for k in ("status", "bytes", "error")} | \
+                    {"head": (res.get("head") or "")[:120]}
+                if usable is None and res.get("status") == 200 and res.get("json"):
+                    usable = (sess, kw, host)
+        if not usable:
+            return out
+        sess, kw, host = usable
+        out["using"] = host
+        for sport, day, words in SOFA_LOOKUPS:
+            res = await _get(sess, f"{host}/sport/{sport}/scheduled-events/{day}", **kw)
+            evs = (res.get("json") or {}).get("events") or []
+            for e in evs:
+                names = f"{(e.get('homeTeam') or {}).get('name')} {(e.get('awayTeam') or {}).get('name')}".lower()
+                if sum(w in names for w in words) >= 2 or (len(words) == 2 and any(w in names for w in words)):
+                    out["lookups"].append({
+                        "day": day, "id": e.get("id"), "tournament": (e.get("tournament") or {}).get("name"),
+                        "home": (e.get("homeTeam") or {}).get("name"), "away": (e.get("awayTeam") or {}).get("name"),
+                        "status": (e.get("status") or {}).get("type"), "start": e.get("startTimestamp"),
+                        "score": [(e.get("homeScore") or {}).get("current"), (e.get("awayScore") or {}).get("current")],
+                        "periods": [[(e.get("homeScore") or {}).get(f"period{i}"),
+                                     (e.get("awayScore") or {}).get(f"period{i}")] for i in range(1, 5)]})
+            out["lookups"].append({"day": day, "searched": words, "events_that_day": len(evs), "status": res.get("status")})
+    return out
+
+
 async def run() -> Dict[str, Any]:
     report: Dict[str, Any] = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
-    for name, fn in (("football_com", football_com), ("sportybet_racket", sportybet_racket)):
+    for name, fn in (("football_com", football_com), ("sportybet_racket", sportybet_racket),
+                     ("sofascore", sofascore)):
         try:
             report[name] = await fn()
         except Exception as e:
