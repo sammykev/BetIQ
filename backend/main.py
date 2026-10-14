@@ -3348,6 +3348,13 @@ async def _refresh_matchdays(days_back: int = 1, trigger: str = "schedule") -> D
                 report["sportradar"] = await asyncio.wait_for(sr_results.refresh(r), 60)
             except Exception as e:
                 report["sportradar"] = {"error": f"{type(e).__name__}: {e}"[:200]}
+            # …and Flashscore's day feeds for the ones Sportradar has nothing for
+            _md_status["stage"] = "asking Flashscore for missing finals"
+            try:
+                import fs_results
+                report["flashscore"] = await asyncio.wait_for(fs_results.refresh(r), 60)
+            except Exception as e:
+                report["flashscore"] = {"error": f"{type(e).__name__}: {e}"[:200]}
         _md_status["stage"] = "settling tickets"
         try:
             report["tickets"] = await asyncio.wait_for(asyncio.to_thread(_settle_tickets, r), 90)
@@ -3849,10 +3856,10 @@ def _leg_results(r, days: Dict[str, Dict]):
             if not leg.get("event_id") and leg.get("sb"):   # a daily pick: its SportyBet ids
                 leg = {**leg, "event_id": leg["sb"].get("eventId")}
             return (_bb_result_for(r, leg, bb_days) or _other_sport_md_result(r, leg, "basketball", md_days)
-                    or _sr_result_for(r, leg, "basketball"))
+                    or _sr_result_for(r, leg, "basketball") or _fs_result_for(r, leg, "basketball"))
         if m.startswith("rk_"):
             return (_rk_result_for(r, leg, rk_days) or _other_sport_md_result(r, leg, _leg_sport(leg), md_days)
-                    or _sr_result_for(r, leg, _leg_sport(leg)))
+                    or _sr_result_for(r, leg, _leg_sport(leg)) or _fs_result_for(r, leg, _leg_sport(leg)))
         e = _md_entry_for(r, leg, days)
         return e.get("result") if e else None
     return result_for
@@ -3866,6 +3873,18 @@ def _sr_result_for(r, leg: Dict, sport: str) -> Optional[Dict]:
     res = sr_results.stored(r, eid)
     if res is None:
         sr_results.want(r, eid, sport)
+    return res
+
+
+def _fs_result_for(r, leg: Dict, sport: str) -> Optional[Dict]:
+    """After Sportradar: Flashscore's final for the leg's teams and day
+    (fs_results), found by the sweep; a leg with none yet is noted."""
+    import fs_results
+    if not leg.get("date") or not leg.get("home") or not leg.get("away"):
+        return None
+    res = fs_results.stored(r, fs_results.leg_key(sport, leg["date"], leg["home"], leg["away"]))
+    if res is None:
+        fs_results.want(r, leg, sport)
     return res
 
 
