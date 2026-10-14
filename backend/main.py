@@ -9061,6 +9061,43 @@ def _daily_public(s: Dict[str, Any]) -> Dict[str, Any]:
     return {**s, "booking": {k: b.get(k) for k in ("code", "share_url", "total_odds", "booked", "of", "error", "at", "football_com")}}
 
 
+_reliability_cache: Dict[str, Any] = {}
+RELIABILITY_MIN_SETTLED = 30      # a band needs this many settled legs before the slip uses it
+
+
+def slip_reliability(rep: Optional[Dict]) -> List[Dict[str, Any]]:
+    """[{lo, hi, said, won, settled}] — for each band of the chance we gave a
+    leg, how often legs in it really won (ticket_review.py's report), bands
+    with RELIABILITY_MIN_SETTLED settled legs only."""
+    import ticket_review
+    bands = (rep or {}).get("legs_by_prob_given") or {}
+    out = []
+    for lo, hi, label in ticket_review.BANDS:
+        b = bands.get(label) or {}
+        if (b.get("settled") or 0) >= RELIABILITY_MIN_SETTLED and b.get("win_rate") is not None and b.get("avg_prob_given"):
+            out.append({"lo": lo, "hi": min(hi, 1.0), "said": b["avg_prob_given"], "won": b["win_rate"],
+                        "settled": b["settled"]})
+    return out
+
+
+@app.get("/api/slip-reliability")
+async def get_slip_reliability():
+    """How our legs really did by the chance we gave them, so the bet slip
+    can show an honest chance for the whole slip. Refreshed nightly."""
+    import ticket_review
+    hit = _reliability_cache.get("v")
+    if hit and time.time() - hit[0] < 600:
+        return hit[1]
+    r = _get_redis()
+    try:
+        rep = json.loads(r.get(ticket_review.REPORT_KEY) or "null") if r else None
+    except Exception:
+        rep = None
+    out = {"bands": slip_reliability(rep), "at": (rep or {}).get("at")}
+    _reliability_cache["v"] = (time.time(), out)
+    return out
+
+
 @app.get("/api/daily-slips")
 async def get_daily_slips(day: str = Query("", alias="date"), _access=Depends(require_feature("daily_slips"))):
     """A day's 10x / 15x / 20x slips with their SportyBet booking codes, each

@@ -90,3 +90,12 @@ def test_daily_slips_are_graded_again_and_a_wrong_cut_is_marked():
     assert cut["cut_in_error"] and cut["picks"][0]["regraded"] == {"was": "lost", "score": "3-0"}
     assert new["replaces"]["in_error"] and new["replaces"]["cut_by"] is None and new["status"] == "pending"
     assert daily_slips.recheck_day(doc, lambda p: results[p["home"]]) == []      # once
+
+
+def test_slip_reliability_keeps_bands_with_enough_legs():
+    import main
+    rep = {"legs_by_prob_given": {"70–80%": {"settled": 690, "win_rate": 0.674, "avg_prob_given": 0.737},
+                                  "<50%": {"settled": 4, "win_rate": 0.75, "avg_prob_given": 0.336}}}
+    got = main.slip_reliability(rep)
+    assert got == [{"lo": 0.7, "hi": 0.8, "said": 0.737, "won": 0.674, "settled": 690}]
+    assert main.slip_reliability(None) == []

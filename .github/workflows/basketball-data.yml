@@ -196,9 +196,10 @@ jobs:
           UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
         run: python crest_check.py
 
-      # Every ticket on the site: win rates by market, sport, line and the chance we gave (ticket_review.py)
+      # Every ticket on the site: win rates by market, sport, line and the chance we gave (ticket_review.py);
+      # nightly, as the bet slip's honest chance reads it (/api/slip-reliability)
       - name: Ticket review
-        if: github.event.inputs.job == 'ticket_review'
+        if: github.event_name == 'schedule' || github.event.inputs.job == 'ticket_review'
         env:
           UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
         run: python ticket_review.py

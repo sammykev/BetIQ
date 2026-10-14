@@ -93,3 +93,25 @@ describe("selectionFromPrediction", () => {
     expect(selectionFromPrediction(pred({ tip_code: "?" }))).toBeNull();
   });
 });
+
+describe("honest slip chance", () => {
+  const { honestLegChance, honestProbability, oneIn } = require("@/lib/slip");
+  const bands = [{ lo: 0.7, hi: 0.8, said: 0.737, won: 0.674, settled: 690 },
+                 { lo: 0.9, hi: 1, said: 0.934, won: 0.829, settled: 164 }];
+  it("scales a leg by how its band really did", () => {
+    expect(honestLegChance(0.75, bands)).toBeCloseTo(0.75 * 0.674 / 0.737, 5);
+    expect(honestLegChance(0.95, bands)).toBeCloseTo(0.95 * 0.829 / 0.934, 5);
+    expect(honestLegChance(1, bands)).toBeLessThan(1);
+    expect(honestLegChance(0.65, bands)).toBe(0.65);      // no band: the model's own
+  });
+  it("multiplies the honest legs", () => {
+    const slip = [{ prob: 0.75 }, { prob: 0.95 }] as any;
+    expect(honestProbability(slip, bands)).toBeCloseTo(honestLegChance(0.75, bands) * honestLegChance(0.95, bands), 6);
+    expect(honestProbability([{ prob: undefined }] as any, bands)).toBeNull();
+  });
+  it("says 1 in N for long shots only", () => {
+    expect(oneIn(0.25)).toBe("1 in 4");
+    expect(oneIn(0.012)).toBe("1 in 85");
+    expect(oneIn(0.6)).toBeNull();
+  });
+});

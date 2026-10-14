@@ -55,6 +55,31 @@ export function combinedProbability(slip: SlipSelection[]): number | null {
   return slip.reduce((p, s) => p * (s.prob as number), 1);
 }
 
+/** How legs given a chance in [lo, hi) really did (backend /api/slip-reliability). */
+export interface ReliabilityBand { lo: number; hi: number; said: number; won: number; settled: number }
+
+/** One leg's chance as our record says it lands: the model's chance scaled
+ *  by how its band really did (won / said); the model's own outside the bands. */
+export function honestLegChance(p: number, bands: ReliabilityBand[]): number {
+  const b = bands.find(x => p >= x.lo && (p < x.hi || (x.hi >= 1 && p <= 1)));
+  if (!b || !(b.said > 0)) return p;
+  return Math.min(0.99, Math.max(0.01, p * (b.won / b.said)));
+}
+
+/** The whole slip's chance on our record (null when a pick has no chance). */
+export function honestProbability(slip: SlipSelection[], bands: ReliabilityBand[]): number | null {
+  if (!slip.length || slip.some(s => typeof s.prob !== "number")) return null;
+  return slip.reduce((p, s) => p * honestLegChance(s.prob as number, bands), 1);
+}
+
+/** "1 in 12" for a chance (rounded; null when 1 in 2 or better). */
+export function oneIn(p: number | null): string | null {
+  if (p === null || p <= 0 || p >= 0.5) return null;
+  const n = 1 / p;
+  const r = n < 20 ? Math.round(n) : n < 1000 ? Math.round(n / 5) * 5 : Math.round(n / 100) * 100;
+  return `1 in ${r.toLocaleString("en")}`;
+}
+
 // Mirrors backend/booking_slip.py sportybet_ids — which picks SportyBet can take
 const SPORTYBET_FIXED = new Set([
   "1x2:1", "1x2:X", "1x2:2",

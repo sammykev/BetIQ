@@ -12,7 +12,8 @@ import { useUser } from "@clerk/nextjs";
 import { useBetSlip } from "@/lib/useBetSlip";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
 import {
-  bookableOnSportybet, combinedProbability, matchKey, slipAsText, type SlipSelection,
+  bookableOnSportybet, combinedProbability, honestProbability, matchKey, oneIn, slipAsText,
+  type ReliabilityBand, type SlipSelection,
 } from "@/lib/slip";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
@@ -147,7 +148,17 @@ export function SlipDrawer() {
   useEffect(() => { setResult(null); setFailed(null); }, [signature, platform]);
 
 
-  const prob = combinedProbability(items);
+  // How our legs have really done at each chance (refreshed nightly): the
+  // slip's chance on that record, not the model's own
+  const [bands, setBands] = useState<ReliabilityBand[]>([]);
+  useEffect(() => {
+    if (!open || bands.length) return;
+    fetch(`${API}/api/slip-reliability`).then(r => r.ok ? r.json() : null)
+      .then(d => { if (Array.isArray(d?.bands)) setBands(d.bands); }).catch(() => {});
+  }, [open, bands.length]);
+  const model = combinedProbability(items);
+  const prob = bands.length ? honestProbability(items, bands) : model;
+  const longShot = oneIn(prob);
   const byKey = new Map((result?.picks ?? []).map(p => [p.key, p]));
   const notBookable = items.filter(s => !bookableOnSportybet(s)).length;
 
@@ -238,7 +249,11 @@ export function SlipDrawer() {
                         <p className="font-display font-extrabold text-3xl leading-none text-n-0 tnum mt-0.5">
                           {prob === null ? "–" : `${(prob * 100).toFixed(prob < 0.1 ? 1 : 0)}%`}
                         </p>
-                        <p className="text-[10px] text-n-500 mt-0.5">Model estimate, matches treated as independent</p>
+                        <p className="text-[10px] text-n-500 mt-0.5">
+                          {bands.length && model !== null
+                            ? `On our record: legs at these chances have won less often than the model says (model ${(model * 100).toFixed(model < 0.1 ? 1 : 0)}%)`
+                            : "Model estimate, matches treated as independent"}
+                        </p>
                       </div>
                       {result?.total_odds && (
                         <div className="text-right">
@@ -247,6 +262,13 @@ export function SlipDrawer() {
                         </div>
                       )}
                     </div>
+                    {longShot && prob !== null && prob < 0.1 && (
+                      <p className="text-xs text-warn flex items-start gap-1.5">
+                        <AlertTriangle size={13} className="shrink-0 mt-0.5" />
+                        <span>This slip lands about {longShot} times. Every leg must win, so each one you add cuts
+                          the chance; a few strong picks land far more often than many.</span>
+                      </p>
+                    )}
                     {(result?.price_changes ?? 0) > 0 && (
                       <p className="text-[11px] text-warn">
                         {result!.price_changes} price{result!.price_changes === 1 ? " has" : "s have"} moved since you added {result!.price_changes === 1 ? "it" : "them"};
