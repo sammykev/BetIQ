@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import clsx from "clsx";
-import { Check, ChevronDown, Clock, Copy, ExternalLink, HelpCircle, Loader2, Ticket as TicketIcon } from "lucide-react";
+import { Check, ChevronDown, Clock, Copy, ExternalLink, HelpCircle, Loader2, Ticket as TicketIcon, Trash2, Undo2 } from "lucide-react";
 import { VerdictIcon } from "@/components/MatchdayList";
 import { LiveStats, SportStats } from "@/components/LiveStats";
 import { useAccess } from "@/lib/access";
@@ -127,6 +127,8 @@ export function TicketsList({ uid, authFetch }: { uid: string; authFetch: (url: 
   const [data, setData] = useState<{ tickets: Ticket[]; summary: TicketSummary; older: OldCode[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState<string | null>(null);
+  const [removed, setRemoved] = useState<string | null>(null);   // the code Undo can bring back
+  const [failed, setFailed] = useState<string | null>(null);
 
   const load = useCallback(() =>
     authFetch(`${API}/api/user/tickets?uid=${encodeURIComponent(uid)}`)
@@ -148,6 +150,44 @@ export function TicketsList({ uid, authFetch }: { uid: string; authFetch: (url: 
     }, wait);
     return () => clearTimeout(timer);
   }, [data, load]);
+
+  // Remove a code the account doesn't want: gone from the list at once,
+  // kept server-side for Undo (backend /api/user/tickets/restore)
+  const q = `uid=${encodeURIComponent(uid)}`;
+  const remove = async (code: string) => {
+    const before = data;
+    setData(d => (d ? { ...d, tickets: d.tickets.filter(t => t.code !== code), older: d.older.filter(c => c.code !== code) } : d));
+    setFailed(null);
+    try {
+      const r = await authFetch(`${API}/api/user/tickets?code=${encodeURIComponent(code)}&${q}`, { method: "DELETE" });
+      if (!r.ok) throw new Error(String(r.status));
+      setRemoved(code);
+      load().then(d => { if (d) setData(d); }).catch(() => {});   // the summary counts without it
+    } catch {
+      setData(before);
+      setFailed("Couldn't remove that ticket. Try again.");
+    }
+  };
+  const undo = async () => {
+    const code = removed;
+    if (!code) return;
+    setRemoved(null);
+    try {
+      const r = await authFetch(`${API}/api/user/tickets/restore?${q}`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, uid }),
+      });
+      if (!r.ok) throw new Error(String(r.status));
+      const d = await load();
+      if (d) setData(d);
+    } catch {
+      setFailed(`Couldn't put ${code} back. Try again.`);
+    }
+  };
+  useEffect(() => {
+    if (!removed) return;
+    const t = setTimeout(() => setRemoved(null), 8000);
+    return () => clearTimeout(t);
+  }, [removed]);
 
   const copy = async (code: string) => {
     try { await navigator.clipboard.writeText(code); setCopied(code); setTimeout(() => setCopied(null), 1500); } catch { /* ignore */ }
@@ -185,9 +225,15 @@ export function TicketsList({ uid, authFetch }: { uid: string; authFetch: (url: 
             <a href={t.share_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-xs text-n-300 hover:text-n-0">
               <ExternalLink size={12} /> Open on SportyBet</a>
           ) : <span />}
-          <button onClick={() => copy(t.code)} className="btn-primary !px-3 !py-1.5 !text-xs !rounded-lg">
-            {copied === t.code ? <Check size={12} /> : <Copy size={12} />}{copied === t.code ? "Copied" : "Copy code"}
-          </button>
+          <span className="flex items-center gap-1.5">
+            <button onClick={() => remove(t.code)} aria-label={`Remove ticket ${t.code}`} title="Remove ticket"
+              className="p-1.5 rounded-lg text-n-500 hover:text-danger hover:bg-danger/10">
+              <Trash2 size={14} />
+            </button>
+            <button onClick={() => copy(t.code)} className="btn-primary !px-3 !py-1.5 !text-xs !rounded-lg">
+              {copied === t.code ? <Check size={12} /> : <Copy size={12} />}{copied === t.code ? "Copied" : "Copy code"}
+            </button>
+          </span>
         </footer>
       </article>
     );
@@ -196,9 +242,21 @@ export function TicketsList({ uid, authFetch }: { uid: string; authFetch: (url: 
   const active = tickets.filter(t => t.status === "pending" || t.status === "open");
   const settled = tickets.filter(t => t.status !== "pending" && t.status !== "open");
 
+  const toast = (removed || failed) && (
+    <div role="status" className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-[calc(100%-2rem)] max-w-sm card px-4 py-3 flex items-center gap-3 text-sm shadow-lg">
+      <span className="flex-1 text-n-200">{removed ? <>Ticket <span className="font-mono font-bold text-n-0">{removed}</span> removed</> : failed}</span>
+      {removed ? (
+        <button onClick={undo} className="inline-flex items-center gap-1 text-xs font-semibold text-accent hover:underline"><Undo2 size={12} /> Undo</button>
+      ) : (
+        <button onClick={() => setFailed(null)} className="text-xs text-n-400 hover:text-n-0">Dismiss</button>
+      )}
+    </div>
+  );
+
   if (!tickets.length && !older.length) {
     return (
       <div className="card text-center px-6 py-14 space-y-2">
+        {toast}
         <TicketIcon size={20} className="mx-auto text-n-400" />
         <p className="heading text-lg">No tickets yet</p>
         <p className="text-sm text-n-400 max-w-sm mx-auto">Every SportyBet code you generate here (bet slip, optimizer, code check) is saved and settled automatically as the matches finish.</p>
@@ -208,6 +266,7 @@ export function TicketsList({ uid, authFetch }: { uid: string; authFetch: (url: 
 
   return (
     <div className="space-y-4">
+      {toast}
       {s && s.tickets > 0 && (
         <div className="card px-4 py-3 flex flex-wrap gap-x-6 gap-y-2 text-sm">
           <span><span className="text-n-500">Tickets won </span><span className="font-bold text-n-0 tnum">{s.won}/{s.won + s.lost}</span></span>
@@ -243,6 +302,10 @@ export function TicketsList({ uid, authFetch }: { uid: string; authFetch: (url: 
                 <span className="font-mono font-bold text-n-0 tracking-[0.15em]">{c.code}</span>
                 <span className="text-[11px] text-n-500 truncate flex-1">{(c.games ?? []).map(g => g.game).join(" · ")}</span>
                 {c.total_odds ? <span className="tnum text-xs text-n-400">{c.total_odds}x</span> : null}
+                <button onClick={() => remove(c.code)} aria-label={`Remove code ${c.code}`} title="Remove code"
+                  className="p-1 rounded-md text-n-500 hover:text-danger hover:bg-danger/10">
+                  <Trash2 size={13} />
+                </button>
               </li>
             ))}
           </ul>

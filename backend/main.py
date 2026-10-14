@@ -4204,6 +4204,75 @@ async def get_tickets(request: Request, uid: str = ""):
     return await asyncio.to_thread(build)
 
 
+TICKETS_TRASH_MAX = 50
+TICKETS_TRASH_DAYS = 30       # a removed ticket can be put back this long
+
+
+def _take_code(r, key: str, code: str) -> Optional[Tuple[int, Dict]]:
+    """Remove the entry with this code from a list stored at `key`: (its
+    position, the entry), or None."""
+    raw = r.get(key)
+    items: List[Dict] = json.loads(raw) if raw else []
+    pos = next((i for i, t in enumerate(items) if t.get("code") == code), None)
+    if pos is None:
+        return None
+    hit = items.pop(pos)
+    r.set(key, json.dumps(items, separators=(",", ":")), ex=365 * 86400)
+    return pos, hit
+
+
+@app.delete("/api/user/tickets")
+async def delete_ticket(request: Request, code: str, uid: str = ""):
+    """Remove one of the account's codes (tracked ticket or older saved
+    code). It goes to a trash kept TICKETS_TRASH_DAYS so Undo can put it
+    back; removing a code that isn't there is a no-op."""
+    uid = await require_user(request, uid)
+    r = _get_redis()
+    if not r:
+        raise HTTPException(status_code=503, detail="No Redis")
+    code = code.strip()[:40]
+    def run() -> Dict[str, Any]:
+        removed = [(kind, item) for kind in ("tickets", "codes")
+                   if (item := _take_code(r, _ukey(uid, kind), code)) is not None]
+        if removed:
+            key = _ukey(uid, "tickets_trash")
+            raw = r.get(key)
+            trash: List[Dict] = [e for e in (json.loads(raw) if raw else []) if e.get("code") != code]
+            trash.insert(0, {"code": code, "at": datetime.now(timezone.utc).isoformat(),
+                             "items": [{"kind": k, "pos": p, "item": i} for k, (p, i) in removed]})
+            r.set(key, json.dumps(trash[:TICKETS_TRASH_MAX], separators=(",", ":")), ex=TICKETS_TRASH_DAYS * 86400)
+            _all_tickets_cache[:] = [0.0, None]
+        return {"deleted": bool(removed)}
+    return await asyncio.to_thread(run)
+
+
+@app.post("/api/user/tickets/restore")
+async def restore_ticket(request: Request, body: Dict[str, Any]):
+    """Body: {code}. Undo a removal: puts the code back from the trash
+    (only what this account removed; nothing sent by the client is stored)."""
+    uid = await require_user(request, body.get("uid", ""))
+    r = _get_redis()
+    if not r:
+        raise HTTPException(status_code=503, detail="No Redis")
+    code = str(body.get("code") or "").strip()[:40]
+    def run() -> Dict[str, Any]:
+        taken = _take_code(r, _ukey(uid, "tickets_trash"), code)
+        if not taken:
+            return {"restored": False}
+        entry = taken[1]
+        for e in entry.get("items") or []:
+            key = _ukey(uid, e["kind"])
+            raw = r.get(key)
+            items: List[Dict] = [t for t in (json.loads(raw) if raw else []) if t.get("code") != code]
+            items.insert(min(int(e.get("pos") or 0), len(items)), e["item"])   # back where it was
+            r.set(key, json.dumps(items, separators=(",", ":")), ex=365 * 86400)
+            if e["kind"] == "tickets":
+                r.sadd(TICKETS_OPEN_KEY, uid)      # settling picks it up again if it's still open
+        _all_tickets_cache[:] = [0.0, None]
+        return {"restored": True}
+    return await asyncio.to_thread(run)
+
+
 @app.post("/api/feedback/result")
 async def submit_match_result(body: Dict[str, Any], _admin: str = Depends(require_admin)):
     """
