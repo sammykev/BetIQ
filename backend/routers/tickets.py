@@ -9,6 +9,7 @@ import json
 import os
 import pandas as pd
 import re
+import secrets
 import time
 from auth import require_user
 from datetime import date, datetime, timedelta, timezone
@@ -509,6 +510,66 @@ async def restore_ticket(request: Request, body: Dict[str, Any]):
                 r.sadd(main.TICKETS_OPEN_KEY, uid)      # settling picks it up again if it's still open
         main._all_tickets_cache[:] = [0.0, None]
         return {"restored": True}
+    return await asyncio.to_thread(run)
+
+
+SHARE_DAYS = 180
+_SHARE_LEG_FIELDS = ("home", "away", "league", "date", "time", "market", "marketName", "code", "label",
+                     "odds", "status", "live")
+
+
+def _share_key(sid: str) -> str:
+    return f"betiq:share:{sid}"
+
+
+@router.post("/api/user/tickets/share")
+async def share_ticket(request: Request, body: Dict[str, Any]):
+    """Body: {code}. A public link id for one of the account's tickets
+    (/t/<id>); the same ticket keeps the same id."""
+    uid = await require_user(request, body.get("uid", ""))
+    r = main._get_redis()
+    if not r:
+        raise HTTPException(status_code=503, detail="No Redis")
+    code = str(body.get("code") or "").strip()[:40]
+    def run() -> Dict[str, Any]:
+        key = main._ukey(uid, "tickets")
+        raw = r.get(key)
+        items: List[Dict] = json.loads(raw) if raw else []
+        t = next((t for t in items if t.get("code") == code), None)
+        if t is None:
+            raise HTTPException(status_code=404, detail="No such ticket")
+        sid = t.get("share_id")
+        if not sid or not r.get(_share_key(sid)):
+            sid = secrets.token_urlsafe(6)
+            t["share_id"] = sid
+            r.set(key, json.dumps(items, separators=(",", ":")), ex=365 * 86400)
+        r.set(_share_key(sid), json.dumps({"uid": uid, "code": code}), ex=SHARE_DAYS * 86400)
+        return {"id": sid}
+    return await asyncio.to_thread(run)
+
+
+@router.get("/api/share/{sid}")
+async def shared_ticket(sid: str):
+    """A shared ticket, for anyone with the link: its legs, odds and how they
+    stand. Nothing about the account that made it."""
+    r = main._get_redis()
+    if not r:
+        raise HTTPException(status_code=503, detail="No Redis")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{4,20}", sid):
+        raise HTTPException(status_code=404, detail="Not found")
+    def run() -> Dict[str, Any]:
+        raw = r.get(_share_key(sid))
+        ref = json.loads(raw) if raw else None
+        if not ref:
+            raise HTTPException(status_code=404, detail="Not found")
+        items = json.loads(r.get(main._ukey(ref["uid"], "tickets")) or "[]")
+        t = next((t for t in items if t.get("code") == ref["code"]), None)
+        if t is None:   # removed since it was shared
+            raise HTTPException(status_code=404, detail="Not found")
+        main._attach_live(r, [t])
+        return {"code": t.get("code"), "created_at": t.get("created_at"), "total_odds": t.get("total_odds"),
+                "status": t.get("status"), "settled_at": t.get("settled_at"),
+                "legs": [{k: l.get(k) for k in _SHARE_LEG_FIELDS if l.get(k) is not None} for l in t.get("legs") or []]}
     return await asyncio.to_thread(run)
 
 

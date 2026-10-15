@@ -2,17 +2,18 @@
 
 import { useCallback, useEffect, useState } from "react";
 import clsx from "clsx";
-import { Check, ChevronDown, Clock, Copy, ExternalLink, HelpCircle, Loader2, Ticket as TicketIcon, Trash2, Undo2 } from "lucide-react";
+import { Check, ChevronDown, Clock, Copy, ExternalLink, HelpCircle, Link2, Loader2, Share2, Ticket as TicketIcon, Trash2, Undo2 } from "lucide-react";
 import { VerdictIcon } from "@/components/MatchdayList";
 import { LiveStats, SportStats } from "@/components/LiveStats";
 import { useAccess } from "@/lib/access";
 import { WhyPick } from "@/components/WhyPick";
 import { API, type Ticket, type TicketLeg, type TicketSummary } from "@/lib/matchday";
+import { shareUrl } from "@/lib/share";
 
 // The account's booking codes, settled leg by leg from the results
 // (backend tickets.py): every code made on BetIQ while signed in.
 
-const STATUS: Record<Ticket["status"], { label: string; cls: string }> = {
+export const STATUS: Record<Ticket["status"], { label: string; cls: string }> = {
   won: { label: "Won", cls: "bg-accent/15 text-accent border-accent/30" },
   lost: { label: "Lost", cls: "bg-danger/15 text-danger border-danger/30" },
   void: { label: "Void", cls: "bg-n-800 text-n-300 border-n-700" },
@@ -195,6 +196,26 @@ export function TicketsList({ uid, authFetch }: { uid: string; authFetch: (url: 
     try { await navigator.clipboard.writeText(code); setCopied(code); setTimeout(() => setCopied(null), 1500); } catch { /* ignore */ }
   };
 
+  // A public link to the ticket (/t/<id>): the share sheet on phones, else copied
+  const share = async (code: string) => {
+    setFailed(null);
+    try {
+      const r = await authFetch(`${API}/api/user/tickets/share?${q}`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, uid }),
+      });
+      if (!r.ok) throw new Error(String(r.status));
+      const url = shareUrl((await r.json()).id);
+      if (typeof navigator.share === "function") {
+        await navigator.share({ title: `BetIQ ticket ${code}`, url }).catch(() => {});
+      } else {
+        await navigator.clipboard.writeText(url);
+        setCopied(`link:${code}`); setTimeout(() => setCopied(null), 1500);
+      }
+    } catch {
+      setFailed("Couldn't make a share link. Try again.");
+    }
+  };
+
   if (loading) return <div className="card flex items-center justify-center gap-2 py-12 text-sm text-n-400"><Loader2 size={15} className="animate-spin" /> Loading tickets…</div>;
   const tickets = data?.tickets ?? [];
   const older = data?.older ?? [];
@@ -231,6 +252,10 @@ export function TicketsList({ uid, authFetch }: { uid: string; authFetch: (url: 
             <button onClick={() => remove(t.code)} aria-label={`Remove ticket ${t.code}`} title="Remove ticket"
               className="p-1.5 rounded-lg text-n-500 hover:text-danger hover:bg-danger/10">
               <Trash2 size={14} />
+            </button>
+            <button onClick={() => share(t.code)} aria-label={`Share ticket ${t.code}`} title="Share a link to this ticket"
+              className="btn-secondary !px-3 !py-1.5 !text-xs !rounded-lg">
+              {copied === `link:${t.code}` ? <><Link2 size={12} />Link copied</> : <><Share2 size={12} />Share</>}
             </button>
             <button onClick={() => copy(t.code)} className="btn-primary !px-3 !py-1.5 !text-xs !rounded-lg">
               {copied === t.code ? <Check size={12} /> : <Copy size={12} />}{copied === t.code ? "Copied" : "Copy code"}
