@@ -78,7 +78,9 @@ function MyTickets() {
           <Tile label="Codes" value={`${s.tickets}`} sub={`${s.pending} still open`} />
           <Tile label="Tickets won" value={`${s.won}/${s.won + s.lost}`} sub={s.hit_rate !== null ? `${pct(s.hit_rate)} of settled` : "none settled yet"} />
           <Tile label="Legs won" value={`${s.legs_won}/${s.legs_won + s.legs_lost}`} sub={pct(s.leg_hit_rate)} />
-          <Tile label="Tickets lost" value={`${s.lost}`} />
+          <Tile label="Return" value={s.roi == null ? "—" : `${s.roi > 0 ? "+" : ""}${Math.round(s.roi * 100)}%`}
+            tone={s.roi == null ? "text-n-400" : s.roi >= 0 ? "text-accent" : "text-danger"}
+            sub={s.roi == null ? "none settled yet" : `${s.units >= 0 ? "+" : "−"}${Math.abs(s.units).toFixed(1)} units at 1 a ticket`} />
         </div>
       )}
     </section>

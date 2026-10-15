@@ -263,6 +263,20 @@ def summary(tickets: List[Dict]) -> Dict[str, Any]:
         if l.get("status") in ("won", "lost"):
             row = by_market.setdefault(l.get("marketName") or l.get("market") or "Other", [0, 0])
             row[0 if l["status"] == "won" else 1] += 1
+    # Units over time: the running total after each settle day (oldest first)
+    timeline: List[Dict[str, Any]] = []
+    run = 0.0
+    for t in sorted(priced, key=lambda t: t.get("settled_at") or t.get("created_at") or ""):
+        run += t["total_odds"] - 1 if t["status"] == "won" else -1.0
+        day = str(t.get("settled_at") or t.get("created_at") or "")[:10]
+        if timeline and timeline[-1]["date"] == day:
+            timeline[-1]["units"] = round(run, 2)
+        else:
+            timeline.append({"date": day, "units": round(run, 2)})
+    # What the model gave the settled legs it priced, against how often they won
+    rated = [l for l in legs if l.get("status") in ("won", "lost") and isinstance(l.get("prob"), (int, float))]
+    said = ({"legs": len(rated), "model_said": round(sum(l["prob"] for l in rated) / len(rated), 3),
+             "came_in": round(sum(1 for l in rated if l["status"] == "won") / len(rated), 3)} if rated else None)
     return {"tickets": len(tickets), "won": won, "lost": lost, "void": void,
             "pending": sum(1 for t in tickets if t.get("status") in ("pending", "open")),
             "hit_rate": round(won / (won + lost), 3) if won + lost else None,
@@ -272,4 +286,28 @@ def summary(tickets: List[Dict]) -> Dict[str, Any]:
             "streak": streak, "streak_type": streak_type,
             "best_win": {"code": best["code"], "odds": best["total_odds"]} if best else None,
             "by_market": sorted(({"market": m, "won": w, "lost": lo, "hit_rate": round(w / (w + lo), 3)}
-                                 for m, (w, lo) in by_market.items()), key=lambda r: -(r["won"] + r["lost"]))}
+                                 for m, (w, lo) in by_market.items()), key=lambda r: -(r["won"] + r["lost"])),
+            "timeline": timeline[-TIMELINE_DAYS:], "said": said,
+            "by_source": _groups(priced, lambda t: SOURCE_NAMES.get(t.get("source") or "", "Other")),
+            "by_odds": _groups(priced, _odds_band, order=[b for _, b in ODDS_BANDS])}
+
+
+TIMELINE_DAYS = 120
+SOURCE_NAMES = {"daily": "Daily odds", "optimizer": "Optimizer", "slip": "Bet slip", "code_check": "Code check"}
+ODDS_BANDS = [(3, "Under 3x"), (10, "3x–10x"), (30, "10x–30x"), (float("inf"), "30x+")]
+
+
+def _odds_band(t: Dict) -> str:
+    return next(name for top, name in ODDS_BANDS if t["total_odds"] < top)
+
+
+def _groups(priced: List[Dict], key, order: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    """Settled, priced tickets grouped by `key`: won, lost, units and return at 1 a ticket."""
+    rows: Dict[str, List[float]] = {}
+    for t in priced:
+        r = rows.setdefault(key(t), [0, 0, 0.0])
+        r[0 if t["status"] == "won" else 1] += 1
+        r[2] += t["total_odds"] - 1 if t["status"] == "won" else -1.0
+    out = [{"name": k, "won": int(w), "lost": int(lo), "units": round(u, 2), "roi": round(u / (w + lo), 3)}
+           for k, (w, lo, u) in rows.items()]
+    return sorted(out, key=lambda r: order.index(r["name"]) if order else -(r["won"] + r["lost"]))

@@ -17,6 +17,7 @@ import { Unavailable } from "@/components/FeatureGate";
 import { PaywallModal } from "@/components/PaywallModal";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
 import { TicketsList } from "@/components/TicketsList";
+import { RecordDetail, type RecordDetailData } from "@/components/RecordDetail";
 import { UnderlineTabs } from "@/components/ui/tabs";
 import { Empty } from "@/components/ui/empty";
 
@@ -30,7 +31,7 @@ interface Code {
 }
 
 // The record from the account's booked codes (backend tickets.summary)
-interface TicketRecord {
+interface TicketRecord extends RecordDetailData {
   tickets: number; won: number; lost: number; void: number; pending: number; hit_rate: number | null;
   legs_won: number; legs_lost: number; leg_hit_rate: number | null;
   units: number; roi: number | null; streak: number; streak_type: "won" | "lost" | null;
@@ -236,9 +237,10 @@ export default function DashboardPage() {
                       ))}
                     </div>
                   )}
+                  <RecordDetail rec={rec} />
                   <p className="text-[11px] text-n-500">
-                    From the SportyBet codes you booked on BetIQ while signed in, settled from the final scores. Return
-                    assumes the same stake on every ticket.
+                    From the SportyBet codes you booked on BetIQ while signed in, settled from the final scores. Return and
+                    units assume the same stake (1 unit) on every ticket.
                   </p>
                 </>
               ) : loadingTab ? (

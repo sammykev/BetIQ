@@ -141,4 +141,5 @@ export interface Ticket {
 export interface TicketSummary {
   tickets: number; won: number; lost: number; pending: number; hit_rate: number | null;
   legs_won: number; legs_lost: number; leg_hit_rate: number | null;
+  units: number; roi: number | null;
 }

@@ -123,3 +123,19 @@ class TestSummaryRecord:
         assert s["best_win"] == {"code": "C", "odds": 8.0}
         goals = next(m for m in s["by_market"] if m["market"] == "Total Goals")
         assert (goals["won"], goals["lost"]) == (4, 0) and s["by_market"][0]["market"] == "Total Goals"
+
+    def test_timeline_groups_and_model_said(self):
+        def t(code, status, odds, settled, source, probs=()):
+            return {"code": code, "status": status, "total_odds": odds, "settled_at": settled, "source": source,
+                    "legs": [{"status": status, "prob": p} for p in probs]}
+        items = [t("A", "won", 3.0, "2026-09-20T18:00", "daily", [0.8, 0.9]),
+                 t("B", "lost", 12.0, "2026-09-20T21:00", "optimizer", [0.5]),
+                 t("C", "won", 2.0, "2026-09-22T18:00", "daily"),
+                 t("D", "pending", 4.0, None, "slip", [0.7])]
+        s = tickets.summary(items)
+        assert s["timeline"] == [{"date": "2026-09-20", "units": 1.0}, {"date": "2026-09-22", "units": 2.0}]
+        assert s["said"] == {"legs": 3, "model_said": round(2.2 / 3, 3), "came_in": round(2 / 3, 3)}
+        daily = next(g for g in s["by_source"] if g["name"] == "Daily odds")
+        assert (daily["won"], daily["lost"], daily["units"], daily["roi"]) == (2, 0, 3.0, 1.5)
+        assert [g["name"] for g in s["by_odds"]] == ["Under 3x", "3x–10x", "10x–30x"]
+        assert tickets.summary([])["said"] is None and tickets.summary([])["timeline"] == []
