@@ -17,7 +17,10 @@ BC/BD, BE/BF, BG/BH, BI/BJ the periods (quarters then overtime; set games).
 Like sr_results: a leg the grader finds no result for is noted (want()),
 the sweep looks it up in the day feeds (refresh()) and keeps the final
 (KEY), which the grader reads next time (stored()). The feeds only go back
-7 days, so a leg older than that is dropped.
+7 days, so each finished day read (two or more days back, when every match
+on it is over) is kept (DAYS_KEY): a leg still unsettled after its day has
+left the feeds is looked up there, and a kept day isn't read again. A leg
+is dropped once none of its days can be read or found kept.
 """
 
 import asyncio
@@ -36,6 +39,12 @@ WANTED_KEY = "betiq:fs:wanted"    # hash {leg key: {"sport", "date", "time", "ho
 TTL = 45 * 86400
 MAX_TRIES = 40
 FEED_DAYS = 7                     # how far back the day feeds go
+DAYS_KEY = "betiq:fs:days"        # hash {"{sport id}|{day}": [finished records]}, days ARCHIVE_DAYS back
+ARCHIVE_DAYS = 31
+SETTLED_OFFSET = -2               # a day this far back has every match over
+# The fields kept for a finished match (find() and parse() read only these)
+KEEP = ("AA", "AD", "AB", "AC", "AE", "AF", "CX", "FK", "WU", "WV", "AG", "AH",
+        "BA", "BB", "BC", "BD", "BE", "BF", "BG", "BH", "BI", "BJ")
 KICKOFF_SLACK = 36 * 3600         # a listed kick-off this far from the leg's still matches
 TIMEOUT = 15.0
 SPORT_IDS = {"basketball": [3], "tennis": [2], "table_tennis": [25], "racket": [2, 25]}
@@ -176,12 +185,58 @@ async def _read(sport_id: int, offset: int, get: Optional[Callable] = None) -> O
         return None
 
 
+def _day_key(sport_id: int, day: date) -> str:
+    return f"{sport_id}|{day.isoformat()}"
+
+
+def _kept_day(r, sport_id: int, day: date) -> Optional[List[Dict[str, str]]]:
+    try:
+        raw = r.hget(DAYS_KEY, _day_key(sport_id, day))
+        return json.loads(raw) if raw else None
+    except Exception:
+        return None
+
+
+def _keep_day(r, sport_id: int, day: date, recs: List[Dict[str, str]]) -> None:
+    done = [{k: f[k] for k in KEEP if k in f} for f in recs if f.get("AB") == "3"]
+    if not done:          # an empty or odd reply: read the day again next time
+        return
+    try:
+        r.hset(DAYS_KEY, _day_key(sport_id, day), json.dumps(done, ensure_ascii=False, separators=(",", ":")))
+    except Exception:
+        pass
+
+
+def _prune_days(r, today: date) -> None:
+    """Drop kept days older than ARCHIVE_DAYS."""
+    oldest = (today.toordinal() - ARCHIVE_DAYS)
+    try:
+        for k in list(r.hkeys(DAYS_KEY) or []):
+            k = k.decode() if isinstance(k, bytes) else k
+            try:
+                if date.fromisoformat(k.split("|", 1)[1]).toordinal() < oldest:
+                    r.hdel(DAYS_KEY, k)
+            except (IndexError, ValueError):
+                r.hdel(DAYS_KEY, k)
+    except Exception:
+        pass
+
+
 async def refresh(r, get: Optional[Callable] = None, now: Optional[float] = None) -> Dict[str, int]:
-    """Look the noted legs up in the day feeds: finals kept, the rest tried
-    again next time (dropped after MAX_TRIES or once their day has left the feeds)."""
+    """Look the noted legs up in the day feeds (or the kept days): finals
+    kept, the rest tried again next time (dropped after MAX_TRIES, or once
+    their days are all kept or gone from the feeds)."""
     now = time.time() if now is None else now
     today = datetime.fromtimestamp(now, timezone.utc).date()
-    wanted = {}
+    day_of = lambda o: date.fromordinal(today.toordinal() + o)
+    kept: Dict[tuple, Optional[List[Dict[str, str]]]] = {}
+
+    def kept_for(sid: int, o: int):
+        if (sid, o) not in kept:
+            kept[(sid, o)] = _kept_day(r, sid, day_of(o)) if o <= SETTLED_OFFSET else None
+        return kept[(sid, o)]
+
+    wanted, feeds = {}, {}
     for k, v in (r.hgetall(WANTED_KEY) or {}).items():
         k = k.decode() if isinstance(k, bytes) else k
         w = _json(v) or {}
@@ -189,22 +244,27 @@ async def refresh(r, get: Optional[Callable] = None, now: Optional[float] = None
             offset = (date.fromisoformat(w.get("date") or "") - today).days
         except ValueError:
             offset = None
-        if offset is None or offset < -FEED_DAYS or w.get("tries", 0) >= MAX_TRIES:
+        days = [(sid, o) for sid in SPORT_IDS.get(w.get("sport"), []) for o in (offset - 1, offset, offset + 1)
+                if o <= 0 and (kept_for(sid, o) is not None or o >= -FEED_DAYS)] if offset is not None else []
+        if not days or w.get("tries", 0) >= MAX_TRIES:
             r.hdel(WANTED_KEY, k)
             continue
-        wanted[k] = (w, offset)
-    feeds: Dict[tuple, Optional[str]] = {}
-    for w, offset in wanted.values():
-        for sid in SPORT_IDS[w["sport"]]:
-            for o in (offset - 1, offset, offset + 1):
-                if -FEED_DAYS <= o <= 0:
-                    feeds.setdefault((sid, o), None)
+        wanted[k] = (w, days)
+        for d in days:
+            if kept.get(d) is None:
+                feeds.setdefault(d, None)
     texts = await asyncio.gather(*(_read(sid, o, get) for sid, o in feeds))
-    recs = {k: records(t) for k, t in zip(feeds, texts) if t}
-    out = {"asked": len(wanted), "found": 0, "feeds": len(feeds), "unread": len(feeds) - len(recs)}
-    for k, (w, offset) in wanted.items():
-        listed = [f for sid in SPORT_IDS[w["sport"]] for o in (offset - 1, offset, offset + 1)
-                  for f in recs.get((sid, o), [])]
+    recs = {d: kept[d] for d in kept if kept[d] is not None}
+    for (sid, o), t in zip(feeds, texts):
+        if not t:
+            continue
+        recs[(sid, o)] = records(t)
+        if o <= SETTLED_OFFSET:
+            _keep_day(r, sid, day_of(o), recs[(sid, o)])
+    out = {"asked": len(wanted), "found": 0, "feeds": len(feeds), "unread": len(feeds) - sum(1 for d in feeds if d in recs),
+           "kept_days": sum(1 for d in kept.values() if d is not None)}
+    for k, (w, days) in wanted.items():
+        listed = [f for d in days for f in recs.get(d, [])]
         ko = _kickoff(w["date"], w.get("time"))
         f = find(listed, w["home"], w["away"], ko) if ko is not None else None
         sport = w["sport"] if w["sport"] == "basketball" else "racket"
@@ -213,8 +273,13 @@ async def refresh(r, get: Optional[Callable] = None, now: Optional[float] = None
             r.hset(KEY, k, json.dumps(res, separators=(",", ":")))
             r.hdel(WANTED_KEY, k)
             out["found"] += 1
+        elif not any(d in feeds for d in days):     # only kept days, which won't change
+            r.hdel(WANTED_KEY, k)
         else:
             r.hset(WANTED_KEY, k, json.dumps({**w, "tries": w.get("tries", 0) + 1}))
     if out["found"]:
         r.expire(KEY, TTL)
+    if feeds:
+        r.expire(DAYS_KEY, (ARCHIVE_DAYS + 2) * 86400)
+        _prune_days(r, today)
     return out

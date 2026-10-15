@@ -17,6 +17,7 @@ class FakeRedis:
     def hsetnx(self, k, f, v): self.h.setdefault(k, {}).setdefault(f, v)
     def hdel(self, k, f): self.h.get(k, {}).pop(f, None)
     def hgetall(self, k): return dict(self.h.get(k, {}))
+    def hkeys(self, k): return list(self.h.get(k, {}))
     def expire(self, k, s): pass
 
 

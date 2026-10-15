@@ -86,7 +86,7 @@ class TestFlow:
             return FEED if url.endswith("f_3_-3_0_en_1") else "0"
         out = asyncio.run(fs_results.refresh(r, get=get, now=NOW))
         assert sorted(u.rsplit("/", 1)[1] for u in urls) == ["f_3_-2_0_en_1", "f_3_-3_0_en_1", "f_3_-4_0_en_1"]
-        assert out == {"asked": 1, "found": 1, "feeds": 3, "unread": 0}
+        assert out == {"asked": 1, "found": 1, "feeds": 3, "unread": 0, "kept_days": 0}
         assert fs_results.stored(r, key)["final"] == [73, 88]
         assert r.hgetall(fs_results.WANTED_KEY) == {}
 
@@ -103,6 +103,35 @@ class TestFlow:
         assert json.loads(r.hget(fs_results.WANTED_KEY, k))["tries"] == 1
         asyncio.run(fs_results.refresh(r, get=get, now=ts("2026-10-25")))
         assert r.hgetall(fs_results.WANTED_KEY) == {}
+
+    def test_finished_days_kept_and_read_after_the_feed_window(self):
+        r = FakeRedis()
+        urls = []
+
+        async def get(url):
+            urls.append(url)
+            return FEED if url.endswith("f_3_-3_0_en_1") else "0"
+        # A leg the grader noted early, not found (other teams), keeps the day
+        fs_results.want(r, {"date": "2026-10-11", "time": "18:00", "home": "Cibona", "away": "Zadar"}, "basketball")
+        asyncio.run(fs_results.refresh(r, get=get, now=NOW))
+        kept = json.loads(r.hget(fs_results.DAYS_KEY, "3|2026-10-11"))
+        assert [f["AA"] for f in kept] == ["xK3pQ1aB"] and "ZA" not in kept[0]       # finished only
+        assert r.hget(fs_results.DAYS_KEY, "3|2026-10-12") is None                    # nothing read: read again
+        # Two weeks on, a leg of that day is noted: found in the kept day, no feed read
+        urls.clear()
+        leg = {"date": "2026-10-11", "time": "18:00", "home": "Alkar Sinj", "away": "Skrljevo"}
+        fs_results.want(r, leg, "basketball")
+        out = asyncio.run(fs_results.refresh(r, get=get, now=ts("2026-10-25")))
+        assert urls == [] and out["found"] == 1 and out["kept_days"] == 1
+        assert fs_results.stored(r, fs_results.leg_key("basketball", "2026-10-11", "Alkar Sinj", "Skrljevo"))["final"] == [73, 88]
+        assert r.hgetall(fs_results.WANTED_KEY) == {}                                  # Cibona: no day left to read
+
+    def test_old_kept_days_pruned(self):
+        r = FakeRedis()
+        r.hset(fs_results.DAYS_KEY, "3|2026-08-01", "[]")
+        r.hset(fs_results.DAYS_KEY, "3|2026-10-10", "[]")
+        fs_results._prune_days(r, datetime(2026, 10, 14).date())
+        assert list(r.hgetall(fs_results.DAYS_KEY)) == ["3|2026-10-10"]
 
 
 class TestGrader:
