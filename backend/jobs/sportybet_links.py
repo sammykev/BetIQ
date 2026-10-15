@@ -413,3 +413,11 @@ def _with_priced_set_pieces(pred: Dict, event: Optional[Dict]) -> Dict:
         priced.update(shots.from_prices(event, getattr(main._intl_shots, "size", None)) or {})
     extra = {k: v for k, v in priced.items() if k not in have}
     return {**pred, "set_pieces": {**have, **extra}} if extra else pred
+
+
+async def _link_sportybet_events(trigger: str = "schedule") -> Dict[str, Any]:
+    """Match upcoming football predictions to SportyBet events and keep the
+    links. `trigger` says what started the run: startup (a new deploy or
+    restart), pipeline, international, schedule or manual."""
+    async with main._link_lock():
+        return await main._link_sportybet_events_now(trigger)

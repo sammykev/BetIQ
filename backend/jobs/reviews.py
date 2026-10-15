@@ -4,6 +4,7 @@ Weekly accuracy review (market_review.py) and league drift check (league_review.
 Moved out of main.py; main's shared state is read as `main.<name>` at call time.
 """
 
+import asyncio
 import json
 import os
 from datetime import date, datetime, timedelta, timezone
@@ -197,3 +198,32 @@ async def put_league_review(body: Dict[str, Any], _admin: str = Depends(main.req
         raise HTTPException(status_code=503, detail="Couldn't save: the database isn't connected")
     main._audit(_admin, "league_review", **new)
     return main._league_review_view()
+
+
+async def _review_job() -> Dict[str, Any]:
+    try:
+        return await asyncio.to_thread(main._run_review)
+    except Exception as e:
+        print(f"[Review] failed: {e}")
+        return {"error": str(e)}
+
+
+async def _league_review_job() -> Dict[str, Any]:
+    try:
+        result = await asyncio.to_thread(main._run_league_review)
+    except Exception as e:
+        print(f"[Drift] failed: {e}")
+        return {"error": str(e)}
+    import league_review
+    text = league_review.message(result, main._league_review.get("mode", "flag")) if "leagues" in result else None
+    if text:
+        import telegram_poster
+        sent = await telegram_poster.notify_admin(text)
+        result["telegram"] = sent.get("ok") or sent.get("error")
+        if result.get("newly_failing"):
+            try:
+                import sentry_sdk
+                sentry_sdk.capture_message(text, level="warning")
+            except Exception:
+                pass
+    return result

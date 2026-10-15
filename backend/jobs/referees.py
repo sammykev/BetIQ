@@ -4,8 +4,11 @@ Referees appointed to upcoming matches, and past referees for the cards model.
 Moved out of main.py; main's shared state is read as `main.<name>` at call time.
 """
 
+import asyncio
 import httpx
+import international_fixtures as intl
 import json
+import os
 import pandas as pd
 from data_fetcher import FootballDataClient
 from datetime import date, datetime, timedelta, timezone
@@ -170,3 +173,96 @@ def _with_club_referees(history: pd.DataFrame) -> pd.DataFrame:
     except Exception as e:
         print(f"[Pipeline] Club referees not added: {e}")
         return history
+
+
+async def _refresh_referees(trigger: str = "schedule") -> Dict[str, Any]:
+    """Look up the referees of the coming days' matches and re-price the
+    cached predictions' bookings. SofaScore first; when it blocks this
+    server, API-Football (APIFOOTBALL_KEY). The GitHub job
+    (collect_referees.py) fills the same Redis key from GitHub's machines,
+    so what it found is picked up here too."""
+    import httpx
+    import referees
+    loop = asyncio.get_running_loop()
+    if main._referee_lock is None or main._referee_lock[0] is not loop:
+        main._referee_lock = (loop, asyncio.Lock())
+    async with main._referee_lock[1]:
+        preds = [p for p in main._predictions_cache if p.get("sport") in (None, "football")]
+        if not preds:
+            return {"skipped": "no predictions yet"}
+        saved = referees.load(main._get_redis())
+        if saved.get("at") and saved["at"] > (main._referees.get("at") or ""):
+            main._referees.update(saved)  # newer, from the GitHub job
+        known = dict(main._appointments())
+        today = datetime.now(timezone.utc).date()
+        from curl_cffi.requests import AsyncSession
+        try:
+            async with AsyncSession(impersonate=intl.IMPERSONATE, timeout=20) as client:
+                found, report = await referees.fetch(client, preds, known, today)
+        except Exception as e:
+            found = {k: v for k, v in known.items() if k.rsplit("|", 1)[-1] >= today.isoformat()}
+            report = {"errors": [f"{type(e).__name__}: {e}"]}
+        report["source"] = "sofascore"
+
+        # football-data.org: every competition it covers, in one request
+        # (a SofaScore find, with the referee's career record, still wins)
+        report["football_data"] = await main._football_data_referees(preds, today)
+        fd = report["football_data"].pop("found_map", {})
+        found = {**fd, **{k: v for k, v in found.items() if v.get("source") not in ("football-data", "api-football")}}
+
+        # API-Football for what's still missing, when SofaScore is blocked
+        still = [p for p in preds if referees.key(p["home"], p["away"], p["date"]) not in found]
+        api_key = os.getenv("APIFOOTBALL_KEY", "").strip()
+        if still and (referees.blocked(report) or not report.get("days")):
+            if not api_key:
+                report["api_football"] = {"skipped": "set APIFOOTBALL_KEY on Render to use API-Football too"}
+            elif main._af_referee_calls() + referees.AF_DAYS > referees.AF_DAILY_CAP:
+                report["api_football"] = {"skipped": f"used today's {referees.AF_DAILY_CAP} requests"}
+            else:
+                async with httpx.AsyncClient(timeout=30) as client:
+                    af, af_report = await referees.fetch_api_football(client, still, today, api_key)
+                main._af_referee_calls(af_report["requests"])
+                report["api_football"] = af_report
+                # A SofaScore find (with the referee's career record) wins
+                found = {**af, **{k: v for k, v in found.items() if v.get("source") != "api-football"}}
+        report["found"] = len(found)
+
+        main._referees.update({"at": datetime.now(timezone.utc).isoformat(), "checked": None,
+                          "appointments": found, "report": report, "trigger": trigger})
+        try:
+            referees.save(main._get_redis(), {k: main._referees[k] for k in ("at", "appointments", "report", "trigger")})
+        except Exception as e:
+            print(f"[Referees] Could not save: {e}")
+        report["on_predictions"] = main._apply_referees()
+        await asyncio.to_thread(main._save_predictions_cache)
+        print(f"[Referees] {trigger}: {len(found)} referees; errors {report.get('errors') or 'none'}")
+        return report
+
+
+async def _collect_fd_referees(trigger: str = "schedule") -> Dict[str, Any]:
+    """Referees of past matches in every football-data.org competition (the
+    current season and four before), kept in Redis for _with_club_referees.
+    A first run reads ~55 seasons at the free plan's pace (~7 minutes)."""
+    import gzip
+    import model_store
+    import referee_sources
+    if not main.API_KEY:
+        return {"skipped": "FOOTBALL_DATA_API_KEY not set"}
+    r = model_store._client()  # binary: the blob is gzip'd
+    if r is None:
+        return {"skipped": "no Redis"}
+    state = await asyncio.to_thread(main._fd_refs_load, r)
+    fd = FootballDataClient(main.API_KEY)
+    def save():
+        r.set(referee_sources.REFS_KEY, gzip.compress(json.dumps(state, separators=(",", ":")).encode()))
+    try:
+        async with httpx.AsyncClient() as hc:
+            report = await referee_sources.collect_past(lambda url: fd._get(hc, url), state, date.today(), asyncio.sleep)
+    except asyncio.CancelledError:                # the server is stopping (a redeploy): keep the seasons read so far
+        save()
+        raise
+    await asyncio.to_thread(save)
+    main._fd_refs_status.update(at=state.get("at"), report=report, refs=len(state.get("refs") or {}),
+                           seasons_done=len(state.get("done") or []), trigger=trigger)
+    print(f"[Referees] football-data.org: {report['found']} new past referees, {report['requests']} requests")
+    return report

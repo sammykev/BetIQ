@@ -4,6 +4,7 @@ Shots models, international set pieces, and our shot lines vs SportyBet's.
 Moved out of main.py; main's shared state is read as `main.<name>` at call time.
 """
 
+import asyncio
 import international_fixtures as intl
 import json
 import pandas as pd
@@ -169,3 +170,11 @@ def _refresh_shot_blend() -> Dict[str, Any]:
         pass
     print(f"[Shots] vs SportyBet: {json.dumps(report)}")
     return report
+
+
+async def _shot_blend_job() -> Dict[str, Any]:
+    try:
+        return await asyncio.to_thread(main._refresh_shot_blend)
+    except Exception as e:
+        print(f"[Shots] vs SportyBet failed: {e}")
+        return {"error": str(e)}

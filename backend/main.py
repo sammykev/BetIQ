@@ -11,17 +11,16 @@ import os
 import re
 import time
 import glob
-import hashlib
 import json
 from datetime import datetime, date, timedelta, timezone
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, BackgroundTasks, Depends, HTTPException, Query, Request, Response
+from fastapi import FastAPI, Depends, HTTPException, Request
 from auth import auth_enforced, optional_user, require_user
-from grading import grade_prediction, regrade, to_goals
+from grading import to_goals
 from team_names import UCL_ALIASES, TeamResolver
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -29,14 +28,13 @@ from dotenv import load_dotenv
 
 from predictor import LeaguePredictor
 import data_fetcher
-from data_fetcher import FootballDataClient, LEAGUES, API_BASE, not_in_plan
+from data_fetcher import FootballDataClient, LEAGUES
 import international_fixtures as intl
 import perf
 import security
 import traffic
 import set_pieces
 import shots
-from scrapers.fbref import load_cards, load_corners, refresh as scrape_fbref, CORNERS_CSV, CARDS_CSV
 
 load_dotenv()
 import error_tracking
@@ -1493,13 +1491,6 @@ async def _sync_football_data(force: bool = False) -> Optional[Dict[str, list]]:
     return report
 
 
-async def _manual_football_sync() -> None:
-    """Admin job: download the league files now, and rebuild if any changed."""
-    report = await _sync_football_data(force=True)
-    if report and report["updated"] and not _is_training:
-        await _run_pipeline()
-
-
 FOOTBALL_DATA_RETRY_MINUTES = 30
 FOOTBALL_DATA_RETRIES = 4
 
@@ -1914,316 +1905,9 @@ def _load_or_train(combined: pd.DataFrame, data_mtime: float) -> LeaguePredictor
     return predictor
 
 
-async def _run_pipeline():
-    global _predictor, _predictions_cache, _last_updated, _is_training
-
-    if _is_training:
-        return
-    _is_training = True
-
-    try:
-        await _sync_football_data()
-        assembled = await asyncio.to_thread(_assemble_training_data)
-        if assembled is None:
-            return
-        history, combined, data_mtime = assembled
-        global _history_df
-        _history_df = history  # keep for H2H lookups
-        try:
-            await asyncio.to_thread(_build_results_index, combined)
-        except Exception as e:
-            print(f"[Pipeline] Results index failed (non-fatal): {e}")
-        global _set_pieces
-        try:
-            _set_pieces = await asyncio.to_thread(
-                lambda: set_pieces.SetPieceModel.fit(_with_club_referees(history), set_pieces.CLUB_GUARDS))
-        except Exception as e:
-            print(f"[Pipeline] Corners/bookings model failed (non-fatal): {e}")
-        try:
-            await asyncio.to_thread(_load_international_set_pieces)
-        except Exception as e:
-            print(f"[Pipeline] International corners/bookings model failed (non-fatal): {e}")
-        try:
-            await asyncio.to_thread(_fit_shots, history)
-        except Exception as e:
-            print(f"[Pipeline] Shots model failed (non-fatal): {e}")
-        # Fresh fits: they hold the history's matches (live_learning.py)
-        import live_learning
-        live_learning.mark_trained(_set_pieces, history)
-        live_learning.mark_trained(_shots, history)
-        print(f"[Pipeline] {len(combined)} training matches.")
-
-        # Training takes minutes of CPU. On a worker thread the API keeps
-        # answering (from the previous model) instead of timing out.
-        print(f"[Memory] {_rss_mb()} MB before loading the model")
-        predictor = await asyncio.to_thread(_load_or_train, combined, data_mtime)
-        print(f"[Memory] {_rss_mb()} MB with the model")
-
-        # Make predictor available immediately so card analysis works during API calibration
-        global _predictor
-        # A newly loaded model holds its training matches; the one already
-        # running (kept when no fresh model was found) also holds every match
-        # fed in since, so its memory stays
-        if getattr(predictor, "_applied_keys", None) is None or predictor is not _predictor:
-            live_learning.mark_trained(predictor, combined, predictor.canon)
-        _predictor = predictor
-        print("[Pipeline] Predictor ready — card analysis now available.")
-        # Then every match finished since the training data was made
-        try:
-            learned = await asyncio.to_thread(_learn_finished_matches, LEARN_DAYS)
-            if learned:
-                print(f"[Pipeline] Learned {learned['matches']} finished matches the models didn't hold.")
-        except Exception as e:
-            print(f"[Pipeline] Learning recent results failed (non-fatal): {e}")
-
-        # Archive yesterday's predictions from the OLD cache before we start
-        # overwriting it below.
-
-        predictions = []
-        fixtures: list = []  # pre-init so the block below is safe when API_KEY is unset
-
-        # ── International fixtures (ESPN + The Odds API, no football-data key needed) ──
-        # First, so an international break shows up within seconds.
-        fixtures.extend(await _fetch_international_fixtures())
-        if fixtures:
-            await asyncio.to_thread(_cache_team_crests, fixtures)
-            predictions = await asyncio.to_thread(_build_predictions, predictor, fixtures, {})
-            _predictions_cache = predictions
-            _last_updated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-            await asyncio.to_thread(_save_predictions_cache)
-            print(f"[Pipeline] +INT: {len(fixtures)} international fixtures — "
-                  f"{len(predictions)} predictions published.")
-
-        # ── Europa and Conference League (ESPN; not in football-data.org's free plan) ──
-        await asyncio.to_thread(_load_europe_model)
-        europe = await _fetch_europe_fixtures(predictor, combined)
-        if europe:
-            fixtures.extend(europe)
-            await asyncio.to_thread(_cache_team_crests, europe)
-            predictions = await asyncio.to_thread(_build_predictions, predictor, fixtures, {})
-            _predictions_cache = predictions
-            _last_updated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-            await asyncio.to_thread(_save_predictions_cache)
-            print(f"[Pipeline] +EL/UECL: {len(europe)} Europa/Conference League fixtures published.")
-
-        # ── More European leagues (ESPN fixtures; league_fixtures.py), and
-        # the top flights only SportyBet covers (the linker's catalog; sb_league_fixtures.py) ──
-        if not _sb_fixtures:
-            await asyncio.to_thread(_load_sb_fixtures)
-        more = await _fetch_more_leagues()
-        more += [fx for fx in _sb_fixtures if _within_window(fx.get("date", ""))]
-        if more:
-            fixtures.extend(more)
-            await asyncio.to_thread(_cache_team_crests, more)
-            predictions = await asyncio.to_thread(_build_predictions, predictor, fixtures, {})
-            _predictions_cache = predictions
-            _last_updated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-            await asyncio.to_thread(_save_predictions_cache)
-            print(f"[Pipeline] +{len(more)} fixtures from Belgium, Scotland, Greece, Turkey and the rest "
-                  f"({len(_unproven_leagues)} leagues still unproven).")
-
-        if API_KEY:
-            client = FootballDataClient(API_KEY)
-
-            # ── Fetch + publish per league, incrementally ──────────────────────
-            # football-data.org's free tier is rate-limited, so fetching all 12
-            # leagues takes ~2 minutes minimum (10s pacing per league) and can take
-            # much longer under 429 backoff. Waiting for all 12 to finish before
-            # showing anything means the app looks broken for minutes at a time,
-            # and on a free host that can sleep mid-run, a stall anywhere in the
-            # loop means NONE of it ever gets served. Instead: publish predictions
-            # after each league's fixtures come in, so the first league (World Cup)
-            # is visible within seconds, and every completed league survives even
-            # if a later one stalls or the run never finishes.
-            print("[Pipeline] Fetching upcoming fixtures (publishing after each league)...")
-            for code in list(LEAGUES.keys()):
-                if not_in_plan(code):
-                    continue
-                try:
-                    league_fixtures = await client.fetch_upcoming(code, days_ahead=PREDICTION_DAYS)
-                except Exception as e:
-                    print(f"[Pipeline] Fixture fetch error for {code}: {e}")
-                    league_fixtures = []
-                if league_fixtures:
-                    fixtures.extend(league_fixtures)
-                    # Team crests ride along for free on the fixtures response
-                    # (no extra API call) — cache them for /api/team-logo.
-                    await asyncio.to_thread(_cache_team_crests, league_fixtures)
-                    # No live odds yet on this fast pass — predict_match() falls back
-                    # to league-average implied probabilities, which is fine for an
-                    # initial publish; the odds pass below refines it.
-                    predictions = await asyncio.to_thread(_build_predictions, predictor, fixtures, {})
-                    _predictor = predictor
-                    _predictions_cache = predictions
-                    _last_updated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-                    await asyncio.to_thread(_save_predictions_cache)
-                    print(f"[Pipeline] +{code}: {len(league_fixtures)} fixtures — "
-                          f"{len(predictions)} predictions published so far.")
-                # Backfill this league's badge only if we don't already have a
-                # confirmed one cached — a one-time cost per league, not worth
-                # paying every run, and this is also what self-heals a
-                # previously rate-limited/failed lookup (see
-                # _has_cached_competition_emblem).
-                if not await asyncio.to_thread(_has_cached_competition_emblem, code):
-                    try:
-                        emblem = await client.fetch_competition_emblem(code)
-                        await asyncio.to_thread(_cache_competition_emblem, code, emblem)
-                    except Exception as e:
-                        print(f"[Pipeline] Emblem fetch failed for {code}: {e}")
-                await asyncio.sleep(10)  # respect football-data.org rate limit
-
-            # ── Live odds pass — improves accuracy + enables value-bet detection ──
-            live_odds: dict = {}
-            if fixtures:
-                try:
-                    stubs = [{"home": fx["home"], "away": fx["away"],
-                              "date": fx.get("date",""), "league_name": fx.get("league_name",""),
-                              **({"odds_sport": fx.get("odds_sport")} if "odds_sport" in fx else {})}
-                             for fx in fixtures]
-                    live_odds = await _get_live_odds_throttled(stubs)
-                    print(f"[Pipeline] Got live odds for {len(live_odds)}/{len(fixtures)} fixtures")
-                except Exception as e:
-                    print(f"[Pipeline] Live odds fetch error (non-fatal): {e}")
-
-                predictions = await asyncio.to_thread(_build_predictions, predictor, fixtures, live_odds)
-                _predictions_cache = predictions
-                _last_updated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-                await asyncio.to_thread(_save_predictions_cache)
-                print(f"[Pipeline] Republished {len(predictions)} predictions (with live odds).")
-                if _unknown_clubs:
-                    print(f"[Pipeline] {len(_unknown_clubs)} fixture clubs the model has no matches for: "
-                          + ", ".join(f"{n} ({lg})" for n, lg in sorted(_unknown_clubs.items(), key=lambda kv: kv[1])))
-
-            # ── Recent-results Elo calibration (refinement) ───────────────────
-            print("[Pipeline] Fetching recent API results to calibrate Elo...")
-            calibrated = False
-            for code in list(LEAGUES.keys()):
-                if not_in_plan(code):
-                    continue
-                try:
-                    recent = await client.fetch_recent_results(code, days_back=60)
-                    if recent.empty or "HomeTeam" not in recent.columns:
-                        await asyncio.sleep(6)  # still pace requests even on empty results
-                        continue
-                    for _, r in recent.iterrows():
-                        predictor._update(r["HomeTeam"], r["AwayTeam"], r["Result"], r["FTHG"], r["FTAG"],
-                                          competition=code)
-                    calibrated = True
-                    await asyncio.sleep(10)
-                except Exception as e:
-                    print(f"[Pipeline] Recent results error for {code}: {e}")
-
-            # Re-predict with the calibrated Elo and republish.
-            if calibrated and fixtures:
-                predictions = await asyncio.to_thread(_build_predictions, predictor, fixtures, live_odds)
-                _predictions_cache = predictions
-                _last_updated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-                await asyncio.to_thread(_save_predictions_cache)
-                print(f"[Pipeline] Republished {len(predictions)} predictions (calibrated).")
-        else:
-            print("[Pipeline] WARNING: No FOOTBALL_DATA_API_KEY set. Add your key to .env to get live fixtures.")
-
-        # Pre-fetch web form for teams that have sparse local data
-        # Runs as a background task so it doesn't block the pipeline
-        if fixtures:
-            asyncio.create_task(_prefetch_web_forms(predictor, fixtures))
-
-        # Fetch Understat xG in background (updates Redis cache for European clubs)
-        asyncio.create_task(_refresh_understat_xg())
-
-        _predictor = predictor
-        print(f"[Pipeline] Done — {len(predictions)} predictions cached.")
-        asyncio.create_task(_link_sportybet_events("pipeline"))
-        asyncio.create_task(_refresh_referees("pipeline"))
-
-        # Send push notifications for high-value picks
-        value_picks = [p for p in predictions if p.get("is_value_bet") and p.get("value_edge", 0) > 0.08]
-        if value_picks:
-            asyncio.create_task(_send_push_notifications(value_picks))
-
-    except Exception as e:
-        print(f"[Pipeline] Fatal error: {e}")
-        import traceback
-        traceback.print_exc()
-    finally:
-        _is_training = False
-
-
 # ------------------------------------------------------------------ #
 # Result fetcher — keeps model calibrated with real match outcomes
 # ------------------------------------------------------------------ #
-
-async def _fetch_and_save_results():
-    """
-    Fetch finished match results from football-data.org for the past 30 days,
-    append to results CSV, and apply to the live model's Elo/form state so
-    predictions stay fresh between full retrains. International results come
-    from ESPN (international_fixtures.py) and need no key.
-    """
-    print("[Results] Fetching recent finished results...")
-    all_rows: List[pd.DataFrame] = []
-    try:
-        intl_report = await intl.fetch_international(days_ahead=0, days_back=10)
-        if intl_report["results"]:
-            all_rows.append(pd.DataFrame(intl_report["results"]).assign(Date=lambda d: pd.to_datetime(d["Date"])))
-            print(f"[Results] {len(intl_report['results'])} international results.")
-    except Exception as e:
-        print(f"[Results] International results error: {e}")
-
-    client = FootballDataClient(API_KEY) if API_KEY else None
-    for code in (LEAGUES if client else []):
-        if not_in_plan(code):
-            continue
-        try:
-            df = await client.fetch_recent_results(code, days_back=30)
-            if not df.empty:
-                df["league"] = code
-                all_rows.append(df)
-            await asyncio.sleep(10)
-        except Exception as e:
-            print(f"[Results] Error fetching {code}: {e}")
-
-    if not all_rows:
-        print("[Results] No results returned.")
-        return
-
-    new_df = pd.concat(all_rows, ignore_index=True)
-    os.makedirs("data", exist_ok=True)
-
-    if os.path.exists(RESULTS_CSV):
-        existing = pd.read_csv(RESULTS_CSV, parse_dates=["Date"])
-        combined = pd.concat([existing, new_df], ignore_index=True)
-        combined = combined.drop_duplicates(subset=["Date", "HomeTeam", "AwayTeam"])
-        combined = combined.sort_values("Date").reset_index(drop=True)
-    else:
-        combined = new_df
-
-    combined.to_csv(RESULTS_CSV, index=False)
-    print(f"[Results] {len(combined)} results saved to {RESULTS_CSV}")
-
-    # New results into the live model, each match once (live_learning.py):
-    # most of the last 30 days are already in its training data or were
-    # learned from the live scores, and must not count again
-    if _predictor is not None:
-        import live_learning
-        moved: set = set()
-        for r in new_df.to_dict("records"):
-            row = live_learning.result_row(r)
-            if not row:
-                continue
-            try:
-                moved |= live_learning.learn(row, predictor=_predictor,
-                                             competition=intl.LEAGUE_CODE if row["league"] == intl.LEAGUE_CODE
-                                             else row["league"])
-            except Exception as e:
-                print(f"[Results] Couldn't learn {row['HomeTeam']} v {row['AwayTeam']}: {e}")
-        print(f"[Results] {len(moved) // 2} new result(s) learned by the live model (it already held the rest).")
-        if moved:
-            _repredict(moved)
-
-    # Web search fallback: find results for past predictions still marked "pending"
-    # that the API didn't return (e.g. international friendlies, cup games)
-    await _web_search_missing_results()
 
 
 async def _web_search_missing_results():
@@ -2318,153 +2002,6 @@ _md_read_cache: Dict[str, Tuple[float, Dict]] = {}
 LIVE_JOBS_KEY = "betiq:live:last"
 
 
-async def _refresh_matchdays(days_back: int = 1, trigger: str = "schedule") -> Dict[str, Any]:
-    """Scores for matches that have kicked off in the last `days_back` days
-    (ESPN live/final, then the league CSVs for stats and anything missed);
-    grades them, then settles booked tickets."""
-    import matchday
-    import results_feed
-    r = _get_redis()
-    if not r:
-        return {"skipped": "no Redis"}
-    now = datetime.now(timezone.utc)
-    _md_status.update(started=now.isoformat(timespec="seconds"), stage="loading match days")
-    today = now.date()
-    dates = [(today - timedelta(days=i)).isoformat() for i in range(days_back + 1)]
-    days = await asyncio.to_thread(_md_many, r, dates)
-    # A day the snapshot never wrote (or a match added since) would never be
-    # scored: its predictions go into the store here, before asking for scores
-    added = []
-    for d in dates:
-        preds = [p for p in _predictions_cache if p.get("date") == d and p.get("sport") in (None, "football")]
-        if not preds:
-            continue
-        try:
-            if matchday.merge_predictions(days[d], preds, now):
-                await asyncio.to_thread(_md_save, r, d, days[d])
-                added.append(d)
-        except Exception as e:
-            print(f"[MatchDay] couldn't store {d}'s predictions: {e}")
-    # Finals from SportyBet or the backups are checked against ESPN by the
-    # 3-hourly sweeps (not the 3-minute live runs)
-    need = {d: {k: e for k, e in day.items() if matchday.needs_result(e, now, recheck=trigger != "live")}
-            for d, day in days.items()}
-    need = {d: v for d, v in need.items() if v}
-    report: Dict[str, Any] = {"dates": sorted(need), "matches": sum(len(v) for v in need.values()),
-                              "updated": 0, "requests": 0, "errors": [], "unmatched": 0}
-    if added:
-        report["stored_from_predictions"] = added
-    if need:
-        pairs = set()
-        for entries in need.values():
-            for e in entries.values():
-                day0 = date.fromisoformat(e["date"])
-                for slug in results_feed.slugs_for(e.get("league") or ""):
-                    pairs.add((day0, slug))
-                    if (e.get("time") or "12:00") < "06:00":  # ESPN files it under the US date
-                        pairs.add((day0 - timedelta(days=1), slug))
-        espn: List[Dict] = []
-        _md_status["stage"] = f"asking ESPN ({len(pairs)} scoreboards)"
-        if pairs:
-            from curl_cffi.requests import AsyncSession
-            try:
-                async with AsyncSession(impersonate=intl.IMPERSONATE, timeout=20) as client:
-                    for d0, slug in sorted(pairs):
-                        got = await results_feed.fetch_espn(client, [d0], [slug])
-                        espn += got["results"]
-                        report["requests"] += got["requests"]
-                        report["errors"] += got["errors"]
-            except Exception as e:
-                report["errors"].append(f"ESPN: {type(e).__name__}")
-        # Backup: matches under way that ESPN still shows as not started
-        # (it lists some small friendlies but never scores them)
-        backup: List[Dict] = []
-        stale = _unscored(need, espn, now)
-        if stale:
-            # SportyBet first (its live list every run, its results now and then), then API-Football
-            _md_status["stage"] = f"asking SportyBet ({len(stale)} unscored)"
-            try:
-                sb, report["sportybet"] = await asyncio.wait_for(_sportybet_scores(stale, now), 60)
-                backup += sb
-            except asyncio.TimeoutError:
-                report["sportybet"] = {"error": "over 60s"}
-            except Exception as e:
-                report["sportybet"] = {"error": f"{type(e).__name__}: {e}"[:200]}
-            still = _unscored(need, espn + backup, now)
-            if still:
-                _md_status["stage"] = f"asking API-Football ({len(still)} unscored)"
-                af, report["backup"] = await _backup_results(r, still)
-                backup += af
-        near = {(date.fromisoformat(d) + timedelta(days=o)).isoformat() for d in need for o in (-1, 0, 1)}
-        csv = []
-        # The league CSVs arrive a day or two after a match: the 3-hourly sweep
-        # reads them; the 3-minute live runs only ask ESPN
-        if trigger != "live":
-            try:
-                csv = await asyncio.to_thread(results_feed.csv_results, near)
-            except Exception as e:
-                report["errors"].append(f"CSV: {type(e).__name__}")
-        _md_status["stage"] = "saving scores"
-        for d, entries in need.items():
-            day, changed = days[d], False
-            matched = set()
-            for source in (espn, backup, csv):
-                for k, res in matchday.match_results(entries, source):
-                    matched.add(k)
-                    before = {f: (day[k].get("result") or {}).get(f) for f in ("status", "hg", "ag")}
-                    was_corrected = (day[k].get("result") or {}).get("corrected")
-                    if matchday.apply_result(day[k], res):
-                        changed = True
-                        report["updated"] += 1
-                        fix = day[k]["result"].get("corrected")
-                        if fix and fix != was_corrected:
-                            report.setdefault("corrected", []).append(
-                                f"{day[k]['home']} v {day[k]['away']}: {fix['was'][0]}-{fix['was'][1]} → "
-                                f"{day[k]['result']['hg']}-{day[k]['result']['ag']}")
-                            r.set(MD_CORRECTED_KEY, now.isoformat(timespec="seconds"))
-                        if before != {f: day[k]["result"].get(f) for f in ("status", "hg", "ag")}:
-                            report["scores"] = report.get("scores", 0) + 1
-            report["unmatched"] += sum(1 for k in entries if k not in matched
-                                       and (matchday.kickoff(entries[k]) or now) < now - timedelta(hours=3))
-            if changed:
-                await asyncio.to_thread(_md_save, r, d, day)
-    report["errors"] = report["errors"][:20]
-    # Settling reads every account with open tickets (a Redis command each):
-    # live runs do it when a score changed, or every MD_SETTLE_MINUTES
-    # (live stats change every run; only a new score or status can settle a ticket)
-    if trigger == "live" and not report.get("scores") and time.time() - _md_last_settle[0] < MD_SETTLE_MINUTES * 60:
-        report["tickets"] = {"skipped": "no new scores"}
-    else:
-        _md_last_settle[0] = time.time()
-        if trigger != "live":
-            # Finals for the basketball / racket legs no other source scored
-            _md_status["stage"] = "asking Sportradar for missing finals"
-            try:
-                import sr_results
-                report["sportradar"] = await asyncio.wait_for(sr_results.refresh(r), 60)
-            except Exception as e:
-                report["sportradar"] = {"error": f"{type(e).__name__}: {e}"[:200]}
-            # …and Flashscore's day feeds for the ones Sportradar has nothing for
-            _md_status["stage"] = "asking Flashscore for missing finals"
-            try:
-                import fs_results
-                report["flashscore"] = await asyncio.wait_for(fs_results.refresh(r), 60)
-            except Exception as e:
-                report["flashscore"] = {"error": f"{type(e).__name__}: {e}"[:200]}
-        _md_status["stage"] = "settling tickets"
-        try:
-            report["tickets"] = await asyncio.wait_for(asyncio.to_thread(_settle_tickets, r), 90)
-        except asyncio.TimeoutError:
-            report["tickets"] = {"error": "settling took over 90s; next run retries"}
-        except Exception as e:
-            report["tickets"] = {"error": str(e)}
-    _md_status.update(at=now.isoformat(timespec="seconds"), trigger=trigger, report=report,
-                      stage="done", error=None)
-    if report["updated"]:
-        print(f"[MatchDay] {trigger}: {report['updated']} results updated over {report['dates']}")
-    return report
-
-
 SB_RESULTS_EVERY = 10 * 60  # seconds between reads of SportyBet's football results (a day is many pages)
 _sb_results_at: Dict[str, float] = {}
 
@@ -2556,10 +2093,6 @@ _traffic = traffic.Traffic()
 TRAFFIC_FLUSH_MINUTES = 5
 
 
-def _flush_traffic() -> int:
-    return _traffic.flush(_get_redis())
-
-
 # Jobs an admin can run now (scheduler ids → what they do)
 ADMIN_JOBS = {
     "refresh": ("Rebuild predictions", lambda: _run_pipeline()),
@@ -2596,17 +2129,6 @@ ADMIN_JOBS = {
 }
 
 
-async def _reload_set_pieces() -> Dict[str, Any]:
-    """Load the international corners/cards/shots models with the latest
-    nightly verdicts and re-price the current predictions — without a full
-    rebuild."""
-    await asyncio.to_thread(_load_international_set_pieces)
-    with_referee = _apply_referees()
-    return {"international_corners_cards": _intl_set_pieces is not None,
-            "international_shots": _intl_shots is not None, "club_shots": _shots is not None,
-            "predictions": len(_predictions_cache), "with_referee": with_referee}
-
-
 # ------------------------------------------------------------------ #
 # User data (saves, bets, accumulators, stats)
 # ------------------------------------------------------------------ #
@@ -2631,90 +2153,7 @@ _bb_predictions: List[Dict] = []
 _bb_status: Dict[str, Any] = {}
 
 
-async def _bb_collect() -> Dict[str, Any]:
-    """Yesterday's and today's results, and a few older days (the backfill)."""
-    import basketball_data as bd
-    r = _get_redis()
-    if not r:
-        return {"error": "no database"}
-    have = [k.decode() if isinstance(k, bytes) else k for k in (r.hkeys(bd.RESULTS_KEY) or [])]
-    today = date.today()
-    fetched, games, failed = 0, 0, 0
-    for day in bd.days_to_collect(have, today):
-        try:
-            found = await bd.fetch_results_day(day)
-        except Exception as e:
-            failed += 1
-            print(f"[Basketball] results for {day}: {e}")
-            continue
-        # A past day with nothing (older than SportyBet keeps) is stored too, so it isn't asked again
-        r.hset(bd.RESULTS_KEY, day, bd.encode(found))
-        fetched += 1
-        games += len(found)
-        await asyncio.sleep(0.5)
-    total_days = r.hlen(bd.RESULTS_KEY)
-    _bb_save_status(collected={"days": fetched, "games": games, "failed": failed, "days_stored": total_days})
-    print(f"[Basketball] results: {fetched} days, {games} games ({total_days} days stored)")
-    if games:
-        await _bb_fit()
-    return {"days": fetched, "games": games, "failed": failed}
-
-
 _bb_team_games: Dict[str, List] = {}      # basketball_facts index: team -> its games, newest first
-
-
-async def _bb_fit() -> Dict[str, Any]:
-    """Rate every league from the stored results."""
-    try:
-        got = await asyncio.to_thread(_bb_fit_sync)
-    except Exception as e:
-        print(f"[Basketball] rating failed: {e}")
-        return {"error": str(e)}
-    _bb_save_status(model=got)
-    print(f"[Basketball] rated {got['leagues']} leagues ({got['teams']} teams) from {got['games']} games")
-    return got
-
-
-async def _bb_refresh() -> List[Dict]:
-    """Price every basketball match SportyBet lists."""
-    import basketball_data as bd
-    import basketball_predictions as bp
-    try:
-        events, report = await bd.fetch_upcoming()
-    except Exception as e:
-        print(f"[Basketball] listing failed: {e}")
-        events, report = [], [str(e)]
-    preds = await asyncio.to_thread(bp.build, events, dict(_bb_leagues))
-    try:
-        await _bb_index()          # each team's recent games, for the form on the list
-    except Exception as e:
-        print(f"[Basketball] couldn't index teams: {e}")
-    try:
-        props = await _bb_add_props(preds)
-    except Exception as e:
-        props = 0
-        print(f"[Props] basketball player lines failed: {e}")
-    if not preds and not events:
-        _bb_save_status(listing={"events": 0, "report": report})
-        return _bb_predictions
-    _bb_predictions[:] = preds
-    r = _get_redis()
-    if r:
-        try:
-            r.set(BB_PREDICTIONS_KEY, bd.encode(preds), ex=6 * 3600)
-            r.setex("betiq:sports:basketball", 3600, json.dumps([_bb_slim(p) for p in preds]))
-        except Exception as e:
-            print(f"[Basketball] couldn't save predictions: {e}")
-    try:
-        if _bbmd_merge(preds):
-            _bb_strip_cache.clear()
-    except Exception as e:
-        print(f"[Basketball] couldn't keep the match days: {e}")
-    rated = sum(1 for p in preds if p.get("rated"))
-    _bb_save_status(listing={"events": len(events), "predictions": len(preds), "rated": rated, "report": report,
-                             "player_lines": props})
-    print(f"[Basketball] {len(preds)} matches priced ({rated} with both teams rated) · {' · '.join(report)}")
-    return preds
 
 
 # ── Tennis and table tennis form and head-to-head (tennis_facts.py) ─────────
@@ -2723,29 +2162,6 @@ _racket_players: Dict[str, Dict[str, List]] = {"tennis": {}, "table_tennis": {}}
 _racket_status: Dict[str, Dict[str, Any]] = {"tennis": {}, "table_tennis": {}}
 _tennis_players = _racket_players["tennis"]          # (the tennis one, by its old name)
 _tennis_status = _racket_status["tennis"]
-
-
-async def _web_probe() -> Dict[str, Any]:
-    """What this server can reach (web_probe.py), saved for the read_probe workflow job."""
-    import web_probe
-    report = await web_probe.run()
-    try:
-        report["live"] = await _live_probe()
-    except Exception as e:
-        report["live"] = {"error": str(e)[:300]}
-    r = _get_redis()
-    if r:
-        r.set(web_probe.PROBE_KEY, json.dumps(report, default=str)[:900_000], ex=7 * 86400)
-    print(f"[Probe] done: {list(report)}")
-    return report
-
-
-async def _tennis_collect() -> Dict[str, Any]:
-    return await _racket_collect("tennis")
-
-
-async def _table_tennis_collect() -> Dict[str, Any]:
-    return await _racket_collect("table_tennis")
 
 
 # ── Tennis and table tennis: every SportyBet line priced, match days, live ──
@@ -2761,21 +2177,6 @@ _rkmd_status: Dict[str, Dict[str, Any]] = {"tennis": {}, "table_tennis": {}}
 _rk_strip_cache: Dict[str, Tuple[float, Any]] = {}
 
 
-async def _rk_load_models() -> Dict[str, int]:
-    """The fitted ratings (nightly, GitHub Actions) from Redis."""
-    got = await asyncio.to_thread(_rk_load_models_sync)
-    print(f"[Racket] models loaded: {got} players")
-    return got
-
-
-async def _tennis_refresh() -> List[Dict]:
-    return await _rk_refresh("tennis")
-
-
-async def _table_tennis_refresh() -> List[Dict]:
-    return await _rk_refresh("table_tennis")
-
-
 RESULTS_REFRESH_MINUTES = 8  # SportyBet's finals for the live ticks
 PAGE_FROZEN_MINUTES = 20   # a live score read from a match's own page, unchanged this long: taken as over
 
@@ -2785,66 +2186,11 @@ OVERDUE_PER_TICK = 15
 _overdue_at: Dict[str, float] = {}
 
 
-async def _tennis_live_tick() -> Dict[str, Any]:
-    return await _guarded_tick("tennis_live", lambda: _rk_live_tick("tennis"), 110)
-
-
-async def _table_tennis_live_tick() -> Dict[str, Any]:
-    return await _guarded_tick("table_tennis_live", lambda: _rk_live_tick("table_tennis"), 110)
-
-
 LIVE_STATS_MINUTES = 2
 
 
 # ── Basketball match days (basketball_matchday.py): the date strip, live, history ──
 _bbmd_status: Dict[str, Any] = {}
-
-
-async def _bb_live_tick() -> Dict[str, Any]:
-    """Live scores for games under way, and finals (graded) from SportyBet's results."""
-    import basketball_data as bd
-    import basketball_matchday as bbmd
-    r = _get_redis()
-    if not r:
-        return {"skipped": "no Redis"}
-    now = datetime.now(timezone.utc)
-    dates = [(now.date() - timedelta(days=i)).isoformat() for i in (2, 1, 0)]
-    days = await asyncio.to_thread(lambda: {d: _bbmd_load(r, d) for d in dates})
-    open_ = {e["id"]: (d, e) for d, day in days.items() for e in day.values() if bbmd.needs_result(e, now)}
-    if not open_:
-        return {"open": 0}
-    changed = set()
-    # Finals from the stored results (read by _bb_results_refresh every few minutes)
-    finals = {g["id"]: g for g in await asyncio.to_thread(_bb_results, r, dates + [(now.date() + timedelta(days=1)).isoformat()])}
-    for eid, (d, e) in open_.items():
-        if eid in finals and bbmd.apply_result(e, finals[eid]):
-            changed.add(d)
-    # In play: the rest that have tipped off
-    playing = [eid for eid, (d, e) in open_.items() if (e.get("result") or {}).get("status") != bbmd.FINISHED
-               and now - (bbmd.kickoff(e) or now) < timedelta(hours=4)]
-    overdue = _overdue("basketball", [eid for eid, (d, e) in open_.items() if eid not in playing
-                                      and (e.get("result") or {}).get("status") != bbmd.FINISHED])
-    how = "none started"
-    ended: Dict[str, Dict] = {}
-    if playing or overdue:
-        paged: set = set()
-        try:
-            live, how, checked = await bd.fetch_live(playing + overdue, final=bd.parse_result, finals=ended,
-                                                     from_pages=paged)
-        except Exception as e:
-            live, how, checked = {}, f"failed: {e}", set()
-        for eid in playing + overdue:
-            d, e = open_[eid]
-            if _apply_live_reading(e, eid, eid in overdue, live, ended, checked, paged, now,
-                                   bbmd.apply_result, bbmd.apply_live, bbmd.stale_live):
-                changed.add(d)
-    if changed:
-        await asyncio.to_thread(lambda: [_bbmd_save(r, d, days[d]) for d in changed])
-    if changed:
-        _bb_strip_cache.clear()
-    _bbmd_status.update(at=now.isoformat(timespec="seconds"), open=len(open_), playing=len(playing),
-                        overdue=len(overdue), finals_from_pages=len(ended), live_source=how)
-    return dict(_bbmd_status)
 
 
 _bb_strip_cache: Dict[str, Tuple[float, Any]] = {}
@@ -2859,64 +2205,6 @@ FB_PROP_LEAGUES = {"PL": "Premier League", "PD": "LaLiga", "BL1": "Bundesliga", 
 _props_players: Dict[Tuple[str, str], Dict[str, Dict]] = {}
 _props_calib: Dict[str, Any] = {}
 _props_fb: Dict[str, List[Dict]] = {}
-
-
-async def _props_load() -> Dict[str, int]:
-    """The players' box scores and the walk-forward check's numbers, from Redis."""
-    try:
-        got = await asyncio.to_thread(_props_load_sync)
-    except Exception as e:
-        print(f"[Props] couldn't load: {e}")
-        return {}
-    print(f"[Props] players loaded: {got}")
-    return got
-
-
-async def _fb_props_refresh() -> Dict[str, int]:
-    """Anytime goalscorers on our football matches in the next three days (top five leagues)."""
-    import props_pricing as pr
-    import sportybet
-    now = datetime.now(timezone.utc)
-    last = (now + timedelta(days=3)).strftime("%Y-%m-%d")
-    scale_by = {lg: (v or {}).get("scale") or 1.0 for lg, v in (_props_calib.get("fb") or {}).items()}
-    priced: Dict[str, List[Dict]] = {}
-    for p in _predictions_cache:
-        league = FB_PROP_LEAGUES.get(p.get("league") or "")
-        players = _props_players.get(("fb", league)) if league else None
-        if not players or not (now.strftime("%Y-%m-%d") <= p.get("date", "") <= last):
-            continue
-        ev = _linked_event(p)
-        if not ev or not ev.get("eventId"):
-            continue
-        try:
-            page = await sportybet.event_page(str(ev["eventId"]))
-        except Exception as e:
-            print(f"[Props] scorer page {ev.get('eventId')}: {e}")
-            continue
-        tt = (p.get("goal_markets") or {}).get("team_totals") or {}
-        lam = {"home": pr.team_goals((tt.get("home") or {}).get("0.5")),
-               "away": pr.team_goals((tt.get("away") or {}).get("0.5"))}
-        team_exp: Dict[str, Optional[float]] = {}
-        for o in pr.scorer_offers(page or {}):
-            if o["team"] not in team_exp:
-                side = "home" if sportybet.team_similarity(o["team"], p["home"]) >= sportybet.team_similarity(o["team"], p["away"]) else "away"
-                team_exp[o["team"]] = lam[side]
-        lines = pr.scorer_price(page or {}, players, team_exp, scale_by.get(league, 1.0))
-        if lines:
-            priced[str(ev["eventId"])] = [{**x, "home": p["home"], "away": p["away"], "date": p["date"],
-                                           "time": p.get("time") or "", "league": p.get("league_name") or league}
-                                          for x in lines]
-        await asyncio.sleep(0.3)
-    _props_fb.clear()
-    _props_fb.update(priced)
-    r = _get_redis()
-    if r:
-        try:
-            r.set(PROPS_FB_KEY, json.dumps(priced), ex=6 * 3600)
-        except Exception:
-            pass
-    print(f"[Props] goalscorers priced on {len(priced)} matches")
-    return {"matches": len(priced), "players": sum(len(v) for v in priced.values())}
 
 
 _LEAGUE_NAME_TO_CODE = {info["name"].lower(): code for code, info in LEAGUES.items()}
@@ -2959,116 +2247,14 @@ _INTL_TOURNAMENT = re.compile(r"international|friendl|nations league|qualif|worl
 MARKET_PAGES = 3   # SportyBet match pages read to confirm market names
 
 
-async def _link_sportybet_events(trigger: str = "schedule") -> Dict[str, Any]:
-    """Match upcoming football predictions to SportyBet events and keep the
-    links. `trigger` says what started the run: startup (a new deploy or
-    restart), pipeline, international, schedule or manual."""
-    async with _link_lock():
-        return await _link_sportybet_events_now(trigger)
-
-
 # ── Referees appointed to upcoming matches (referees.py) ──
 REFEREE_HOURS = 3
 _referees: Dict[str, Any] = {"at": None, "appointments": {}, "report": None, "trigger": None}
 _referee_lock: Optional[Tuple[Any, asyncio.Lock]] = None
 
 
-async def _refresh_referees(trigger: str = "schedule") -> Dict[str, Any]:
-    """Look up the referees of the coming days' matches and re-price the
-    cached predictions' bookings. SofaScore first; when it blocks this
-    server, API-Football (APIFOOTBALL_KEY). The GitHub job
-    (collect_referees.py) fills the same Redis key from GitHub's machines,
-    so what it found is picked up here too."""
-    global _referee_lock
-    import httpx
-    import referees
-    loop = asyncio.get_running_loop()
-    if _referee_lock is None or _referee_lock[0] is not loop:
-        _referee_lock = (loop, asyncio.Lock())
-    async with _referee_lock[1]:
-        preds = [p for p in _predictions_cache if p.get("sport") in (None, "football")]
-        if not preds:
-            return {"skipped": "no predictions yet"}
-        saved = referees.load(_get_redis())
-        if saved.get("at") and saved["at"] > (_referees.get("at") or ""):
-            _referees.update(saved)  # newer, from the GitHub job
-        known = dict(_appointments())
-        today = datetime.now(timezone.utc).date()
-        from curl_cffi.requests import AsyncSession
-        try:
-            async with AsyncSession(impersonate=intl.IMPERSONATE, timeout=20) as client:
-                found, report = await referees.fetch(client, preds, known, today)
-        except Exception as e:
-            found = {k: v for k, v in known.items() if k.rsplit("|", 1)[-1] >= today.isoformat()}
-            report = {"errors": [f"{type(e).__name__}: {e}"]}
-        report["source"] = "sofascore"
-
-        # football-data.org: every competition it covers, in one request
-        # (a SofaScore find, with the referee's career record, still wins)
-        report["football_data"] = await _football_data_referees(preds, today)
-        fd = report["football_data"].pop("found_map", {})
-        found = {**fd, **{k: v for k, v in found.items() if v.get("source") not in ("football-data", "api-football")}}
-
-        # API-Football for what's still missing, when SofaScore is blocked
-        still = [p for p in preds if referees.key(p["home"], p["away"], p["date"]) not in found]
-        api_key = os.getenv("APIFOOTBALL_KEY", "").strip()
-        if still and (referees.blocked(report) or not report.get("days")):
-            if not api_key:
-                report["api_football"] = {"skipped": "set APIFOOTBALL_KEY on Render to use API-Football too"}
-            elif _af_referee_calls() + referees.AF_DAYS > referees.AF_DAILY_CAP:
-                report["api_football"] = {"skipped": f"used today's {referees.AF_DAILY_CAP} requests"}
-            else:
-                async with httpx.AsyncClient(timeout=30) as client:
-                    af, af_report = await referees.fetch_api_football(client, still, today, api_key)
-                _af_referee_calls(af_report["requests"])
-                report["api_football"] = af_report
-                # A SofaScore find (with the referee's career record) wins
-                found = {**af, **{k: v for k, v in found.items() if v.get("source") != "api-football"}}
-        report["found"] = len(found)
-
-        _referees.update({"at": datetime.now(timezone.utc).isoformat(), "checked": None,
-                          "appointments": found, "report": report, "trigger": trigger})
-        try:
-            referees.save(_get_redis(), {k: _referees[k] for k in ("at", "appointments", "report", "trigger")})
-        except Exception as e:
-            print(f"[Referees] Could not save: {e}")
-        report["on_predictions"] = _apply_referees()
-        await asyncio.to_thread(_save_predictions_cache)
-        print(f"[Referees] {trigger}: {len(found)} referees; errors {report.get('errors') or 'none'}")
-        return report
-
-
 # ── Past referees from football-data.org, for the cards model ──
 _fd_refs_status: Dict[str, Any] = {"at": None, "report": None, "refs": 0, "seasons_done": 0}
-
-
-async def _collect_fd_referees(trigger: str = "schedule") -> Dict[str, Any]:
-    """Referees of past matches in every football-data.org competition (the
-    current season and four before), kept in Redis for _with_club_referees.
-    A first run reads ~55 seasons at the free plan's pace (~7 minutes)."""
-    import gzip
-    import model_store
-    import referee_sources
-    if not API_KEY:
-        return {"skipped": "FOOTBALL_DATA_API_KEY not set"}
-    r = model_store._client()  # binary: the blob is gzip'd
-    if r is None:
-        return {"skipped": "no Redis"}
-    state = await asyncio.to_thread(_fd_refs_load, r)
-    fd = FootballDataClient(API_KEY)
-    def save():
-        r.set(referee_sources.REFS_KEY, gzip.compress(json.dumps(state, separators=(",", ":")).encode()))
-    try:
-        async with httpx.AsyncClient() as hc:
-            report = await referee_sources.collect_past(lambda url: fd._get(hc, url), state, date.today(), asyncio.sleep)
-    except asyncio.CancelledError:                # the server is stopping (a redeploy): keep the seasons read so far
-        save()
-        raise
-    await asyncio.to_thread(save)
-    _fd_refs_status.update(at=state.get("at"), report=report, refs=len(state.get("refs") or {}),
-                           seasons_done=len(state.get("done") or []), trigger=trigger)
-    print(f"[Referees] football-data.org: {report['found']} new past referees, {report['requests']} requests")
-    return report
 
 
 # National-team match stats (corners, bookings, shots) by (date, team keys):
@@ -3082,51 +2268,14 @@ SHOT_BLEND_DAYS = 90
 _shot_blend: Dict[str, Any] = {"weights": {}, "report": None, "at": None}
 
 
-async def _shot_blend_job() -> Dict[str, Any]:
-    try:
-        return await asyncio.to_thread(_refresh_shot_blend)
-    except Exception as e:
-        print(f"[Shots] vs SportyBet failed: {e}")
-        return {"error": str(e)}
-
-
 # ── Weekly accuracy review (market_review.py) ──
 REVIEW_KEY = "betiq:review"
 _review: Dict[str, Any] = {"mode": "flag", "overrides": {}, "latest": None, "history": [], "loaded": False}
 
 
-async def _review_job() -> Dict[str, Any]:
-    try:
-        return await asyncio.to_thread(_run_review)
-    except Exception as e:
-        print(f"[Review] failed: {e}")
-        return {"error": str(e)}
-
-
 # ── Weekly league drift check (league_review.py) ──
 LEAGUE_REVIEW_KEY = "betiq:league_review"
 _league_review: Dict[str, Any] = {"mode": "flag", "overrides": {}, "latest": None, "history": [], "loaded": False}
-
-
-async def _league_review_job() -> Dict[str, Any]:
-    try:
-        result = await asyncio.to_thread(_run_league_review)
-    except Exception as e:
-        print(f"[Drift] failed: {e}")
-        return {"error": str(e)}
-    import league_review
-    text = league_review.message(result, _league_review.get("mode", "flag")) if "leagues" in result else None
-    if text:
-        import telegram_poster
-        sent = await telegram_poster.notify_admin(text)
-        result["telegram"] = sent.get("ok") or sent.get("error")
-        if result.get("newly_failing"):
-            try:
-                import sentry_sdk
-                sentry_sdk.capture_message(text, level="warning")
-            except Exception:
-                pass
-    return result
 
 
 OPT_SPORTS = ("football", "basketball", "tennis", "table_tennis")
@@ -3144,33 +2293,6 @@ DAILY_KEY = "betiq:daily:{}"
 DAILY_RECORD_KEY = "betiq:daily:record"
 _daily_lock = asyncio.Lock()
 _daily_memory: Dict[str, Dict[str, Any]] = {}   # when the database is down: still one set a day
-
-
-async def _build_daily(day: str, force: bool = False) -> Optional[Dict[str, Any]]:
-    """The day's slips, made once (just before its midnight, by the daily
-    tick) and booked on SportyBet straight away, so everyone gets the same
-    slips and codes all day. `force` (admin) makes them again."""
-    import daily_slips
-    r = _get_redis()
-    async with _daily_lock:
-        if not force:
-            doc = _daily_load(r, day)
-            if doc:
-                return doc
-        if not _predictions_cache:
-            return None
-        # In turn, each leaving out the matches the ones before took: no match
-        # on two targets' slips, so one result can't cut them all
-        slips: List[Dict[str, Any]] = []
-        for target in daily_slips.TARGETS:
-            slips.append(await _daily_slip(target, day, daily_slips.match_keys({"slips": slips})))
-        doc = {"date": day, "built_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "slips": slips}
-        await _book_daily(doc)
-        _daily_save(r, doc)
-        print(f"[Daily] {day}: " + ", ".join(
-            f"{int(s['target'])}x " + ((s.get("booking") or {}).get("code") or ("no slip" if s["status"] == "none" else "no code yet"))
-            for s in slips))
-        return doc
 
 
 DAILY_SWEEP_DAYS = 30           # past the 7-day expiry, so every pick ends graded or "unknown"
@@ -3216,29 +2338,6 @@ _last_public_refresh = 0.0
 # ------------------------------------------------------------------ #
 
 scheduler = AsyncIOScheduler()
-
-
-async def _load_fbref_data():
-    """Load cards + corners CSVs, rebuilding from EPL CSV if missing or >7 days old."""
-    global _cards_df, _corners_df
-    import time as _time
-
-    needs_scrape = True
-    if os.path.exists(CORNERS_CSV):
-        age_days = (_time.time() - os.path.getmtime(CORNERS_CSV)) / 86400
-        if age_days < 7:
-            needs_scrape = False
-
-    if needs_scrape:
-        print("[fbref] Data stale or missing — building from EPL CSV...")
-        try:
-            await scrape_fbref(epl_csv_path=EPL_HISTORY)
-        except Exception as e:
-            print(f"[fbref] Build failed: {e}")
-
-    _cards_df = load_cards()
-    _corners_df = load_corners()
-    print(f"[fbref] Loaded cards data ({len(_cards_df)} teams), corners data ({len(_corners_df)} teams)")
 
 
 async def _clubelo_refresh() -> None:
@@ -3465,23 +2564,26 @@ from routers.logos import (  # noqa: E402
 )
 from routers.community import _leaderboard  # noqa: E402
 from jobs.sportybet_links import (  # noqa: E402
-    _catalog_summary, _kickoff_ms, _link_lock, _link_on_startup, _link_sportybet_events_now,
-    _linked_event, _load_sb_fixtures, _market_coverage, _market_map, _match_predictions_to_events,
-    _price_unpriced, _publish_sb_leagues, _publish_waiting_europe, _restore_link_status,
-    _save_link_status, _sb_1x2, _sb_key, _sb_market_map, _with_priced_set_pieces,
+    _catalog_summary, _kickoff_ms, _link_lock, _link_on_startup, _link_sportybet_events,
+    _link_sportybet_events_now, _linked_event, _load_sb_fixtures, _market_coverage, _market_map,
+    _match_predictions_to_events, _price_unpriced, _publish_sb_leagues, _publish_waiting_europe,
+    _restore_link_status, _save_link_status, _sb_1x2, _sb_key, _sb_market_map,
+    _with_priced_set_pieces,
 )
 from jobs.referees import (  # noqa: E402
-    _af_referee_calls, _apply_referees, _appointments, _fd_refs_load, _football_data_referees,
-    _referee_status, _set_piece_extras, _with_club_referees,
+    _af_referee_calls, _apply_referees, _appointments, _collect_fd_referees, _fd_refs_load,
+    _football_data_referees, _referee_status, _refresh_referees, _set_piece_extras,
+    _with_club_referees,
 )
 from jobs.shots import (  # noqa: E402
     _fit_shots, _index_intl_stats, _international_set_pieces, _intl_stats_for,
-    _load_international_set_pieces, _refresh_shot_blend, _restore_shot_blend, _shot_markets,
+    _load_international_set_pieces, _refresh_shot_blend, _restore_shot_blend, _shot_blend_job,
+    _shot_markets,
 )
 from jobs.reviews import (  # noqa: E402
-    _league_review_view, _market_names, _paused_leagues, _paused_markets, _restore_league_review,
-    _restore_review, _review_view, _run_league_review, _run_review, _save_league_review,
-    _save_review,
+    _league_review_job, _league_review_view, _market_names, _paused_leagues, _paused_markets,
+    _restore_league_review, _restore_review, _review_job, _review_view, _run_league_review,
+    _run_review, _save_league_review, _save_review,
 )
 from routers.optimizer import (  # noqa: E402
     _bookable_markets, _cached_sport_predictions, _explain_empty, _live_pages_for, _live_states,
@@ -3489,12 +2591,22 @@ from routers.optimizer import (  # noqa: E402
     asdict_option,
 )
 from routers.daily import (  # noqa: E402
-    _book_daily, _daily_load, _daily_public, _daily_save, _daily_slip, _daily_tick, _grade_daily,
-    _recheck_daily_after_correction, _remake_cut, _sweep_daily, slip_reliability,
+    _book_daily, _build_daily, _daily_load, _daily_public, _daily_save, _daily_slip, _daily_tick,
+    _grade_daily, _recheck_daily_after_correction, _remake_cut, _sweep_daily, slip_reliability,
 )
 from jobs.social import (  # noqa: E402
     _channel, _maybe_post_daily, _post_alerts, _post_daily, _post_day, _post_enabled, _post_ready,
     _site_url, admin_post_channel,
+)
+from jobs.pipeline import (  # noqa: E402
+    _fetch_and_save_results, _flush_traffic, _load_fbref_data, _manual_football_sync,
+    _reload_set_pieces, _run_pipeline,
+)
+from jobs.matchdays import _refresh_matchdays  # noqa: E402
+from jobs.sports import (  # noqa: E402
+    _bb_collect, _bb_fit, _bb_live_tick, _bb_refresh, _fb_props_refresh, _props_load,
+    _rk_load_models, _table_tennis_collect, _table_tennis_live_tick, _table_tennis_refresh,
+    _tennis_collect, _tennis_live_tick, _tennis_refresh, _web_probe,
 )
 from routers.config import _trial_config  # noqa: E402
 from routers import (  # noqa: E402

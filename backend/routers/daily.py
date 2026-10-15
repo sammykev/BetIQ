@@ -348,3 +348,30 @@ async def _daily_tick() -> None:
             await main._maybe_post_daily(doc)
         except Exception as e:
             print(f"[Daily] tick for {day} failed: {e}")
+
+
+async def _build_daily(day: str, force: bool = False) -> Optional[Dict[str, Any]]:
+    """The day's slips, made once (just before its midnight, by the daily
+    tick) and booked on SportyBet straight away, so everyone gets the same
+    slips and codes all day. `force` (admin) makes them again."""
+    import daily_slips
+    r = main._get_redis()
+    async with main._daily_lock:
+        if not force:
+            doc = main._daily_load(r, day)
+            if doc:
+                return doc
+        if not main._predictions_cache:
+            return None
+        # In turn, each leaving out the matches the ones before took: no match
+        # on two targets' slips, so one result can't cut them all
+        slips: List[Dict[str, Any]] = []
+        for target in daily_slips.TARGETS:
+            slips.append(await main._daily_slip(target, day, daily_slips.match_keys({"slips": slips})))
+        doc = {"date": day, "built_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "slips": slips}
+        await main._book_daily(doc)
+        main._daily_save(r, doc)
+        print(f"[Daily] {day}: " + ", ".join(
+            f"{int(s['target'])}x " + ((s.get("booking") or {}).get("code") or ("no slip" if s["status"] == "none" else "no code yet"))
+            for s in slips))
+        return doc
