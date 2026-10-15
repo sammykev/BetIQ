@@ -1,7 +1,8 @@
-import { auth, clerkClient } from "@clerk/nextjs/server";
+import { auth } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
-import { isPlan, planKobo } from "@/lib/pricing";
-import { MAX_STORED_REFERENCES, isFreshPayment, paidByUser, renewal } from "@/lib/subscription";
+import { isPlan } from "@/lib/pricing";
+import { isFreshPayment, paidByUser } from "@/lib/subscription";
+import { paysFor, redeem, verifyTransaction } from "@/lib/paystack";
 
 export async function POST(req: NextRequest) {
   try {
@@ -22,22 +23,15 @@ export async function POST(req: NextRequest) {
     }
 
     // Verify the payment with Paystack
-    const verify = await fetch(
-      `https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`,
-      { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
-    );
-    const data = await verify.json();
-
-    if (!data.status || data.data?.status !== "success") {
-      console.error("[subscribe] Paystack verify failed:", data.message);
+    const paid = await verifyTransaction(reference);
+    if (!paid || paid.status !== "success") {
       return NextResponse.json({ error: "payment_not_verified" }, { status: 400 });
     }
 
     // The amount is set in the browser, so check what was actually paid —
     // otherwise an edited checkout (e.g. ₦1, or the Lite price) would still
     // unlock the plan asked for.
-    const paid = data.data;
-    if (paid.currency !== "NGN" || Number(paid.amount) < planKobo(plan)) {
+    if (!paysFor(paid, plan)) {
       console.error(`[subscribe] Amount mismatch for ${reference}: ${paid.amount} ${paid.currency}`);
       return NextResponse.json({ error: "amount_mismatch" }, { status: 400 });
     }
@@ -56,34 +50,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "payment_too_old" }, { status: 409 });
     }
 
-    const client = await clerkClient();
-    const user = await client.users.getUser(userId);
-    const used = Array.isArray(user.privateMetadata?.paystack_references)
-      ? (user.privateMetadata.paystack_references as string[])
-      : [];
-    // paystack_reference covers the last payment made before this list existed
-    if (used.includes(reference) || user.publicMetadata?.paystack_reference === reference) {
-      return NextResponse.json({ error: "reference_already_used" }, { status: 409 });
+    const done = await redeem(userId, plan, reference);
+    if ("error" in done) {
+      // The webhook may have redeemed it first: the plan is already on the account
+      return NextResponse.json({ error: done.error }, { status: 409 });
     }
-
-    // Renewing the same plan extends from the current expiry, so paying early
-    // never loses days already paid for; a new plan starts from today.
-    const expiresAt = renewal(user.publicMetadata, plan);
-
-    await client.users.updateUserMetadata(userId, {
-      publicMetadata: {
-        subscription: plan,
-        subscription_expires: expiresAt.toISOString(),
-        paystack_reference: reference,
-        trial: false,   // paid now (days left of a trial on the same plan carry over)
-      },
-      privateMetadata: {
-        paystack_references: [...used, reference].slice(-MAX_STORED_REFERENCES),
-      },
-    });
-
-    console.log(`[subscribe] User ${userId} subscribed to ${plan}. Expires ${expiresAt.toISOString()}`);
-    return NextResponse.json({ success: true, plan, expires: expiresAt.toISOString() });
+    return NextResponse.json({ success: true, plan: done.plan, expires: done.expires });
   } catch (err) {
     console.error("[subscribe]", err);
     return NextResponse.json({ error: "server_error" }, { status: 500 });

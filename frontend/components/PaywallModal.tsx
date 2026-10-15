@@ -29,6 +29,25 @@ const PERKS: [FeatureId, string][] = [
   ["sport.table_tennis", "Table tennis predictions"],
 ];
 
+/** Ask the server to apply a payment, retrying network and server errors.
+ *  "Already used" means the Paystack webhook applied it first, which is fine. */
+async function redeemPayment(reference: string, plan: Plan): Promise<void> {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (attempt) await new Promise(r => setTimeout(r, 1500 * 2 ** (attempt - 1)));
+    const res = await fetch("/api/subscribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reference, plan }),
+    }).catch(() => null);
+    if (!res) continue;
+    if (res.ok) return;
+    const { error } = await res.json().catch(() => ({ error: "" }));
+    if (error === "reference_already_used") return;
+    if (res.status < 500 && error !== "payment_not_verified") break;
+  }
+  throw new Error("not_confirmed");
+}
+
 export function PaywallModal({ onClose, onSuccess, need }: Props) {
   const { user } = useUser();
   const access = useAccess();
@@ -57,14 +76,11 @@ export function PaywallModal({ onClose, onSuccess, need }: Props) {
       metadata: { userId: user.id, plan },
       onSuccess: (transaction: { reference: string }) => {
         setBusy(plan);
-        fetch("/api/subscribe", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ reference: transaction.reference, plan }),
-        })
-          .then(r => { if (!r.ok) throw new Error(); })
+        redeemPayment(transaction.reference, plan)
           .then(async () => { await user.reload().catch(() => {}); refreshAccess(); onSuccess(); })
-          .catch(() => setError("Payment received but verification failed. Contact support."))
+          .catch(() => setError(
+            `Payment received but not confirmed yet. It will be applied automatically within a few minutes; ` +
+            `if not, contact support with reference ${transaction.reference}.`))
           .finally(() => setBusy(null));
       },
       onCancel: () => {},

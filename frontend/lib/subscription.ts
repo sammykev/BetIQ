@@ -89,3 +89,20 @@ export function trialDaysLeft(meta: TrialMeta, now = new Date()): number | null 
   const ms = new Date(String(meta.subscription_expires)).getTime() - now.getTime();
   return Math.max(1, Math.ceil(ms / 86_400_000));
 }
+
+/** Metadata's userId and plan (Paystack sometimes sends metadata as a JSON string). */
+export function payer(tx: { metadata?: unknown }): { userId?: string; plan?: string } {
+  let meta = tx.metadata;
+  if (typeof meta === "string") {
+    try { meta = JSON.parse(meta); } catch { meta = null; }
+  }
+  if (!meta || typeof meta !== "object") return {};
+  const { userId, plan } = meta as { userId?: unknown; plan?: unknown };
+  return { userId: typeof userId === "string" ? userId : undefined, plan: typeof plan === "string" ? plan : undefined };
+}
+
+// The webhook leaves a payment this new to the browser's own redemption, and
+// asks Paystack to retry later, so the two never both extend the plan.
+export const WEBHOOK_GRACE_MS = 2 * 60_000;
+// Paystack retries a failed webhook for up to 72 hours
+export const WEBHOOK_MAX_AGE_HOURS = 96;
