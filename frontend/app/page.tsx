@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { rememberCrests } from "@/lib/teamAssets";
 import { PredictionCard } from "@/components/PredictionCard";
+import { PushToggle } from "@/components/PushToggle";
 import { LeagueTabs } from "@/components/LeagueTabs";
 import { LeagueSections } from "@/components/LeagueSections";
 import { StatusFilter, type MatchStatus } from "@/components/StatusFilter";
@@ -15,7 +16,7 @@ import { confidenceTier, headlinePick } from "@/lib/picks";
 import { predKey } from "@/components/SaveButton";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
 import {
-  RefreshCw, TrendingUp, AlertTriangle, CalendarDays, Percent, Bell,
+  RefreshCw, TrendingUp, AlertTriangle, CalendarDays, Percent,
   Brain, BarChart3, Bot, Ticket, Globe, ArrowRight, SearchX, ChevronDown, Loader2,
 } from "lucide-react";
 import { ChatBot } from "@/components/ChatBot";
@@ -299,8 +300,6 @@ export default function HomePage() {
   const [selectedBB, setSelectedBB] = useState<BasketballPrediction | null>(null);
   const [showPaywall, setShowPaywall] = useState<null | { need?: Plan }>(null);
   const [savedKeys, setSavedKeys] = useState<Set<string>>(new Set());
-  const [pushEnabled, setPushEnabled] = useState(false);
-  const [pushSupported, setPushSupported] = useState(false);
 
   // Match days: the date strip (7 back, 14 ahead) and the chosen day's results
   const [strip, setStrip] = useState<StripResponse | null>(null);
@@ -486,18 +485,6 @@ export default function HomePage() {
     return () => clearInterval(id);
   }, []);
 
-  // Check push notification support
-  useEffect(() => {
-    if ("serviceWorker" in navigator && "PushManager" in window) {
-      setPushSupported(true);
-      navigator.serviceWorker.ready.then(reg => {
-        reg.pushManager.getSubscription().then(sub => {
-          setPushEnabled(!!sub);
-        });
-      });
-    }
-  }, []);
-
   async function handleRefresh() {
     setRefreshing(true);
     try {
@@ -506,42 +493,6 @@ export default function HomePage() {
       await load();
     } finally {
       setRefreshing(false);
-    }
-  }
-
-  async function handlePushToggle() {
-    if (!pushSupported) return;
-    const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
-    try {
-      const reg = await navigator.serviceWorker.ready;
-      if (pushEnabled) {
-        const sub = await reg.pushManager.getSubscription();
-        if (sub) {
-          await fetch(`${API}/api/push/subscribe`, {
-            method: "DELETE",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ subscription: sub.toJSON() }),
-          });
-          await sub.unsubscribe();
-        }
-        setPushEnabled(false);
-      } else {
-        const keyRes = await fetch(`${API}/api/push/public-key`);
-        const { public_key } = await keyRes.json();
-        if (!public_key) { alert("Push notifications not configured on server."); return; }
-        const sub = await reg.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: public_key,
-        });
-        await fetch(`${API}/api/push/subscribe`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ subscription: sub.toJSON() }),
-        });
-        setPushEnabled(true);
-      }
-    } catch (e) {
-      console.error("Push toggle error:", e);
     }
   }
 
@@ -648,21 +599,7 @@ export default function HomePage() {
 
   const headerActions = (
     <>
-      {pushSupported && (
-        <button
-          onClick={handlePushToggle}
-          title={pushEnabled ? "Disable value bet notifications" : "Get notified for value bets"}
-          className={clsx(
-            "hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all",
-            pushEnabled
-              ? "bg-brand-400/10 border-brand-400/40 text-accent"
-              : "bg-surface border-n-800 text-n-400 hover:text-n-0 hover:border-n-700"
-          )}
-        >
-          <Bell size={12} />
-          {pushEnabled ? "Alerts on" : "Alerts"}
-        </button>
-      )}
+      <PushToggle compact className="hidden sm:block" />
       <button
         onClick={handleRefresh}
         disabled={refreshing}

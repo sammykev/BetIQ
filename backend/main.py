@@ -4428,7 +4428,7 @@ async def submit_match_result(body: Dict[str, Any], _admin: str = Depends(requir
 
 # ── Push notification subscriptions ──────────────────────────────────────── #
 
-PUSH_SUBS_KEY = "betiq:push_subs"
+PUSH_SUBS_KEY = "betiq:push_subs"   # web_push.SUBS_KEY
 
 @app.get("/api/push/public-key")
 async def push_public_key():
@@ -4480,46 +4480,40 @@ async def push_unsubscribe(req: Request):
 
 
 async def _send_push_notifications(value_preds: list):
-    """Send push notification to all subscribers when high-value picks are found."""
-    vapid_private = os.getenv("VAPID_PRIVATE_KEY", "")
-    vapid_claims_email = os.getenv("VAPID_CLAIMS_EMAIL", "admin@betiq.app")
-    if not vapid_private:
-        return
+    """Tell subscribers about strong value picks, at most once a day."""
+    import web_push
     r = _get_redis()
-    if not r:
+    if not r or not web_push.configured():
         return
     try:
-        from pywebpush import webpush, WebPushException
-        import json as _json
-        subs_raw = r.smembers(PUSH_SUBS_KEY)
-        if not subs_raw:
+        if not await asyncio.to_thread(web_push.once, r, "value", datetime.now(timezone.utc).date().isoformat()):
             return
-        payload_obj = {
-            "title": f"BetIQ — {len(value_preds)} Value Bet{'s' if len(value_preds) > 1 else ''} Found!",
-            "body": " · ".join(f"{p['home']} vs {p['away']}" for p in value_preds[:3]),
-            "icon": "/icon-192.png",
-            "url": "/",
-        }
-        payload = _json.dumps(payload_obj)
-        for sub_raw in subs_raw:
-            try:
-                sub = _json.loads(sub_raw)
-                webpush(
-                    subscription_info=sub,
-                    data=payload,
-                    vapid_private_key=vapid_private,
-                    vapid_claims={"sub": f"mailto:{vapid_claims_email}"},
-                )
-            except WebPushException as e:
-                if "410" in str(e) or "404" in str(e):
-                    r.srem(PUSH_SUBS_KEY, sub_raw)  # remove expired subscription
-            except Exception:
-                pass
-        print(f"[Push] Sent notifications to {len(subs_raw)} subscribers")
+        n = len(value_preds)
+        data = web_push.payload(f"{n} value bet{'s' if n != 1 else ''} found",
+                                " · ".join(f"{p['home']} vs {p['away']}" for p in value_preds[:3]), "/", "value")
+        print(f"[Push] value picks: {await asyncio.to_thread(web_push.send_all, r, data)}")
     except ImportError:
         print("[Push] pywebpush not installed — push notifications disabled")
     except Exception as e:
-        print(f"[Push] Error: {e}")
+        print(f"[Push] Error: {type(e).__name__}: {e}")
+
+
+async def _push_daily(doc: Dict[str, Any]) -> None:
+    """Tell subscribers the day's slips are out, once a day."""
+    import web_push
+    r = _get_redis()
+    text = web_push.daily_text(doc)
+    if not r or not text or not web_push.configured():
+        return
+    try:
+        if not await asyncio.to_thread(web_push.once, r, "daily", doc["date"]):
+            return
+        data = web_push.payload(text["title"], text["body"], "/daily", "daily")
+        print(f"[Push] daily odds: {await asyncio.to_thread(web_push.send_all, r, data)}")
+    except ImportError:
+        print("[Push] pywebpush not installed — push notifications disabled")
+    except Exception as e:
+        print(f"[Push] daily error: {type(e).__name__}: {e}")
 
 
 async def _refresh_understat_xg():
@@ -9894,6 +9888,7 @@ async def _maybe_post_daily(doc: Dict[str, Any]) -> None:
     import daily_slips
     if doc.get("date") != daily_slips.today() or not _post_ready(doc, daily_slips.now_utc()):
         return
+    await _push_daily(doc)
     for ch in POST_CHANNELS:
         mod = _channel(ch)
         if not await asyncio.to_thread(_post_enabled, ch) or not mod.configured():

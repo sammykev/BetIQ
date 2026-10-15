@@ -9,6 +9,7 @@ import { PageHeader } from "@/components/shell/PageHeader";
 import { FeatureGate, Locked, Unavailable } from "@/components/FeatureGate";
 import { LegRow, nextRefresh } from "@/components/TicketsList";
 import { StakeHint } from "@/components/StakeHint";
+import { PushToggle } from "@/components/PushToggle";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
 import { API, type LegLive, type LegStatus } from "@/lib/matchday";
 
@@ -331,7 +332,8 @@ export default function DailyPage() {
     <AppShell>
       <div className="space-y-6 animate-fade-in">
         <PageHeader eyebrow="Out at midnight" title="Daily odds"
-          description="Three slips a day at about 5, 10 and 20 odds, each one only if our chances say it lands at least 1 in its odds, from that day's football, basketball, tennis and table tennis matches only and picks our model rates 80% or more (none at 2.0 odds or more), each with its SportyBet and football.com booking codes." />
+          description="Three slips a day at about 5, 10 and 20 odds, each one only if our chances say it lands at least 1 in its odds, from that day's football, basketball, tennis and table tennis matches only and picks our model rates 80% or more (none at 2.0 odds or more), each with its SportyBet and football.com booking codes."
+          right={<PushToggle />} />
         <FeatureGate feature="daily_slips" title="Daily odds" perks={PERKS}>
           <Daily />
         </FeatureGate>
