@@ -20,6 +20,7 @@ import { CompetitionBadge } from "@/components/CompetitionBadge";
 import { ThinHistoryBadge } from "@/components/ThinHistoryBadge";
 import { localTime } from "@/lib/matchTime";
 import { ExpandAllButton, PinButton, pinnedFirst, useLeagueOpen, usePinnedLeagues } from "@/components/LeagueSections";
+import { WhyPick } from "@/components/WhyPick";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
 
@@ -35,6 +36,7 @@ interface OptPick {
   sport?: "football" | "basketball" | "tennis" | "table_tennis";
   bookable?: boolean;  // a SportyBet code can take it (match listed, market confirmed)
   league_id?: string;  // the league's id (its header and pin go by it); `league` is its name
+  why?: string[];      // "why this pick" (backend/reasons.py)
 }
 interface OptResult {
   picks?: OptPick[]; games?: number; total_odds?: number; win_chance?: number;
@@ -858,6 +860,7 @@ export default function OptimizerPage() {
                       <p className="text-xs text-n-400">{p.market_name}: <span className="text-n-200">{p.label}</span>
                         {p.bookable === false && <span className="ml-1.5 text-[10px] font-bold uppercase tracking-wide text-warn">not on SportyBet</span>}
                       </p>
+                      <WhyPick why={p.why} className="mt-0.5" />
                     </div>
                     <div className="text-right shrink-0">
                       <p className="text-sm font-bold text-n-0 tnum">{odds(p.odds)}</p>

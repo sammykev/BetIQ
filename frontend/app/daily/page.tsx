@@ -24,7 +24,7 @@ import { API, type LegLive, type LegStatus } from "@/lib/matchday";
 interface Pick {
   home: string; away: string; date: string; time?: string; league?: string;
   market: string; market_name?: string; code: string; label?: string;
-  prob: number; odds: number; bookable?: boolean; status: LegStatus; live?: LegLive;
+  prob: number; odds: number; bookable?: boolean; status: LegStatus; live?: LegLive; why?: string[];
 }
 /** The server's booking of the slip on SportyBet (made with the slip). */
 interface Booking {

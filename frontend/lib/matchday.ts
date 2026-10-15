@@ -119,6 +119,8 @@ export type LegStatus = "won" | "lost" | "void" | "pending" | "unknown";
 export interface TicketLeg {
   home: string; away: string; date: string; time?: string; market: string; marketName?: string;
   code: string; label?: string; prob?: number | null; odds?: number | null; status: LegStatus;
+  /** "Why this pick" (daily slips and the optimizer; backend/reasons.py) */
+  why?: string[] | null;
   /** Once the match has started: how it stands (and, at the end, the final score and stats). */
   live?: LegLive;
 }

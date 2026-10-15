@@ -57,7 +57,7 @@ BB_FAMILIES = ("bb_winner", "bb_1x2", "bb_handicap", "bb_total", "bb_team_total"
 RK_FAMILIES = ("rk_winner", "rk_set_handicap", "rk_games_handicap", "rk_total_games", "rk_total_sets", "rk_to_win_set")
 
 PICK_FIELDS = ("home", "away", "date", "time", "league", "market", "market_name", "code", "label",
-               "prob", "odds", "odds_source", "bookable", "sport", "sb")
+               "prob", "odds", "odds_source", "bookable", "sport", "sb", "why")
 
 
 def request(target: float, attempt: Dict[str, Any]) -> Dict[str, Any]:

@@ -6,6 +6,7 @@ import { Check, ChevronDown, Clock, Copy, ExternalLink, HelpCircle, Loader2, Tic
 import { VerdictIcon } from "@/components/MatchdayList";
 import { LiveStats, SportStats } from "@/components/LiveStats";
 import { useAccess } from "@/lib/access";
+import { WhyPick } from "@/components/WhyPick";
 import { API, type Ticket, type TicketLeg, type TicketSummary } from "@/lib/matchday";
 
 // The account's booking codes, settled leg by leg from the results
@@ -104,6 +105,7 @@ export function LegRow({ leg, showProb = false }: { leg: TicketLeg; showProb?: b
         <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open}
           className="w-full flex items-center gap-2.5 py-2 text-left">{body}</button>
       ) : <div className="flex items-center gap-2.5 py-2">{body}</div>}
+      <WhyPick why={leg.why} className="pl-7 -mt-1 pb-2" />
       {open && hasStats && lv && (
         <div className="pb-3">
           <div className="rounded-xl [box-shadow:var(--ring-control)] bg-surface-sunken px-3 py-3">

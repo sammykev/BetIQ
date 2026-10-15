@@ -26,7 +26,7 @@ Win chance treats the matches as independent and is the model's estimate.
 
 import re
 import math
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
@@ -64,6 +64,8 @@ class Option:
     # The league's id (football's code, e.g. "PL"; basketball's and racket's league
     # key): the site's league headers and pins go by it; `league` is its name
     league_id: str = ""
+    # Football's reasons from the prediction (reasons.context); the slip adds chance and price
+    context: List[str] = field(default_factory=list)
 
 
 def _line(stat: str, line: str, over: bool):
@@ -239,6 +241,7 @@ def candidates(pred: Dict, sportybet_event: Optional[Dict] = None,
     import calibration
     import football_calibration
     import market_blend
+    import reasons
     if not all(isinstance(pred.get(k), (int, float))
                for k in ("p_home", "p_draw", "p_away", "p_over15", "p_over25")):
         return []
@@ -297,7 +300,8 @@ def candidates(pred: Dict, sportybet_event: Optional[Dict] = None,
                           pred.get("league_name") or pred.get("league") or "", market, market_name,
                           code, label.format(home=pred["home"], away=pred["away"]),
                           round(prob, 4), round(float(odds), 2), source,
-                          league_id=str(pred.get("league") or "")))
+                          league_id=str(pred.get("league") or ""),
+                          context=reasons.context(pred, market)))
     return out
 
 
@@ -360,11 +364,19 @@ def worth_it(o: Option, min_edge: Optional[float] = MIN_EDGE) -> bool:
     return min_edge is None or o.odds_source == "estimated" or o.prob * o.odds >= 1 + min_edge
 
 
+def _pick(o: Option) -> Dict:
+    """A pick as the API gives it, with its reasons ("why this pick")."""
+    import reasons
+    d = asdict(o)
+    d["why"] = reasons.why(o.prob, o.odds, o.odds_source, d.pop("context"))
+    return d
+
+
 def _result(picks: List[Option], lo: float, hi: float) -> Dict:
     picks = sorted(picks, key=lambda o: (o.date, o.time, o.home))
     total = math.prod(o.odds for o in picks)
     return {
-        "picks": [asdict(o) for o in picks],
+        "picks": [_pick(o) for o in picks],
         "games": len(picks),
         "total_odds": round(total, 2),
         "win_chance": round(math.prod(o.prob for o in picks), 4),

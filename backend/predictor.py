@@ -1044,7 +1044,9 @@ class LeaguePredictor:
         probs = self.predict_proba(f)
         p_h, _, p_a, _, p_o25 = probs
         return {**_rounded_probs(*probs), **pick_tips(*probs),
-                **goal_markets(f["xG_Home"], f["xG_Away"], p_o25, p_h, p_a, getattr(self, "dc_rho", -0.13))}
+                **goal_markets(f["xG_Home"], f["xG_Away"], p_o25, p_h, p_a, getattr(self, "dc_rho", -0.13)),
+                "xg_home": round(float(f["xG_Home"]), 2), "xg_away": round(float(f["xG_Away"]), 2),
+                "elo_gap": round(float(f["HomeElo"]) - float(f["AwayElo"]))}
 
     def predict_proba(self, feats: Dict) -> tuple:
         """(p_home, p_draw, p_away, p_over15, p_over25) for one feature row.
