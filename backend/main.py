@@ -3733,6 +3733,22 @@ async def edge_report(days: int = 60, _admin: str = Depends(require_admin)):
     return {"days": days, **price_book.report(entries)}
 
 
+@app.get("/api/admin/clv")
+async def clv_report(days: int = 60, _admin: str = Depends(require_admin)):
+    """Closing-line value: each pick's first price against SportyBet's last
+    one before kick-off, over the last `days` days (price_book.clv_report)."""
+    import price_book
+    days = max(1, min(int(days), 118))
+    r = _get_redis()
+    if not r:
+        raise HTTPException(status_code=503, detail="No Redis")
+    today = date.today()
+    dates = [(today - timedelta(days=i)).isoformat() for i in range(0, days + 1)]
+    stored = await asyncio.to_thread(_md_many, r, dates)
+    entries = [e for d in dates for e in (stored.get(d) or {}).values()]
+    return {"days": days, **price_book.clv_report(entries)}
+
+
 @app.get("/api/admin/calibration")
 async def calibration_report(_admin: str = Depends(require_admin)):
     """The proof behind each market's correction (calibration.py, nightly):
@@ -8053,6 +8069,14 @@ async def _link_sportybet_events_now(trigger: str) -> Dict[str, Any]:
     _sb_link_status.clear()
     _sb_link_status.update(status)
     await asyncio.to_thread(_save_link_status)
+    # The fresh prices into each match day, so the last before kick-off (its
+    # closing price, for price_book.clv_report) is at most a run old
+    r = _get_redis()
+    if r and _sb_links:
+        try:
+            await asyncio.to_thread(_snapshot_matchdays, r)
+        except Exception as e:
+            print(f"[SportyBet] Snapshot after linking failed: {e}")
     print(f"[SportyBet] Linked {status['linked']}/{status['predictions']} predictions "
           f"({status['events']} SportyBet events, {trigger}) — {' · '.join(status['report']) or 'no fetch'}")
     return _sb_link_status

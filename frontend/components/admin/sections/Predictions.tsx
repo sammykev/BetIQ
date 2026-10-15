@@ -235,6 +235,68 @@ function EdgeReport() {
   );
 }
 
+/** Closing-line value (price_book.clv_report): each pick's first price
+ * against SportyBet's last one before kick-off. */
+function ClosingLine() {
+  const { get } = useAdmin();
+  const [rep, setRep] = useState<any>(null);
+  const [days, setDays] = useState(60);
+  const [by, setBy] = useState<"by_market" | "by_league" | "by_confidence" | "by_edge">("by_market");
+  useEffect(() => { setRep(null); get(`/api/admin/clv?days=${days}`).then(setRep).catch(() => setRep({ error: true })); }, [days]);
+  if (!rep) return <Skeleton rows={3} />;
+  if (rep.error) return <p className="text-xs text-n-400">Couldn&apos;t load the report.</p>;
+  const clv = (g: any) => (g?.picks ? `${g.avg_clv > 0 ? "+" : ""}${(g.avg_clv * 100).toFixed(1)}%` : "—");
+  const tone = (g: any) => (!g?.picks ? "text-n-400" : g.avg_clv > 0 ? "text-accent" : "text-danger");
+  const groups: any[] = rep[by] ?? [];
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-1.5">
+        {[30, 60, 118].map(d => (
+          <button key={d} onClick={() => setDays(d)}
+            className={clsx("rounded-full px-2.5 py-1 text-xs", d === days ? "bg-accent/15 text-accent" : "bg-surface-sunken text-n-300")}>
+            {d} days
+          </button>
+        ))}
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        <Stat label="Picks with a close" value={num(rep.all?.picks ?? 0)} />
+        <Stat label="Every pick" value={clv(rep.all)}
+          tone={rep.all?.picks ? (rep.all.avg_clv > 0 ? "accent" : "danger") : undefined}
+          sub={rep.all?.picks ? `beat the close ${pctText(rep.all.beat)}, worse ${pctText(rep.all.worse)}` : undefined} />
+        <Stat label={`Value picks (edge ≥ ${Math.round((rep.min_ev ?? 0.05) * 100)}%)`} value={clv(rep.value)}
+          tone={rep.value?.picks ? (rep.value.avg_clv > 0 ? "accent" : "danger") : undefined}
+          sub={rep.value?.picks ? `${num(rep.value.picks)} picks, beat the close ${pctText(rep.value.beat)}` : undefined} />
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {([["by_market", "Market"], ["by_league", "League"], ["by_confidence", "Confidence"], ["by_edge", "Claimed edge"]] as const).map(([k, label]) => (
+          <button key={k} onClick={() => setBy(k)}
+            className={clsx("rounded-full px-2.5 py-1 text-xs", k === by ? "bg-accent/15 text-accent" : "bg-surface-sunken text-n-300")}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {groups.length > 0 ? (
+        <ul className="grid gap-1.5 text-xs">
+          {groups.map((g: any) => (
+            <li key={g.name} className="rounded-lg bg-surface-sunken px-2.5 py-1.5 flex flex-wrap justify-between gap-2">
+              <span className="text-n-200">{by === "by_market" ? (MARKET_LABELS[g.name] ?? g.name) : g.name}</span>
+              <span className="tnum text-n-400">
+                <span className={tone(g)}>{clv(g)}</span> · beat {pctText(g.beat)} · {num(g.picks)} picks
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-xs text-n-400">No settled picks with a closing price yet — they build up as matches kick off.</p>
+      )}
+      <p className="text-[11px] text-n-500">
+        Positive means SportyBet&apos;s price fell after we picked it: the market moved our way. Steady positive CLV over
+        hundreds of picks is the earliest sign of a real edge; results take far longer to show it.
+      </p>
+    </div>
+  );
+}
+
 const pctText = (x: number | null | undefined) => (x == null ? "—" : `${Math.round(x * 100)}%`);
 const pct1 = (x: number | null | undefined) => (x == null ? "—" : `${(x * 100).toFixed(1)}%`);
 const SPORT_LABEL: Record<string, string> = { football: "Football", basketball: "Basketball", tennis: "Tennis", table_tennis: "Table tennis" };
@@ -1007,6 +1069,11 @@ export function PredictionsSection() {
       <Card title="Profit at SportyBet prices" icon={<Target size={15} />}
         subtitle="Every outcome we model that SportyBet priced before kick-off, settled at full time: where the model beats SportyBet, and where it doesn't">
         <EdgeReport />
+      </Card>
+
+      <Card title="Closing-line value" icon={<Target size={15} />}
+        subtitle="Each pick's first price against SportyBet's last one before kick-off: did the market move towards the model?">
+        <ClosingLine />
       </Card>
 
       <Card title="Shots & shots on target" icon={<Target size={15} />}

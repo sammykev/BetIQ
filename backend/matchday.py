@@ -117,12 +117,16 @@ def merge_predictions(day: Dict[str, Dict], preds: Iterable[Dict], now: datetime
             continue
         snap, head = snapshot(p), _header(p)
         if e is None:
-            day[k] = {**head, "pred": snap, "snap_at": now.isoformat(timespec="seconds"),
-                      "locked": started, "result": None, "grades": None}
+            e = day[k] = {**head, "pred": snap, "snap_at": now.isoformat(timespec="seconds"),
+                          "locked": started, "result": None, "grades": None}
             changed = True
         elif e.get("pred") != snap or any(e.get(f) != v for f, v in head.items()):
             e.update(head, pred=snap, snap_at=now.isoformat(timespec="seconds"))
             changed = True
+        # The first price each outcome became a pick at (closing-line value: price_book)
+        if not started:
+            import price_book
+            changed = price_book.note_open(e, snap.get("prices"), now.isoformat(timespec="minutes")) or changed
     return changed
 
 
