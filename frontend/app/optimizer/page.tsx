@@ -49,7 +49,9 @@ interface OptResult {
 }
 interface ThinMatch { home: string; away: string; date: string; time?: string; league?: string; league_name?: string;
   /** Left out for its league (check not passed), not for want of data on a club */
-  league_unproven?: boolean }
+  league_unproven?: boolean;
+  /** Left out because the weekly drift check paused its league */
+  league_paused?: boolean }
 
 /** The matches the optimizer left out for want of data on a club. */
 function ThinLeftOut({ matches }: { matches?: ThinMatch[] }) {
@@ -59,15 +61,16 @@ function ThinLeftOut({ matches }: { matches?: ThinMatch[] }) {
       <summary className="flex cursor-pointer list-none items-center gap-2 text-n-300 [&::-webkit-details-marker]:hidden">
         <ThinHistoryBadge league={matches.every(m => m.league_unproven)} />
         <span className="flex-1">{matches.length} {matches.length === 1 ? "match" : "matches"} left out: {
-          matches.every(m => m.league_unproven) ? "league not proven yet"
-            : matches.some(m => m.league_unproven) ? "too little data on a club, or league not proven yet"
+          matches.every(m => m.league_paused) ? "league paused by the weekly accuracy check"
+            : matches.every(m => m.league_unproven) ? "league not proven yet"
+            : matches.some(m => m.league_unproven || m.league_paused) ? "too little data on a club, or the league isn't in use"
             : "too little data on a club"}</span>
         <ChevronDown size={14} className="shrink-0 text-n-500 transition-transform group-open:rotate-180" aria-hidden="true" />
       </summary>
       <ul className="mt-2 space-y-1">
         {matches.map(m => (
           <li key={`${m.home}-${m.away}-${m.date}`} className="flex items-center justify-between gap-2 text-n-200">
-            <span className="truncate">{m.home} v {m.away}{m.league_unproven ? " · new league" : ""}</span>
+            <span className="truncate">{m.home} v {m.away}{m.league_paused ? " · league paused" : m.league_unproven ? " · new league" : ""}</span>
             <span className="shrink-0 text-n-500">{m.league_name || m.league} · {m.date.slice(5)}{m.time ? ` ${localTime(m.date, m.time)}` : ""}</span>
           </li>
         ))}

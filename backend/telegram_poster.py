@@ -52,10 +52,11 @@ def error_text(status: int, body: Dict[str, Any]) -> str:
     return f"HTTP {status}: {detail}".strip() + hint
 
 
-async def publish(text: str) -> Dict[str, Any]:
-    """Send `text` (HTML) to the channel: {ok, id, url} or {ok: False, error}."""
+async def publish(text: str, chat: Optional[str] = None) -> Dict[str, Any]:
+    """Send `text` (HTML) to the channel (or `chat`): {ok, id, url} or {ok: False, error}."""
     import httpx
-    token, chat = os.getenv("TELEGRAM_BOT_TOKEN", "").strip(), os.getenv("TELEGRAM_CHAT_ID", "").strip()
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    chat = chat or os.getenv("TELEGRAM_CHAT_ID", "").strip()
     try:
         async with httpx.AsyncClient(timeout=20) as client:
             r = await client.post(f"https://api.telegram.org/bot{token}/sendMessage",
@@ -69,6 +70,15 @@ async def publish(text: str) -> Dict[str, Any]:
         mid = (body.get("result") or {}).get("message_id")
         return {"ok": True, "id": str(mid), "url": message_url(chat, mid)}
     return {"ok": False, "error": error_text(r.status_code, body)}
+
+
+async def notify_admin(text: str) -> Dict[str, Any]:
+    """Send plain `text` to the admin's own chat (TELEGRAM_ADMIN_CHAT_ID: a
+    private chat or group with the bot, never the public channel)."""
+    chat = os.getenv("TELEGRAM_ADMIN_CHAT_ID", "").strip()
+    if not chat or not os.getenv("TELEGRAM_BOT_TOKEN", "").strip():
+        return {"ok": False, "error": "TELEGRAM_ADMIN_CHAT_ID not set"}
+    return await publish(html.escape(text)[:MAX_LENGTH], chat)
 
 
 def compose(doc: Dict[str, Any], site: str) -> Optional[str]:

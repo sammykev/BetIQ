@@ -629,6 +629,138 @@ function WeeklyReview() {
   );
 }
 
+/** The weekly drift check per league (league_review.py): leagues whose picks
+ * come in clearly less often than we say, flagged or paused. */
+function LeagueDrift() {
+  const { get, post, flash, adminFetch } = useAdmin();
+  const [rev, setRev] = useState<any>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const load = () => get("/api/admin/league-review").then(d => setRev(d ?? { error: true }));
+  useEffect(() => { load(); }, [get]);
+
+  const save = async (patch: object, key: string) => {
+    setBusy(key);
+    try {
+      const r = await adminFetch(`${API}/api/admin/league-review`, {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.detail || "Couldn't save");
+      setRev(d);
+      flash("ok", "Saved: slips use it straight away");
+    } catch (e: any) {
+      flash("err", e instanceof TypeError ? "Couldn't reach the server, so nothing was saved" : e?.message || "Couldn't save");
+    }
+    setBusy(null);
+  };
+  const runNow = async () => {
+    setBusy("run");
+    try {
+      await post("/api/admin/jobs/league_review/run");
+      flash("ok", "Checking the last eight weeks…");
+      setTimeout(() => { load(); setBusy(null); }, 8_000);
+    } catch { flash("err", "Couldn't start the check"); setBusy(null); }
+  };
+
+  if (!rev) return <Skeleton rows={4} />;
+  if (rev.error) return <p className="text-xs text-n-400">Couldn&apos;t load the drift check.</p>;
+  const latest = rev.latest;
+  const blocked = new Set<string>(rev.blocked ?? []);
+  const auto = rev.mode === "auto";
+  const override = (lg: string) => rev.overrides?.[lg] ?? "auto";
+  const checked = new Map<string, any>((latest?.leagues ?? []).map((x: any) => [x.league, x]));
+  const rows = [...(latest?.leagues ?? []),
+    ...Object.keys(rev.overrides ?? {}).filter(lg => !checked.has(lg))
+      .map(lg => ({ league: lg, name: lg, status: "few", why: "not in the latest check" }))];
+  const name = (lg: string) => checked.get(lg)?.name ?? lg;
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-2 grid-cols-1 sm:grid-cols-2">
+        <Toggle on={auto} busy={busy === "mode"} onChange={() => save({ mode: auto ? "flag" : "auto" }, "mode")}
+          label={auto ? "Pause leagues automatically" : "Flag only"}
+          hint={auto ? "Leagues falling short are left out of slips until they recover" : "Falling-short leagues are reported but still used"} />
+        <div className="flex items-center justify-between gap-3 rounded-xl bg-surface-sunken px-3 py-2.5">
+          <div className="min-w-0 text-[11px] text-n-400">
+            <p className="text-sm font-semibold text-n-0">{latest?.at ? `Checked ${ago(latest.at)}` : "Not checked yet"}</p>
+            Sundays 23:40 (Lagos) · last {rev.rules?.window_days ?? 56} days · {num(latest?.matches ?? 0)} matches
+          </div>
+          <Btn onClick={runNow} busy={busy === "run"}>Run now</Btn>
+        </div>
+      </div>
+      {!rev.telegram_admin && (
+        <p className="text-[11px] text-n-500">
+          Set TELEGRAM_ADMIN_CHAT_ID in the server&apos;s .env (your own chat with the bot) to get these on Telegram; they
+          also go to Sentry when it&apos;s on.
+        </p>
+      )}
+      {blocked.size > 0 && (
+        <p className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-n-200">
+          <span className="font-semibold text-danger">Left out of slips now:</span> {Array.from(blocked).map(name).join(", ")}
+        </p>
+      )}
+      {rows.length > 0 ? (
+        <div className="max-h-96 overflow-auto">
+          <table className="w-full min-w-[520px] text-xs tnum">
+            <thead>
+              <tr className="text-left text-n-500">
+                <th className="py-1.5 pr-2 font-medium">League</th><th className="py-1.5 px-2 font-medium">Verdict</th>
+                <th className="py-1.5 px-2 font-medium text-right">Came in</th><th className="py-1.5 px-2 font-medium text-right">Said</th>
+                <th className="py-1.5 pl-2 font-medium text-right">Use it</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((x: any) => (
+                <tr key={x.league} className="border-t border-n-800 align-top">
+                  <td className="py-1.5 pr-2">
+                    <span className="text-n-200">{x.name}</span>
+                    <span className="block text-[10px] text-n-500">{x.why}</span>
+                  </td>
+                  <td className="py-1.5 px-2 whitespace-nowrap">
+                    <Pill tone={REVIEW_TONE[x.status] ?? "muted"}>{REVIEW_LABEL[x.status] ?? x.status}</Pill>
+                    {x.failing && <span className="block text-[10px] text-danger mt-0.5">{auto ? "paused" : "would pause"}</span>}
+                  </td>
+                  <td className="py-1.5 px-2 text-right text-n-0 font-semibold">{pctText(x.hit_rate)}</td>
+                  <td className="py-1.5 px-2 text-right text-n-300">{pctText(x.model_said)}</td>
+                  <td className="py-1.5 pl-2 text-right">
+                    <select value={override(x.league)} disabled={busy === x.league}
+                      onChange={e => save({ overrides: { ...(rev.overrides ?? {}), [x.league]: e.target.value } }, x.league)}
+                      className="rounded-md bg-surface-sunken border border-n-800 px-1.5 py-1 text-[11px] text-n-200">
+                      <option value="auto">{blocked.has(x.league) ? "Check (off)" : "Check (on)"}</option>
+                      <option value="on">Always on</option>
+                      <option value="off">Off</option>
+                    </select>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : <p className="text-xs text-n-400">No check yet: it runs every Sunday night, or press Run now.</p>}
+      {rev.history?.length > 1 && (
+        <div>
+          <p className="eyebrow mb-1.5">Past checks</p>
+          <ul className="space-y-1 text-[11px] text-n-400">
+            {rev.history.slice(0, 6).map((h: any) => (
+              <li key={h.at}>
+                <span className="text-n-200">{new Date(h.at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
+                {" · "}{num(h.matches)} matches
+                {h.newly_failing?.length > 0 && <> · <span className="text-danger">falling short: {h.newly_failing.map(name).join(", ")}</span></>}
+                {h.recovered?.length > 0 && <> · <span className="text-accent">back: {h.recovered.map(name).join(", ")}</span></>}
+                {!h.newly_failing?.length && !h.recovered?.length && " · no changes"}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <p className="text-[11px] text-n-500">
+        Every league&apos;s picks (all markets, outcomes rated 50%+) over the last eight weeks. A league falls short when its
+        picks came in at least {Math.abs(Math.round((rev.rules?.pause_gap ?? -0.06) * 100))} points below what the model said,
+        over {rev.rules?.min_matches ?? 20}+ matches, by more than chance explains. It keeps being predicted and checked, and
+        comes back when a check finds it on track.
+      </p>
+    </div>
+  );
+}
+
 /** Shots and shots-on-target markets: club model (checked on each league
  * data refresh) and international (checked nightly). */
 /** One line of the Elo / SportyBet comparisons: lower Brier is better. */
@@ -1054,6 +1186,11 @@ export function PredictionsSection() {
       <Card title="Weekly accuracy review" icon={<Target size={15} />}
         subtitle="Markets whose picks come in clearly less often than we say are left out of slips until they recover">
         <WeeklyReview />
+      </Card>
+
+      <Card title="League drift check" icon={<Target size={15} />}
+        subtitle="Leagues whose picks come in clearly less often than we say: flagged, or left out of slips until they recover">
+        <LeagueDrift />
       </Card>
 
       <Card title="Market corrections: the proof" icon={<Target size={15} />}

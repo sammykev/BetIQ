@@ -317,6 +317,16 @@ async def admin_alerts(_admin: str = Depends(require_admin)):
     review_alert = market_review.alert(_review, review_age)
     if review_alert:
         alerts.append(review_alert)
+    import league_review
+    _restore_league_review()
+    try:
+        at = (_league_review.get("latest") or {}).get("at")
+        drift_age = (datetime.now(timezone.utc) - datetime.fromisoformat(at)).total_seconds() / 86400 if at else None
+    except ValueError:
+        drift_age = None
+    drift_alert = league_review.alert(_league_review, drift_age)
+    if drift_alert:
+        alerts.append(drift_alert)
     alerts += await asyncio.to_thread(_post_alerts)
     return {"alerts": alerts}
 
@@ -5332,6 +5342,7 @@ ADMIN_JOBS = {
     "daily_slips": ("Remake today's daily odds slips (new booking codes)", lambda: _build_daily(__import__("daily_slips").today(), force=True)),
     "shot_blend": ("Score our shot lines against SportyBet's", lambda: _shot_blend_job()),
     "market_review": ("Weekly accuracy review (pause markets falling short)", lambda: _review_job()),
+    "league_review": ("Weekly league drift check (flag or pause leagues falling short)", lambda: _league_review_job()),
     "set_pieces_reload": ("Reload corners, cards & shots models (after the nightly checks)",
                           lambda: _reload_set_pieces()),
 }
@@ -8812,6 +8823,113 @@ async def paused_markets():
                        for m in sorted(market_review.blocked(_review))]}
 
 
+# ── Weekly league drift check (league_review.py) ──
+LEAGUE_REVIEW_KEY = "betiq:league_review"
+_league_review: Dict[str, Any] = {"mode": "flag", "overrides": {}, "latest": None, "history": [], "loaded": False}
+
+
+def _restore_league_review() -> None:
+    r = _get_redis()
+    if r and not _league_review.get("loaded"):
+        try:
+            _league_review.update(json.loads(r.get(LEAGUE_REVIEW_KEY) or "{}"), loaded=True)
+        except Exception:
+            pass
+
+
+def _save_league_review() -> bool:
+    r = _get_redis()
+    if not r:
+        return False
+    try:
+        r.set(LEAGUE_REVIEW_KEY, json.dumps({k: v for k, v in _league_review.items() if k != "loaded"}))
+        return True
+    except Exception:
+        return False
+
+
+def _paused_leagues() -> set:
+    """Leagues the optimizer and daily slips leave out now."""
+    import league_review
+    _restore_league_review()
+    return league_review.blocked(_league_review)
+
+
+async def _league_review_job() -> Dict[str, Any]:
+    try:
+        result = await asyncio.to_thread(_run_league_review)
+    except Exception as e:
+        print(f"[Drift] failed: {e}")
+        return {"error": str(e)}
+    import league_review
+    text = league_review.message(result, _league_review.get("mode", "flag")) if "leagues" in result else None
+    if text:
+        import telegram_poster
+        sent = await telegram_poster.notify_admin(text)
+        result["telegram"] = sent.get("ok") or sent.get("error")
+        if result.get("newly_failing"):
+            try:
+                import sentry_sdk
+                sentry_sdk.capture_message(text, level="warning")
+            except Exception:
+                pass
+    return result
+
+
+def _run_league_review() -> Dict[str, Any]:
+    """Check every league over the last league_review.WINDOW_DAYS settled days."""
+    import league_review
+    r = _get_redis()
+    if not r:
+        return {"skipped": "no Redis"}
+    _restore_league_review()
+    today = date.today()
+    days = _md_many(r, [(today - timedelta(days=i)).isoformat() for i in range(1, league_review.WINDOW_DAYS + 1)])
+    result = league_review.review((e for day in days.values() for e in day.values()),
+                                  (_league_review.get("latest") or {}).get("failing") or [])
+    _league_review.update(league_review.remember(_league_review, result,
+                                                 datetime.now(timezone.utc).isoformat(timespec="seconds")))
+    _save_league_review()
+    print(f"[Drift] {result['matches']} matches · failing {result['failing'] or 'none'} · "
+          f"newly {result['newly_failing'] or 'none'} · recovered {result['recovered'] or 'none'}")
+    return result
+
+
+def _league_review_view() -> Dict[str, Any]:
+    import league_review
+    return {"mode": _league_review.get("mode", "flag"), "overrides": _league_review.get("overrides") or {},
+            "latest": _league_review.get("latest"), "history": _league_review.get("history") or [],
+            "blocked": sorted(league_review.blocked(_league_review)),
+            "telegram_admin": bool(os.getenv("TELEGRAM_ADMIN_CHAT_ID", "").strip()),
+            "rules": {"window_days": league_review.WINDOW_DAYS, "min_matches": league_review.MIN_MATCHES,
+                      "pause_gap": league_review.PAUSE_GAP, "pause_z": league_review.PAUSE_Z}}
+
+
+@app.get("/api/admin/league-review")
+async def get_league_review(_admin: str = Depends(require_admin)):
+    """The latest league drift check, past ones, and the settings."""
+    _restore_league_review()
+    return _league_review_view()
+
+
+@app.put("/api/admin/league-review")
+async def put_league_review(body: Dict[str, Any], _admin: str = Depends(require_admin)):
+    """Body: {mode?: auto|flag, overrides?: {league: on|off|auto}}."""
+    import league_review
+    _restore_league_review()
+    try:
+        new = league_review.settings(body or {}, _league_review)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    before = {k: _league_review.get(k) for k in ("mode", "overrides")}
+    _league_review.update(new)
+    if not _save_league_review():
+        _league_review.update(before)
+        raise HTTPException(status_code=503, detail="Couldn't save: the database isn't connected")
+    _audit(_admin, "league_review", **new)
+    return _league_review_view()
+
+
 def _bookable_markets():
     """(market, code) → whether a SportyBet code can take the pick now:
     trusted markets always, VERIFIED ones once SportyBet's own labels
@@ -9146,10 +9264,14 @@ async def _optimize_request(body: Dict[str, Any],
     # A club the model has (next to) no matches for: its chances are mostly
     # guesswork, so the match stays out (the page lists what was left out)
     # A league whose check hasn't passed (league_unproven) is left out the same way
+    # So is a league the weekly drift check paused (or the admin switched off)
+    paused_lg = _paused_leagues()
+    out_lg = lambda p: str(p.get("league") or "") in paused_lg
     thin = [{**{k: p.get(k) for k in ("home", "away", "date", "time", "league", "league_name", "flag")},
-             **({"league_unproven": True} if p.get("league_unproven") and not p.get("thin_history") else {})}
-            for p in upcoming if p.get("thin_history") or p.get("league_unproven")]
-    upcoming = [p for p in upcoming if not (p.get("thin_history") or p.get("league_unproven"))]
+             **({"league_unproven": True} if p.get("league_unproven") and not p.get("thin_history") else {}),
+             **({"league_paused": True} if out_lg(p) else {})}
+            for p in upcoming if p.get("thin_history") or p.get("league_unproven") or out_lg(p)]
+    upcoming = [p for p in upcoming if not (p.get("thin_history") or p.get("league_unproven") or out_lg(p))]
     # Bookable = linked to a SportyBet event. Asked of the stored links, not
     # the prediction's "sportybet" flag: a predictions rebuild replaces the
     # predictions (flags and all) minutes before the next linking run.
@@ -10165,6 +10287,8 @@ async def startup():
                       next_run_time=datetime.now() + timedelta(minutes=3))
     # Sundays 22:30 UTC (23:30 Lagos), before Monday's daily slips are made (23:50 Lagos)
     scheduler.add_job(_review_job, "cron", day_of_week="sun", hour=22, minute=30, id="market_review",
+                      max_instances=1, coalesce=True)
+    scheduler.add_job(_league_review_job, "cron", day_of_week="sun", hour=22, minute=40, id="league_review",
                       max_instances=1, coalesce=True)
     # Basketball: results (and the backfill) every half hour, ratings after new
     # results and every 6 hours, SportyBet's matches priced every 15 minutes
