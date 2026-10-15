@@ -8,6 +8,7 @@ import { AppShell } from "@/components/shell/AppShell";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { FeatureGate, Locked, Unavailable } from "@/components/FeatureGate";
 import { LegRow, nextRefresh } from "@/components/TicketsList";
+import { StakeHint } from "@/components/StakeHint";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
 import { API, type LegLive, type LegStatus } from "@/lib/matchday";
 
@@ -132,6 +133,7 @@ function SlipView({ s, isToday, date, retry, minProb, cut }: {
           <p className="text-xs text-n-400">Chance the whole slip lands: <span className="font-bold text-n-0 tnum">{pctFine(s.win_chance)}</span></p>
         </div>
       </header>
+      {s.status === "pending" && <div className="mx-4 sm:mx-5 mb-3"><StakeHint chance={s.win_chance} odds={b?.total_odds ?? s.total_odds} /></div>}
 
       {s.replaces && (
         <p className="mx-4 sm:mx-5 mb-3 text-xs text-n-300 flex items-start gap-1.5">

@@ -1,5 +1,6 @@
 "use client";
 
+import { StakeHint } from "@/components/StakeHint";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import clsx from "clsx";
 import { useUser } from "@clerk/nextjs";
@@ -762,6 +763,7 @@ export default function OptimizerPage() {
                 {result.estimated_prices! > 0 &&
                   ` ${result.estimated_prices} price${result.estimated_prices === 1 ? " is" : "s are"} estimated from our probabilities; SportyBet's own odds may differ.`}
               </p>
+              <StakeHint chance={result.win_chance} odds={result.total_odds} />
               <LiveCheckNote check={result.live_check} />
               <ThinLeftOut matches={result.thin_history} />
 
