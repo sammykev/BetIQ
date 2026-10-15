@@ -262,8 +262,37 @@ Once the site and a night of GitHub jobs have run fine (a day or two), turn
 
 - Nightly at 04:10 UTC to `/root/betiq-backups/redis-DATE.rdb.gz`; now:
   `bash ~/betiq/deploy/vm/backup-redis.sh`.
-- They're on this server only. For a copy elsewhere, download one now and
-  then from your computer:
-  `scp root@13.140.188.212:/root/betiq-backups/redis-DATE.rdb.gz .`
+- **Off-server copy (recommended).** Without it, losing this server loses
+  the backups too. With Backblaze B2 (10 GB free):
+  1. backblaze.com → sign up → **B2 Cloud Storage → Buckets → Create a
+     Bucket** (private), e.g. `betiq-backups`.
+  2. **Application Keys → Add a New Application Key**, limited to that
+     bucket, read and write. Copy the keyID and applicationKey.
+  3. On the server, `nano ~/betiq/deploy/vm/.env` and fill in
+     `BACKUP_REMOTE=b2:betiq-backups/betiq`, `RCLONE_CONFIG_B2_ACCOUNT=<keyID>`,
+     `RCLONE_CONFIG_B2_KEY=<applicationKey>` and a long random
+     `BACKUP_PASSPHRASE` (`openssl rand -base64 32` makes one). Type them
+     there only. Keep the passphrase in your password manager too:
+     without it the uploaded copies can't be opened.
+  4. Run `bash ~/betiq/deploy/vm/backup-redis.sh` once; it should end
+     without an error and the file shows in the bucket as
+     `redis-DATE.rdb.gz.enc`. Copies there are kept `BACKUP_REMOTE_DAYS` (60).
+- Every run is recorded: `/api/health` shows `backup` (when, size, and
+  `offsite`: ok / off / failed), and the site monitor opens an issue if the
+  last backup is over 36 hours old or its upload failed.
+- Restore from an off-server copy: download the `.enc` file from the
+  bucket to the server (e.g. `scp` it into `/root/betiq-backups/`), then
+  `export BACKUP_PASSPHRASE='...'` (type it) and
+  `openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:BACKUP_PASSPHRASE -in redis-DATE.rdb.gz.enc -out /root/betiq-backups/redis-DATE.rdb.gz`,
+  then restore that `.rdb.gz` as below.
 - Restore one (replaces everything stored now):
   `bash ~/betiq/deploy/vm/restore-redis.sh /root/betiq-backups/redis-DATE.rdb.gz`
+- Test a restore every few months, so you know the copies are good.
+
+### Redeploys wait for long jobs
+
+`update.sh` (every 5 minutes) no longer restarts the API in the middle of
+a long job (model refresh, collectors, the match-day sweep): while one runs
+it holds `betiq:job:running:<job>` in Redis, and the redeploy waits until
+none are left, for 30 minutes at most. `bash ~/betiq/deploy/vm/update.sh --force`
+deploys straight away.

@@ -35,6 +35,7 @@ API = os.getenv("SITE_URL", "https://13-140-188-212.sslip.io").rstrip("/")
 APP = os.getenv("APP_URL", "https://predict-withbetiq.vercel.app").rstrip("/")
 STATE_FILE = os.getenv("MONITOR_STATE", "monitor-state.json")
 STALE_HOURS = 13
+BACKUP_STALE_HOURS = 36  # the backup runs nightly at 04:10 UTC
 BASELINE_HOURS = 6
 DROP_SHARE = 0.4
 FAIL_RUNS = 2
@@ -90,6 +91,14 @@ def checks(get: Get, state: Dict, now: datetime) -> Tuple[List[Dict], Dict]:
         f"predictions updated {age:.1f}h ago" if age is not None else "predictions never updated")
     paused = health.get("leagues_paused") or []
     add("paused", not paused, "no league paused" if not paused else "paused leagues: " + ", ".join(paused))
+    # The nightly redis backup (deploy/vm/backup-redis.sh); skipped until the server has made one
+    backup = health.get("backup")
+    if isinstance(backup, dict):
+        b_age = _age_hours(backup.get("at"), now)
+        offsite = backup.get("offsite") or "off"
+        add("backup", b_age is not None and b_age < BACKUP_STALE_HOURS and offsite != "failed",
+            (f"redis backed up {b_age:.0f}h ago" if b_age is not None else "redis backup time unknown")
+            + {"ok": ", copied off-server", "failed": ", off-server copy FAILED"}.get(offsite, ", local only"))
 
     code, body, _ = get(API + "/api/predictions?limit=2000")
     preds = body.get("predictions") if isinstance(body, dict) else None

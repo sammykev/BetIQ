@@ -7,14 +7,14 @@ import monitor
 NOW = datetime(2026, 10, 12, 12, 0, tzinfo=timezone.utc)
 
 
-def _site(preds=30, updated="2026-10-12T06:00:00Z", paused=(), health=200, bb=5, tennis_code=200):
+def _site(preds=30, updated="2026-10-12T06:00:00Z", paused=(), health=200, bb=5, tennis_code=200, backup=None):
     def get(url):
         path = url.split("//", 1)[1].split("/", 1)[1] if "/" in url.split("//", 1)[1] else ""
         if url.startswith(monitor.APP):
             return 200, None, 0.2
         if path == "api/health":
             return health, {"status": "ok", "last_updated": updated, "model_ready": True,
-                            "leagues_paused": list(paused)}, 0.1
+                            "leagues_paused": list(paused), "backup": backup}, 0.1
         if path.startswith("api/predictions"):
             return 200, {"predictions": [{"date": "2026-10-13", "league": "PL" if i % 2 else "SA"}
                                          for i in range(preds)]}, 0.1
@@ -47,6 +47,15 @@ def test_each_problem_is_named():
     assert _failed(_site(health=502))[0] == {"api"}
     assert _failed(_site(tennis_code=403))[0] == set()              # tennis kept for testers: skipped
     assert _failed(_site(tennis_code=404))[0] == set()              # switched off: skipped
+
+
+def test_the_redis_backup():
+    fresh = {"at": "2026-10-12T04:10:00Z", "bytes": 1000, "offsite": "ok"}
+    assert _failed(_site(backup=fresh))[0] == set()
+    assert _failed(_site(backup={**fresh, "offsite": "off"}))[0] == set()        # no off-server copy set up
+    assert _failed(_site(backup={**fresh, "offsite": "failed"}))[0] == {"backup"}
+    assert _failed(_site(backup={**fresh, "at": "2026-10-10T04:10:00Z"}))[0] == {"backup"}
+    assert _failed(_site(backup=None))[0] == set()                               # never ran yet: skipped
 
 
 def test_a_collapse_in_football_predictions():

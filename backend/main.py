@@ -2270,7 +2270,20 @@ async def health():
         "model_ready": _predictor is not None,
         # football-data.org competitions paused after a 401/403 (data_fetcher.not_in_plan)
         "leagues_paused": sorted(c for c in data_fetcher.NOT_IN_PLAN if c not in data_fetcher.ESPN_ONLY),
+        # The nightly redis backup (deploy/vm/backup-redis.sh): when, how big, and the off-server copy
+        "backup": _last_backup(),
     }
+
+
+def _last_backup():
+    r = _get_redis()
+    if r is None:
+        return None
+    try:
+        raw = r.get("betiq:backup:last")
+        return json.loads(raw) if raw else None
+    except Exception:
+        return None
 
 
 @app.get("/api/leagues")
@@ -10181,7 +10194,7 @@ async def startup():
     scheduler.add_job(_shot_blend_job, "interval", hours=6, id="shot_blend",
                       next_run_time=datetime.now() + timedelta(minutes=15))
     # How long each job runs, and the loop-lag watch (perf.py; the probe reads them)
-    from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED
+    from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED, EVENT_JOB_MISSED, EVENT_JOB_SUBMITTED
 
     def _job_done(ev):
         try:
@@ -10189,6 +10202,7 @@ async def startup():
         except Exception:
             pass
     scheduler.add_listener(_job_done, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)
+    scheduler.add_listener(_job_marker, EVENT_JOB_SUBMITTED | EVENT_JOB_EXECUTED | EVENT_JOB_ERROR | EVENT_JOB_MISSED)
     asyncio.get_event_loop().create_task(perf.watch_loop(_get_redis))
     scheduler.start()
     # Which code this server runs (the "Basketball data" workflow's read_probe job prints it)
@@ -10200,7 +10214,36 @@ async def startup():
             print(f"[Boot] couldn't record: {e}")
 
 
+# Long jobs a redeploy waits for: while one runs it holds betiq:job:running:<id>,
+# and deploy/vm/update.sh holds off (up to 30 min) until none are left
+REDEPLOY_WAITS_FOR = {"refresh", "fd_referees", "bb_collect", "bb_fit", "tennis_collect", "table_tennis_collect",
+                      "fbref_refresh", "matchday_sweep", "web_probe", "shot_blend", "results_refresh"}
+
+
+def _job_marker(ev):
+    if ev.job_id not in REDEPLOY_WAITS_FOR:
+        return
+    r = _get_redis()
+    if r is None:
+        return
+    try:
+        from apscheduler.events import EVENT_JOB_SUBMITTED
+        key = f"betiq:job:running:{ev.job_id}"
+        if ev.code == EVENT_JOB_SUBMITTED:
+            r.set(key, datetime.now(timezone.utc).isoformat(timespec="seconds"), ex=3600)
+        else:
+            r.delete(key)
+    except Exception:
+        pass
+
+
 @app.on_event("shutdown")
 async def shutdown():
     scheduler.shutdown()
+    r = _get_redis()
+    if r:
+        try:
+            r.delete(*[f"betiq:job:running:{j}" for j in REDEPLOY_WAITS_FOR])
+        except Exception:
+            pass
     _flush_traffic()  # keep the last few minutes of page views
