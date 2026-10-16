@@ -784,7 +784,7 @@ function MatchContent() {
         </div>
       )}
       {!analysis && !loadingAnalysis && (
-        <div className="grid lg:grid-cols-2 gap-4 items-start">
+        <div className="grid lg:grid-cols-2 short:grid-cols-2 gap-4 items-start">
           <MatchFactsPanels facts={facts} home={home} away={away} />
         </div>
       )}

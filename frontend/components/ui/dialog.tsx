@@ -13,7 +13,7 @@ import { cn, EASE } from "@/lib/utils";
 export function Overlay() {
   return (
     <RD.Overlay forceMount asChild>
-      <motion.div className="fixed inset-0 z-50 bg-[rgb(7_11_20/0.6)] backdrop-blur-[2px]"
+      <motion.div className="fixed inset-0 z-50 bg-[rgb(7_11_20/0.45)] backdrop-blur-[3px]"
         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, transition: { duration: 0.15 } }}
         transition={{ duration: 0.2, ease: EASE }} />
     </RD.Overlay>
@@ -51,8 +51,8 @@ export function Dialog({
             <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-6 pointer-events-none">
               <RD.Content forceMount asChild>
                 <motion.div
-                  className={cn("pointer-events-auto w-full sm:max-w-lg max-h-[92dvh] overflow-y-auto bg-surface",
-                    "rounded-t-3xl sm:rounded-3xl [box-shadow:var(--shadow-pop)] focus:outline-none", className)}
+                  className={cn("pointer-events-auto relative w-full sm:max-w-lg max-h-[92dvh] overflow-y-auto glass-thick pb-[env(safe-area-inset-bottom)] sm:pb-0",
+                    "rounded-t-3xl sm:rounded-3xl [box-shadow:var(--glass-edge),var(--shadow-pop)] focus:outline-none", className)}
                   initial={{ opacity: 0, y: 12, filter: "blur(4px)" }}
                   animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
                   exit={{ opacity: 0, y: 6, filter: "blur(2px)", transition: { duration: 0.15, ease: "easeOut" } }}
@@ -97,7 +97,7 @@ export function ModalFrame({
   trap?: boolean;
 }) {
   const scroller = React.useRef<HTMLDivElement>(null);
-  const panel = cn("relative w-full bg-surface rounded-3xl [box-shadow:var(--shadow-pop)] overflow-hidden focus:outline-none",
+  const panel = cn("relative w-full glass-thick rounded-3xl [box-shadow:var(--glass-edge),var(--shadow-pop)] overflow-hidden focus:outline-none",
     align === "top" && "my-4 sm:my-8", size === "sm" ? "max-w-sm" : size === "md" ? "max-w-lg" : "max-w-2xl", className);
   const enter = {
     initial: { opacity: 0, y: 12, filter: "blur(4px)" },
@@ -144,7 +144,7 @@ function LooseModal({ onClose, title, layer, panel, enter, children }: {
   // In <body>, like Radix's portal, so no transformed ancestor traps the fixed layers
   return createPortal(
     <>
-      <motion.div aria-hidden className="fixed inset-0 z-50 bg-[rgb(7_11_20/0.6)] backdrop-blur-[2px]"
+      <motion.div aria-hidden className="fixed inset-0 z-50 bg-[rgb(7_11_20/0.45)] backdrop-blur-[3px]"
         initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.2, ease: EASE }} />
       <div className={layer} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
         <motion.div ref={ref} role="dialog" aria-modal="true" aria-label={title} tabIndex={-1} className={panel} {...enter}>

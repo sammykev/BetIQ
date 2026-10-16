@@ -1,7 +1,8 @@
 # Checks on every push to main and every pull request: a red X on GitHub (and an email)
 # when a change breaks the backend's tests, the frontend's types or tests,
-# or commits a secret. Dependency audits report without blocking (see the
-# job's summary): known issues in pinned versions are tracked separately.
+# the layout at phone-to-monitor sizes, or commits a secret. Dependency audits
+# report without blocking (see the job's summary): known issues in pinned
+# versions are tracked separately.
 name: Checks
 
 on:
@@ -54,6 +55,35 @@ jobs:
         run: npx tsc --noEmit
       - name: Unit tests
         run: npx jest --ci
+
+  e2e:
+    name: Layout tests (phones to monitors)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Layout tests
+        run: npx playwright test
+      - name: Keep the report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          retention-days: 7
 
   secrets:
     name: Secret scan

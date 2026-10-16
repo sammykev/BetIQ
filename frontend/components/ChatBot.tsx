@@ -152,11 +152,11 @@ export function ChatBot({ predictions }: Props) {
 
   return (
     <>
-      {/* Floating button — sits above the mobile bottom nav */}
+      {/* Floating button — sits above the phone menu bar */}
       {!open && (
         <button
           onClick={() => setOpen(true)}
-          className="fixed bottom-20 lg:bottom-6 right-4 lg:right-6 z-50 w-14 h-14 bg-brand-400 hover:bg-brand-300 text-ink rounded-full shadow-pop flex items-center justify-center transition-all hover:scale-105 active:scale-95"
+          className="fixed bottom-dock md:bottom-6 short:bottom-4 right-4 md:right-6 z-50 w-14 h-14 bg-brand-400 hover:bg-brand-300 text-ink rounded-full shadow-pop flex items-center justify-center transition-all hover:scale-105 active:scale-95"
           title="BetIQ Assistant"
         >
           <MessageCircle size={24} />
@@ -165,8 +165,9 @@ export function ChatBot({ predictions }: Props) {
 
       {/* Chat panel */}
       {open && (
-        <div className="fixed bottom-20 lg:bottom-6 right-4 lg:right-6 z-50 w-[360px] max-w-[calc(100vw-2rem)] flex flex-col card !rounded-2xl shadow-pop overflow-hidden animate-slide-up"
-          style={{ height: minimised ? "auto" : "560px" }}
+        <div className="fixed bottom-dock md:bottom-6 short:bottom-4 right-4 md:right-6 z-50 w-[360px] max-w-[calc(100vw-2rem)] flex flex-col card !rounded-2xl shadow-pop overflow-hidden animate-slide-up"
+          // Never taller than the screen: phones on their side are under 500px high
+          style={{ height: minimised ? "auto" : "min(560px, calc(100dvh - 8.5rem - env(safe-area-inset-bottom)))" }}
         >
           {/* Header */}
           <div className="flex items-center gap-3 px-4 py-3 bg-surface-sunken border-b border-n-800 shrink-0">

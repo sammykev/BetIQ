@@ -116,6 +116,17 @@ export function UsersSection() {
     (plan === "all" || (u.tier ?? (u.premium ? "premium" : "free")) === plan) &&
     (!q || `${u.email} ${u.name}`.toLowerCase().includes(q.toLowerCase()))), [users, q, plan]);
 
+  const planPill = (u: any) =>
+    u.tier === "premium" || (!u.tier && u.premium) ? <Pill tone="info">Premium{u.trial ? " trial" : ""} · {u.days_left}d</Pill>
+      : u.tier === "lite" ? <Pill tone="ok">Lite{u.trial ? " trial" : ""} · {u.days_left}d</Pill> : <Pill>Free</Pill>;
+  const actions = (u: any) => (
+    <span className="inline-flex gap-1.5 justify-end">
+      {u.tier !== "lite" && <Btn busy={busy === u.email} onClick={() => setPlanFor(u.email, "lite")}>Lite</Btn>}
+      {u.tier !== "premium" && <Btn busy={busy === u.email} onClick={() => setPlanFor(u.email, "premium")}>Premium</Btn>}
+      {u.tier && u.tier !== "free" && <Btn variant="danger" busy={busy === u.email} onClick={() => setPlanFor(u.email, null)}>Remove</Btn>}
+    </span>
+  );
+
   const growth = useMemo(() => {
     const days = Array.from({ length: 30 }, (_, i) => new Date(Date.now() - (29 - i) * 86400000).toISOString().slice(0, 10));
     return { labels: days.map(d => d.slice(5)), values: days.map(d => data?.growth?.[d] ?? 0) };
@@ -160,11 +171,27 @@ export function UsersSection() {
           ))}
         </div>
         {!data ? <Skeleton rows={6} /> : data.error ? <p className="text-sm text-warn">Couldn&apos;t load accounts (Clerk).</p> : (
-          <div className="overflow-x-auto -mx-4 sm:mx-0">
+          <>
+          {/* Phone: one card per account */}
+          <ul className="sm:hidden space-y-2 stagger">
+            {shown.map(u => (
+              <li key={u.id} className="rounded-xl bg-surface [box-shadow:var(--ring-control)] px-3 py-2.5 space-y-2 text-xs">
+                <div className="flex items-start gap-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-n-0 truncate">{u.email}</p>
+                    <p className="text-n-500 truncate">{u.name !== "—" ? `${u.name} · ` : ""}joined {new Date(u.created).toISOString().slice(0, 10)}</p>
+                  </div>
+                  {planPill(u)}
+                </div>
+                {actions(u)}
+              </li>
+            ))}
+          </ul>
+          <div className="hidden sm:block overflow-x-auto">
             <table className="w-full text-xs min-w-[560px]">
               <thead>
                 <tr className="text-left text-n-400 border-b border-n-800">
-                  <th className="py-2 px-4 sm:px-2 font-semibold">Account</th>
+                  <th className="py-2 px-2 font-semibold">Account</th>
                   <th className="py-2 px-2 font-semibold">Joined</th>
                   <th className="py-2 px-2 font-semibold">Plan</th>
                   <th className="py-2 px-2" />
@@ -173,28 +200,20 @@ export function UsersSection() {
               <tbody className="divide-y divide-n-800">
                 {shown.map(u => (
                   <tr key={u.id}>
-                    <td className="py-2 px-4 sm:px-2 min-w-0">
+                    <td className="py-2 px-2 min-w-0">
                       <p className="text-n-0 truncate max-w-[260px]">{u.email}</p>
                       {u.name !== "—" && <p className="text-n-500 truncate max-w-[260px]">{u.name}</p>}
                     </td>
                     <td className="py-2 px-2 text-n-400 tnum whitespace-nowrap">{new Date(u.created).toISOString().slice(0, 10)}</td>
-                    <td className="py-2 px-2">
-                      {u.tier === "premium" || (!u.tier && u.premium) ? <Pill tone="info">Premium{u.trial ? " trial" : ""} · {u.days_left}d</Pill>
-                        : u.tier === "lite" ? <Pill tone="ok">Lite{u.trial ? " trial" : ""} · {u.days_left}d</Pill> : <Pill>Free</Pill>}
-                    </td>
-                    <td className="py-2 px-2 text-right">
-                      <span className="inline-flex gap-1.5 justify-end">
-                        {u.tier !== "lite" && <Btn busy={busy === u.email} onClick={() => setPlanFor(u.email, "lite")}>Lite</Btn>}
-                        {u.tier !== "premium" && <Btn busy={busy === u.email} onClick={() => setPlanFor(u.email, "premium")}>Premium</Btn>}
-                        {u.tier && u.tier !== "free" && <Btn variant="danger" busy={busy === u.email} onClick={() => setPlanFor(u.email, null)}>Remove</Btn>}
-                      </span>
-                    </td>
+                    <td className="py-2 px-2">{planPill(u)}</td>
+                    <td className="py-2 px-2 text-right">{actions(u)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            {!shown.length && <p className="text-xs text-n-400 py-3 px-4 sm:px-0">No matches.</p>}
           </div>
+          {!shown.length && <p className="text-xs text-n-400 py-3">No matches.</p>}
+          </>
         )}
       </Card>
     </div>

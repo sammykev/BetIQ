@@ -28,15 +28,16 @@ export function Sheet({
             <Overlay />
             <RD.Content forceMount asChild>
               <motion.div
-                className={cn("fixed z-50 flex flex-col bg-surface [box-shadow:var(--shadow-pop)] focus:outline-none",
+                className={cn("fixed z-50 flex flex-col glass-thick [box-shadow:var(--glass-edge),var(--shadow-pop)] focus:outline-none",
                   side === "right"
                     ? "inset-y-0 right-0 w-full sm:w-[420px] sm:rounded-l-3xl"
-                    : "inset-x-0 bottom-0 max-h-[92dvh] rounded-t-3xl",
+                    : "inset-x-0 bottom-0 max-h-[92dvh] rounded-t-3xl pb-[env(safe-area-inset-bottom)]",
                   className)}
                 initial={{ opacity: 0, ...from, filter: "blur(4px)" }}
                 animate={{ opacity: 1, x: 0, y: 0, filter: "blur(0px)" }}
                 exit={{ opacity: 0, x: from.x / 2, y: from.y / 2, transition: { duration: 0.15, ease: "easeOut" } }}
                 transition={{ duration: 0.28, ease: EASE }}>
+                {side === "bottom" && <div aria-hidden className="mx-auto mt-2.5 -mb-2 h-1 w-10 rounded-full bg-n-600/50 shrink-0" />}
                 <div className="flex items-start gap-3 px-5 pt-5 pb-3 shrink-0">
                   <div className="min-w-0 flex-1">
                     <RD.Title className="heading text-lg">{title}</RD.Title>

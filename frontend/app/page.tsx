@@ -656,7 +656,7 @@ export default function HomePage() {
           <div className="space-y-4">
             {sportSummary && <p className="text-sm text-n-400">{sportSummary}</p>}
             {sportLoading ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 stagger">
                 {Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)}
               </div>
             ) : sportPreds.length === 0 ? (
@@ -666,7 +666,7 @@ export default function HomePage() {
                 body="The model publishes picks once odds and fixtures are confirmed. Check back closer to game day."
               />
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 stagger">
                 <EnterGroup>
                   {sportPreds.map((p, i) => (
                     <Enter key={i} i={i} className="flex flex-col [&>*]:flex-1">
@@ -807,7 +807,7 @@ export default function HomePage() {
 
           {/* Picks */}
           {loading ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 stagger">
               {Array.from({ length: 9 }).map((_, i) => <SkeletonCard key={i} />)}
             </div>
           ) : error === "__waking__" ? (

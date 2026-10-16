@@ -601,7 +601,7 @@ export default function OptimizerPage() {
           )}
 
           {/* Markets: each sport in play side by side */}
-          <div className={clsx("grid gap-4", panels > 1 && "lg:grid-cols-2")}>
+          <div className={clsx("grid gap-4", panels > 1 && "lg:grid-cols-2 short:grid-cols-2")}>
             {showFootball && (
               <div className="rounded-xl [box-shadow:var(--ring-control)] bg-surface-sunken/40 p-4">
                 <Setting label={panels > 1 ? "Football markets" : "Markets"}>

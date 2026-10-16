@@ -45,6 +45,17 @@
   --shimmer: rgb(255 255 255 / 0.7);
   --floodlight: rgb(132 204 22 / 0.08);
   --scrollbar: 199 207 221;
+
+  /* Glass (menu bar, header, sheets): a tinted fill over a blur. Three
+     weights — thin for chrome that sits over busy content, thick for
+     panels that hold text. The edge is a top highlight plus a hairline. */
+  --glass-fill: 255 255 255;
+  --glass-a-thin: 0.55;
+  --glass-a-regular: 0.7;
+  --glass-a-thick: 0.82;
+  --glass-edge: inset 0 1px 0 rgb(255 255 255 / 0.7), 0 0 0 1px oklch(0 0 0 / 0.06);
+  --glass-shadow: 0 8px 32px -12px rgb(15 23 41 / 0.18);
+  --glass-sheen: rgb(255 255 255 / 0.35);
   color-scheme: light;
 }
 
@@ -84,6 +95,14 @@ html.dark {
   --shimmer: rgb(255 255 255 / 0.06);
   --floodlight: rgb(184 245 61 / 0.06);
   --scrollbar: 39 51 75;
+
+  --glass-fill: 15 23 41;
+  --glass-a-thin: 0.5;
+  --glass-a-regular: 0.68;
+  --glass-a-thick: 0.8;
+  --glass-edge: inset 0 1px 0 rgb(255 255 255 / 0.08), 0 0 0 1px oklch(1 0 0 / 0.08);
+  --glass-shadow: 0 12px 40px -12px rgb(0 0 0 / 0.7);
+  --glass-sheen: rgb(255 255 255 / 0.04);
   color-scheme: dark; /* native inputs, selects and scrollbars render dark */
 }
 
@@ -129,6 +148,7 @@ body {
   ::before,
   ::after {
     animation-duration: 0.001ms !important;
+    animation-delay: 0s !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
@@ -255,10 +275,91 @@ body {
     box-shadow: var(--ring-control-hover);
   }
 
+  /* Glass surfaces. Never put glass on an element with position:fixed
+     children: backdrop-filter makes it their containing block. */
+  .glass-thin,
+  .glass,
+  .glass-regular,
+  .glass-thick {
+    background-color: rgb(var(--glass-fill) / var(--glass-a));
+    background-image: linear-gradient(180deg, var(--glass-sheen), transparent 60%);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+  }
+  .glass-thin { --glass-a: var(--glass-a-thin); --glass-blur: 12px; --glass-sat: 160%; }
+  .glass,
+  .glass-regular { --glass-a: var(--glass-a-regular); --glass-blur: 20px; --glass-sat: 170%; }
+  .glass-thick { --glass-a: var(--glass-a-thick); --glass-blur: 28px; --glass-sat: 180%; }
+
+  /* The rim and lift that make a floating glass panel read as one object */
+  .glass-edge {
+    box-shadow: var(--glass-edge), var(--glass-shadow);
+  }
+
+  /* The chosen item inside a glass bar: a brighter lens of the same glass */
+  .glass-lens {
+    background: rgb(var(--accent) / 0.14);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.12), 0 0 0 1px rgb(var(--accent) / 0.22);
+  }
+
   /* Images and crests: a neutral hairline for depth */
   .img-outline {
     outline: 1px solid var(--img-outline);
     outline-offset: -1px;
+  }
+}
+
+/* No blur support, or the OS asks for less transparency: solid panels */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass-thin,
+  .glass,
+  .glass-regular,
+  .glass-thick {
+    background-color: rgb(var(--surface));
+    background-image: none;
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .glass-thin,
+  .glass,
+  .glass-regular,
+  .glass-thick {
+    background-color: rgb(var(--surface));
+    background-image: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+/* Fingers need 44px: the header's small icon buttons grow on touch screens */
+@media (pointer: coarse) {
+  .shell-header :is(button, a) {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+/* ── Motion ────────────────────────────────────────────────────────────── */
+/* Lists that arrive together: each child rises in a beat after the last */
+.stagger > * {
+  animation: rise-in 0.42s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+.stagger > *:nth-child(2) { animation-delay: 40ms; }
+.stagger > *:nth-child(3) { animation-delay: 80ms; }
+.stagger > *:nth-child(4) { animation-delay: 120ms; }
+.stagger > *:nth-child(5) { animation-delay: 160ms; }
+.stagger > *:nth-child(6) { animation-delay: 200ms; }
+.stagger > *:nth-child(7) { animation-delay: 240ms; }
+.stagger > *:nth-child(n + 8) { animation-delay: 280ms; }
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
   }
 }
 
@@ -281,6 +382,24 @@ html.theme-switching *::after {
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
+  }
+
+  /* Room for the shell's chrome. The rail is 76px; the floating dock is
+     ~64px tall with a 10px gap, both plus the device's safe area. */
+  .w-rail {
+    width: calc(76px + env(safe-area-inset-left));
+  }
+  .pl-rail {
+    padding-left: calc(76px + env(safe-area-inset-left));
+  }
+  .pb-dock {
+    padding-bottom: calc(6.5rem + env(safe-area-inset-bottom));
+  }
+  .bottom-dock {
+    bottom: calc(5.75rem + env(safe-area-inset-bottom));
+  }
+  .pt-safe {
+    padding-top: env(safe-area-inset-top);
   }
 
   /* Kept for backwards compatibility with older components */

@@ -135,7 +135,7 @@ export function LeagueSections<T>({ sport, items, leagueOf, itemKey, render, bad
               <PinButton pinned={pinned} name={league.name} onToggle={() => toggle(league.id)} />
             </div>
             {open && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 stagger">
                 {list.map((it, i) => <div key={itemKey(it, i)} className="flex flex-col [&>*]:flex-1">{render(it, i)}</div>)}
               </div>
             )}

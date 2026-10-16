@@ -181,7 +181,7 @@ export default function DashboardPage() {
             <div className="space-y-3">
               {rec && rec.tickets > 0 ? (
                 <>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="grid grid-cols-2 md:grid-cols-4 short:grid-cols-4 gap-3 stagger">
                     <StatCard label="Tickets won" value={rec.hit_rate == null ? "—" : `${Math.round(rec.hit_rate * 100)}%`}
                       color={rec.hit_rate == null ? "text-n-400" : rec.hit_rate >= 0.5 ? "text-accent" : rec.hit_rate >= 0.3 ? "text-warn" : "text-danger"}
                       sub={`${rec.won} of ${rec.won + rec.lost} settled`} />
@@ -244,7 +244,7 @@ export default function DashboardPage() {
                   </p>
                 </>
               ) : loadingTab ? (
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="grid grid-cols-2 md:grid-cols-4 short:grid-cols-4 gap-3 stagger">
                   {Array.from({ length: 4 }).map((_, i) => (
                     <div key={i} className="card px-4 py-4 space-y-3"><div className="skeleton h-3 w-16" /><div className="skeleton h-8 w-20 !rounded-lg" /></div>
                   ))}

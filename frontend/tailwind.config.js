@@ -10,6 +10,12 @@ const config = {
   ],
   theme: {
     extend: {
+      // Extended screens come after the defaults, so `short:` (a phone on its
+      // side) overrides `md:`; the max-width keeps it clear of `lg:`.
+      screens: {
+        short: { raw: "(orientation: landscape) and (max-height: 500px) and (max-width: 1023px)" },
+        "3xl": "1440px",
+      },
       fontFamily: {
         sans: [
           "var(--font-inter)",
@@ -92,6 +98,9 @@ const config = {
         "fade-in": "fade-in 0.3s ease both",
         "slide-up": "slide-up 0.35s cubic-bezier(0.16, 1, 0.3, 1) both",
         "scale-in": "scale-in 0.25s cubic-bezier(0.16, 1, 0.3, 1) both",
+        // `backwards`, not `both`: once in, no transform is left behind to
+        // trap the page's position:fixed children
+        "page-in": "page-in 0.4s cubic-bezier(0.16, 1, 0.3, 1) backwards",
       },
       keyframes: {
         "fade-in": {
@@ -105,6 +114,10 @@ const config = {
         "scale-in": {
           from: { opacity: "0", transform: "scale(0.97)" },
           to: { opacity: "1", transform: "scale(1)" },
+        },
+        "page-in": {
+          from: { opacity: "0", transform: "translateY(8px)" },
+          to: { opacity: "1", transform: "translateY(0)" },
         },
       },
     },

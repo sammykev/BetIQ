@@ -188,7 +188,7 @@ export function SlipDrawer() {
         {open && (
           <RD.Portal forceMount>
             <RD.Overlay forceMount asChild>
-              <motion.div className="fixed inset-0 z-50 bg-[rgb(7_11_20/0.5)] backdrop-blur-[2px]"
+              <motion.div className="fixed inset-0 z-50 bg-[rgb(7_11_20/0.45)] backdrop-blur-[3px]"
                 initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, transition: { duration: 0.15 } }}
                 transition={{ duration: 0.2, ease: EASE }} />
             </RD.Overlay>
@@ -200,7 +200,7 @@ export function SlipDrawer() {
                 exit={wide ? { x: 16, opacity: 0, transition: { duration: 0.15, ease: "easeOut" } }
                            : { y: 24, opacity: 0, transition: { duration: 0.15, ease: "easeOut" } }}
                 transition={{ duration: 0.3, ease: EASE }}
-                className="fixed z-50 inset-x-0 bottom-0 max-h-[88dvh] sm:inset-y-0 sm:left-auto sm:right-0 sm:max-h-none sm:w-[420px] flex flex-col bg-surface rounded-t-3xl sm:rounded-none [box-shadow:var(--shadow-pop)] outline-none"
+                className="fixed z-50 inset-x-0 bottom-0 max-h-[88dvh] sm:inset-y-0 sm:left-auto sm:right-0 sm:max-h-none sm:w-[420px] flex flex-col glass-thick rounded-t-3xl sm:rounded-none pb-[env(safe-area-inset-bottom)] sm:pb-0 [box-shadow:var(--glass-edge),var(--shadow-pop)] outline-none"
               >
                 {/* Header */}
                 <div className="flex items-center justify-between px-5 py-4 border-b border-n-800">

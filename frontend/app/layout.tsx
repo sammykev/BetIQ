@@ -45,7 +45,7 @@ export const metadata: Metadata = {
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
-    statusBarStyle: "black",
+    statusBarStyle: "black-translucent",
     title: "BetIQ",
   },
   // The standard form of apple-mobile-web-app-capable, which Chrome now warns is deprecated
@@ -81,6 +81,8 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
+  // Fill the whole screen behind notches; the shell pads itself with env(safe-area-inset-*)
+  viewportFit: "cover",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

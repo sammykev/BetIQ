@@ -270,7 +270,7 @@ export function TicketsList({ uid, authFetch }: { uid: string; authFetch: (url: 
   const settled = tickets.filter(t => t.status !== "pending" && t.status !== "open");
 
   const toast = (removed || failed) && (
-    <div role="status" className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-[calc(100%-2rem)] max-w-sm card px-4 py-3 flex items-center gap-3 text-sm shadow-lg">
+    <div role="status" className="fixed bottom-dock md:bottom-6 short:bottom-4 left-1/2 -translate-x-1/2 z-50 w-[calc(100%-2rem)] max-w-sm card px-4 py-3 flex items-center gap-3 text-sm shadow-lg">
       <span className="flex-1 text-n-200">{removed ? <>Ticket <span className="font-mono font-bold text-n-0">{removed}</span> removed</> : failed}</span>
       {removed ? (
         <button onClick={undo} className="inline-flex items-center gap-1 text-xs font-semibold text-accent hover:underline"><Undo2 size={12} /> Undo</button>
@@ -302,7 +302,7 @@ export function TicketsList({ uid, authFetch }: { uid: string; authFetch: (url: 
         </div>
       )}
       {active.length > 0 ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">{active.map(card)}</div>
+        <div className="grid grid-cols-1 md:grid-cols-2 short:grid-cols-2 gap-4 stagger">{active.map(card)}</div>
       ) : (
         <p className="card px-4 py-6 text-center text-sm text-n-400">No open tickets. Settled ones are below.</p>
       )}
@@ -312,7 +312,7 @@ export function TicketsList({ uid, authFetch }: { uid: string; authFetch: (url: 
             <span>Settled tickets ({settled.length}) · {settled.filter(t => t.status === "won").length} won</span>
             <ChevronDown size={16} className="text-n-400 transition-transform group-open:rotate-180" />
           </summary>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">{settled.map(card)}</div>
+          <div className="grid grid-cols-1 md:grid-cols-2 short:grid-cols-2 gap-4 mt-4 stagger">{settled.map(card)}</div>
         </details>
       )}
 

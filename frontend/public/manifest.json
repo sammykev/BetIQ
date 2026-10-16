@@ -6,7 +6,7 @@
   "display": "standalone",
   "background_color": "#070b14",
   "theme_color": "#070b14",
-  "orientation": "portrait-primary",
+  "orientation": "any",
   "categories": [
     "sports",
     "entertainment"
@@ -43,12 +43,10 @@
       "purpose": "maskable"
     }
   ],
-  "screenshots": [
-    {
-      "src": "/logo.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "form_factor": "narrow"
-    }
+  "id": "/",
+  "scope": "/",
+  "display_override": [
+    "standalone",
+    "minimal-ui"
   ]
 }

@@ -177,7 +177,7 @@ export default function AdminPage() {
   return (
     <AdminContext.Provider value={api}>
       <div className="min-h-screen bg-canvas">
-        <header className="sticky top-0 z-30 border-b border-n-800 bg-canvas/90 backdrop-blur">
+        <header className="sticky top-0 z-30 pt-safe border-b border-n-800 bg-canvas/90 backdrop-blur">
           <div className="max-w-6xl mx-auto px-4 pt-3 flex items-center gap-3">
             <img src="/logo.svg" alt="" className="w-8 h-8 rounded-lg" />
             <div className="min-w-0">
@@ -224,7 +224,7 @@ export default function AdminPage() {
         </main>
 
         {toast && (
-          <div role="status" className={clsx("fixed bottom-4 right-4 z-50 flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold shadow-card max-w-[90vw]",
+          <div role="status" className={clsx("fixed bottom-[max(1rem,env(safe-area-inset-bottom))] right-4 z-50 flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold shadow-card max-w-[90vw]",
             toast.type === "ok" ? "bg-brand-400 text-ink" : "bg-danger text-white")}>
             {toast.type === "ok" ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
             {toast.text}

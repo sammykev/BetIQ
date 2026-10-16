@@ -14,6 +14,7 @@ const SOURCES: Record<string, string> = {
   daily: "Daily odds", other: "Other",
 };
 const STATUS_TONE: Record<string, "ok" | "danger" | "muted" | "info"> = { won: "ok", lost: "danger", void: "muted", open: "info" };
+const statusLabel = (s: string) => (s === "open" ? "Open" : s[0].toUpperCase() + s.slice(1));
 const LEG_TONE: Record<string, string> = { won: "text-accent", lost: "text-danger", void: "text-n-500" };
 
 interface Leg { home: string; away: string; date?: string; time?: string; label?: string; marketName?: string; odds?: number | null; status?: string }
@@ -44,6 +45,38 @@ export function AllTickets({ sources }: { sources?: Record<string, number> }) {
     try { await navigator.clipboard.writeText(code); setCopied(code); setTimeout(() => setCopied(null), 1400); } catch { /* ignore */ }
   };
 
+  const Detail = ({ t }: { t: Ticket }) => (
+    <div className="space-y-2">
+      <ul className="space-y-1.5">
+        {t.legs.map((l, i) => (
+          <li key={i} className="flex items-start justify-between gap-3">
+            <span className="min-w-0">
+              <span className="block text-n-0">{l.label || l.marketName}</span>
+              <span className="block text-[11px] text-n-500">{l.home} v {l.away}{l.date ? ` · ${l.date}${l.time ? ` ${l.time}` : ""}` : ""}</span>
+            </span>
+            <span className="shrink-0 text-right tnum">
+              <span className="text-n-200">{l.odds ? l.odds.toFixed(2) : "—"}</span>
+              <span className={clsx("block text-[11px] capitalize", LEG_TONE[l.status ?? ""] ?? "text-n-400")}>
+                {l.status === "unknown" ? "not graded" : l.status ?? "pending"}</span>
+            </span>
+          </li>
+        ))}
+      </ul>
+      <div className="flex flex-wrap items-center gap-2 pt-1">
+        <button onClick={e => { e.stopPropagation(); copy(t.code); }}
+          className="inline-flex items-center gap-1 rounded-lg border border-n-800 bg-surface px-2.5 py-1.5 text-xs text-n-200 hover:text-n-0">
+          {copied === t.code ? <Check size={12} /> : <Copy size={12} />}{copied === t.code ? "Copied" : "Copy code"}
+        </button>
+        {t.share_url && (
+          <a href={t.share_url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
+            className="inline-flex items-center gap-1 rounded-lg border border-n-800 bg-surface px-2.5 py-1.5 text-xs text-n-200 hover:text-n-0">
+            <ExternalLink size={12} /> Open on SportyBet</a>
+        )}
+        <span className="text-[11px] text-n-500">Account {t.uid} · made {new Date(t.created_at).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}</span>
+      </div>
+    </div>
+  );
+
   return (
     <div className="space-y-3 border-t border-n-800 pt-3">
       <div className="flex flex-wrap gap-2">
@@ -67,11 +100,37 @@ export function AllTickets({ sources }: { sources?: Record<string, number> }) {
         <>
           <p className="text-[11px] text-n-500">{num(data.total)} code{data.total === 1 ? "" : "s"}{data.total > data.tickets.length ? `, newest ${data.tickets.length} shown` : ""}</p>
           {data.tickets.length === 0 ? <p className="text-xs text-n-400">No codes match.</p> : (
-            <div className="overflow-x-auto -mx-4 sm:mx-0">
+            <>
+            {/* Phone: one card per code */}
+            <ul className="sm:hidden space-y-2 stagger">
+              {data.tickets.map(t => {
+                const key = `${t.uid}:${t.code}`;
+                const expanded = open === key;
+                return (
+                  <li key={key} className="rounded-xl bg-surface [box-shadow:var(--ring-control)] overflow-hidden">
+                    <button type="button" onClick={() => setOpen(expanded ? null : key)} aria-expanded={expanded}
+                      className="w-full text-left px-3 py-2.5 min-h-[44px] space-y-1">
+                      <span className="flex items-center gap-2">
+                        <span className="font-mono font-bold text-n-0 tracking-wider">{t.code}</span>
+                        <Pill tone={STATUS_TONE[t.status] ?? "muted"}>{statusLabel(t.status)}</Pill>
+                        <span className="ml-auto tnum font-semibold text-n-0 text-xs">{t.total_odds ? t.total_odds.toFixed(2) : "—"}</span>
+                        <ChevronDown size={14} className={clsx("text-n-500 transition-transform", expanded && "rotate-180")} />
+                      </span>
+                      <span className="block text-xs text-n-300 truncate">{t.name || t.email || "Unknown account"}</span>
+                      <span className="block text-[11px] text-n-500">
+                        {ago(t.created_at)} · {SOURCES[t.source ?? "other"] ?? t.source} · {t.legs.length} pick{t.legs.length === 1 ? "" : "s"}
+                      </span>
+                    </button>
+                    {expanded && <div className="border-t border-n-800 bg-surface-sunken px-3 py-3 animate-page-in"><Detail t={t} /></div>}
+                  </li>
+                );
+              })}
+            </ul>
+            <div className="hidden sm:block overflow-x-auto">
               <table className="w-full min-w-[640px] text-xs">
                 <thead>
                   <tr className="text-left text-n-500 border-b border-n-800">
-                    <th className="py-2 px-4 sm:px-2 font-medium">Code</th>
+                    <th className="py-2 px-2 font-medium">Code</th>
                     <th className="py-2 px-2 font-medium">Made by</th>
                     <th className="py-2 px-2 font-medium">When</th>
                     <th className="py-2 px-2 font-medium">From</th>
@@ -89,7 +148,7 @@ export function AllTickets({ sources }: { sources?: Record<string, number> }) {
                     return (
                       <Fragment key={key}>
                         <tr onClick={() => setOpen(expanded ? null : key)} className="cursor-pointer hover:bg-surface-sunken align-top">
-                          <td className="py-2 px-4 sm:px-2 font-mono font-bold text-n-0 tracking-wider whitespace-nowrap">{t.code}</td>
+                          <td className="py-2 px-2 font-mono font-bold text-n-0 tracking-wider whitespace-nowrap">{t.code}</td>
                           <td className="py-2 px-2 min-w-0">
                             <p className="text-n-0 truncate max-w-[180px]">{t.name || t.email || "Unknown account"}</p>
                             {t.name && t.email && <p className="text-n-500 truncate max-w-[180px]">{t.email}</p>}
@@ -98,43 +157,12 @@ export function AllTickets({ sources }: { sources?: Record<string, number> }) {
                           <td className="py-2 px-2 text-n-300 whitespace-nowrap">{SOURCES[t.source ?? "other"] ?? t.source}</td>
                           <td className="py-2 px-2 text-right text-n-300 tnum">{t.legs.length}{t.status === "open" && settled ? <span className="text-n-500"> · {settled} in</span> : null}</td>
                           <td className="py-2 px-2 text-right text-n-0 tnum font-semibold">{t.total_odds ? t.total_odds.toFixed(2) : "—"}</td>
-                          <td className="py-2 px-2"><Pill tone={STATUS_TONE[t.status] ?? "muted"}>{t.status === "open" ? "Open" : t.status[0].toUpperCase() + t.status.slice(1)}</Pill></td>
+                          <td className="py-2 px-2"><Pill tone={STATUS_TONE[t.status] ?? "muted"}>{statusLabel(t.status)}</Pill></td>
                           <td className="py-2 px-2 text-right"><ChevronDown size={14} className={clsx("inline text-n-500 transition-transform", expanded && "rotate-180")} /></td>
                         </tr>
                         {expanded && (
                           <tr className="bg-surface-sunken">
-                            <td colSpan={8} className="px-4 sm:px-3 py-3">
-                              {/* On a phone the table scrolls sideways: keep the details on screen */}
-                              <div className="sticky left-4 max-w-[calc(100vw-4rem)] sm:max-w-none space-y-2">
-                              <ul className="space-y-1.5">
-                                {t.legs.map((l, i) => (
-                                  <li key={i} className="flex items-start justify-between gap-3">
-                                    <span className="min-w-0">
-                                      <span className="block text-n-0">{l.label || l.marketName}</span>
-                                      <span className="block text-[11px] text-n-500">{l.home} v {l.away}{l.date ? ` · ${l.date}${l.time ? ` ${l.time}` : ""}` : ""}</span>
-                                    </span>
-                                    <span className="shrink-0 text-right tnum">
-                                      <span className="text-n-200">{l.odds ? l.odds.toFixed(2) : "—"}</span>
-                                      <span className={clsx("block text-[11px] capitalize", LEG_TONE[l.status ?? ""] ?? "text-n-400")}>
-                                        {l.status === "unknown" ? "not graded" : l.status ?? "pending"}</span>
-                                    </span>
-                                  </li>
-                                ))}
-                              </ul>
-                              <div className="flex flex-wrap items-center gap-2 pt-1">
-                                <button onClick={e => { e.stopPropagation(); copy(t.code); }}
-                                  className="inline-flex items-center gap-1 rounded-lg border border-n-800 bg-surface px-2.5 py-1.5 text-xs text-n-200 hover:text-n-0">
-                                  {copied === t.code ? <Check size={12} /> : <Copy size={12} />}{copied === t.code ? "Copied" : "Copy code"}
-                                </button>
-                                {t.share_url && (
-                                  <a href={t.share_url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
-                                    className="inline-flex items-center gap-1 rounded-lg border border-n-800 bg-surface px-2.5 py-1.5 text-xs text-n-200 hover:text-n-0">
-                                    <ExternalLink size={12} /> Open on SportyBet</a>
-                                )}
-                                <span className="text-[11px] text-n-500">Account {t.uid} · made {new Date(t.created_at).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}</span>
-                              </div>
-                              </div>
-                            </td>
+                            <td colSpan={8} className="px-3 py-3"><Detail t={t} /></td>
                           </tr>
                         )}
                       </Fragment>
@@ -143,6 +171,7 @@ export function AllTickets({ sources }: { sources?: Record<string, number> }) {
                 </tbody>
               </table>
             </div>
+            </>
           )}
         </>
       )}

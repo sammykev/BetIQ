@@ -74,7 +74,7 @@ function MyTickets() {
       {!s || s.tickets === 0 ? (
         <p className="text-sm text-n-400">Codes you generate on BetIQ while signed in are tracked here and settled leg by leg as results come in.</p>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 stagger">
           <Tile label="Codes" value={`${s.tickets}`} sub={`${s.pending} still open`} />
           <Tile label="Tickets won" value={`${s.won}/${s.won + s.lost}`} sub={s.hit_rate !== null ? `${pct(s.hit_rate)} of settled` : "none settled yet"} />
           <Tile label="Legs won" value={`${s.legs_won}/${s.legs_won + s.legs_lost}`} sub={pct(s.leg_hit_rate)} />
@@ -140,7 +140,7 @@ export default function TrackRecordPage() {
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 short:grid-cols-4 gap-3 stagger">
               {sport !== "football" ? <>
                 <Tile label="Our tips" value={pct(m.tip?.hit_rate)} tone="text-accent"
                   sub={m.tip ? `${m.tip.n} picks · we said ${pct(m.tip.avg_prob)}` : undefined} />
@@ -171,7 +171,23 @@ export default function TrackRecordPage() {
                   <p className="text-xs text-n-400">What we said the picks&apos; chances were, next to how often they won.</p>
                 </div>
               </header>
-              <div className="overflow-x-auto">
+              {/* Phone: one row card per market, the numbers side by side under its name */}
+              <ul className="sm:hidden divide-y divide-n-800 border-t border-n-800 stagger">
+                {markets.map(k => (
+                  <li key={k} className="px-4 py-3">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="text-n-0 font-medium text-sm truncate">{sport === "football" ? MARKET_LABELS[k] ?? m[k].name : m[k].name}</span>
+                      <span className="text-[11px] text-n-500 tnum shrink-0">{m[k].n} picks</span>
+                    </div>
+                    <dl className="mt-1.5 grid grid-cols-3 gap-2 text-xs">
+                      <div><dt className="text-n-500">We said</dt><dd className="tnum text-n-300">{pct(m[k].avg_prob)}</dd></div>
+                      <div><dt className="text-n-500">Happened</dt><dd className="tnum text-n-0 font-semibold">{pct(m[k].hit_rate)}</dd></div>
+                      <div className="text-right"><dt className="text-n-500">Gap</dt><dd><Gap said={m[k].avg_prob} happened={m[k].hit_rate} /></dd></div>
+                    </dl>
+                  </li>
+                ))}
+              </ul>
+              <div className="hidden sm:block overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-[11px] uppercase tracking-[0.06em] text-n-500 border-y border-n-800 bg-surface-sunken/60">
@@ -203,7 +219,7 @@ export default function TrackRecordPage() {
               </p>
             </section>
 
-            <div className="grid gap-4 lg:grid-cols-2">
+            <div className="grid gap-4 lg:grid-cols-2 short:grid-cols-2">
               <section className="card overflow-hidden">
                 <header className="px-4 sm:px-5 pt-4 pb-3 flex items-start gap-2">
                   <Scale size={16} className="text-accent mt-0.5" />
