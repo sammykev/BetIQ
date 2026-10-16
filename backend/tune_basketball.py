@@ -24,7 +24,7 @@ from backtest_basketball import MIN_GAMES, TRAIN_DAYS, WARMUP
 
 TUNING_KEY = "betiq:bb:tuning"
 HALF_LIVES = (45.0, 90.0, 180.0, 365.0)
-RIDGES = (0.5, 1.0, 2.0, 4.0, 8.0, 16.0)
+RIDGES = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0)
 TEST_WEEKS = 104          # the latest two seasons' weeks are tested (older leagues: fewer)
 MIN_GAIN = 0.002          # log loss a tuned pair must save on the held-out half
 MIN_COVER = 0.99          # and the share of the defaults' games it must still price
