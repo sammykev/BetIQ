@@ -69,3 +69,17 @@ def test_shrink_pulls_toward_even():
     assert 0.5 < tm.shrink(0.8, 0.8) < 0.8
     assert tm.shrink(0.8, 1.0) == pytest.approx(0.8)
     assert tm.shrink(0.2, 0.8) == pytest.approx(1 - tm.shrink(0.8, 0.8))
+
+
+def test_a_long_layoff_marks_a_player_down():
+    a = tm.Player("Back Again", "ATP", elo=1900, n=100, last="2026-08-01")
+    b = tm.Player("Busy Player", "ATP", elo=1900, n=100, last="2026-10-10")
+    assert tm.rested(a, "2026-10-16") and not tm.rested(b, "2026-10-16")
+    assert not tm.rested(a, None) and not tm.rested(tm.Player("New", "ATP"), "2026-10-16")
+    p = tm.layoff(0.6, a, b, "2026-10-16")
+    assert p < 0.6 and tm.layoff(0.4, b, a, "2026-10-16") == pytest.approx(1 - p)
+    assert tm.layoff(0.6, a, a, "2026-10-16") == pytest.approx(0.6)
+    players = {f"ATP|{tm.name_key(x.name)}": x for x in (a, b)}
+    even = tm.predict(players, {"ATP": 0.64}, "Back Again", "Busy Player", "Hard")
+    tired = tm.predict(players, {"ATP": 0.64}, "Back Again", "Busy Player", "Hard", day="2026-10-16")
+    assert even.p_win == pytest.approx(0.5, abs=0.01) and tired.p_win < 0.47

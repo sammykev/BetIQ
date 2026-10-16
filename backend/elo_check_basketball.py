@@ -42,6 +42,7 @@ def league_check(name: str, games: List[bm.Game]) -> Optional[Dict]:
         return None
     start = date.fromisoformat(games[int(len(games) * WARMUP)].date)
     end = date.fromisoformat(games[-1].date)
+    rest = bm.back_to_back(games)
     elo: Dict[str, float] = {}
     last: Dict[str, str] = {}
     done = 0                         # games already run through the Elo
@@ -64,10 +65,11 @@ def league_check(name: str, games: List[bm.Game]) -> Optional[Dict]:
         scale = sdm / sdd
         week_rows = []
         if lg:
-            for g in games[done:]:
+            for i in range(done, len(games)):
+                g = games[i]
                 if g.date >= nxt.isoformat():
                     break
-                m = bm.expect(lg, g.home, g.away, g.neutral)
+                m = bm.expect(lg, g.home, g.away, g.neutral, rest=rest[i])
                 if m is None:
                     continue
                 d = be.diff(elo, g.home, g.away, g.neutral)
@@ -150,6 +152,8 @@ def main() -> None:
         results += bd.decode(blob)
     results = bb_history.combine(results, bb_history.load(r))
     print(f"{len(results)} games")
+    import tune_basketball as tb
+    bm.TUNED.update(tb.load(r))
     report = run(results)
     r.set(REPORT_KEY, json.dumps(report))
 

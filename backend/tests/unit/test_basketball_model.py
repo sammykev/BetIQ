@@ -196,3 +196,52 @@ def test_a_quarters_margin_follows_its_share(league):
     assert q4_flat.home - q4_flat.away == pytest.approx(1.2)
     assert q4_flat.p_3way("1") < q4_even.p_3way("1")
     assert q4_flat.home + q4_flat.away == pytest.approx(q4_even.home + q4_even.away)
+
+
+def test_back_to_backs_from_the_schedule():
+    g = lambda d, h, a: bm.Game(d, h, a, 80, 78)
+    games = [g("2025-01-01", "A", "B"), g("2025-01-02", "A", "C"), g("2025-01-03", "C", "B"),
+             g("2025-01-05", "B", "A")]
+    assert bm.back_to_back(games) == [(False, False), (True, False), (True, False), (False, False)]
+
+
+def test_a_tired_team_is_marked_down_and_the_total_kept():
+    """Several games a day, a team on the second night of a back-to-back
+    scoring 3 fewer and conceding 3 more: the fit finds it, and a match's
+    expectation moves by it (margin only) when one side played yesterday."""
+    rng = random.Random(4)
+    att = {t: rng.gauss(0, 4) for t in TEAMS}
+    dfn = {t: rng.gauss(0, 4) for t in TEAMS}
+    games, last, day = [], {}, date(2024, 10, 1)
+    for _ in range(320):
+        playing = rng.sample(TEAMS, 8)
+        for h, a in zip(playing[::2], playing[1::2]):
+            th = last.get(h) == day - timedelta(days=1)
+            ta = last.get(a) == day - timedelta(days=1)
+            pen = 1.5 * (int(ta) - int(th))
+            hs = round(83 + att[h] - dfn[a] + pen + rng.gauss(0, 9))
+            as_ = round(80 + att[a] - dfn[h] - pen + rng.gauss(0, 9))
+            games.append(bm.Game(day.isoformat(), h, a, hs, as_ + (hs == as_)))
+        for t in playing:
+            last[t] = day
+        day += timedelta(days=1)
+    assert sum(h or a for h, a in bm.back_to_back(games)) > 200
+    lg = bm.fit("Tired", games, as_of=day)
+    assert 1.5 < lg.b2b < 4.5
+    yday, today = (day - timedelta(days=1)).isoformat(), day.isoformat()
+    lg.last.update({"T1": yday, "T2": (day - timedelta(days=3)).isoformat()})
+    assert lg.tired("T1", today) and not lg.tired("T2", today) and not lg.tired("T9", today)
+    fresh, tired = bm.expect(lg, "T1", "T2"), bm.expect(lg, "T1", "T2", day=today)
+    assert tired.margin == pytest.approx(fresh.margin - lg.b2b)
+    assert tired.home_pts + tired.away_pts == pytest.approx(fresh.home_pts + fresh.away_pts)
+    assert bm.expect(lg, "T2", "T1", rest=(False, True)).margin == pytest.approx(bm.expect(lg, "T2", "T1").margin + lg.b2b)
+    back = bm.League.from_json(lg.to_json())
+    assert back.b2b == lg.b2b and back.last == lg.last
+
+
+def test_older_saved_leagues_have_no_back_to_back_term(league):
+    lg, *_ = league
+    old = {k: v for k, v in lg.to_json().items() if k not in ("b2b", "last")}
+    back = bm.League.from_json(old)
+    assert back.b2b == 0.0 and not back.tired("T3", "2025-01-02")
+    assert back.expect("T3", "T4", rest=(True, False)) == back.expect("T3", "T4")

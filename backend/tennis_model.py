@@ -14,7 +14,9 @@ All pure functions; the ratings come from tennis_fit.py via Redis.
 """
 
 from dataclasses import dataclass, field
+from datetime import date
 from functools import lru_cache
+import math
 from math import log10
 from typing import Dict, List, Optional, Tuple
 
@@ -160,14 +162,14 @@ def p_match(pa: float, pb: float, best_of: int = 3) -> float:
 
 def solve_serve(p_win: float, pa: float, pb: float, best_of: int = 3) -> Tuple[float, float]:
     """Shift both serve chances (A's up, B's down, or the reverse) until A's
-    chance of winning a best-of-3 match is p_win: the level from the
+    chance of winning a best-of-`best_of` match is p_win: the level from the
     ratings (and market), the shape from the serve/return record."""
     lo, hi = -0.25, 0.25
     p_win = min(0.995, max(0.005, p_win))
     for _ in range(40):
         mid = (lo + hi) / 2
         a, b = min(0.97, max(0.2, pa + mid)), min(0.97, max(0.2, pb - mid))
-        if p_match(a, b, 3) < p_win:
+        if p_match(a, b, best_of) < p_win:
             lo = mid
         else:
             hi = mid
@@ -190,6 +192,31 @@ def shrink(p: float, s: float) -> float:
     overconfident (ratings are estimates); tennis_fit fits s."""
     p = min(max(p, 1e-6), 1 - 1e-6)
     return 1.0 / (1.0 + ((1 - p) / p) ** s)
+
+
+# A player back from 35+ days without a match plays below their rating
+# (walk-forward 2023-26: log loss 0.5762 -> 0.5751)
+LAYOFF_DAYS = 35
+LAYOFF_LOGIT = 0.25
+
+
+def rested(p: Optional["Player"], day: Optional[str]) -> bool:
+    """Whether the player is coming back from a long layoff on this day."""
+    if p is None or not p.last or not day:
+        return False
+    try:
+        return (date.fromisoformat(day[:10]) - date.fromisoformat(p.last[:10])).days >= LAYOFF_DAYS
+    except ValueError:
+        return False
+
+
+def layoff(p_a: float, a: Optional["Player"], b: Optional["Player"], day: Optional[str]) -> float:
+    """p_a marked down on the logit scale for a's layoff (and up for b's)."""
+    d = int(rested(a, day)) - int(rested(b, day))
+    if not d:
+        return p_a
+    p_a = min(max(p_a, 1e-6), 1 - 1e-6)
+    return 1.0 / (1.0 + (1 - p_a) / p_a * math.exp(LAYOFF_LOGIT * d))
 
 
 @dataclass
@@ -247,10 +274,11 @@ def tour_of(tournament: str) -> str:
 
 def predict(players: Dict[str, Player], avg: Dict[str, float], p1: str, p2: str, surface: str,
             best_of: int = 3, market_p1: Optional[float] = None, model_weight: float = 0.5,
-            tour: str = "ATP", shrink_s: float = 1.0, surface_weight: Optional[float] = None) -> Optional[MatchDist]:
+            tour: str = "ATP", shrink_s: float = 1.0, surface_weight: Optional[float] = None,
+            day: Optional[str] = None) -> Optional[MatchDist]:
     """A match's distribution: Elo level blended with the market's, shaped
     by serve and return. None when neither player is known and there's no
-    market price."""
+    market price. day (ISO) lets a long layoff mark a player down."""
     def find(name: str) -> Optional[Player]:
         k = name_key(name)
         return players.get(f"{tour}|{k}") or players.get(f"{'WTA' if tour == 'ATP' else 'ATP'}|{k}")
@@ -259,6 +287,7 @@ def predict(players: Dict[str, Player], avg: Dict[str, float], p1: str, p2: str,
     known = a is not None and b is not None and a.n >= 5 and b.n >= 5
     if known:
         p_elo = shrink(elo_p(a.rating(surface, surface_weight), b.rating(surface, surface_weight)), shrink_s)
+        p_elo = layoff(p_elo, a, b, day)
         level = p_elo if market_p1 is None else model_weight * p_elo + (1 - model_weight) * market_p1
     elif market_p1 is not None:
         level = market_p1
@@ -267,7 +296,7 @@ def predict(players: Dict[str, Player], avg: Dict[str, float], p1: str, p2: str,
     a = a or Player(p1, tour)
     b = b or Player(p2, tour)
     pa0, pb0 = serve_chances(a, b, avg)
-    pa, pb = solve_serve(level, pa0, pb0)
+    pa, pb = solve_serve(level, pa0, pb0, best_of)
     md = match_dist(pa, pb, best_of)
     md.detail = {"level": round(level, 4), "elo": round(p_elo, 4) if known else None,
                  "market": round(market_p1, 4) if market_p1 is not None else None, "known": known,

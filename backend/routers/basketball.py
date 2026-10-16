@@ -67,6 +67,7 @@ async def _bb_index() -> Dict[str, List]:
 
 def _bb_fit_sync() -> Dict[str, Any]:
     import basketball_data as bd
+    import basketball_model as bm
     r = main._get_redis()
     results = main._bb_results(r)
     try:
@@ -83,6 +84,13 @@ def _bb_fit_sync() -> Dict[str, Any]:
         history = bb_history.combine(results, bb_history.load(r)) if r and elo_report else None
     except Exception as e:
         print(f"[Basketball] Elo not used: {e}")
+    # Each league's half-life and ridge where the tuning beat the defaults (tune_basketball.py)
+    try:
+        import tune_basketball as tb
+        bm.TUNED.clear()
+        bm.TUNED.update(tb.load(r))
+    except Exception as e:
+        print(f"[Basketball] tuning not used: {e}")
     leagues = bd.fit_all(results, backtest=backtest, elo_report=elo_report, history=history)
     main._bb_leagues.clear()
     main._bb_leagues.update(leagues)

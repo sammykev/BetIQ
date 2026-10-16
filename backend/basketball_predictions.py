@@ -60,7 +60,9 @@ def _expectation(ev: Dict, offs: List[Dict], lg: Optional[bm.League]) -> Optiona
     if total is not None:
         # SportyBet's total counts overtime; ours is regulation's
         total -= 0.05 * bm.OT_SHARE * total
-    ours = bm.expect(lg, home, away) if lg else None
+    k = bd.kickoff(ev)
+    # back-to-back: a team that played yesterday (in the fitted results) is tired
+    ours = bm.expect(lg, home, away, day=k.date().isoformat() if k else None) if lg else None
     if ours is None and total is None and lg is not None and margin is not None:
         total = 2 * lg.avg
     return bm.blend(ours, sigma, margin, total, MODEL_WEIGHT,

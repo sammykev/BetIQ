@@ -35,7 +35,16 @@ import numpy as np
 
 HALF_LIFE_DAYS = 90      # a game's weight halves every this many days
 RIDGE = 8.0              # pull towards the league average, in games' worth
+# Per league (half-life days, ridge) where the walk-forward tuning
+# (tune_basketball.py) found better than the defaults; loaded from Redis
+TUNED: Dict[str, Tuple[float, float]] = {}
 MIN_GAMES = 8            # a team needs this many (weighted) games to be "known"
+# The second night of a back-to-back costs a team points of margin (fitted per
+# league, pulled towards 0 by B2B_RIDGE games' worth; NBA ~2.2). Margin only:
+# walk-forward on the NBA, a tired side's own points and its opponent's move
+# by about the same amount, so the total doesn't change.
+B2B_RIDGE = 4.0
+B2B_MAX = 6.0
 SIGMA_FLOOR = {"margin": 9.0, "total": 11.0, "team": 7.5}
 # Where a league has no games to measure from: typical of professional leagues
 DEFAULT_SIGMA = {"margin": 12.0, "total": 17.0, "team": 10.5,
@@ -85,11 +94,20 @@ class League:
     elo: Dict[str, float] = field(default_factory=dict)
     elo_scale: float = 0.0
     elo_weight: float = 0.0
+    b2b: float = 0.0            # margin a team loses on the second night of a back-to-back
+    last: Dict[str, str] = field(default_factory=dict)   # each team's latest game in the fit
+
+    def tired(self, team: str, day: str) -> bool:
+        """Whether `team` played the day before `day` (YYYY-MM-DD)."""
+        got = self.last.get(team)
+        return bool(got) and (date.fromisoformat(day) - date.fromisoformat(got)).days == 1
 
     def known(self, team: str) -> bool:
         return self.games.get(team, 0.0) >= MIN_GAMES
 
-    def expect(self, home: str, away: str, neutral: bool = False) -> Tuple[float, float]:
+    def expect(self, home: str, away: str, neutral: bool = False,
+               rest: Tuple[bool, bool] = (False, False)) -> Tuple[float, float]:
+        """`rest`: whether home / away are on the second night of a back-to-back."""
         hc = 0.0 if neutral else self.home_court
         h = self.avg + hc + self.attack.get(home, 0.0) - self.defence.get(away, 0.0)
         a = self.avg + self.attack.get(away, 0.0) - self.defence.get(home, 0.0)
@@ -99,12 +117,13 @@ class League:
             w = self.elo_weight
             margin = (1 - w) * (h - a) + w * self.elo_scale * be.diff(self.elo, home, away, neutral)
             h, a = (h + a + margin) / 2, (h + a - margin) / 2
-        return h, a
+        shift = self.b2b * (int(rest[1]) - int(rest[0])) / 2
+        return h + shift, a - shift
 
     def to_json(self) -> Dict:
         return {k: getattr(self, k) for k in ("name", "avg", "home_court", "attack", "defence", "games",
                                               "sigma", "h1_share", "n", "as_of", "q_shares", "margin_shares",
-                                              "tie_factor", "elo", "elo_scale", "elo_weight")}
+                                              "tie_factor", "elo", "elo_scale", "elo_weight", "b2b", "last")}
 
     @classmethod
     def from_json(cls, d: Dict) -> "League":
@@ -114,15 +133,32 @@ class League:
                    margin_shares=tuple(d.get("margin_shares") or (0.5, 0.25, 0.25, 0.25, 0.25)),
                    tie_factor=float(d.get("tie_factor") or TIE_FACTOR),
                    elo=dict(d.get("elo") or {}), elo_scale=float(d.get("elo_scale") or 0.0),
-                   elo_weight=float(d.get("elo_weight") or 0.0))
+                   elo_weight=float(d.get("elo_weight") or 0.0),
+                   b2b=float(d.get("b2b") or 0.0), last=dict(d.get("last") or {}))
 
 
-def _weights(games: List[Game], as_of: date) -> np.ndarray:
-    return np.array([0.5 ** (max(0, (as_of - date.fromisoformat(g.date)).days) / HALF_LIFE_DAYS) for g in games])
+def back_to_back(games: List[Game]) -> List[Tuple[bool, bool]]:
+    """Per game (sorted by date), whether home / away played the day before."""
+    last: Dict[str, int] = {}
+    out = []
+    for g in games:
+        d = date.fromisoformat(g.date).toordinal()
+        out.append((d - last.get(g.home, -9) == 1, d - last.get(g.away, -9) == 1))
+        last[g.home] = last[g.away] = d
+    return out
 
 
-def fit(name: str, games: Iterable[Game], as_of: Optional[date] = None) -> Optional[League]:
-    """Ratings from a league's games before `as_of` (all of them if None)."""
+def _weights(games: List[Game], as_of: date, half_life: float = HALF_LIFE_DAYS) -> np.ndarray:
+    return np.array([0.5 ** (max(0, (as_of - date.fromisoformat(g.date)).days) / half_life) for g in games])
+
+
+def fit(name: str, games: Iterable[Game], as_of: Optional[date] = None,
+        half_life: Optional[float] = None, ridge: Optional[float] = None) -> Optional[League]:
+    """Ratings from a league's games before `as_of` (all of them if None);
+    half-life and ridge the league's tuned ones (TUNED) unless given."""
+    tuned = TUNED.get(name, (HALF_LIFE_DAYS, RIDGE))
+    half_life = tuned[0] if half_life is None else half_life
+    ridge = tuned[1] if ridge is None else ridge
     games = sorted((g for g in games if as_of is None or g.date < as_of.isoformat()), key=lambda g: g.date)
     if len(games) < 20:
         return None
@@ -130,31 +166,38 @@ def fit(name: str, games: Iterable[Game], as_of: Optional[date] = None) -> Optio
     teams = sorted({g.home for g in games} | {g.away for g in games})
     idx = {t: i for i, t in enumerate(teams)}
     T = len(teams)
-    w = _weights(games, as_of)
-    # Columns: [average, home court, attack x T, defence x T]; two rows a game,
-    # each with at most 4 non-zeros: the normal equations are built directly
-    # (no dense design matrix, so years of a big league stay cheap)
-    P = 2 + 2 * T
+    w = _weights(games, as_of, half_life)
+    rest = back_to_back(games)
+    # Columns: [average, home court, attack x T, defence x T, back-to-back]; two
+    # rows a game, each with at most 5 non-zeros: the normal equations are built
+    # directly (no dense design matrix, so years of a big league stay cheap)
+    P = 3 + 2 * T
     n = len(games)
-    cols = np.zeros((2 * n, 4), dtype=np.int64)
-    vals = np.zeros((2 * n, 4))
+    cols = np.zeros((2 * n, 5), dtype=np.int64)
+    vals = np.zeros((2 * n, 5))
     y = np.zeros(2 * n)
     rw = np.repeat(w, 2)
     for k, g in enumerate(games):
         h, a = idx[g.home], idx[g.away]
-        cols[2 * k] = (0, 2 + h, 2 + T + a, 1)
-        vals[2 * k] = (1.0, 1.0, -1.0, 0.0 if g.neutral else 1.0)
+        tired = (int(rest[k][1]) - int(rest[k][0])) / 2   # the home side's gain from the other's tiredness
+        cols[2 * k] = (0, 2 + h, 2 + T + a, 1, P - 1)
+        vals[2 * k] = (1.0, 1.0, -1.0, 0.0 if g.neutral else 1.0, tired)
         y[2 * k] = g.hs
-        cols[2 * k + 1] = (0, 2 + a, 2 + T + h, 1)
-        vals[2 * k + 1] = (1.0, 1.0, -1.0, 0.0)
+        cols[2 * k + 1] = (0, 2 + a, 2 + T + h, 1, P - 1)
+        vals[2 * k + 1] = (1.0, 1.0, -1.0, 0.0, -tired)
         y[2 * k + 1] = g.as_
     XtX = np.zeros((P, P))
     np.add.at(XtX, (cols[:, :, None], cols[:, None, :]), rw[:, None, None] * vals[:, :, None] * vals[:, None, :])
     Xty = np.zeros(P)
     np.add.at(Xty, cols, (rw * y)[:, None] * vals)
-    # Ridge on the teams only (not on the average or home court)
-    pen = np.r_[0.0, 0.0, np.full(2 * T, RIDGE)]
+    # Ridge on the teams (not on the average or home court) and the back-to-back
+    pen = np.r_[0.0, 0.0, np.full(2 * T, ridge), B2B_RIDGE]
     beta = np.linalg.solve(XtX + np.diag(pen), Xty)
+    if not 0.0 <= beta[-1] <= B2B_MAX:
+        # Tiredness can't help: held at the bound, the rest refitted around it
+        b = min(B2B_MAX, max(0.0, float(beta[-1])))
+        Xty_b = Xty[:-1] - b * XtX[:-1, -1]
+        beta = np.r_[np.linalg.solve(XtX[:-1, :-1] + np.diag(pen[:-1]), Xty_b), b]
     avg, hc = float(beta[0]), float(beta[1])
     att = {t: float(beta[2 + i]) for t, i in idx.items()}
     dfn = {t: float(beta[2 + T + i]) for t, i in idx.items()}
@@ -162,9 +205,13 @@ def fit(name: str, games: Iterable[Game], as_of: Optional[date] = None) -> Optio
     for k, g in enumerate(games):
         played[g.home] = played.get(g.home, 0.0) + w[k]
         played[g.away] = played.get(g.away, 0.0) + w[k]
-    lg = League(name, avg, hc, att, dfn, played, dict(DEFAULT_SIGMA), n=len(games), as_of=as_of.isoformat())
-    lg.sigma, lg.h1_share, lg.q_shares, lg.margin_shares = _spread(lg, games, w)
-    lg.tie_factor = _tie_factor(lg, games)
+    last = {}
+    for g in games:
+        last[g.home] = last[g.away] = g.date
+    lg = League(name, avg, hc, att, dfn, played, dict(DEFAULT_SIGMA), n=len(games), as_of=as_of.isoformat(),
+                b2b=float(beta[-1]), last=last)
+    lg.sigma, lg.h1_share, lg.q_shares, lg.margin_shares = _spread(lg, games, w, rest)
+    lg.tie_factor = _tie_factor(lg, games, rest)
     return lg
 
 
@@ -173,14 +220,14 @@ def base_tie(margin: float, sd: float) -> float:
     return _N.cdf((0.5 - margin) / sd) - _N.cdf((-0.5 - margin) / sd)
 
 
-def _tie_factor(lg: League, games: List[Game]) -> float:
+def _tie_factor(lg: League, games: List[Game], rest: Optional[List[Tuple[bool, bool]]] = None) -> float:
     """How many more regulation ties the league's games had than the spread
     alone expects (games with quarter scores: those tell overtime for sure)."""
     seen, expected = 0, 0.0
-    for g in games:
+    for k, g in enumerate(games):
         if not g.periods or len(g.periods) != 4:
             continue
-        eh, ea = lg.expect(g.home, g.away, g.neutral)
+        eh, ea = lg.expect(g.home, g.away, g.neutral, rest[k] if rest else (False, False))
         expected += base_tie(eh - ea, lg.sigma["margin"])
         seen += sum(p[0] for p in g.periods) == sum(p[1] for p in g.periods)
     return min(3.0, max(1.0, (seen + PRIOR_TIES * TIE_FACTOR) / (expected + PRIOR_TIES)))
@@ -207,7 +254,8 @@ def _margin_shares(rows: List[Tuple[float, List[float], float]]) -> Tuple[float,
     return (min(0.7, max(0.3, beta[0])),) + tuple(min(0.4, max(0.05, b)) for b in beta[1:])
 
 
-def _spread(lg: League, games: List[Game], w: np.ndarray) -> Tuple[Dict[str, float], float, Tuple, Tuple]:
+def _spread(lg: League, games: List[Game], w: np.ndarray,
+            rest: Optional[List[Tuple[bool, bool]]] = None) -> Tuple[Dict[str, float], float, Tuple, Tuple]:
     """How far the league's results land from our expectations (in-sample,
     so widened a little: out of sample they land further)."""
     dm, dt, dteam, ww = [], [], [], []
@@ -215,7 +263,7 @@ def _spread(lg: League, games: List[Game], w: np.ndarray) -> Tuple[Dict[str, flo
     mrows: List[Tuple[float, List[float], float]] = []
     quarter_games = []
     for k, g in enumerate(games):
-        eh, ea = lg.expect(g.home, g.away, g.neutral)
+        eh, ea = lg.expect(g.home, g.away, g.neutral, rest[k] if rest else (False, False))
         # Regulation only: overtime adds points a normal game doesn't have
         rh, ra = (sum(p[0] for p in g.periods), sum(p[1] for p in g.periods)) if g.periods else (g.hs, g.as_)
         if g.ot and not g.periods:
@@ -445,11 +493,16 @@ def team_rating(lg: League, team: str) -> Dict[str, float]:
     return out
 
 
-def expect(lg: League, home: str, away: str, neutral: bool = False) -> Optional[Match]:
-    """Our expectation for a match, or None when either team is unknown."""
+def expect(lg: League, home: str, away: str, neutral: bool = False, day: Optional[str] = None,
+           rest: Optional[Tuple[bool, bool]] = None) -> Optional[Match]:
+    """Our expectation for a match, or None when either team is unknown.
+    `day` (YYYY-MM-DD, UTC): tells a back-to-back from the teams' last games
+    in the fit; `rest` gives it directly instead."""
     if not (lg.known(home) and lg.known(away)):
         return None
-    h, a = lg.expect(home, away, neutral)
+    if rest is None:
+        rest = (lg.tired(home, day), lg.tired(away, day)) if day else (False, False)
+    h, a = lg.expect(home, away, neutral, rest)
     return Match(h, a, dict(lg.sigma), lg.h1_share, "model",
                  {"games_home": round(lg.games.get(home, 0), 1), "games_away": round(lg.games.get(away, 0), 1),
                   "ratings": {"home": team_rating(lg, home), "away": team_rating(lg, away)}},

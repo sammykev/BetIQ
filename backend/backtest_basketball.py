@@ -74,6 +74,7 @@ def league_backtest(name: str, games: List[bm.Game], elo: Optional[tuple] = None
     games = sorted(games, key=lambda g: g.date)
     if len(games) < MIN_GAMES:
         return None
+    rest = dict(zip(map(id, games), bm.back_to_back(games)))   # the schedule is known in advance
     ratings: Dict[str, float] = {}
     last: Dict[str, str] = {}
     done = 0
@@ -105,7 +106,7 @@ def league_backtest(name: str, games: List[bm.Game], elo: Optional[tuple] = None
             for g in games:
                 if not (week.isoformat() <= g.date < nxt.isoformat()):
                     continue
-                m = bm.expect(lg, g.home, g.away, g.neutral)
+                m = bm.expect(lg, g.home, g.away, g.neutral, rest=rest[id(g)])
                 if m is None:
                     continue
                 picks += _picks(m, g)
@@ -129,6 +130,11 @@ def league_backtest(name: str, games: List[bm.Game], elo: Optional[tuple] = None
     scale_m = oos_m / float(np.mean(fit_sd_m))
     out = {"league": name, "games": len(games), "tested": len(resid_m),
            "first": games[0].date, "last": games[-1].date,
+           "b2b": round(lg.b2b, 2) if lg else 0.0,
+           "rmse": {"margin": round(float(np.sqrt(np.mean(np.square(resid_m)))), 3),
+                    "total": round(float(np.sqrt(np.mean(np.square(resid_t)))), 3)},
+           "winner_log_loss": round(float(np.mean([bm.log_loss(p, won) for mk, p, won in picks[::1]
+                                                     if mk == "winner"])), 4),
            "sigma_scale": {"margin": round(scale_m, 3),
                            "total": round(oos_t / float(np.mean(fit_sd_t)), 3)},
            "calibration": calibration(picks), "bias": {"margin": round(float(np.mean(resid_m)), 2),
@@ -235,6 +241,8 @@ def main() -> None:
         elo_report = json.loads(r.get(ec.REPORT_KEY) or "null")
     except Exception:
         elo_report = None
+    import tune_basketball as tb
+    bm.TUNED.update(tb.load(r))
     report = run(results, args.min, elo_report)
     r.set(BACKTEST_KEY, json.dumps(report))
     print(f"Saved: {len(report['leagues'])} leagues")

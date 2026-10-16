@@ -107,7 +107,8 @@ def distribution(ev: Dict, sport: str, model: Optional[Dict], offs: List[Dict]):
         from sports_fetcher import _surface
         return tm.predict(model.get("players") or {}, model.get("avg") or dict(tm.DEFAULT_SPW), p1, p2, _surface(t),
                           tennis_best_of(t, offs), mp, MODEL_WEIGHT["tennis"], tm.tour_of(t),
-                          model.get("shrink", 1.0), model.get("surface_weight"))
+                          model.get("shrink", 1.0), model.get("surface_weight"),
+                          k.date().isoformat() if (k := kickoff(ev)) else None)
     import table_tennis_model as ttm
     bo = 7 if any(o["market"] == "rk_correct_score" and "4" in o["code"].split(":") for o in offs) else ttm.best_of(t)
     return ttm.predict(model.get("players") or {}, p1, p2, mp, MODEL_WEIGHT["table_tennis"], bo,

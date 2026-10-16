@@ -146,12 +146,13 @@ class Fit:
         first_is_w = h % 2 == 0
         a, b = (w, l) if first_is_w else (l, w)
         p_a = tm.shrink(tm.elo_p(a.rating(surf, self.sw), b.rating(surf, self.sw)), self.shrink)
+        p_a = tm.layoff(p_a, a, b, r["date"])
         group = r["tour"] + ":" + r.get("level", r.get("src", ""))
         if (h >> 1) % self.detail_every:
             self.checked.append((r["date"], group, p_a, first_is_w, None))
             return
         pa0, pb0 = tm.serve_chances(a, b, self.tour_avg())
-        pa, pb = tm.solve_serve(p_a, pa0, pb0)
+        pa, pb = tm.solve_serve(p_a, pa0, pb0, r.get("best_of", 3))
         md = tm.match_dist(pa, pb, r.get("best_of", 3))
         a_won = first_is_w
         games_a = sum(g[0] for g in r["sets"]) if first_is_w else sum(g[1] for g in r["sets"])
