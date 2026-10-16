@@ -1825,6 +1825,14 @@ def _train_new(combined: pd.DataFrame) -> LeaguePredictor:
     # This prevents unknown national teams (Ecuador, Algeria etc.) from
     # starting at 1500 and looking equal to Germany/France/Brazil
     predictor.elo.seed_national_teams()
+    # Per-league Elo K / home advantage / form decay where tuning found a
+    # clear win on held-out matches (backend/tune_goals.py)
+    try:
+        import model_store
+        import tune_goals
+        predictor.league_params = tune_goals.load(model_store._client())
+    except Exception as e:
+        print(f"[train] goals tuning not loaded: {e}")
     predictor.train(combined)
     return predictor
 

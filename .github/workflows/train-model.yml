@@ -16,6 +16,7 @@ on:
       - "backend/train_model.py"
       - "backend/model_store.py"
       - "backend/tune_football.py"
+      - "backend/tune_goals.py"
       - ".github/workflows/train-model.yml"
 
 concurrency:
@@ -25,7 +26,7 @@ concurrency:
 jobs:
   train:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 120
     defaults:
       run:
         working-directory: backend
@@ -43,6 +44,16 @@ jobs:
           cache-dependency-path: backend/requirements.txt
 
       - run: pip install -r requirements.txt
+
+      # Elo K / home advantage / form decay per league, walk-forward over the
+      # latest season, kept only where a league beat the defaults on matches
+      # it wasn't tuned on (backend/tune_goals.py); the training reads them
+      - name: Football goals tuning
+        continue-on-error: true
+        timeout-minutes: 70
+        env:
+          UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
+        run: python tune_goals.py
 
       - name: Train and publish
         env:

@@ -126,6 +126,10 @@ def offset_prior(league: str) -> float:
 
 LEAGUE_K = 6.0          # league offset learning rate per cross-league match
 STRENGTH_TEAM_K = 0.5   # share of the normal Elo K a strength-only match moves the teams by
+# Elo K (× EloSystem.K), home advantage (Elo points) and form decay (_ewm's
+# alpha) a league uses unless it has its own (LeaguePredictor.league_params,
+# kept by tune_goals.py only where they beat these on later matches)
+LEAGUE_PARAM_DEFAULTS = {"k_mult": 1.0, "home_adv": 80.0, "form_alpha": 0.25}
 
 
 def _dc_tau(i: int, j: int, mu_h: float, mu_a: float, rho: float) -> float:
@@ -161,14 +165,15 @@ class EloSystem:
             if team not in self.ratings:
                 self.ratings[team] = seed
 
-    def expected(self, home: str, away: str) -> float:
-        diff = self.get(home) - self.get(away) + self.HOME_ADV
+    def expected(self, home: str, away: str, home_adv: Optional[float] = None) -> float:
+        diff = self.get(home) - self.get(away) + (self.HOME_ADV if home_adv is None else home_adv)
         return 1.0 / (1.0 + 10 ** (-diff / 400))
 
-    def update(self, home: str, away: str, result: str, competition: str = ""):
-        exp = self.expected(home, away)
+    def update(self, home: str, away: str, result: str, competition: str = "",
+               k_mult: float = 1.0, home_adv: Optional[float] = None):
+        exp = self.expected(home, away, home_adv)
         actual = {"H": 1.0, "D": 0.5, "A": 0.0}[result]
-        k = self.K * COMPETITION_K.get(competition, 1.0)
+        k = self.K * COMPETITION_K.get(competition, 1.0) * k_mult
         delta = k * (actual - exp)
         self.ratings[home] = self.get(home) + delta
         self.ratings[away] = self.get(away) - delta
@@ -492,6 +497,15 @@ class LeaguePredictor:
         self.team_league: Dict[str, str] = {}        # team -> its latest domestic league
         self.league_offset: Dict[str, float] = {}    # league -> Elo offset (see LEAGUE_STRENGTH)
         self._league_sot: List[float] = []           # shots on target per team-match, for the default
+        self.league_params: Dict[str, Dict[str, float]] = {}   # league -> its own LEAGUE_PARAM_DEFAULTS
+
+    def param(self, league: str, key: str) -> float:
+        """A league's own Elo / form setting, else the default."""
+        own = (getattr(self, "league_params", None) or {}).get(league or "") or {}
+        return float(own.get(key, LEAGUE_PARAM_DEFAULTS[key]))
+
+    def _elo_params(self, league: str) -> Dict[str, float]:
+        return {"k_mult": self.param(league, "k_mult"), "home_adv": self.param(league, "home_adv")}
 
     # ── league strength ──────────────────────────────────────────────────
     def _offset(self, team: str) -> float:
@@ -598,19 +612,20 @@ class LeaguePredictor:
         self._init(home)
         self._init(away)
         hs, as_ = self.team_stats[home], self.team_stats[away]
+        alpha = self.param(league, "form_alpha")
 
-        h_gf = _ewm(hs["gf"]) if hs["gf"] else 1.5
-        a_gf = _ewm(as_["gf"]) if as_["gf"] else 1.5
-        h_ga = _ewm(hs["ga"]) if hs["ga"] else 1.2
-        a_ga = _ewm(as_["ga"]) if as_["ga"] else 1.2
-        h_form = _ewm(hs["pts"]) if hs["pts"] else 1.0
-        a_form = _ewm(as_["pts"]) if as_["pts"] else 1.0
+        h_gf = _ewm(hs["gf"], alpha) if hs["gf"] else 1.5
+        a_gf = _ewm(as_["gf"], alpha) if as_["gf"] else 1.5
+        h_ga = _ewm(hs["ga"], alpha) if hs["ga"] else 1.2
+        a_ga = _ewm(as_["ga"], alpha) if as_["ga"] else 1.2
+        h_form = _ewm(hs["pts"], alpha) if hs["pts"] else 1.0
+        a_form = _ewm(as_["pts"], alpha) if as_["pts"] else 1.0
         h_var = float(np.std(hs["gf"][-6:])) if len(hs["gf"]) >= 3 else 0.8
         a_var = float(np.std(as_["gf"][-6:])) if len(as_["gf"]) >= 3 else 0.8
         h_elo = self.strength(home)
         a_elo = self.strength(away)
-        h_yc = _ewm(hs["yc"]) if hs["yc"] else 1.5
-        a_yc = _ewm(as_["yc"]) if as_["yc"] else 1.5
+        h_yc = _ewm(hs["yc"], alpha) if hs["yc"] else 1.5
+        a_yc = _ewm(as_["yc"], alpha) if as_["yc"] else 1.5
 
         # Convert raw odds to overround-adjusted implied probabilities
         has_odds = odds_home > 1 and odds_draw > 1 and odds_away > 1
@@ -632,10 +647,10 @@ class LeaguePredictor:
         lg_away = float(np.mean(self._league_away_goals[-2000:])) if len(self._league_away_goals) >= 20 else 1.20
 
         # Use venue-specific stats when >= 3 games available, fall back to overall avg
-        h_home_scored   = _ewm(hs["home_gf"]) if len(hs.get("home_gf", [])) >= 3 else h_gf
-        h_home_conceded = _ewm(hs["home_ga"]) if len(hs.get("home_ga", [])) >= 3 else h_ga
-        a_away_scored   = _ewm(as_["away_gf"]) if len(as_.get("away_gf", [])) >= 3 else a_gf
-        a_away_conceded = _ewm(as_["away_ga"]) if len(as_.get("away_ga", [])) >= 3 else a_ga
+        h_home_scored   = _ewm(hs["home_gf"], alpha) if len(hs.get("home_gf", [])) >= 3 else h_gf
+        h_home_conceded = _ewm(hs["home_ga"], alpha) if len(hs.get("home_ga", [])) >= 3 else h_ga
+        a_away_scored   = _ewm(as_["away_gf"], alpha) if len(as_.get("away_gf", [])) >= 3 else a_gf
+        a_away_conceded = _ewm(as_["away_ga"], alpha) if len(as_.get("away_ga", [])) >= 3 else a_ga
 
         # Relative strength vs league baseline (1.0 = exactly average)
         h_attack  = h_home_scored   / max(lg_home, 0.01)   # home scoring vs avg home scorer
@@ -684,7 +699,7 @@ class LeaguePredictor:
         sot_default = float(np.mean(league_sot[-4000:])) if len(league_sot) >= 20 else DEFAULT_SOT
         def _sot(team_stats: dict, key: str) -> float:
             vals = team_stats.get(key) or []
-            return _ewm(vals) if len(vals) >= 3 else sot_default
+            return _ewm(vals, alpha) if len(vals) >= 3 else sot_default
         h_sotf, h_sota = _sot(hs, "sotf"), _sot(hs, "sota")
         a_sotf, a_sota = _sot(as_, "sotf"), _sot(as_, "sota")
 
@@ -761,7 +776,7 @@ class LeaguePredictor:
         try:
             fthg, ftag = float(fthg), float(ftag)
             if fthg != fthg or ftag != ftag:  # NaN check (NaN != NaN)
-                self.elo.update(home, away, result)
+                self.elo.update(home, away, result, **self._elo_params(competition))
                 return
         except (TypeError, ValueError):
             return
@@ -796,7 +811,7 @@ class LeaguePredictor:
             self.team_stats[home]["yc"].append(h_cards)
             self.team_stats[away]["yc"].append(a_cards)
 
-        self.elo.update(home, away, result, competition=competition)
+        self.elo.update(home, away, result, competition=competition, **self._elo_params(competition))
 
         # Track last match date for rest-days feature
         if match_date:
@@ -969,6 +984,7 @@ class LeaguePredictor:
             "team_league": getattr(self, "team_league", {}),
             "league_offset": getattr(self, "league_offset", {}),
             "_league_sot": getattr(self, "_league_sot", []),
+            "league_params": getattr(self, "league_params", {}),
             "data_mtime": data_mtime,
         }
 
@@ -993,6 +1009,7 @@ class LeaguePredictor:
         inst.team_league          = payload.get("team_league", {})
         inst.league_offset        = payload.get("league_offset", {})
         inst._league_sot          = payload.get("_league_sot", [])
+        inst.league_params        = payload.get("league_params", {})
         inst._ready               = True
         return inst
 
@@ -1341,7 +1358,7 @@ class LeaguePredictor:
         elo_a = self.strength(away)
         elo_gap = elo_h - elo_a  # positive = home stronger
         # Implied win prob from Elo alone (includes home advantage)
-        elo_win_prob = round(1 / (1 + 10 ** (-(elo_gap + EloSystem.HOME_ADV) / 400)), 3)
+        elo_win_prob = round(1 / (1 + 10 ** (-(elo_gap + self.param(league, "home_adv")) / 400)), 3)
 
         abs_gap = abs(elo_gap)
         if abs_gap < 30:
