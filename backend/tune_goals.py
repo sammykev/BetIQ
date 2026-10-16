@@ -10,7 +10,8 @@ had odds) and the one without.
 One setting at a time (K, then home advantage, then form decay), each
 league moves to the value with the lowest score on the first half of the
 window; it keeps its settings only where they beat the defaults on the
-second half by MIN_GAIN (0.2%). Run in GitHub Actions ("Train model"),
+second half by MIN_GAIN (0.2%), and only if the kept settings together beat
+the defaults over all leagues. Run in GitHub Actions ("Train model"),
 before the training: saved to Redis (TUNING_KEY), which main._train_new
 reads.
 
@@ -138,8 +139,8 @@ def tune(matches: pd.DataFrame, make: Callable[[], LeaguePredictor] = LeaguePred
         if held_default is None:
             continue
         changed = chosen[lg] != LEAGUE_PARAM_DEFAULTS
-        keep = (changed and n_held >= MIN_HELD and held_best is not None
-                and held_best <= held_default * (1 - MIN_GAIN))
+        keep = bool(changed and n_held >= MIN_HELD and held_best is not None
+                    and held_best <= held_default * (1 - MIN_GAIN))
         report["leagues"][lg] = {"best": chosen[lg], "keep": keep, "held_matches": n_held,
                                  "default": held_default, "tuned": held_best,
                                  "tune_default": _per_match(default.get((lg, 0))), "tune_best": best[lg][0]}
@@ -154,6 +155,14 @@ def tune(matches: pd.DataFrame, make: Callable[[], LeaguePredictor] = LeaguePred
         n = sum(v[0] for (lg, half), v in s.items() if half == 1)
         b = sum(v[1] for (lg, half), v in s.items() if half == 1)
         report["overall"][name] = {"matches": n, "brier": _per_match([n, b])}
+    # Leagues share the Elo pool and the XGBoost models, so the kept settings
+    # must also win together, or every league goes back to the defaults
+    if report["tuned"] and not report["overall"]["used"]["brier"] < report["overall"]["default"]["brier"]:
+        log(f"[goals] the kept settings together {report['overall']['used']['brier']} don't beat the defaults "
+            f"{report['overall']['default']['brier']}: back to defaults")
+        for lg in report["tuned"]:
+            report["leagues"][lg]["keep"] = False
+        report["tuned"] = {}
     log(f"[goals] held-out half, all leagues: {json.dumps(report['overall'])}; tuned: {sorted(report['tuned'])}")
     return report
 

@@ -88,3 +88,26 @@ def test_keeps_only_a_clear_win_on_the_held_out_half(monkeypatch):
     assert rep["leagues"]["SA"]["best"]["home_adv"] == 40.0 and not rep["leagues"]["SA"]["keep"]
     assert not rep["leagues"]["L3"]["keep"]
     assert rep["overall"]["used"]["brier"] < rep["overall"]["default"]["brier"]
+    json.dumps(rep)                                          # saved as JSON
+
+
+def test_kept_settings_that_lose_together_go_back_to_defaults(monkeypatch):
+    days = pd.date_range("2022-01-01", "2025-06-01", freq="7D")
+    matches = pd.DataFrame({"Date": days, "HomeTeam": "A", "AwayTeam": "B", "FTHG": 1, "FTAG": 0, "Result": "H"})
+
+    def fake(matches, params, start, cut, make=None):
+        # PL's own setting wins alone, but once it's the only one used
+        # (no other key moved) the other league does much worse
+        tuned_alone = params.get("PL", {}).get("k_mult") == 0.5
+        only_pl = tuned_alone and params.get("SA", {}).get("k_mult") != 0.5 and "SA" not in params
+        out = {}
+        for lg in ("PL", "SA"):
+            for h in (0, 1):
+                b = 0.9 if (lg == "PL" and tuned_alone) else (1.5 if (lg == "SA" and only_pl) else 1.0)
+                out[(lg, h)] = [200, b * 200]
+        return out
+    monkeypatch.setattr(tg, "score", fake)
+    rep = tg.tune(matches, log=lambda s: None)
+    assert rep["tuned"] == {} and not rep["leagues"]["PL"]["keep"]
+    assert rep["overall"]["used"]["brier"] > rep["overall"]["default"]["brier"]
+    json.dumps(rep)
