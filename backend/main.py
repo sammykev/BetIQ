@@ -2174,7 +2174,7 @@ _rk_models: Dict[str, Dict] = {}
 _rk_predictions: Dict[str, List[Dict]] = {"tennis": [], "table_tennis": []}
 _rk_status: Dict[str, Dict[str, Any]] = {"tennis": {}, "table_tennis": {}}
 _rkmd_status: Dict[str, Dict[str, Any]] = {"tennis": {}, "table_tennis": {}}
-_rk_strip_cache: Dict[str, Tuple[float, Any]] = {}
+_rk_strip_cache: Dict[Tuple[str, str], Tuple[float, Any]] = {}
 
 
 RESULTS_REFRESH_MINUTES = 8  # SportyBet's finals for the live ticks
@@ -2526,7 +2526,7 @@ from routers.matches import (  # noqa: E402
     _recent_results_frame, _sanitize, _shared_model_status, _team_results,
 )
 from routers.matchday import (  # noqa: E402
-    _backup_results, _date_param, _guarded_refresh, _guarded_tick, _learn_finished_matches,
+    _backup_results, _client_today, _date_param, _guarded_refresh, _guarded_tick, _learn_finished_matches,
     _legacy_view, _matchday_live, _matchday_sweep, _md_day_view, _md_load, _md_many, _md_save,
     _read_history, _record_job, _repredict, _snapshot_matchdays, _sportybet_scores, _unscored,
 )

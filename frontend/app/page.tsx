@@ -424,9 +424,9 @@ export default function HomePage() {
       setStrip(s);
       if (!dayPicked.current) {
         dayPicked.current = true;
-        const t = s.days.find(d => d.date === s.today);
-        const next = s.days.find(d => d.date > s.today && d.total > 0);
-        setDay(t && t.total > 0 ? s.today : next?.date ?? s.today);
+        const t = s.days.find(d => d.date === localDateStr());
+        const next = s.days.find(d => d.date > localDateStr() && d.total > 0);
+        setDay(t && t.total > 0 ? localDateStr() : next?.date ?? localDateStr());
       }
     };
     const kept = peek<StripResponse>("football:strip");
@@ -438,9 +438,9 @@ export default function HomePage() {
       if (!dayPicked.current) {
         dayPicked.current = true;
         // Open on today; if nothing's on today, the next day that has matches
-        const t = s.days.find(d => d.date === s.today);
-        const next = s.days.find(d => d.date > s.today && d.total > 0);
-        setDay(t && t.total > 0 ? s.today : next?.date ?? s.today);
+        const t = s.days.find(d => d.date === localDateStr());
+        const next = s.days.find(d => d.date > localDateStr() && d.total > 0);
+        setDay(t && t.total > 0 ? localDateStr() : next?.date ?? localDateStr());
       }
       timer = setTimeout(load, s.days.some(d => d.live > 0) ? 60_000 : 5 * 60_000);
     }).catch(() => { if (alive) timer = setTimeout(load, 60_000); });
@@ -448,7 +448,7 @@ export default function HomePage() {
     return () => { alive = false; clearTimeout(timer); };
   }, []);
 
-  const today = strip?.today ?? localDateStr();
+  const today = localDateStr();
   const isPast = day < today;
   const isToday = day === today;
 
@@ -682,7 +682,7 @@ export default function HomePage() {
         {activeSport === "football" && <>
           {/* Match days: 7 back, 14 ahead */}
           {strip ? (
-            <DateStrip days={strip.days} today={strip.today} selected={day} onSelect={d => { dayPicked.current = true; setDay(d); }} />
+            <DateStrip days={strip.days} today={today} selected={day} onSelect={d => { dayPicked.current = true; setDay(d); }} />
           ) : (
             <div className="flex gap-1.5 overflow-hidden">{Array.from({ length: 8 }).map((_, i) => <div key={i} className="skeleton !rounded-xl w-[58px] h-[62px] shrink-0" />)}</div>
           )}

@@ -1,3 +1,4 @@
+import { localDateStr } from "./matchTime";
 // Match days (backend matchday.py): each match's pre-match prediction next
 // to its score, and how every market's pick did.
 
@@ -77,7 +78,7 @@ export const won = (v?: Verdict) => v === "won" || v === "half_won";
 export const lost = (v?: Verdict) => v === "lost" || v === "half_lost";
 
 export async function fetchStrip(signal?: AbortSignal): Promise<StripResponse> {
-  const r = await fetch(`${API}/api/matchday/strip`, { signal });
+  const r = await fetch(`${API}/api/matchday/strip?today=${localDateStr()}`, { signal });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 }

@@ -169,3 +169,20 @@ def test_live_reads_games_the_listing_left_out(monkeypatch):
     assert set(live) == {"sr:match:1", "sr:match:2"} and pages == ["sr:match:2"]
     assert live["sr:match:2"]["score"] == [60, 58] and checked == {"sr:match:1", "sr:match:2"}
     assert "1 of ours" in how and "event pages: 1 read" in how
+
+
+def test_client_today_follows_the_device_within_a_day():
+    from datetime import date, timedelta
+    server = date.today()
+    assert main._client_today("") == server
+    assert main._client_today((server + timedelta(days=1)).isoformat()) == server + timedelta(days=1)
+    assert main._client_today((server - timedelta(days=1)).isoformat()) == server - timedelta(days=1)
+    assert main._client_today((server + timedelta(days=5)).isoformat()) == server
+    assert main._client_today("not-a-date") == server
+
+
+def test_highest_and_lowest_quarter_are_separate_families():
+    import basketball_predictions as bp
+    assert bp.family("bb_hsq") == bp.family("bb_hsq_total") == "bb_quarter_high"
+    assert bp.family("bb_lsq") == bp.family("bb_lsq_total") == "bb_quarter_low"
+    assert "bb_quarter_high" in bp.FAMILIES and "bb_quarter_low" in bp.FAMILIES

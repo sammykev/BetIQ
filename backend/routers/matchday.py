@@ -329,6 +329,18 @@ def _read_history(r, d: str) -> List[Dict]:
     return [main._legacy_view(e) for e in main._md_load(r, d).values()]
 
 
+def _client_today(value: str = "") -> date:
+    """The viewer's date, as their device gives it ("YYYY-MM-DD"): any
+    timezone is within a day of UTC's, so anything further off (or missing)
+    falls back to the server's date."""
+    server = date.today()
+    try:
+        d = date.fromisoformat(value) if value else server
+    except (TypeError, ValueError):
+        return server
+    return d if abs((d - server).days) <= 1 else server
+
+
 def _date_param(value: str) -> date:
     try:
         return date.fromisoformat(value)
@@ -358,13 +370,14 @@ async def get_matchday(date_: str = Query("", alias="date")):
 
 
 @router.get("/api/matchday/strip")
-async def get_matchday_strip():
-    """The date strip: 7 days back to 14 ahead, each with its match count,
-    how many are live / finished, and how our tips did."""
+async def get_matchday_strip(today_: str = Query("", alias="today", max_length=10)):
+    """The date strip: 7 days back to 14 ahead of the viewer's date (their
+    device's, `today`), each with its match count, how many are live /
+    finished, and how our tips did."""
     import matchday
-    today = date.today()
-    hit = main._strip_cache.get("strip")
-    if hit and time.time() - hit[0] < 60 and hit[1]["today"] == today.isoformat():
+    today = main._client_today(today_)
+    hit = main._strip_cache.get(today.isoformat())
+    if hit and time.time() - hit[0] < 60:
         return hit[1]
     dates = [(today + timedelta(days=o)).isoformat() for o in range(-main.MD_DAYS_BACK, main.MD_DAYS_AHEAD + 1)]
     r = main._get_redis()
@@ -383,7 +396,7 @@ async def get_matchday_strip():
             s["total"] = max(s["total"], upcoming.get(d, 0))
         days.append({"date": d, **s})
     out = {"today": today.isoformat(), "days": days}
-    main._strip_cache["strip"] = (time.time(), out)
+    main._strip_cache[today.isoformat()] = (time.time(), out)
     return out
 
 

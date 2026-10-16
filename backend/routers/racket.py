@@ -541,11 +541,11 @@ def _with_live_stats(sport: str, date_: str, matches: List[Dict]) -> List[Dict]:
     return matches
 
 
-def _rk_strip(sport: str) -> Dict[str, Any]:
+def _rk_strip(sport: str, today_: str = "") -> Dict[str, Any]:
     import racket_matchday as rmd
-    today = date.today()
-    hit = main._rk_strip_cache.get(sport)
-    if hit and time.time() - hit[0] < 60 and hit[1]["today"] == today.isoformat():
+    today = main._client_today(today_)
+    hit = main._rk_strip_cache.get((sport, today.isoformat()))
+    if hit and time.time() - hit[0] < 60:
         return hit[1]
     dates = [(today + timedelta(days=o)).isoformat() for o in range(-main.MD_DAYS_BACK, main.MD_DAYS_AHEAD + 1)]
     r = main._get_redis()
@@ -564,7 +564,7 @@ def _rk_strip(sport: str) -> Dict[str, Any]:
             s["total"] = max(s["total"], upcoming.get(d, 0))
         days.append({"date": d, **s})
     out = {"today": today.isoformat(), "days": days}
-    main._rk_strip_cache[sport] = (time.time(), out)
+    main._rk_strip_cache[(sport, today.isoformat())] = (time.time(), out)
     return out
 
 
@@ -597,10 +597,10 @@ def _rk_match(sport: str, event: str) -> Dict:
 
 
 @router.get("/api/tennis/matchday/strip")
-async def get_tennis_strip(request: Request):
-    """The tennis date strip: 7 days back to 14 ahead."""
+async def get_tennis_strip(request: Request, today_: str = Query("", alias="today", max_length=10)):
+    """The tennis date strip: 7 days back to 14 ahead of the viewer's date."""
     await main._check_sport_access(request, "tennis")
-    return await asyncio.to_thread(main._rk_strip, "tennis")
+    return await asyncio.to_thread(main._rk_strip, "tennis", today_)
 
 
 @router.get("/api/tennis/matchday")
@@ -619,9 +619,9 @@ async def get_tennis_match(request: Request, event: str = Query(..., max_length=
 
 
 @router.get("/api/table-tennis/matchday/strip")
-async def get_table_tennis_strip(request: Request):
+async def get_table_tennis_strip(request: Request, today_: str = Query("", alias="today", max_length=10)):
     await main._check_sport_access(request, "table-tennis")
-    return await asyncio.to_thread(main._rk_strip, "table_tennis")
+    return await asyncio.to_thread(main._rk_strip, "table_tennis", today_)
 
 
 @router.get("/api/table-tennis/matchday")

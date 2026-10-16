@@ -1,3 +1,4 @@
+import { localDateStr } from "./matchTime";
 import type { SlipSelection } from "./slip";
 import type { RacketSport } from "./tennis";
 import type { StatRow } from "./matchday";
@@ -119,7 +120,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.o
 export const rkPath = (sport: RacketSport) => (sport === "table_tennis" ? "table-tennis" : "tennis");
 
 export async function fetchRKStrip(f: Fetcher, sport: RacketSport, signal?: AbortSignal): Promise<RKStripResponse> {
-  const r = await f(`${API_URL}/api/${rkPath(sport)}/matchday/strip`, { signal });
+  const r = await f(`${API_URL}/api/${rkPath(sport)}/matchday/strip?today=${localDateStr()}`, { signal });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 }

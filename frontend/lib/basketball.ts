@@ -1,3 +1,4 @@
+import { localDateStr } from "./matchTime";
 import type { SlipSelection } from "./slip";
 import type { StatRow } from "./matchday";
 import type { SideRatings, TeamRating } from "@/components/Ratings";
@@ -8,7 +9,7 @@ import type { SideRatings, TeamRating } from "@/components/Ratings";
 
 export interface BBLine {
   market: string;         // bb_total, bb_q1_handicap, …
-  family: string;         // bb_winner | bb_1x2 | bb_handicap | bb_total | bb_team_total | bb_halves | bb_quarters | bb_quarter_race | bb_overtime
+  family: string;         // bb_winner | bb_1x2 | bb_handicap | bb_total | bb_team_total | bb_halves | bb_quarters | bb_quarter_high | bb_quarter_low | bb_overtime
   market_name: string;
   code: string;
   label: string;          // "Lakers -5.5", "Over 160.5 points", "1st quarter: Over 40.5 points"
@@ -53,7 +54,8 @@ export const FAMILIES: { id: string; name: string }[] = [
   { id: "bb_team_total", name: "Team points" },
   { id: "bb_halves", name: "Halves" },
   { id: "bb_quarters", name: "Quarters" },
-  { id: "bb_quarter_race", name: "Highest / lowest quarter" },
+  { id: "bb_quarter_high", name: "Highest scoring quarter" },
+  { id: "bb_quarter_low", name: "Lowest scoring quarter" },
   { id: "bb_1x2", name: "1X2 (regulation)" },
   { id: "bb_overtime", name: "Overtime" },
 ];
@@ -105,7 +107,7 @@ type Fetcher = (url: string, init?: RequestInit) => Promise<Response>;
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
 
 export async function fetchBBStrip(f: Fetcher, signal?: AbortSignal): Promise<BBStripResponse> {
-  const r = await f(`${API_URL}/api/basketball/matchday/strip`, { signal });
+  const r = await f(`${API_URL}/api/basketball/matchday/strip?today=${localDateStr()}`, { signal });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 }

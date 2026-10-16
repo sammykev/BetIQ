@@ -68,9 +68,9 @@ export function BasketballDays({ preds, loading, onOpen }: {
       setStrip(kept);
       if (!picked.current) {
         picked.current = true;
-        const t = kept.days.find(d => d.date === kept.today);
-        const next = kept.days.find(d => d.date > kept.today && d.total > 0);
-        setDay(t && t.total > 0 ? kept.today : next?.date ?? kept.today);
+        const t = kept.days.find(d => d.date === localDateStr());
+        const next = kept.days.find(d => d.date > localDateStr() && d.total > 0);
+        setDay(t && t.total > 0 ? localDateStr() : next?.date ?? localDateStr());
       }
     }
     const load = () => fetchBBStrip(authFetch).then(s => {
@@ -79,9 +79,9 @@ export function BasketballDays({ preds, loading, onOpen }: {
       setStrip(s);
       if (!picked.current) {
         picked.current = true;
-        const t = s.days.find(d => d.date === s.today);
-        const next = s.days.find(d => d.date > s.today && d.total > 0);
-        setDay(t && t.total > 0 ? s.today : next?.date ?? s.today);
+        const t = s.days.find(d => d.date === localDateStr());
+        const next = s.days.find(d => d.date > localDateStr() && d.total > 0);
+        setDay(t && t.total > 0 ? localDateStr() : next?.date ?? localDateStr());
       }
       timer = setTimeout(load, s.days.some(d => d.live > 0) ? 60_000 : 5 * 60_000);
     }).catch(() => { if (alive) timer = setTimeout(load, 60_000); });
@@ -89,7 +89,7 @@ export function BasketballDays({ preds, loading, onOpen }: {
     return () => { alive = false; clearTimeout(timer); };
   }, [authFetch]);
 
-  const today = strip?.today ?? localDateStr();
+  const today = localDateStr();
   const isPast = day < today;
   const isToday = day === today;
 
@@ -141,7 +141,7 @@ export function BasketballDays({ preds, loading, onOpen }: {
   return (
     <div className="space-y-4">
       {strip ? (
-        <DateStrip days={strip.days} today={strip.today} selected={day} onSelect={goTo} />
+        <DateStrip days={strip.days} today={today} selected={day} onSelect={goTo} />
       ) : (
         <div className="flex gap-1.5 overflow-hidden">{Array.from({ length: 8 }).map((_, i) => <div key={i} className="skeleton !rounded-xl w-[58px] h-[62px] shrink-0" />)}</div>
       )}

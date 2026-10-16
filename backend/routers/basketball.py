@@ -132,7 +132,12 @@ def _bb_load() -> None:
         for d in bd.decode(r.get(main.BB_MODEL_KEY)):
             lg = bm.League.from_json(d)
             main._bb_leagues[lg.name] = lg
-        main._bb_predictions[:] = bd.decode(r.get(main.BB_PREDICTIONS_KEY))
+        preds = bd.decode(r.get(main.BB_PREDICTIONS_KEY))
+        import basketball_predictions as bp
+        for p in preds:                 # saved before a family split: group each line afresh
+            for x in p.get("bb_markets") or []:
+                x["family"] = bp.family(x.get("market") or "")
+        main._bb_predictions[:] = preds
         main._bb_status.update(json.loads(r.get(main.BB_STATUS_KEY) or "{}"))
     except Exception as e:
         print(f"[Basketball] couldn't load: {e}")
@@ -235,13 +240,13 @@ async def _bb_live_guarded() -> Dict[str, Any]:
 
 
 @router.get("/api/basketball/matchday/strip")
-async def get_basketball_strip(request: Request):
-    """The basketball date strip: 7 days back to 14 ahead, like football's."""
+async def get_basketball_strip(request: Request, today_: str = Query("", alias="today", max_length=10)):
+    """The basketball date strip: 7 days back to 14 ahead of the viewer's date, like football's."""
     import basketball_matchday as bbmd
     await main._check_sport_access(request, "basketball")
-    today = date.today()
-    hit = main._bb_strip_cache.get("strip")
-    if hit and time.time() - hit[0] < 60 and hit[1]["today"] == today.isoformat():
+    today = main._client_today(today_)
+    hit = main._bb_strip_cache.get(today.isoformat())
+    if hit and time.time() - hit[0] < 60:
         return hit[1]
     dates = [(today + timedelta(days=o)).isoformat() for o in range(-main.MD_DAYS_BACK, main.MD_DAYS_AHEAD + 1)]
     r = main._get_redis()
@@ -260,7 +265,7 @@ async def get_basketball_strip(request: Request):
             s["total"] = max(s["total"], upcoming.get(d, 0))
         days.append({"date": d, **s})
     out = {"today": today.isoformat(), "days": days}
-    main._bb_strip_cache["strip"] = (time.time(), out)
+    main._bb_strip_cache[today.isoformat()] = (time.time(), out)
     return out
 
 

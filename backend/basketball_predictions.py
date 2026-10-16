@@ -30,7 +30,7 @@ QUARTER_RACE_MIN = 0.2
 FAMILIES = {
     "bb_winner": "Winner", "bb_1x2": "1X2 (regulation)", "bb_handicap": "Handicap", "bb_total": "Total Points",
     "bb_team_total": "Team Points", "bb_halves": "Halves", "bb_quarters": "Quarters", "bb_overtime": "Overtime",
-    "bb_quarter_race": "Highest / lowest quarter",
+    "bb_quarter_high": "Highest scoring quarter", "bb_quarter_low": "Lowest scoring quarter",
     "bb_player": "Player props",
 }
 
@@ -42,8 +42,10 @@ def family(market: str) -> str:
         return "bb_team_total"
     if market.startswith(("bb_h1_", "bb_h2_")):
         return "bb_halves"
-    if market in QUARTER_RACE:
-        return "bb_quarter_race"
+    if market in ("bb_hsq", "bb_hsq_total"):
+        return "bb_quarter_high"
+    if market in ("bb_lsq", "bb_lsq_total"):
+        return "bb_quarter_low"
     if market.startswith("bb_q"):
         return "bb_quarters"
     if market.startswith("bb_player_"):
@@ -163,15 +165,18 @@ def options(pred: Dict, min_prob: float, families: Optional[set] = None,
     import calibration
     import optimizer
     out = []
+    if families and "bb_quarter_race" in families:     # the old combined family: both of its halves
+        families = set(families) | {"bb_quarter_high", "bb_quarter_low"}
     for x in pred.get("bb_markets") or []:
-        if families and x["family"] not in families:
+        fam = family(x["market"])      # from the market: predictions saved before a family split still group right
+        if families and fam not in families:
             continue
         if allowed and not allowed(x["market"], x["code"]):
             continue
         # Our chance through its market's correction (calibration.py; raw without one)
         prob = calibration.apply("basketball", x["market"], x["prob"])
         floor = min(min_prob, QUARTER_RACE_MIN) if (x["market"] in ("bb_hsq", "bb_lsq") and families
-                                                    and "bb_quarter_race" in families) else min_prob
+                                                    and fam in families) else min_prob
         if not floor <= prob < 0.995 or x["odds"] <= 1.01:
             continue
         out.append(optimizer.Option(pred["home"], pred["away"], pred["date"], pred.get("time") or "",

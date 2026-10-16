@@ -12,6 +12,7 @@ import { StakeHint } from "@/components/StakeHint";
 import { PushToggle } from "@/components/PushToggle";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
 import { API, type LegLive, type LegStatus } from "@/lib/matchday";
+import { localDateStr } from "@/lib/matchTime";
 
 // Daily odds (backend daily_slips.py): three slips a day at about 5x, 10x and 20x
 // from the day's own matches, only from picks the model rates 80%+ and
@@ -78,8 +79,9 @@ function daysBefore(iso: string, n: number): string[] {
   const d = new Date(`${iso}T12:00:00Z`);
   return Array.from({ length: n }, (_, i) => new Date(d.getTime() - i * 864e5).toISOString().slice(0, 10));
 }
-const dayName = (iso: string, today: string) =>
-  iso === today ? "Today" : new Date(`${iso}T12:00:00Z`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+// "Today" by the device's own date, not the server's
+const dayName = (iso: string) =>
+  iso === localDateStr() ? "Today" : new Date(`${iso}T12:00:00Z`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
 
 /** The match that cut a slip: its first lost pick. */
 const cutBy = (s: Slip) => {
@@ -282,7 +284,7 @@ function Daily() {
       <div className="flex gap-1.5 overflow-x-auto [scrollbar-width:none] -mx-1 px-1">
         {daysBefore(data.today, 7).map(d => (
           <button key={d} onClick={() => setDay(d === data.today ? "" : d)}
-            className={clsx("chip shrink-0", (d === data.date) ? "chip-active" : "chip-idle")}>{dayName(d, data.today)}</button>
+            className={clsx("chip shrink-0", (d === data.date) ? "chip-active" : "chip-idle")}>{dayName(d)}</button>
         ))}
       </div>
 
