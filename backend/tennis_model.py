@@ -272,6 +272,26 @@ def tour_of(tournament: str) -> str:
     return "WTA" if ("wta" in t or "women" in t or "ladies" in t or "fed cup" in t or "bjk" in t) else "ATP"
 
 
+GROUPS = ("ATP", "WTA", "Challenger", "ITF")
+
+
+def group_of(tournament: str, tour: str = "", level: str = "") -> str:
+    """The tour a match is tuned under (tennis_fit): ATP or WTA tour level,
+    Challenger or ITF. `level` is the web history's ("tour", "challenger",
+    "itf"); without it the tournament's name decides."""
+    if level == "itf":
+        return "ITF"
+    if level == "challenger":
+        return "Challenger"
+    if level != "tour":
+        t = (tournament or "").lower()
+        if "itf" in t or "futures" in t:
+            return "ITF"
+        if "challenger" in t:
+            return "Challenger"
+    return tour or tour_of(tournament)
+
+
 def predict(players: Dict[str, Player], avg: Dict[str, float], p1: str, p2: str, surface: str,
             best_of: int = 3, market_p1: Optional[float] = None, model_weight: float = 0.5,
             tour: str = "ATP", shrink_s: float = 1.0, surface_weight: Optional[float] = None,
