@@ -21,7 +21,7 @@ MAX_LINES = 90           # per match, likeliest first
 DEFAULT_MARGIN_SHARES = (0.52, 0.27, 0.26, 0.25, 0.22)
 
 # The quarters against each other (basketball_quarters.py)
-QUARTER_RACE = ("bb_hsq", "bb_hsq_total", "bb_lsq_total")
+QUARTER_RACE = ("bb_hsq", "bb_lsq", "bb_hsq_total", "bb_lsq_total")
 # "Which quarter is highest" is a 4-way race (a pick is ~25–35% likely): when a
 # user asks for it, its picks go down to this, below the usual minimum
 QUARTER_RACE_MIN = 0.2
@@ -80,13 +80,17 @@ def predict(ev: Dict, lg: Optional[bm.League]) -> Optional[Dict[str, Any]]:
     lines = bmk.main_lines(offs)
     if match is None:
         return None
-    # The quarters against each other: from trends in previous games and meetings (basketball_quarters.py)
+    # The quarters against each other: from trends in previous games and meetings (basketball_quarters.py).
+    # Priced for every match: SportyBet doesn't list which quarter is lowest, so
+    # that one (and the rest where it lists none) shows as our chances alone
+    import basketball_quarters as bq
     qodds = None
-    if any(o["kind"] in bmk.QUARTER_KINDS for o in offs):
-        import basketball_quarters as bq
+    try:
         qodds = bq.odds_for(ev.get("_tournament") or "", home, away, match.home_pts, match.away_pts,
                             match.sigma.get("total", 17.0), match.q_shares,
                             (lg.sigma.get("q_total") if lg else None) or bm.DEFAULT_SIGMA["q_total"])
+    except Exception as e:
+        print(f"[Basketball] no quarter chances for {home} v {away}: {e}")
     priced = []
     for o in offs:
         p = bmk.quarter_probability(qodds, o) if o["kind"] in bmk.QUARTER_KINDS else bmk.probability(match, o)
@@ -99,8 +103,8 @@ def predict(ev: Dict, lg: Optional[bm.League]) -> Optional[Dict[str, Any]]:
     p_home = match.p_win(True)
     keep = sorted((x for x in priced if KEEP_MIN <= x["prob"] <= KEEP_MAX), key=lambda x: -x["prob"])[:MAX_LINES]
     keep += [x for x in winner.values() if x not in keep]
-    # Every outcome of the highest scoring quarter (each is well under 50%)
-    keep += [x for x in priced if x["market"] == "bb_hsq" and x not in keep]
+    # Every outcome of the highest / lowest scoring quarter (each is well under 50%)
+    keep += [x for x in priced if x["market"] in ("bb_hsq", "bb_lsq") and x not in keep]
     t = ev.get("_tournament") or ""
     country, name = bd.split_tournament(t)
     tip_home = p_home >= 0.5
@@ -124,7 +128,9 @@ def predict(ev: Dict, lg: Optional[bm.League]) -> Optional[Dict[str, Any]]:
         "exp_home_pts": round(match.home_pts, 1), "exp_away_pts": round(match.away_pts, 1),
         "model": match.source, "model_detail": match.detail,
         "rated": bool(lg and lg.known(home) and lg.known(away)),
-        **({"quarters": {"expected": qodds.expected, "highest": {k: round(v, 3) for k, v in qodds.highest().items()}}}
+        **({"quarters": {"expected": qodds.expected,
+                         "highest": {k: round(v, 3) for k, v in qodds.highest().items()},
+                         "lowest": {k: round(v, 3) for k, v in qodds.lowest().items()}}}
            if qodds else {}),
         "bb_markets": keep,
     }
@@ -162,7 +168,7 @@ def options(pred: Dict, min_prob: float, families: Optional[set] = None,
             continue
         # Our chance through its market's correction (calibration.py; raw without one)
         prob = calibration.apply("basketball", x["market"], x["prob"])
-        floor = min(min_prob, QUARTER_RACE_MIN) if (x["market"] == "bb_hsq" and families
+        floor = min(min_prob, QUARTER_RACE_MIN) if (x["market"] in ("bb_hsq", "bb_lsq") and families
                                                     and "bb_quarter_race" in families) else min_prob
         if not floor <= prob < 0.995 or x["odds"] <= 1.01:
             continue

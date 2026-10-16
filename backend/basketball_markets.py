@@ -16,6 +16,7 @@ Our codes (stored with tickets, used to settle):
     bb_q{1-4}_1x2 / _handicap / _total / _home_total / _away_total
     bb_overtime        OT-Y / OT-N
     bb_hsq             Q1 / Q2 / Q3 / Q4 / EQ       highest scoring quarter (EQ: a tie for it), regulation
+    bb_lsq             Q1 / Q2 / Q3 / Q4 / EQ       lowest scoring quarter (EQ: a tie for it), regulation
     bb_hsq_total       O47.5 / U47.5                the highest scoring quarter's points
     bb_lsq_total       O33.5 / U33.5                the lowest scoring quarter's points
 """
@@ -54,7 +55,12 @@ MARKETS: Dict[str, Tuple[str, str, str, bool]] = {
     "1193": ("bb_hsq_total", "full", "hsq_total", False),
     "1195": ("bb_lsq_total", "full", "lsq_total", False),
 }
-QUARTER_KINDS = ("hsq", "hsq_total", "lsq_total")
+QUARTER_KINDS = ("hsq", "lsq", "hsq_total", "lsq_total")
+# SportyBet's which-quarter-is-lowest market goes by its label, not an id:
+# no listing seen from here carried its id, so a listed id would be a guess
+LSQ_LABEL = "lowest scoring quarter"
+_QUARTER_DESC = {"1st quarter": "Q1", "2nd quarter": "Q2", "3rd quarter": "Q3", "4th quarter": "Q4",
+                 "equal": "EQ", "draw": "EQ", "tie": "EQ"}
 # Asked for in SportyBet's listing (every line of each)
 LISTING_MARKETS = ",".join(MARKETS)
 
@@ -62,7 +68,7 @@ PART_NAMES = {"full": "", "h1": "1st half", "h2": "2nd half", "q1": "1st quarter
               "q3": "3rd quarter", "q4": "4th quarter"}
 KIND_NAMES = {"winner": "Winner", "1x2": "1X2", "handicap": "Handicap", "total": "Total Points",
               "home_total": "Home Team Points", "away_total": "Away Team Points", "overtime": "Overtime",
-              "hsq": "Highest Scoring Quarter", "hsq_total": "Highest Scoring Quarter Points",
+              "hsq": "Highest Scoring Quarter", "lsq": "Lowest Scoring Quarter", "hsq_total": "Highest Scoring Quarter Points",
               "lsq_total": "Lowest Scoring Quarter Points"}
 _OUT = {"4": "1", "5": "2", "1": "1", "2": "X", "3": "2", "1714": "H", "1715": "A",
         "12": "O", "13": "U", "74": "Y", "76": "N",
@@ -104,10 +110,13 @@ def offers(ev: Dict) -> List[Dict[str, Any]]:
     out = []
     for m in ev.get("markets") or []:
         mid = str(m.get("id"))
-        if mid not in MARKETS:
-            continue
-        market, part, kind, ot = MARKETS[mid]
         spec = m.get("specifier") or ""
+        if mid in MARKETS:
+            market, part, kind, ot = MARKETS[mid]
+        elif _is_lsq(m):
+            market, part, kind, ot = "bb_lsq", "full", "lsq", False
+        else:
+            continue
         sp = _spec(spec)
         if part == "q":
             n = sp.get("quarternr")
@@ -123,6 +132,8 @@ def offers(ev: Dict) -> List[Dict[str, Any]]:
                 continue
             oid, odds = str(o.get("id")), _num(o.get("odds"))
             side = _OUT.get(oid)
+            if kind == "lsq":
+                side = _QUARTER_DESC.get(str(o.get("desc") or "").strip().lower(), side)
             if not side or not odds or odds <= 1.0:
                 continue
             if kind == "handicap":
@@ -138,6 +149,13 @@ def offers(ev: Dict) -> List[Dict[str, Any]]:
                         "odds": odds, "sb": {"eventId": str(ev.get("eventId")), "marketId": mid,
                                              "specifier": spec, "outcomeId": oid}})
     return out
+
+
+def _is_lsq(m: Dict) -> bool:
+    """SportyBet's "Lowest scoring quarter" (which one), not its points over/under."""
+    name = str(m.get("desc") or m.get("name") or "").lower()
+    spec = str(m.get("specifier") or "")
+    return LSQ_LABEL in name and "total=" not in spec and "over" not in name and "points" not in name
 
 
 def label(o: Dict, home: str, away: str) -> str:
@@ -158,8 +176,8 @@ def label(o: Dict, home: str, away: str) -> str:
     elif kind in ("home_total", "away_total"):
         team = home if kind == "home_total" else away
         body = f"{team} {'over' if code[0] == 'O' else 'under'} {code[1:]} points"
-    elif kind == "hsq":
-        body = "Highest scoring quarter: " + ({"Q1": "1st", "Q2": "2nd", "Q3": "3rd", "Q4": "4th"}.get(code, "") + " quarter"
+    elif kind in ("hsq", "lsq"):
+        body = f"{'Highest' if kind == 'hsq' else 'Lowest'} scoring quarter: " + ({"Q1": "1st", "Q2": "2nd", "Q3": "3rd", "Q4": "4th"}.get(code, "") + " quarter"
                                               if code != "EQ" else "a tie")
     elif kind in ("hsq_total", "lsq_total"):
         body = (f"{'Highest' if kind == 'hsq_total' else 'Lowest'} scoring quarter "
@@ -177,6 +195,8 @@ def quarter_probability(q, o: Dict) -> Optional[float]:
         return None
     if kind == "hsq":
         return q.highest().get(code)
+    if kind == "lsq":
+        return q.lowest().get(code)
     if kind in ("hsq_total", "lsq_total") and line is not None:
         over = q.p_high_over(line) if kind == "hsq_total" else q.p_low_over(line)
         return over if code[0] == "O" else 1.0 - over
@@ -244,12 +264,12 @@ def settle(market: str, code: str, result: Optional[Dict]) -> str:
         return "pending"
     fh, fa = result["final"]
     periods = result.get("periods") or []
-    if market in ("bb_hsq", "bb_hsq_total", "bb_lsq_total"):
+    if market in ("bb_hsq", "bb_lsq", "bb_hsq_total", "bb_lsq_total"):
         if len(periods) < 4:
             return "void"                  # no quarter scores to settle from
         q = [periods[i][0] + periods[i][1] for i in range(4)]
-        if market == "bb_hsq":
-            top = max(q)
+        if market in ("bb_hsq", "bb_lsq"):
+            top = max(q) if market == "bb_hsq" else min(q)
             got = "EQ" if q.count(top) > 1 else f"Q{q.index(top) + 1}"
             return "won" if got == code else "lost"
         value, line = (max(q) if market == "bb_hsq_total" else min(q)), float(code[1:])

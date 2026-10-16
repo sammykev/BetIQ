@@ -10,7 +10,7 @@ Compared, by log loss (lower is better) on the same games:
   league      the simulation from the league's quarter pattern only
   k…/h…       plus team trends (K_TEAM) and meetings (K_H2H) at each weight
 
-Markets scored: highest scoring quarter (Q1–Q4 or a tie), and the highest
+Markets scored: highest and lowest scoring quarter (Q1–Q4 or a tie), and the highest
 and lowest quarter's points over the league's middle line. The weights that
 do best on highest-quarter log loss are saved (CONFIG_KEY) for the server —
 only if they beat the league pattern; else trends are switched off.
@@ -39,10 +39,11 @@ def _ll(p: float) -> float:
     return -math.log(min(0.999, max(0.001, p)))
 
 
-def _outcome(q: np.ndarray) -> str:
+def _outcome(q: np.ndarray, lowest: bool = False) -> str:
+    """Which quarter scored the most (or the least), "EQ" for a tie for it."""
     tot = q.sum(axis=1)
-    top = tot.max()
-    return "EQ" if (tot == top).sum() > 1 else f"Q{int(tot.argmax()) + 1}"
+    top = tot.min() if lowest else tot.max()
+    return "EQ" if (tot == top).sum() > 1 else f"Q{int(tot.argmin() if lowest else tot.argmax()) + 1}"
 
 
 def league_check(name: str, games: List[bm.Game]) -> Optional[Dict]:
@@ -68,6 +69,8 @@ def league_check(name: str, games: List[bm.Game]) -> Optional[Dict]:
             continue
         outs = [_outcome(bq._quarters(g)) for g in train[-2000:]]
         freq = {o: (outs.count(o) + 1) / (len(outs) + 5) for o in bq.OUTCOMES}
+        outs_lo = [_outcome(bq._quarters(g), lowest=True) for g in train[-2000:]]
+        freq_lo = {o: (outs_lo.count(o) + 1) / (len(outs_lo) + 5) for o in bq.OUTCOMES}
         maxes = [bq._quarters(g).sum(axis=1).max() for g in train[-2000:]]
         mins = [bq._quarters(g).sum(axis=1).min() for g in train[-2000:]]
         hi_line, lo_line = float(np.median(maxes)) + 0.5, float(np.median(mins)) + 0.5
@@ -81,9 +84,10 @@ def league_check(name: str, games: List[bm.Game]) -> Optional[Dict]:
         for g in test:
             q = bq._quarters(g)
             tot = q.sum(axis=1)
-            got = _outcome(q)
+            got, got_lo = _outcome(q), _outcome(q, lowest=True)
             hp, ap = lg.expect(g.home, g.away, g.neutral)
             losses.setdefault("frequency|hsq", []).append(_ll(freq[got]))
+            losses.setdefault("frequency|lsq", []).append(_ll(freq_lo[got_lo]))
             losses.setdefault("frequency|hi", []).append(_ll(f_hi if tot.max() > hi_line else 1 - f_hi))
             losses.setdefault("frequency|lo", []).append(_ll(f_lo if tot.min() > lo_line else 1 - f_lo))
             for label, (m, kh, teams) in models.items():
@@ -91,6 +95,7 @@ def league_check(name: str, games: List[bm.Game]) -> Optional[Dict]:
                 sims = bq.simulate(mu, m.cov, lg.sigma.get("total", 17.0), sims=SIMS, seed=len(g.home) * 31 + len(g.away))
                 o = bq.QuarterOdds(sims, list(mu))
                 losses.setdefault(f"{label}|hsq", []).append(_ll(o.highest()[got]))
+                losses.setdefault(f"{label}|lsq", []).append(_ll(o.lowest()[got_lo]))
                 ph, pl = o.p_high_over(hi_line), o.p_low_over(lo_line)
                 losses.setdefault(f"{label}|hi", []).append(_ll(ph if tot.max() > hi_line else 1 - ph))
                 losses.setdefault(f"{label}|lo", []).append(_ll(pl if tot.min() > lo_line else 1 - pl))
@@ -124,7 +129,7 @@ def run(by_league: Dict[str, List[bm.Game]]) -> Dict:
         return {"note": "no league with enough quarter-scored games"}
     labels = sorted({k.split("|")[0] for k in pooled})
     table = {lab: {mk: round(sum(pooled[f"{lab}|{mk}"]) / len(pooled[f"{lab}|{mk}"]), 5)
-                   for mk in ("hsq", "hi", "lo") if f"{lab}|{mk}" in pooled} for lab in labels}
+                   for mk in ("hsq", "lsq", "hi", "lo") if f"{lab}|{mk}" in pooled} for lab in labels}
     grid = [lab for lab in labels if lab.startswith("k")]
     best = min(grid, key=lambda lab: table[lab]["hsq"]) if grid else None
     z = _z(pooled[f"{best}|hsq"], pooled["league|hsq"]) if best else 0.0

@@ -86,3 +86,38 @@ def test_offers_read_sportybets_quarter_markets():
     one = next(o for o in bmk.offers(ev) if o["market"] == "bb_hsq" and o["code"] == "Q4")
     assert bmk.label(one, "A", "B") == "Highest scoring quarter: 4th quarter"
     assert bmk.market_name("bb_hsq") == "Highest Scoring Quarter"
+
+
+def test_lowest_quarter():
+    m = bq.fit("L", _league(), k_team=10)
+    bq.MODELS.clear()
+    bq.MODELS["L"] = m
+    low = bq.odds_for("L", "Late", "T1", 80, 80, 12).lowest()
+    plain = bq.odds_for("L", "T2", "T1", 80, 80, 12).lowest()
+    assert abs(sum(low.values()) - 1) < 1e-9 and low["EQ"] > 0.01
+    assert low["Q4"] < plain["Q4"] - 0.05                   # "Late" piles up its 4th: rarely the lowest
+    bq.MODELS.clear()
+    res = {"status": "finished", "final": [90, 85], "periods": [[20, 20], [25, 22], [20, 18], [25, 25]]}
+    assert bmk.settle("bb_lsq", "Q3", res) == "won"           # 38 points, the fewest
+    assert bmk.settle("bb_lsq", "Q1", res) == "lost"
+    tie = {**res, "periods": [[20, 18], [25, 22], [20, 18], [25, 25]]}
+    assert bmk.settle("bb_lsq", "EQ", tie) == "won" and bmk.settle("bb_lsq", "Q3", tie) == "lost"
+    assert bmk.settle("bb_lsq", "Q1", {**res, "periods": [[1, 1]]}) == "void"
+
+
+def test_lowest_quarter_offer_found_by_its_label():
+    ev = {"eventId": "sr:match:1", "markets": [
+        {"id": "99999", "desc": "Lowest Scoring Quarter", "specifier": "",
+         "outcomes": [{"id": "1", "desc": "1st Quarter", "odds": "3.6"}, {"id": "2", "desc": "4th quarter", "odds": "4.2"},
+                      {"id": "3", "desc": "Equal", "odds": "8.0"}]},
+        {"id": "99998", "desc": "Lowest scoring quarter - Over/Under", "specifier": "total=33.5",
+         "outcomes": [{"id": "12", "odds": "1.8"}]}]}
+    offs = bmk.offers(ev)
+    assert {(o["market"], o["code"]) for o in offs} == {("bb_lsq", "Q1"), ("bb_lsq", "Q4"), ("bb_lsq", "EQ")}
+    one = next(o for o in offs if o["code"] == "Q1")
+    assert one["sb"]["marketId"] == "99999"                    # books under SportyBet's own id
+    assert bmk.label(one, "A", "B") == "Lowest scoring quarter: 1st quarter"
+    assert bmk.market_name("bb_lsq") == "Lowest Scoring Quarter"
+    q = bq.QuarterOdds(bq.simulate([20, 20, 20, 30], [[16, 0, 0, 0], [0, 16, 0, 0], [0, 0, 16, 0], [0, 0, 0, 16]],
+                                   10, sims=4000, seed=1), [])
+    assert bmk.quarter_probability(q, one) == q.lowest()["Q1"] > 0.2

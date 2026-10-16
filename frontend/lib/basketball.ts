@@ -40,6 +40,9 @@ export interface BasketballPrediction {
   bb_markets?: BBLine[];  // one match (/api/basketball/match): every line
   /** Each team's last 5, oldest to newest ("WWLWL") */
   home_form?: string; away_form?: string;
+  /** Our quarter model: expected points per quarter (both teams) and each quarter's
+   *  chance to be the highest / lowest scoring one (Q1..Q4, EQ = a tie for it) */
+  quarters?: { expected: number[]; highest: Record<string, number>; lowest: Record<string, number> } | null;
 }
 
 export const FAMILIES: { id: string; name: string }[] = [

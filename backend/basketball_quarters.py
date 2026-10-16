@@ -1,6 +1,6 @@
 """
-Basketball quarter markets — highest scoring quarter (which, with "Equal"
-for a tie), and the highest / lowest scoring quarter's points over/under —
+Basketball quarter markets — highest and lowest scoring quarter (which,
+with "Equal" for a tie), and the highest / lowest scoring quarter's points over/under —
 priced from trends in previous games and the two teams' previous meetings.
 
 Per league, from every game with quarter scores (recent ones counting more,
@@ -22,7 +22,7 @@ by its scoring shares (and the away team's conceding ones), plus the away
 team's likewise, nudged by the meetings. The four quarters are then
 simulated SIMS times on whole points (the game's pace moving all four
 together, the spread moving each one), which gives every outcome's chance:
-which quarter is highest, a tie for it, and the highest or lowest quarter's
+which quarter is highest or lowest, a tie for it, and the highest or lowest quarter's
 points against any line.
 
 How much the team trends and meetings count (K_TEAM, K_H2H) is chosen by
@@ -172,8 +172,15 @@ class QuarterOdds:
     expected: List[float]
 
     def highest(self) -> Dict[str, float]:
+        return self._extreme(self.sims.max(axis=1, keepdims=True))
+
+    def lowest(self) -> Dict[str, float]:
+        return self._extreme(self.sims.min(axis=1, keepdims=True))
+
+    def _extreme(self, top: np.ndarray) -> Dict[str, float]:
+        """Each quarter's chance of being the only one at `top` (each draw's
+        highest or lowest), and "EQ" for two or more sharing it."""
         q = self.sims
-        top = q.max(axis=1, keepdims=True)
         ties = (q == top).sum(axis=1)
         out = {f"Q{i + 1}": float(((q[:, i] == top[:, 0]) & (ties == 1)).mean()) for i in range(4)}
         out["EQ"] = float((ties > 1).mean())
