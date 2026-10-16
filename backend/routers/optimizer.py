@@ -52,7 +52,8 @@ def _explain_empty(reasons: List[Dict], matches: int, days: int, min_prob: float
         else:
             parts.append(f"{r['name']}: SportyBet hasn't confirmed this market yet, so codes can't include it. "
                          "Untick \"Only matches SportyBet lists\" to build the slip anyway.")
-    return " ".join(parts) or f"None of {span} has a pick at {round(min_prob * 100)}% or more."
+    return " ".join(parts) or (f"None of {span} has a pick at {round(min_prob * 100)}% or more." if min_prob
+                                else f"None of {span} has a pick in the markets you chose.")
 
 
 def _optimizer_sports(body: Dict[str, Any]) -> List[str]:
@@ -283,7 +284,9 @@ async def _optimize_request(body: Dict[str, Any],
         lo, hi = float(body.get("min_odds", 2)), float(body.get("max_odds", 5))
         target = float(body.get("target_odds") or (lo * hi) ** 0.5)
         max_games = int(body.get("max_games", optimizer.MAX_GAMES))
-        min_prob = min(0.95, max(0.5, float(body.get("min_prob", 0.6))))
+        # Each pick's least chance; 0 or null: off (any pick, e.g. a ~30% highest scoring quarter)
+        raw = body.get("min_prob", 0.6)
+        min_prob = 0.0 if raw in (None, 0, "off") else min(0.95, max(0.5, float(raw)))
         # The whole slip's least win chance (e.g. 0.9): the highest odds that keep it
         min_chance = float(body["min_slip_chance"]) if body.get("min_slip_chance") else None
         if min_chance is not None:
@@ -420,17 +423,17 @@ async def _optimize_request(body: Dict[str, Any],
     considered = sum(1 for g in groups if g)
     if considered == 0 and sport == "basketball":
         return {"error": (f"None of the {len(bb_preds)} basketball matches in the next {days} day{'s' if days != 1 else ''} "
-                          f"has a line our model rates {min_prob:.0%} or more"
+                          + (f"has a line our model rates {min_prob:.0%} or more" if min_prob else "has a priced line")
                           + (" in the markets you chose" if bb_families else "")
-                          + ". Lower the minimum confidence, add markets or pick more days."
+                          + (". Lower the minimum confidence, add markets or pick more days." if min_prob else ". Add markets or pick more days.")
                           if bb_preds else "No basketball matches listed on SportyBet in those days yet."),
                 "matches_considered": 0, "target": [lo, hi], "target_odds": target, "thin_history": thin}
     if considered == 0 and sport in main.RK_SPORTS:
         name = "tennis" if sport == "tennis" else "table tennis"
         return {"error": (f"None of the {len(rk_preds)} {name} matches in the next {days} day{'s' if days != 1 else ''} "
-                          f"has a line our model rates {min_prob:.0%} or more"
+                          + (f"has a line our model rates {min_prob:.0%} or more" if min_prob else "has a priced line")
                           + (" in the markets you chose" if rk_families[sport] else "")
-                          + ". Lower the minimum confidence, add markets or pick more days."
+                          + (". Lower the minimum confidence, add markets or pick more days." if min_prob else ". Add markets or pick more days.")
                           if rk_preds else f"No {name} matches listed on SportyBet in those days yet."),
                 "matches_considered": 0, "target": [lo, hi], "target_odds": target, "thin_history": thin}
     if considered == 0:

@@ -121,3 +121,12 @@ def test_lowest_quarter_offer_found_by_its_label():
     q = bq.QuarterOdds(bq.simulate([20, 20, 20, 30], [[16, 0, 0, 0], [0, 16, 0, 0], [0, 0, 16, 0], [0, 0, 0, 16]],
                                    10, sims=4000, seed=1), [])
     assert bmk.quarter_probability(q, one) == q.lowest()["Q1"] > 0.2
+
+
+def test_quarter_picks_obey_each_pick_minimum():
+    import basketball_predictions as bbp
+    pred = {"home": "A", "away": "B", "date": "2026-10-16", "time": "18:00", "league_name": "L", "league": "L",
+            "bb_markets": [{"market": "bb_hsq", "market_name": "Highest scoring quarter", "code": "q4",
+                            "label": "4th quarter", "prob": 0.31, "odds": 3.4, "sb": {}}]}
+    assert bbp.options(pred, 0.6) == []                      # a ~30% quarter isn't 60% likely
+    assert [o.code for o in bbp.options(pred, 0.0)] == ["q4"]   # minimum off: any pick

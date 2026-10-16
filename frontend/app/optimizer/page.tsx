@@ -538,6 +538,7 @@ export default function OptimizerPage() {
 
           <div className="grid gap-5 sm:grid-cols-2">
             <Setting label="Each pick at least">
+              <Chip active={minProb === 0} onClick={() => setMinProb(0)}>Off</Chip>
               {CONFIDENCE.map(c => (
                 <Chip key={c} active={minProb === c} onClick={() => setMinProb(c)}>{Math.round(c * 100)}% likely</Chip>
               ))}

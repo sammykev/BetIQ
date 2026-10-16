@@ -22,9 +22,6 @@ DEFAULT_MARGIN_SHARES = (0.52, 0.27, 0.26, 0.25, 0.22)
 
 # The quarters against each other (basketball_quarters.py)
 QUARTER_RACE = ("bb_hsq", "bb_lsq", "bb_hsq_total", "bb_lsq_total")
-# "Which quarter is highest" is a 4-way race (a pick is ~25–35% likely): when a
-# user asks for it, its picks go down to this, below the usual minimum
-QUARTER_RACE_MIN = 0.2
 
 # Families of markets, as the optimizer and the pages group them
 FAMILIES = {
@@ -175,9 +172,7 @@ def options(pred: Dict, min_prob: float, families: Optional[set] = None,
             continue
         # Our chance through its market's correction (calibration.py; raw without one)
         prob = calibration.apply("basketball", x["market"], x["prob"])
-        floor = min(min_prob, QUARTER_RACE_MIN) if (x["market"] in ("bb_hsq", "bb_lsq") and families
-                                                    and fam in families) else min_prob
-        if not floor <= prob < 0.995 or x["odds"] <= 1.01:
+        if not min_prob <= prob < 0.995 or x["odds"] <= 1.01:
             continue
         out.append(optimizer.Option(pred["home"], pred["away"], pred["date"], pred.get("time") or "",
                                     pred.get("league_name") or "", x["market"], x["market_name"], x["code"],
