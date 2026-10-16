@@ -270,12 +270,17 @@ class SetPieceModel:
     def _league_avgs(self, league: str, stat: str) -> Optional[List[float]]:
         return self.league.get(league, {}).get(stat)
 
-    def _p(self, name: str):
+    def _p(self, name: str, league: Optional[str] = None):
+        # A league's own setting (params["by_league"], tune_football.py) first
+        if league:
+            got = ((self.params.get("by_league") or {}).get(league) or {}).get(name)
+            if got is not None:
+                return got
         return self.params.get(name, globals()[name.upper()])
 
     def _rating(self, team: str, stat: str, league: Optional[str] = None) -> Tuple[float, float]:
         w, f, a = self.team.get(team, {}).get(stat, (0.0, 0.0, 0.0))
-        prior = self._p("prior")
+        prior = self._p("prior", league)
         start_f = start_a = 1.0
         weight = self._p("elo_weight")
         if weight and STRENGTH is not None:
@@ -308,8 +313,8 @@ class SetPieceModel:
         need = self._p("min_matches")
         if self.matches.get(home, 0) < need or self.matches.get(away, 0) < need:
             return None
-        gamma, team_gamma = self._p("gamma"), self._p("team_gamma")
         league = league if league in self.league else self.league_of.get(home)
+        gamma, team_gamma = self._p("gamma", league), self._p("team_gamma", league)
         out = {}
         for stat in self.STATS:
             avgs = self._league_avgs(league, stat)
@@ -337,7 +342,7 @@ class SetPieceModel:
                 r = self.ref.setdefault(key, [0.0, 0.0])
                 r[0] = r[0] * decay_r + 1
                 r[1] = r[1] * decay_r + sum(counts["bookings"]) / base
-        decay, league_decay = self._p("decay"), self._p("league_decay")
+        decay, league_decay = self._p("decay", league), self._p("league_decay")
         for stat, (h, a) in counts.items():
             lg = self.league.setdefault(league, {})
             if stat not in lg:
@@ -362,9 +367,10 @@ class SetPieceModel:
     # ---------------------------------------------------------------- #
     @classmethod
     def replay(cls, matches: pd.DataFrame, test_from: Optional[pd.Timestamp] = None,
-               params: Optional[Dict] = None):
+               params: Optional[Dict] = None, tag: bool = False):
         """Fit on matches in date order. Returns (model, [(date, stat, mean, actual,
-        baseline mean)]) — predictions made before each match, from test_from on."""
+        baseline mean)]) — predictions made before each match, from test_from on
+        (tag: each row also ends with the match's league)."""
         model = cls(params)
         rows = []
         df = matches.sort_values("Date")
@@ -381,12 +387,12 @@ class SetPieceModel:
                 if exp:
                     for stat in cls.STATS:
                         base = sum(model._league_avgs(league, stat))
-                        rows.append((row["Date"], stat, sum(exp[stat]), sum(counts[stat]), base))
+                        rows.append((row["Date"], stat, sum(exp[stat]), sum(counts[stat]), base) + ((league,) if tag else ()))
                     for stat, team_stats in cls.TEAM_OF.items():
                         avgs = model._league_avgs(league, stat)
                         for side, team_stat in enumerate(team_stats):
                             rows.append((row["Date"], team_stat, exp[f"{stat}_team"][side], counts[stat][side],
-                                         avgs[side]))
+                                         avgs[side]) + ((league,) if tag else ()))
             model.update(row["HomeTeam"], row["AwayTeam"], league, counts, referee)
         model._when = None   # from here on: today's strengths
         return model, rows

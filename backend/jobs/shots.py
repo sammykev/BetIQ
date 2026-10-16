@@ -19,16 +19,29 @@ import main
 def _fit_shots(history: pd.DataFrame) -> None:
     """Fit the club shots model, and check each stat on the last 12 months'
     matches (predicted from the ones before them) against the league average."""
-    model = shots.ShotModel.fit(history)
+    # Per-league settings where a league clearly beat the defaults (tune_football.py)
+    params = {"by_league": main._football_tuning().get("shots") or {}}
+    model = shots.ShotModel.fit(history, params)
     if model is None:
         main._shots, main._shots_info = None, {"reason": "no shots data in the league CSVs"}
         return
     last = history["Date"].max()
-    verdict = shots.check(history, str((last - pd.Timedelta(days=365)).date()))
+    verdict = shots.check(history, str((last - pd.Timedelta(days=365)).date()), params=params)
     main._shots = model
     main._shots_info = {"check": verdict, "use": {k: v["use"] for k, v in verdict.items()},
                    "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     print(f"[Pipeline] Shots model: {', '.join(k for k, v in verdict.items() if v['use']) or 'no stat beat the average'}")
+
+
+def _football_tuning() -> Dict[str, Dict]:
+    """The per-league corners / bookings / shots settings saved by tune_football.py ({} without)."""
+    try:
+        import model_store
+        import tune_football
+        return tune_football.load(model_store._client())
+    except Exception as e:
+        print(f"[Pipeline] No football tuning ({e}); defaults")
+        return {}
 
 
 def _shot_markets(home: str, away: str, league: Optional[str]) -> Optional[Dict]:

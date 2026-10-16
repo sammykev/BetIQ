@@ -2576,7 +2576,7 @@ from jobs.referees import (  # noqa: E402
     _with_club_referees,
 )
 from jobs.shots import (  # noqa: E402
-    _fit_shots, _index_intl_stats, _international_set_pieces, _intl_stats_for,
+    _fit_shots, _football_tuning, _index_intl_stats, _international_set_pieces, _intl_stats_for,
     _load_international_set_pieces, _refresh_shot_blend, _restore_shot_blend, _shot_blend_job,
     _shot_markets,
 )

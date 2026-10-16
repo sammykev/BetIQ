@@ -15,6 +15,7 @@ on:
       - "backend/team_names.py"
       - "backend/train_model.py"
       - "backend/model_store.py"
+      - "backend/tune_football.py"
       - ".github/workflows/train-model.yml"
 
 concurrency:
@@ -47,6 +48,13 @@ jobs:
         env:
           UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
         run: python train_model.py
+
+      # Corners / bookings / shots settings per league, kept only where a
+      # league beat the defaults on matches it wasn't tuned on (backend/tune_football.py)
+      - name: Football set-piece tuning
+        env:
+          UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
+        run: python tune_football.py
 
       # Each football market's calibration map from its settled picks,
       # checked on later days first (backend/football_calibration.py)

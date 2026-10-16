@@ -42,8 +42,11 @@ async def _run_pipeline():
         except Exception as e:
             print(f"[Pipeline] Results index failed (non-fatal): {e}")
         try:
+            # Per-league settings where a league clearly beat the defaults (tune_football.py)
+            sp_tuned = main._football_tuning().get("set_pieces") or {}
             main._set_pieces = await asyncio.to_thread(
-                lambda: set_pieces.SetPieceModel.fit(main._with_club_referees(history), set_pieces.CLUB_GUARDS))
+                lambda: set_pieces.SetPieceModel.fit(main._with_club_referees(history),
+                                                     {**set_pieces.CLUB_GUARDS, "by_league": sp_tuned}))
         except Exception as e:
             print(f"[Pipeline] Corners/bookings model failed (non-fatal): {e}")
         try:
