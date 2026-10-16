@@ -168,13 +168,15 @@ def market_means(offers: List[Dict], dispersion: Dict[str, float]) -> Dict[Tuple
 def bb_price(ev: Dict, players: Dict[str, Dict], team_factor: Dict[str, float],
              dispersion: Optional[Dict[str, float]] = None, priors: Optional[Dict[str, float]] = None,
              teams: Tuple[str, str] = ("", ""), today: Optional[date] = None,
-             calibration: Optional[Dict[str, List]] = None) -> List[Dict]:
+             calibration: Optional[Dict[str, List]] = None, tuning: Optional[Dict[str, float]] = None) -> List[Dict]:
     """Our chance of each of SportyBet's player lines on an event.
     team_factor: {team name: tonight's expected points / its usual};
     calibration: {stat: the walk-forward check's map} (pp.calibrate);
     teams: the event's two teams (a player on neither has moved: SportyBet's
-    line knows his new role better than his old box scores)."""
+    line knows his new role better than his old box scores);
+    tuning: the league's {"half_life", "prior_minutes"} (props_backtest), else the defaults."""
     import sportybet
+    tuning = tuning or {}
     dispersion = {**DEFAULT_DISPERSION, **(dispersion or {})}
     today = today or date.today()
     offers = bb_offers(ev)
@@ -189,7 +191,8 @@ def bb_price(ev: Dict, players: Dict[str, Dict], team_factor: Dict[str, float],
         if ck not in cache:
             prior = (priors or {}).get(o["stat"]) or league_rates(players, col)
             factor = max(0.85, min(1.15, team_factor.get(p["team"], 1.0))) ** GAME_EXPONENT[o["stat"]]
-            proj = pp.project(_rows_to_games(p["games"], col), "x", prior, dispersion[o["stat"]], factor)
+            proj = pp.project(_rows_to_games(p["games"], col), "x", prior, dispersion[o["stat"]], factor,
+                              half_life=tuning.get("half_life"), prior_minutes=tuning.get("prior_minutes"))
             if proj is not None and ck in market:
                 on_team = not any(teams) or max(sportybet.team_similarity(p["team"], t) for t in teams if t) >= 0.6
                 w = (MODEL_WEIGHT if on_team else MOVED_WEIGHT) * freshness(p["games"][-1][0], today)

@@ -77,43 +77,48 @@ def nb_cdf(k: int, mean: float, r: float) -> float:
     return min(1.0, sum(nb_pmf(i, mean, r) for i in range(k + 1)))
 
 
-def _weights(n: int) -> List[float]:
-    """Newest game first: 1, 0.93, 0.87, …"""
-    return [0.5 ** (i / HALF_LIFE) for i in range(n)]
+def _weights(n: int, half_life: Optional[float] = None) -> List[float]:
+    """Newest game first: 1, 0.93, 0.87, … (half_life: the league's tuned one, else HALF_LIFE)."""
+    hl = half_life or HALF_LIFE
+    return [0.5 ** (i / hl) for i in range(n)]
 
 
-def expected_minutes(games: Sequence[Game]) -> Tuple[float, float]:
+def expected_minutes(games: Sequence[Game], half_life: Optional[float] = None) -> Tuple[float, float]:
     """(mean, spread) of his minutes when he plays, newest first."""
     played = [g for g in games if g.minutes > 0]
     if not played:
         return 0.0, 0.0
-    w = _weights(len(played))
+    w = _weights(len(played), half_life)
     m = sum(wi * g.minutes for wi, g in zip(w, played)) / sum(w)
     var = sum(wi * (g.minutes - m) ** 2 for wi, g in zip(w, played)) / sum(w)
     return m, var ** 0.5
 
 
-def rate(games: Sequence[Game], stat: str, prior: float) -> Tuple[float, float]:
+def rate(games: Sequence[Game], stat: str, prior: float, half_life: Optional[float] = None,
+         prior_minutes: Optional[float] = None) -> Tuple[float, float]:
     """(per-minute rate, minutes behind it), pulled towards `prior`."""
+    pm = PRIOR_MINUTES if prior_minutes is None else prior_minutes
     used = [g for g in games if g.minutes >= MIN_MINUTES and stat in g.stats]
-    w = _weights(len(used))
+    w = _weights(len(used), half_life)
     mins = sum(wi * g.minutes for wi, g in zip(w, used))
     count = sum(wi * g.stats[stat] for wi, g in zip(w, used))
-    return (count + prior * PRIOR_MINUTES) / (mins + PRIOR_MINUTES), mins
+    return (count + prior * pm) / (mins + pm), mins
 
 
 def project(games: Sequence[Game], stat: str, prior: float, dispersion: float,
-            game_factor: float = 1.0, minutes: Optional[float] = None) -> Optional[Projection]:
+            game_factor: float = 1.0, minutes: Optional[float] = None, half_life: Optional[float] = None,
+            prior_minutes: Optional[float] = None) -> Optional[Projection]:
     """His expected count tonight. `games` newest first; `game_factor`: tonight's
     game against his team's usual (e.g. our expected team points / its average);
-    `minutes` to use instead of his recent average (known to play less, say)."""
+    `minutes` to use instead of his recent average (known to play less, say);
+    half_life / prior_minutes: the league's tuned ones (props_backtest), else the defaults."""
     played = [g for g in games if g.minutes > 0]
     if len(played) < MIN_GAMES:
         return None
-    m, m_sd = expected_minutes(played)
+    m, m_sd = expected_minutes(played, half_life)
     if minutes is not None:
         m = minutes
-    r, behind = rate(played, stat, prior)
+    r, behind = rate(played, stat, prior, half_life, prior_minutes)
     mean = max(0.01, m * r * game_factor)
     # Minutes that swing widen the count's spread: var += (rate x minutes' sd)²
     extra = (r * game_factor * m_sd) ** 2

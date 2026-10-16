@@ -20,7 +20,7 @@ Saved to Redis (CALIB_KEY); the server's pricing reads it.
 import json
 from datetime import datetime, timezone
 from math import exp, log
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import basketball_data as bd
 import player_props as pp
@@ -29,10 +29,70 @@ import props_pricing as pr
 
 CALIB_KEY = "betiq:props:calib"
 WINDOW = 60          # a player's latest games used to project the next (as the server does)
+# Per league: how fast old games fade (games) and how hard a rate is pulled to its
+# prior (minutes). The best on the earlier half of the player-games (by date) is kept
+# only where it beats the defaults on the later half by MIN_GAIN of their log loss
+HALF_LIVES = (5.0, 10.0, 20.0)
+PRIOR_MINUTES = (75.0, 150.0, 300.0)
+MIN_GAIN = 0.002
+MIN_HELD = 2000      # held-out player-games (all stats) a league needs to be tuned
 
 
-def bb_check(players: Dict[str, Dict], dispersion: Dict[str, float]) -> Tuple[Dict[str, float], Dict[str, List]]:
+def _nb_loss(k: int, mean: float, r: float) -> float:
+    return -log(max(1e-12, pp.nb_pmf(k, mean, r)))
+
+
+def tune(players: Dict[str, Dict], dispersion: Dict[str, float]) -> Dict:
+    """The league's half life and prior minutes: each pair prices every
+    player-game from the games before it (as bb_check); scored by the log
+    likelihood of what he did (every stat), chosen on the earlier half of the
+    dates and checked on the later half."""
+    grid = [(h, m) for h in HALF_LIVES for m in PRIOR_MINUTES]
+    default = (pp.HALF_LIFE, pp.PRIOR_MINUTES)
+    if default not in grid:
+        grid.append(default)
+    dates = sorted(r[0] for p in players.values() for r in p["games"][pp.MIN_GAMES:] if float(r[4]) > 0)
+    if not dates:
+        return {"skipped": "no player-games"}
+    cut = dates[len(dates) // 2]
+    loss = {c: [[0, 0.0], [0, 0.0]] for c in grid}      # candidate: [earlier half, later half] × [n, sum]
+    for stat, (col, *_ ) in pr.BB_STATS.items():
+        prior = pr.league_rates(players, col)
+        disp = dispersion.get(stat, pr.DEFAULT_DISPERSION[stat])
+        for p in players.values():
+            g = p["games"]
+            for i in range(pp.MIN_GAMES, len(g)):
+                if float(g[i][4]) <= 0:
+                    continue
+                past = pr._rows_to_games(g[max(0, i - WINDOW):i], col)
+                k, half = int(round(float(g[i][col]))), int(g[i][0] >= cut)
+                for c in grid:
+                    proj = pp.project(past, "x", prior, disp, half_life=c[0], prior_minutes=c[1])
+                    if proj is None:
+                        continue
+                    acc = loss[c][half]
+                    acc[0] += 1
+                    acc[1] += _nb_loss(k, proj.mean, proj.dispersion)
+    mean = lambda acc: acc[1] / acc[0] if acc[0] else None
+    if mean(loss[default][0]) is None or mean(loss[default][1]) is None:
+        return {"skipped": "too few player-games"}
+    best = min((c for c in grid if mean(loss[c][0]) is not None), key=lambda c: mean(loss[c][0]))
+    n_held = loss[default][1][0]
+    keep = (best != default and n_held >= MIN_HELD
+            and mean(loss[best][1]) <= mean(loss[default][1]) * (1 - MIN_GAIN))
+    rep = {"best": {"half_life": best[0], "prior_minutes": best[1]}, "keep": keep, "held": n_held, "cut": cut,
+           "default": round(mean(loss[default][1]), 5), "tuned": round(mean(loss[best][1]), 5),
+           "grid": {f"{h:g}/{m:g}": [round(mean(loss[(h, m)][0]) or 0, 5), round(mean(loss[(h, m)][1]) or 0, 5)]
+                    for h, m in grid}}
+    if keep:
+        rep["use"] = dict(rep["best"])
+    return rep
+
+
+def bb_check(players: Dict[str, Dict], dispersion: Dict[str, float],
+             tuning: Optional[Dict[str, float]] = None) -> Tuple[Dict[str, float], Dict[str, List]]:
     """(measured dispersion per stat, (our chance, came in) rows per stat) over one league."""
+    tuning = tuning or {}
     pairs: Dict[str, List[Tuple[float, float]]] = {s: [] for s in pr.BB_STATS}
     rows: Dict[str, List[Tuple[float, bool]]] = {s: [] for s in pr.BB_STATS}
     for stat, (col, *_ ) in pr.BB_STATS.items():
@@ -41,7 +101,8 @@ def bb_check(players: Dict[str, Dict], dispersion: Dict[str, float]) -> Tuple[Di
             g = p["games"]
             for i in range(pp.MIN_GAMES, len(g)):
                 past = g[max(0, i - WINDOW):i]
-                proj = pp.project(pr._rows_to_games(past, col), "x", prior, dispersion.get(stat, pr.DEFAULT_DISPERSION[stat]))
+                proj = pp.project(pr._rows_to_games(past, col), "x", prior, dispersion.get(stat, pr.DEFAULT_DISPERSION[stat]),
+                                  half_life=tuning.get("half_life"), prior_minutes=tuning.get("prior_minutes"))
                 if proj is None or float(g[i][4]) <= 0:
                     continue
                 actual = float(g[i][col])
@@ -100,16 +161,27 @@ def run(r) -> Dict:
         players = bd.decode(raw) if raw else {}
         if not players:
             continue
-        # Two passes: measure the spread, then check the chances priced with it
+        # Measure the spread, tune the half life / prior minutes with it, then
+        # measure the spread and check the chances with what the server will use
         disp, _ = bb_check(players, {})
-        _, rows = bb_check(players, disp)
+        tuned = tune(players, disp)
+        if tuned.get("use"):
+            disp, _ = bb_check(players, {}, tuned["use"])
+        _, rows = bb_check(players, disp, tuned.get("use"))
         # Points' tails run wider than one spread says (blowouts, foul trouble,
         # early exits): a map per stat corrects the chances that remain
         maps, cal = calibrated(rows)
         raw = {s: pp.calibration(v) for s, v in rows.items()}
         report["bb"][league] = {"players": len(players), "dispersion": {k: round(v, 2) for k, v in disp.items()},
-                                "calibration_map": maps, "calibration": cal, "calibration_raw": raw}
+                                "calibration_map": maps, "calibration": cal, "calibration_raw": raw,
+                                "tuning": tuned.get("use") or {}, "tuning_report": tuned}
         print(f"{league}: {len(players)} players; dispersion {report['bb'][league]['dispersion']}")
+        if "best" in tuned:
+            print(f"  half life / prior minutes: best {tuned['best']['half_life']:g}/{tuned['best']['prior_minutes']:g} "
+                  f"on the earlier half · held out {tuned['held']} player-games: log loss {tuned['default']} -> "
+                  f"{tuned['tuned']} · {'KEEP' if tuned['keep'] else 'defaults'}")
+        else:
+            print(f"  half life / prior minutes: {tuned}")
         for s, rs in raw.items():
             print(f"  {s} before: " + " · ".join(f"{x['bucket']} said {x['said']:.0%} came in {x['came_in']:.0%}" for x in rs))
         for s, rs in cal.items():

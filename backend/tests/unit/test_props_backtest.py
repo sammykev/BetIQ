@@ -67,3 +67,25 @@ def test_calibration_map_checked_on_held_out_games():
         for row in after[s]:
             if row["n"] > 300:
                 assert abs(row["came_in"] - row["said"]) < 0.06, (s, row)
+
+
+def test_projection_half_life_and_prior_minutes():
+    games = [pp.Game(f"2026-01-{i + 1:02d}", 30.0, {"x": 20.0 if i < 5 else 5.0}) for i in range(20)]  # newest first
+    plain = pp.project(games, "x", 0.3, 10.0)
+    assert plain.mean == pp.project(games, "x", 0.3, 10.0, half_life=pp.HALF_LIFE,
+                                    prior_minutes=pp.PRIOR_MINUTES).mean
+    fast = pp.project(games, "x", 0.3, 10.0, half_life=3.0)
+    assert fast.mean > plain.mean                       # the recent hot games count more
+    pulled = pp.project(games, "x", 0.3, 10.0, prior_minutes=3000.0)
+    assert abs(pulled.rate - 0.3) < abs(plain.rate - 0.3)
+
+
+def test_props_tuning_report():
+    players = simulated_bb(players=30, games=30)
+    got = pb.tune(players, {})
+    assert set(got["best"]) == {"half_life", "prior_minutes"}
+    assert got["held"] > 0 and "10/150" in got["grid"]
+    assert got["keep"] == ("use" in got)
+    if not got["keep"]:
+        assert got["held"] < pb.MIN_HELD or got["tuned"] > got["default"] * (1 - pb.MIN_GAIN) or \
+            (got["best"] == {"half_life": pp.HALF_LIFE, "prior_minutes": pp.PRIOR_MINUTES})

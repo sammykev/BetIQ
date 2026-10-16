@@ -14,6 +14,9 @@ Markets scored: highest and lowest scoring quarter (Q1–Q4 or a tie), and the h
 and lowest quarter's points over the league's middle line. The weights that
 do best on highest-quarter log loss are saved (CONFIG_KEY) for the server —
 only if they beat the league pattern; else trends are switched off.
+Per league, how fast old games fade (HL_GRID days against HALF_LIFE_DAYS) is
+chosen on the earlier half of its test games and kept only where the later
+half agrees; saved with the weights ("half_life").
 
     python check_bb_quarters.py     (GitHub Actions: "Basketball data", job bb_quarters)
 """
@@ -33,6 +36,13 @@ MIN_LEAGUE = 300
 SIMS = 4000
 GRID = [(10.0, 8.0), (25.0, 8.0), (60.0, 8.0), (25.0, 3.0), (25.0, 20.0), (25.0, -1.0)]
 OFF = {"k_team": 1e9, "k_h2h": -1.0}
+# Per league, how fast old games fade (days), with team trends at BASE: the best
+# on the earlier half of a league's test games (highest + lowest quarter log loss)
+# is kept only where it beats HALF_LIFE_DAYS on the later half by MIN_GAIN
+HL_GRID = (90.0, 365.0, 730.0)
+BASE = (25.0, 8.0)
+MIN_GAIN = 0.002
+MIN_HELD = 150
 
 
 def _ll(p: float) -> float:
@@ -81,6 +91,10 @@ def league_check(name: str, games: List[bm.Game]) -> Optional[Dict]:
             m = bq.fit(name, train, as_of=date.fromisoformat(test[0].date), k_team=kt)
             if m:
                 models[f"k{kt:g}/h{kh:g}"] = (m, kh, True)
+        for hl in HL_GRID:
+            m = bq.fit(name, train, as_of=date.fromisoformat(test[0].date), k_team=BASE[0], half_life=hl)
+            if m:
+                models[f"hl{hl:g}"] = (m, BASE[1], True)
         for g in test:
             q = bq._quarters(g)
             tot = q.sum(axis=1)
@@ -113,9 +127,32 @@ def _z(a: List[float], b: List[float]) -> float:
     return round(mean / (sd / math.sqrt(len(d))), 2) if sd > 0 else 0.0
 
 
+def half_life(losses: Dict[str, List[float]]) -> Dict:
+    """A league's half life: candidates scored on highest + lowest quarter log
+    loss, chosen on the earlier half of its test games, kept where the later
+    half agrees (beats HALF_LIFE_DAYS by MIN_GAIN)."""
+    base = f"k{BASE[0]:g}/h{BASE[1]:g}"
+    cands = {float(bq.HALF_LIFE_DAYS): base, **{hl: f"hl{hl:g}" for hl in HL_GRID}}
+    score = {hl: [a + b for a, b in zip(losses[f"{lab}|hsq"], losses[f"{lab}|lsq"])]
+             for hl, lab in cands.items() if f"{lab}|hsq" in losses}
+    n = min((len(v) for v in score.values()), default=0)
+    if float(bq.HALF_LIFE_DAYS) not in score or n < 2:
+        return {"keep": False}
+    half = n // 2
+    early = {hl: sum(v[:half]) / half for hl, v in score.items() if len(v) == n}
+    late = {hl: sum(v[half:]) / (n - half) for hl, v in score.items() if len(v) == n}
+    dflt = float(bq.HALF_LIFE_DAYS)
+    best = min(early, key=early.get)
+    keep = best != dflt and n - half >= MIN_HELD and late[best] <= late[dflt] * (1 - MIN_GAIN)
+    return {"best": best, "keep": keep, "held": n - half, "default": round(late[dflt], 5),
+            "tuned": round(late[best], 5), "early": {f"{k:g}": round(v, 5) for k, v in early.items()},
+            "late": {f"{k:g}": round(v, 5) for k, v in late.items()}}
+
+
 def run(by_league: Dict[str, List[bm.Game]]) -> Dict:
     pooled: Dict[str, List[float]] = {}
     per: Dict[str, Dict] = {}
+    half_lives: Dict[str, float] = {}
     for name, games in sorted(by_league.items(), key=lambda kv: -len(kv[1])):
         got = league_check(name, games)
         if not got:
@@ -125,12 +162,19 @@ def run(by_league: Dict[str, List[bm.Game]]) -> Dict:
             pooled.setdefault(k, []).extend(v)
         print(f"{name}: {got['games']} test games · highest quarter log loss: "
               + ", ".join(f"{k.split('|')[0]} {per[name][k]}" for k in per[name] if k.endswith("|hsq")))
+        hl = half_life(got["losses"])
+        per[name]["half_life"] = hl
+        if "best" in hl:
+            print(f"  half life: best {hl['best']:g} days on the earlier half · held out {hl['held']} games: "
+                  f"log loss {hl['default']} -> {hl['tuned']} · {'KEEP' if hl['keep'] else 'defaults'}")
+        if hl.get("keep"):
+            half_lives[name] = hl["best"]
     if not pooled:
         return {"note": "no league with enough quarter-scored games"}
     labels = sorted({k.split("|")[0] for k in pooled})
     table = {lab: {mk: round(sum(pooled[f"{lab}|{mk}"]) / len(pooled[f"{lab}|{mk}"]), 5)
                    for mk in ("hsq", "lsq", "hi", "lo") if f"{lab}|{mk}" in pooled} for lab in labels}
-    grid = [lab for lab in labels if lab.startswith("k")]
+    grid = [lab for lab in labels if lab.startswith("k")]     # the half-life candidates ("hl…") aren't weights
     best = min(grid, key=lambda lab: table[lab]["hsq"]) if grid else None
     z = _z(pooled[f"{best}|hsq"], pooled["league|hsq"]) if best else 0.0
     use = best is not None and table[best]["hsq"] < table["league"]["hsq"]
@@ -144,8 +188,9 @@ def run(by_league: Dict[str, List[bm.Game]]) -> Dict:
         print(f"  {lab:<12} {json.dumps(table[lab])}")
     print(f"best weights: {best} · vs league pattern z {z} (below −2 is clear) → "
           f"{'team trends and meetings ON ' + json.dumps(config) if use else 'trends OFF (league pattern only)'}")
+    print(f"half lives kept: {json.dumps(half_lives) if half_lives else 'none (every league on ' + str(bq.HALF_LIFE_DAYS) + ' days)'}")
     return {"test_games": len(pooled["league|hsq"]), "table": table, "best": best, "z_vs_league": z,
-            "config": config, "leagues": per}
+            "config": {**config, "half_life": half_lives}, "leagues": per}
 
 
 def main() -> None:

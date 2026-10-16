@@ -130,3 +130,45 @@ def test_quarter_picks_obey_each_pick_minimum():
                             "label": "4th quarter", "prob": 0.31, "odds": 3.4, "sb": {}}]}
     assert bbp.options(pred, 0.6) == []                      # a ~30% quarter isn't 60% likely
     assert [o.code for o in bbp.options(pred, 0.0)] == ["q4"]   # minimum off: any pick
+
+
+def test_half_life_per_league():
+    games = _league(n=400)
+    default = bq.fit("L", games, k_team=10)
+    assert bq.fit("L", games, k_team=10, half_life=bq.HALF_LIFE_DAYS).to_json() == default.to_json()
+    saved = dict(bq.CONFIG)
+    try:
+        bq.CONFIG["half_life"] = {"L": 30.0}
+        tuned = bq.fit("L", games, k_team=10)
+        assert tuned.to_json() == bq.fit("L", games, k_team=10, half_life=30.0).to_json()
+        assert tuned.games["Late"] < default.games["Late"]           # old games fade faster
+        assert bq.fit("Other", games, k_team=10).to_json()["games"] == bq.fit(
+            "Other", games, k_team=10, half_life=bq.HALF_LIFE_DAYS).to_json()["games"]
+    finally:
+        bq.CONFIG.clear()
+        bq.CONFIG.update(saved)
+
+
+def test_load_config_reads_half_lives():
+    import json
+
+    class R:
+        def get(self, k):
+            return json.dumps({"k_team": 10, "k_h2h": 3, "half_life": {"NBA": 365}})
+    got = bq.load_config(R())
+    assert got == {"k_team": 10.0, "k_h2h": 3.0, "half_life": {"NBA": 365.0}}
+    assert bq.load_config(None)["half_life"] == {}
+
+
+def test_half_life_check_keeps_only_a_clear_win():
+    import check_bb_quarters as cq
+    n = 400
+    flat = {"k25/h8|hsq": [1.0] * n, "k25/h8|lsq": [1.0] * n}
+    better = {**flat, "hl365|hsq": [0.9] * n, "hl365|lsq": [1.0] * n,
+              "hl90|hsq": [1.1] * n, "hl90|lsq": [1.0] * n}
+    got = cq.half_life(better)
+    assert got["best"] == 365.0 and got["keep"]
+    # Better on the earlier half only: not kept
+    flip = {**flat, "hl365|hsq": [0.9] * (n // 2) + [1.1] * (n // 2), "hl365|lsq": [1.0] * n}
+    assert not cq.half_life(flip)["keep"]
+    assert not cq.half_life({})["keep"]

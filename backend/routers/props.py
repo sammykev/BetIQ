@@ -62,7 +62,7 @@ def _bb_prop_lines(pred: Dict, page: Dict) -> List[Dict]:
     calib = (main._props_calib.get("bb") or {}).get(league) or {}
     disp = dict(calib.get("dispersion") or {})
     return pr.bb_price(page, players, factor, disp, teams=(pred["home"], pred["away"]),
-                       calibration=calib.get("calibration_map") or {})
+                       calibration=calib.get("calibration_map") or {}, tuning=calib.get("tuning") or {})
 
 
 async def _bb_add_props(preds: List[Dict]) -> int:

@@ -4,7 +4,7 @@ with "Equal" for a tie), and the highest / lowest scoring quarter's points over/
 priced from trends in previous games and the two teams' previous meetings.
 
 Per league, from every game with quarter scores (recent ones counting more,
-HALF_LIFE_DAYS):
+HALF_LIFE_DAYS, or the league's own where check_bb_quarters found a better one):
 
   league pattern   each quarter's share of a game's points (in many leagues
                    the 4th runs high: fouls, free throws, the clock)
@@ -33,7 +33,7 @@ import json
 import zlib
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -49,7 +49,8 @@ OUTCOMES = ("Q1", "Q2", "Q3", "Q4", "EQ")
 
 # The leagues' models, set by the server after each fit (main._bb_fit_sync)
 MODELS: Dict[str, "QuarterModel"] = {}
-CONFIG: Dict[str, float] = {"k_team": K_TEAM, "k_h2h": K_H2H}
+# k_team, k_h2h; half_life: {league: days} where check_bb_quarters found one better than HALF_LIFE_DAYS
+CONFIG: Dict[str, Any] = {"k_team": K_TEAM, "k_h2h": K_H2H, "half_life": {}}
 
 
 @dataclass
@@ -86,9 +87,11 @@ def _quarters(g) -> Optional[np.ndarray]:
 
 
 def fit(league: str, games: Iterable, as_of: Optional[date] = None,
-        k_team: Optional[float] = None) -> Optional[QuarterModel]:
+        k_team: Optional[float] = None, half_life: Optional[float] = None) -> Optional[QuarterModel]:
     """A league's quarter model from its quarter-scored games before `as_of`."""
     k_team = CONFIG["k_team"] if k_team is None else k_team
+    if half_life is None:
+        half_life = (CONFIG.get("half_life") or {}).get(league) or HALF_LIFE_DAYS
     rows = []
     for g in games:
         if as_of is not None and g.date >= as_of.isoformat():
@@ -99,7 +102,7 @@ def fit(league: str, games: Iterable, as_of: Optional[date] = None,
     if len(rows) < MIN_GAMES:
         return None
     last = as_of or max(date.fromisoformat(g.date) for g, _ in rows)
-    w = np.array([0.5 ** (max(0, (last - date.fromisoformat(g.date)).days) / HALF_LIFE_DAYS) for g, _ in rows])
+    w = np.array([0.5 ** (max(0, (last - date.fromisoformat(g.date)).days) / half_life) for g, _ in rows])
     tot = np.array([q.sum(axis=1) for _, q in rows])                    # n × 4 quarter totals
     T = tot.sum(axis=1)
     shares = (w[:, None] * tot / T[:, None]).sum(axis=0) / w.sum()
@@ -224,10 +227,11 @@ def load(r) -> Dict[str, QuarterModel]:
         return {}
 
 
-def load_config(r) -> Dict[str, float]:
+def load_config(r) -> Dict[str, Any]:
     try:
         raw = r.get(CONFIG_KEY)
         got = json.loads(raw) if raw else {}
-        return {"k_team": float(got.get("k_team", K_TEAM)), "k_h2h": float(got.get("k_h2h", K_H2H))}
+        return {"k_team": float(got.get("k_team", K_TEAM)), "k_h2h": float(got.get("k_h2h", K_H2H)),
+                "half_life": {str(k): float(v) for k, v in (got.get("half_life") or {}).items()}}
     except Exception:
-        return {"k_team": K_TEAM, "k_h2h": K_H2H}
+        return {"k_team": K_TEAM, "k_h2h": K_H2H, "half_life": {}}
