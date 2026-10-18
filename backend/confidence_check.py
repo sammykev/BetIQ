@@ -151,6 +151,19 @@ def tickets(rows: List[Dict], sizes=TICKET_SIZES, keep: Optional[Callable[[Dict]
     return out
 
 
+def suspects(rows: List[Dict], rep: Dict, z: float = -3.0, limit: int = 60) -> Dict[str, List[Dict]]:
+    """The picks behind each cell that falls short by more than |z| standard
+    errors — to see what went wrong (wrong side, wrong score, a bad feed)."""
+    out = {}
+    for how, cells in ((market_key, rep["markets"]), (league_key, rep["leagues"])):
+        for c in cells:
+            if isinstance(c["z"], (int, float)) and c["z"] <= z:
+                rs = [r for r in rows if r["cal"] >= LEVELS[0] and how(r) == c["cell"]]
+                out[c["cell"]] = [{k: r.get(k) for k in ("date", "match", "league", "market", "code", "prob", "cal", "won", "score")}
+                                  for r in sorted(rs, key=lambda r: (r["date"], r["match"]))[:limit]]
+    return out
+
+
 def report(rows: List[Dict], maps: Dict) -> Dict:
     rows = annotate(rows, maps)
     names = {league_key(r): r.get("league_name") or r.get("league") or "?" for r in rows}
@@ -166,6 +179,7 @@ def report(rows: List[Dict], maps: Dict) -> Dict:
             rep["sports"][s] = {"raw": bands(rs, "prob"), "corrected": bands(rs, "cal")}
     good = {c["cell"] for c in rep["markets"] if c["proven"] and c["proven"] >= 0.9}
     rep["proven_markets"] = sorted(good)
+    rep["suspects"] = suspects(rows, rep)
     rep["tickets"] = {"all": tickets(rows),
                       "proven_only": tickets(rows, keep=lambda r: market_key(r) in good) if good else []}
     return rep
@@ -202,6 +216,11 @@ def print_report(rep: Dict) -> None:
         print()
     print("== PROVEN at ≥ 90% (Wilson lower bound clears 90% on ≥ "
           f"{MIN_PROVEN} picks) ==\n  " + (", ".join(rep["proven_markets"]) or "none"))
+    for k, rs in rep.get("suspects", {}).items():
+        print(f"\n== SUSPECT {k}: its picks rated ≥ 80% ==")
+        for r in rs:
+            print(f"  {r['date']} {r['match'][:48]:<48} {r['league'] or '':<8} {r['market']:<14} {r['code']:<8} "
+                  f"raw {_pct(r['prob'])} cal {_pct(r['cal'])} {'WON ' if r['won'] else 'lost'} {r.get('score') or ''}")
     for name, rows in rep["tickets"].items():
         print(f"\n== TICKETS ({name}): the day's top-N picks, one per match ==")
         for t in rows:
