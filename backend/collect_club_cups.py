@@ -20,14 +20,16 @@ import club_cups
 import model_store
 
 
-def collect_leagues(minutes: float) -> int:
-    """The small domestic leagues into their own store (no check here: the
-    Europe model's check, europe_model.py, judges them)."""
+def collect_leagues(minutes: float, competitions=None, key: str = club_cups.LEAGUES_KEY) -> int:
+    """The small domestic leagues (or the second divisions) into their own
+    store (no check here: the Europe model's check, europe_model.py, judges
+    the small leagues; the second divisions are ratings-only rows)."""
+    competitions = club_cups.LEAGUES if competitions is None else competitions
     r = model_store._client()
     if r is None:
         print("UPSTASH_REDIS_URL isn't set — nothing to store to. Skipping.")
         return 0
-    data = club_cups.load(r, club_cups.LEAGUES_KEY)
+    data = club_cups.load(r, key)
     today = datetime.now(timezone.utc).date()
 
     async def go():
@@ -35,7 +37,7 @@ def collect_leagues(minutes: float) -> int:
         import international_fixtures as intl
         async with AsyncSession(impersonate=intl.IMPERSONATE, timeout=30) as session:
             return await club_cups.collect(session, data, time.monotonic() + minutes * 60, today,
-                                           competitions=club_cups.LEAGUES,
+                                           competitions=competitions,
                                            seasons_back=club_cups.LEAGUE_SEASONS_BACK)
 
     started = time.monotonic()
@@ -43,7 +45,7 @@ def collect_leagues(minutes: float) -> int:
     report["at"] = datetime.now(timezone.utc).isoformat()
     report["seconds"] = round(time.monotonic() - started)
     data["runs"] = (data.get("runs") or [])[-19:] + [report]
-    size = club_cups.save(r, data, club_cups.LEAGUES_KEY)
+    size = club_cups.save(r, data, key)
     print("Leagues collection:", json.dumps(report, indent=1))
     by = {}
     for row in data["rows"].values():
@@ -59,7 +61,11 @@ def main() -> int:
     ap.add_argument("--probe", action="store_true", help="only show what ESPN returns per competition")
     ap.add_argument("--leagues", action="store_true",
                     help="collect the small domestic leagues (club_cups.LEAGUES) for the Europe model instead")
+    ap.add_argument("--second-tiers", action="store_true",
+                    help="collect the second divisions (club_cups.SECOND_TIERS): promoted clubs' history")
     args = ap.parse_args()
+    if args.second_tiers:
+        return collect_leagues(args.minutes, club_cups.SECOND_TIERS, club_cups.SECOND_TIERS_KEY)
     if args.leagues:
         return collect_leagues(args.minutes)
     if args.probe:

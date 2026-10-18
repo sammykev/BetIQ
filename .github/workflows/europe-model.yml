@@ -31,7 +31,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    timeout-minutes: 190
     defaults:
       run:
         working-directory: backend
@@ -58,6 +58,13 @@ jobs:
         env:
           UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
         run: python collect_club_cups.py --leagues --minutes ${{ github.event.inputs.league_minutes || '45' }}
+
+      # Their second divisions: promoted clubs' history (club_cups.SECOND_TIERS)
+      - name: Collect ESPN second divisions
+        if: github.event.inputs.probe != 'true'
+        env:
+          UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
+        run: python collect_club_cups.py --second-tiers --minutes 40
 
       # The other countries' top flights from SportyBet's results (collect_sb_leagues.py)
       - name: Collect SportyBet leagues

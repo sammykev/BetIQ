@@ -474,7 +474,9 @@ PROBE_SLUGS = ["cyp.1", "irl.1", "cro.1", "cze.1", "srb.1", "hun.1", "isr.1", "b
                "blr.1", "ltu.1", "lva.1", "est.1", "alb.1", "mkd.1", "kos.1", "mne.1", "gib.1", "wal.1",
                "nir.1", "lux.1", "and.1", "fro.1",
                # covered by football-data.co.uk, for comparison
-               "aut.1", "sui.1", "den.1", "nor.1", "swe.1", "pol.1", "rou.1", "gre.1", "tur.1", "bel.1", "sco.1"]
+               "aut.1", "sui.1", "den.1", "nor.1", "swe.1", "pol.1", "rou.1", "gre.1", "tur.1", "bel.1", "sco.1",
+               # second divisions (club_cups.SECOND_TIERS)
+               "bel.2", "gre.2", "tur.2", "aut.2", "sui.2", "den.2", "nor.2", "swe.2", "pol.2", "rou.2"]
 
 
 async def probe_leagues(days: int = 45) -> Dict[str, Any]:

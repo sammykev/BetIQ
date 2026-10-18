@@ -803,6 +803,8 @@ async def data_status(_admin: str = Depends(main.require_admin)):
         "leagues": leagues,
         "last_sync": {"at": last.isoformat() if last else None, "report": main._football_sync["report"]},
         "teams_checked": len(teams),
+        # ESPN second-division matches loaded per league (main._second_tier_rows)
+        "second_tiers": dict(main._second_tier_counts),
         "renamed": {k: v["model_name"] for k, v in sorted(teams.items()) if v["model_name"] != k},
         "thin_history": thin,
         "international": {**main._intl_status, "at": main._intl_status["at"].isoformat() if main._intl_status["at"] else None},

@@ -279,3 +279,63 @@ def test_a_league_without_a_calendar_is_skipped_not_read_daily():
     asyncio.run(club_cups.collect(Session(), data, 1e18, date(2026, 6, 1), pause=0,
                                   competitions={"cze.1": ("CZE", "Czechia", "league")}, seasons_back=0))
     assert data["calendars"]["cze.1|2025"] == [] and Session.calls == 2
+
+
+class TestSecondTiers:
+    """ESPN's second divisions as context rows (main._second_tier_rows):
+    promoted clubs keep one history across both tiers."""
+
+    def rows(self, monkeypatch, matches, extra, known=frozenset()):
+        data = cc.empty()
+        for i, (h, a, lg) in enumerate(matches):
+            data["rows"][str(i)] = {"Date": f"2025-0{i % 9 + 1}-10", "HomeTeam": h, "AwayTeam": a,
+                                    "FTHG": 1, "FTAG": 0, "Result": "H", "league": lg}
+        monkeypatch.setattr(cc, "load", lambda r, key=None: data if key == cc.SECOND_TIERS_KEY else cc.empty())
+        return main._second_tier_rows(set(known), extra)
+
+    def extra(self, *names, league="TSL"):
+        return pd.DataFrame({"HomeTeam": list(names), "AwayTeam": list(reversed(names)), "league": league})
+
+    def test_names_resolve_to_the_top_flight_spelling(self, monkeypatch):
+        df = self.rows(monkeypatch, [("Kocaelispor FK", "Bandirmaspor", "TUR2")],
+                       self.extra("Kocaelispor", "Galatasaray"))
+        assert df.HomeTeam.tolist() == ["Kocaelispor"] and df.AwayTeam.tolist() == ["Bandirmaspor"]
+        assert df.Context.all() and main._second_tier_counts == {"TUR2": 1}
+
+    def test_clashing_names_take_the_top_flight_tag(self, monkeypatch):
+        # Tagged in the top flight's rows → the same tagged name here
+        df = self.rows(monkeypatch, [("Grazer AK", "Lustenau", "AUT2")],
+                       self.extra("Grazer AK (AUT)", "Sturm Graz", league="AUT"), known={"Grazer AK"})
+        assert df.HomeTeam.tolist() == ["Grazer AK (AUT)"]
+
+    def test_reserve_sides_stay_their_own_teams(self, monkeypatch):
+        df = self.rows(monkeypatch, [("Sturm Graz II", "Rapid Wien II", "AUT2"), ("Jong Genk", "Lommel", "BEL2")],
+                       pd.concat([self.extra("Sturm Graz", "Rapid Wien", league="AUT"),
+                                  self.extra("Genk", "Club Brugge", league="JPL")]))
+        assert set(df.HomeTeam) == {"Sturm Graz II", "Jong Genk"} and "Rapid Wien II" in set(df.AwayTeam)
+
+    def test_nothing_collected_is_empty(self, monkeypatch):
+        assert self.rows(monkeypatch, [], pd.DataFrame()).empty
+
+    def test_every_second_tier_has_a_parent_league(self):
+        codes = {code for code, _, _ in cc.SECOND_TIERS.values()}
+        assert codes == set(cc.SECOND_TIER_PARENT)
+        assert set(cc.SECOND_TIER_PARENT.values()) <= main.MAIN_EXTRA_LEAGUES
+
+    def test_collector_flag(self, monkeypatch):
+        import sys
+        import collect_club_cups
+        seen = {}
+        monkeypatch.setattr(collect_club_cups, "collect_leagues",
+                            lambda minutes, comps=None, key=None: seen.update(comps=comps, key=key) or 0)
+        monkeypatch.setattr(sys, "argv", ["collect_club_cups.py", "--second-tiers", "--minutes", "1"])
+        assert collect_club_cups.main() == 0
+        assert seen == {"comps": cc.SECOND_TIERS, "key": cc.SECOND_TIERS_KEY}
+
+
+def test_scotlands_second_tier_comes_from_football_data():
+    import football_data_sync as fds
+    import predictor
+    assert "SC1" in fds.EXTRA_DIVISIONS and "D1" in main.MAIN_EXTRA_LEAGUES
+    assert {"D1", "TUR2", "AUT2"} <= predictor.DOMESTIC_LEAGUES
+    assert main._TAG_AS["D1"] == "SPL"

@@ -85,7 +85,9 @@ COMPETITION_K: Dict[str, float] = {
 LEAGUE_STRENGTH = False
 DOMESTIC_LEAGUES = {"PL", "ELC", "EL1", "EL2", "PD", "SD", "SA", "SB", "BL1", "BL2", "FL1", "FL2", "DED", "JPL",
                     "PPL", "SPL", "D1", "GSL", "BSA", "TSL", "AUT", "SUI", "DEN", "NOR", "SWE", "POL", "ROU",
-                    "CYP", "IRL", "ISR", "MLT", "WAL", "NIR", "CZE", "FIN"}
+                    "CYP", "IRL", "ISR", "MLT", "WAL", "NIR", "CZE", "FIN",
+                    # second divisions (club_cups.SECOND_TIERS; Scotland's is D1)
+                    "BEL2", "GRE2", "TUR2", "AUT2", "SUI2", "DEN2", "NOR2", "SWE2", "POL2", "ROU2"}
 LEAGUE_OFFSET_PRIOR = {"PL": 0.0, "PD": -15.0, "SA": -25.0, "BL1": -25.0, "FL1": -60.0, "PPL": -90.0,
                        "DED": -100.0, "ELC": -170.0, "BL2": -190.0, "SD": -190.0, "SB": -200.0, "FL2": -230.0,
                        "EL1": -280.0, "EL2": -360.0, "JPL": -110.0, "SPL": -150.0, "GSL": -150.0, "BSA": -80.0,
@@ -93,7 +95,11 @@ LEAGUE_OFFSET_PRIOR = {"PL": 0.0, "PD": -15.0, "SA": -25.0, "BL1": -25.0, "FL1":
                        "TSL": -140.0, "AUT": -150.0, "SUI": -160.0, "DEN": -170.0, "NOR": -180.0,
                        "POL": -200.0, "SWE": -210.0, "ROU": -230.0,
                        "CZE": -170.0, "ISR": -220.0, "CYP": -220.0, "FIN": -320.0, "IRL": -330.0,
-                       "NIR": -420.0, "MLT": -430.0, "WAL": -450.0}
+                       "NIR": -420.0, "MLT": -430.0, "WAL": -450.0,
+                       # Second divisions: roughly a top flight's level less a Championship-to-PL gap
+                       "D1": -320.0, "BEL2": -280.0, "GRE2": -330.0, "TUR2": -300.0, "AUT2": -320.0,
+                       "SUI2": -320.0, "DEN2": -330.0, "NOR2": -340.0, "SWE2": -360.0, "POL2": -360.0,
+                       "ROU2": -400.0}
 # SportyBet's top flights (group B: collect_sb_leagues, as context rows) are
 # islands — their clubs only meet each other, so a Bosnian title contender's
 # Elo reads like a Premier League side's. Their offsets apply always (with

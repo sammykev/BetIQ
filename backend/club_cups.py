@@ -67,6 +67,28 @@ LEAGUE_CODES = {c for c, _, _ in LEAGUES.values()}
 LEAGUES_KEY = "betiq:club_leagues:v1"
 LEAGUE_SEASONS_BACK = 3
 
+# Second divisions of the leagues we publish from ESPN (league_fixtures.py),
+# which football-data.co.uk doesn't carry (Scotland's comes from its SC1
+# files): the history of promoted clubs. The main model reads them as
+# context rows (main._second_tier_rows). Slugs not yet seen answering are
+# simply skipped (no calendar, no requests); see europe_model.py --probe-leagues.
+SECOND_TIERS: Dict[str, Tuple[str, str, str]] = {
+    "bel.2": ("BEL2", "Challenger Pro League", "league"),
+    "gre.2": ("GRE2", "Super League 2", "league"),
+    "tur.2": ("TUR2", "TFF 1. Lig", "league"),
+    "aut.2": ("AUT2", "Austrian 2. Liga", "league"),
+    "sui.2": ("SUI2", "Challenge League", "league"),
+    "den.2": ("DEN2", "Danish 1st Division", "league"),
+    "nor.2": ("NOR2", "OBOS-ligaen", "league"),
+    "swe.2": ("SWE2", "Superettan", "league"),
+    "pol.2": ("POL2", "I liga", "league"),
+    "rou.2": ("ROU2", "Liga II", "league"),
+}
+# Second division → the top flight its promoted clubs go up to
+SECOND_TIER_PARENT = {"BEL2": "JPL", "GRE2": "GSL", "TUR2": "TSL", "AUT2": "AUT", "SUI2": "SUI",
+                      "DEN2": "DEN", "NOR2": "NOR", "SWE2": "SWE", "POL2": "POL", "ROU2": "ROU"}
+SECOND_TIERS_KEY = "betiq:club_second_tiers:v1"
+
 
 def season_start(today: date) -> int:
     return today.year if today.month >= 7 else today.year - 1

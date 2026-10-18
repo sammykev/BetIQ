@@ -921,7 +921,11 @@ def _load_new_league_csv(path: str, league: str) -> pd.DataFrame:
 
 # The Brasileirão and the European leagues we publish (league_fixtures.py):
 # context rows — ratings and form, no training rows
-MAIN_EXTRA_LEAGUES = {"BSA", "JPL", "SPL", "GSL", "TSL", "AUT", "SUI", "DEN", "NOR", "SWE", "POL", "ROU"}
+MAIN_EXTRA_LEAGUES = {"BSA", "JPL", "SPL", "GSL", "TSL", "AUT", "SUI", "DEN", "NOR", "SWE", "POL", "ROU",
+                      "D1"}  # Scotland's second tier (SC1): promoted clubs' history
+# A second division's clashing names take its top flight's tag, so a promoted
+# club keeps one history across both
+_TAG_AS = {"D1": "SPL"}
 # Leagues whose walk-forward check hasn't passed: published with a warning, kept out of slips
 _unproven_leagues: set = set()
 # Group B (sb_league_fixtures.py): fixtures from SportyBet's catalog, kept between linking runs
@@ -979,11 +983,65 @@ def _load_extra_leagues(known: Optional[set] = None, leagues: Optional[set] = No
         return pd.DataFrame()
     clash = {normalise(n) for n in (known or set())}
     for col in ("HomeTeam", "AwayTeam"):
-        df[col] = [f"{n} ({lg})" if normalise(n) in clash else n for n, lg in zip(df[col], df["league"])]
+        df[col] = [f"{n} ({_TAG_AS.get(lg, lg)})" if normalise(n) in clash else n
+                   for n, lg in zip(df[col], df["league"])]
     df = df.drop_duplicates(subset=["Date", "HomeTeam", "AwayTeam"]).sort_values("Date").reset_index(drop=True)
     df["Context"] = True
     print(f"[Data] Extra leagues: {len(df)} matches for ratings only "
           f"({', '.join(f'{k} {v}' for k, v in df['league'].value_counts().items())})")
+    return df
+
+
+# Reserve and youth sides ("Sturm Graz II", "Jong PSV", "Lommel U23"): their
+# own teams, never resolved to the first team
+_RESERVE = re.compile(r"(?:\bII\b|\bB$|\bU-?(?:19|21|23)\b|^Jong\b|\bAmat)", re.I)
+_second_tier_counts: Dict[str, int] = {}
+
+
+def _second_tier_rows(known: set, extra_df: pd.DataFrame) -> pd.DataFrame:
+    """ESPN's second divisions (club_cups.SECOND_TIERS) as context rows: the
+    history of clubs promoted into the top flights we publish. Each name is
+    resolved to its top flight's spelling (football-data.co.uk's), so a
+    promoted club's two tiers are one history; one clashing with a club in
+    `known` takes the top flight's tag, as _load_extra_leagues does."""
+    import club_cups
+    import model_store
+    from team_names import normalise
+    global _second_tier_counts
+    try:
+        data = club_cups.load(model_store._client(), club_cups.SECOND_TIERS_KEY)
+        df = club_cups.rows_frame(data, set(club_cups.SECOND_TIER_PARENT))
+    except Exception as e:
+        print(f"[Data] Second divisions not read: {e}")
+        return pd.DataFrame()
+    if df.empty:
+        _second_tier_counts = {}
+        return df
+    df = df[df["Date"] >= EXTRA_SINCE].copy()
+    clash = {normalise(n) for n in known}
+    for code, parent in club_cups.SECOND_TIER_PARENT.items():
+        rows = df["league"] == code
+        if not rows.any():
+            continue
+        tag = f" ({parent})"
+        top: set = set()
+        if not extra_df.empty:
+            in_parent = extra_df[extra_df["league"] == parent]
+            top = {n[:-len(tag)] if n.endswith(tag) else n
+                   for n in set(in_parent["HomeTeam"]) | set(in_parent["AwayTeam"])}
+        resolver = TeamResolver(top)
+        for col in ("HomeTeam", "AwayTeam"):
+            names = []
+            for n in df.loc[rows, col]:
+                if not _RESERVE.search(n):
+                    n = resolver.resolve(n)
+                names.append(n + tag if normalise(n) in clash else n)
+            df.loc[rows, col] = names
+    df = df.drop_duplicates(subset=["Date", "HomeTeam", "AwayTeam"]).reset_index(drop=True)
+    df["Context"] = True
+    _second_tier_counts = {k: int(v) for k, v in df["league"].value_counts().items()}
+    print(f"[Data] Second divisions: {len(df)} matches for ratings only "
+          f"({', '.join(f'{k} {v}' for k, v in _second_tier_counts.items())})")
     return df
 
 
@@ -1799,9 +1857,11 @@ def _assemble_training_data():
     # changes. The European extra leagues feed the Europe model only
     # (europe_model.py), which is judged on European matches.
     extra_df = _load_extra_leagues(club_names | nation_names, leagues=MAIN_EXTRA_LEAGUES)
+    # Their second divisions from ESPN: promoted clubs' history
+    tier2_df = _second_tier_rows(club_names | nation_names, extra_df)
     # The top flights only SportyBet covers (sb_league_fixtures.py), the same way
-    sb_df = _sb_league_rows(club_names | nation_names | (
-        set(extra_df["HomeTeam"]) | set(extra_df["AwayTeam"]) if not extra_df.empty else set()))
+    sb_df = _sb_league_rows(club_names | nation_names | {
+        n for df in (extra_df, tier2_df) if not df.empty for n in set(df["HomeTeam"]) | set(df["AwayTeam"])})
     if not ucl_df.empty and club_names:
         ucl_df = TeamResolver(club_names, aliases=UCL_ALIASES).resolve_frame(ucl_df)
     if not ucl_df.empty:
@@ -1810,7 +1870,7 @@ def _assemble_training_data():
     # European competitions and domestic cups from ESPN (club_cups.py), the
     # sets the nightly check found to improve the league predictions
     cups_df = _club_cup_rows(club_names)
-    parts = [df for df in [fd_df, epl_df, ucl_df, intl_df, cups_df, extra_df, sb_df] if not df.empty]
+    parts = [df for df in [fd_df, epl_df, ucl_df, intl_df, cups_df, extra_df, tier2_df, sb_df] if not df.empty]
     if not parts:
         print("[Pipeline] No training data found!")
         return None

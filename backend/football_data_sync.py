@@ -37,7 +37,7 @@ REQUIRED = ["Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG", "FTR"]
 # the others as one file per country with every season since 2012
 # (football-data.co.uk/new/), results and closing odds.
 EXTRA_DIR = os.path.join(os.path.dirname(__file__), "data", "football_extra")
-EXTRA_DIVISIONS = ("B1", "SC0", "G1", "T1")
+EXTRA_DIVISIONS = ("B1", "SC0", "SC1", "G1", "T1")
 NEW_BASE_URL = "https://www.football-data.co.uk/new"
 NEW_LEAGUES = ("AUT", "SWZ", "DNK", "NOR", "SWE", "POL", "ROU", "BRA")
 NEW_REQUIRED = ["Date", "Home", "Away", "HG", "AG", "Res"]
