@@ -268,7 +268,8 @@ def _football_rows(e: Dict, day: str) -> List[Dict]:
     if (e.get("result") or {}).get("status") != "finished":
         return []
     return [{"sport": "football", "market": m, "code": c, "prob": float(p), "won": bool(w),
-             "date": e.get("date") or day, "match": f"{e.get('home')}|{e.get('away')}|{e.get('date') or day}"}
+             "date": e.get("date") or day, "match": f"{e.get('home')}|{e.get('away')}|{e.get('date') or day}",
+             "league": str(e.get("league") or ""), "league_name": str(e.get("league_name") or "")}
             for m, c, p, w in market_accuracy.settle(e) if isinstance(p, (int, float))]
 
 
@@ -284,7 +285,8 @@ def _other_rows(sport: str, e: Dict, day: str) -> List[Dict]:
     if res.get("status") != "finished":
         return []
     match = f"{e.get('home')}|{e.get('away')}|{e.get('date') or day}"
-    base = {"sport": sport, "date": e.get("date") or day, "match": match}
+    base = {"sport": sport, "date": e.get("date") or day, "match": match,
+            "league": str(e.get("league") or ""), "league_name": str(e.get("league_name") or "")}
     out = []
     if isinstance(p.get("lines"), list) and p["lines"]:
         settle = _settler(sport)
