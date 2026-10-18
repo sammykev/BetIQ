@@ -463,8 +463,9 @@ async def _optimize_request(body: Dict[str, Any],
                                               league_id=str(p.get("league") or "")))
     if bb_preds:
         import basketball_predictions
-        groups += [basketball_predictions.options(p, min_prob, bb_families, lambda m, c: m not in paused)
-                   for p in bb_preds]
+        # A market or its whole family switched off (the admin switches basketball off by family)
+        bb_allowed = lambda m, c: m not in paused and basketball_predictions.family(m) not in paused
+        groups += [basketball_predictions.options(p, min_prob, bb_families, bb_allowed) for p in bb_preds]
     rk_preds: List[Dict] = []
     if rk_on:
         import racket_predictions

@@ -231,6 +231,15 @@ class TestServer:
         with pytest.raises(Exception):
             asyncio.run(main._optimize_request({"sport": "cricket"}))
 
+    def test_a_family_the_admin_switched_off_is_never_picked(self, priced, monkeypatch):
+        import asyncio
+        import main
+        monkeypatch.setattr(main, "_review", {"mode": "flag", "loaded": True, "overrides": {"bb_halves": "off", "bb_total": "off"}})
+        r = asyncio.run(main._optimize_request({"sport": "basketball", "min_odds": 1.5, "max_odds": 3.5,
+                                                "min_prob": 0.6, "days": 3}))
+        assert r.get("picks"), r
+        assert not any(p["market"] == "bb_total" or p["market"].startswith(("bb_h1_", "bb_h2_")) for p in r["picks"])
+
     def test_the_optimizer_respects_the_basketball_switch(self, priced, monkeypatch):
         import main
         from fastapi import HTTPException

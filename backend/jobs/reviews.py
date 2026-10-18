@@ -70,14 +70,15 @@ def _review_view() -> Dict[str, Any]:
     return {"mode": main._review.get("mode", "flag"), "overrides": main._review.get("overrides") or {},
             "latest": main._review.get("latest"), "history": main._review.get("history") or [],
             "blocked": sorted(market_review.blocked(main._review)),
-            "markets": [{"market": m, "name": n} for m, n in main._market_names().items()],
+            "markets": [{"market": m, "name": n, "sport": "basketball" if m.startswith("bb_") else "football"}
+                        for m, n in main._market_names().items()],
             "rules": {"window_days": market_review.WINDOW_DAYS, "min_matches": market_review.MIN_MATCHES,
                       "pause_gap": market_review.PAUSE_GAP, "pause_z": market_review.PAUSE_Z}}
 
 
 def _market_names() -> Dict[str, str]:
-    import optimizer
-    return dict(optimizer.MARKET_NAMES)
+    import market_review
+    return market_review.known()
 
 
 @router.get("/api/admin/market-review")

@@ -539,9 +539,11 @@ function WeeklyReview() {
   const reviewed = new Map<string, any>((latest?.markets ?? []).map((m: any) => [m.market, m]));
   // Reviewed markets first, then any pinned by hand that the review didn't cover
   const rows = [...(latest?.markets ?? []),
-    ...Object.keys(rev.overrides ?? {}).filter(m => !reviewed.has(m))
+    ...Object.keys(rev.overrides ?? {}).filter(m => !reviewed.has(m) && !m.startsWith("bb_"))
       .map(m => ({ market: m, name: rev.markets?.find((x: any) => x.market === m)?.name ?? m, status: "few", why: "not in the latest review" }))];
   const names = (ids: string[]) => ids.map(id => rev.markets?.find((x: any) => x.market === id)?.name ?? id).join(", ");
+  // Basketball isn't reviewed: its families of markets are switched off by hand
+  const basketball = (rev.markets ?? []).filter((m: any) => m.sport === "basketball");
   return (
     <div className="space-y-3">
       <div className="grid gap-2 grid-cols-1 sm:grid-cols-2">
@@ -602,6 +604,30 @@ function WeeklyReview() {
           </table>
         </div>
       ) : <p className="text-xs text-n-400">No review yet: it runs every Monday, or press Run now.</p>}
+      {basketball.length > 0 && (
+        <div>
+          <p className="eyebrow mb-1.5">Basketball markets</p>
+          <div className="grid gap-1.5 grid-cols-1 sm:grid-cols-2">
+            {basketball.map((m: any) => {
+              const isOff = override(m.market) === "off";
+              return (
+                <div key={m.market} className="flex items-center justify-between gap-3 rounded-lg bg-surface-sunken px-3 py-2">
+                  <span className={`text-xs ${isOff ? "text-n-500 line-through" : "text-n-200"}`}>{m.name.replace(/^Basketball /, "")}</span>
+                  <select value={isOff ? "off" : "auto"} disabled={busy === m.market}
+                    onChange={e => save({ overrides: { ...(rev.overrides ?? {}), [m.market]: e.target.value } }, m.market)}
+                    className="rounded-md bg-surface border border-n-800 px-1.5 py-1 text-[11px] text-n-200">
+                    <option value="auto">On</option>
+                    <option value="off">Off</option>
+                  </select>
+                </div>
+              );
+            })}
+          </div>
+          <p className="mt-1.5 text-[11px] text-n-500">
+            Off leaves every line of that kind out of the optimizer and daily odds, and hides its chip on the optimizer page.
+          </p>
+        </div>
+      )}
       {rev.history?.length > 1 && (
         <div>
           <p className="eyebrow mb-1.5">Past reviews</p>

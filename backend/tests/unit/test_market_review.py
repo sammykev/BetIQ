@@ -120,6 +120,13 @@ class TestSettings:
             with pytest.raises(ValueError):
                 mr.settings(bad, {})
 
+    def test_basketball_families_can_be_switched_off(self):
+        new = mr.settings({"overrides": {"bb_quarters": "off", "bb_player": "auto"}}, {})
+        assert new["overrides"] == {"bb_quarters": "off"} and "bb_quarters" in mr.blocked(new)
+        assert mr.names(["bb_quarters"]) == "Basketball Quarters"
+        with pytest.raises(ValueError):
+            mr.settings({"overrides": {"bb_q1_total": "off"}}, {})          # families, not single markets
+
     def test_alert(self):
         paused = {"market": "goals_ou", "status": "pause"}
         state = {"mode": "auto", "latest": {"markets": [paused], "newly_paused": ["goals_ou"]}}

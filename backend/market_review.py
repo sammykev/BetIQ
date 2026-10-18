@@ -16,7 +16,8 @@ settled, so the next review sees whether it has recovered. A paused market
 comes back once it reviews "ok" (a "watch" or thin week keeps it paused).
 
 The admin chooses the mode ("auto" pauses, "flag" only reports) and can pin
-any market on or off (overrides). Flag is the default: a market that comes
+any market on or off (overrides), basketball's families of markets too
+(those aren't reviewed, only switched off by hand). Flag is the default: a market that comes
 in under what we say is corrected (calibration.py), not left out.
 """
 
@@ -115,6 +116,13 @@ def review(entries: Iterable[Dict], paused_before: Iterable[str] = ()) -> Dict[s
             "paused": sorted(now), "newly_paused": sorted(now - before), "restored": sorted(before - now)}
 
 
+def known() -> Dict[str, str]:
+    """Every market an override can name: football's, then basketball's
+    families (basketball_predictions.FAMILIES, as the optimizer groups them)."""
+    import basketball_predictions
+    return {**optimizer.MARKET_NAMES, **{f: f"Basketball {n}" for f, n in basketball_predictions.FAMILIES.items()}}
+
+
 def blocked(state: Dict[str, Any]) -> Set[str]:
     """Markets not to pick from: pinned off, the DEFAULT_OFF ones not pinned
     on, plus (in auto mode) the review's paused ones that aren't pinned on."""
@@ -134,9 +142,9 @@ def settings(body: Dict[str, Any], current: Dict[str, Any]) -> Dict[str, Any]:
     overrides = body.get("overrides", current.get("overrides") or {})
     if not isinstance(overrides, dict):
         raise ValueError("overrides must be {market: on|off}")
-    clean = {}
+    clean, markets = {}, known()
     for m, v in overrides.items():
-        if m not in optimizer.MARKET_NAMES:
+        if m not in markets:
             raise ValueError(f"Unknown market: {m}")
         if v is None or v == "auto":
             continue
@@ -155,7 +163,8 @@ def remember(state: Dict[str, Any], result: Dict[str, Any], at: str) -> Dict[str
 
 
 def names(markets: Iterable[str]) -> str:
-    return ", ".join(optimizer.MARKET_NAMES.get(m, m) for m in markets)
+    names = known()
+    return ", ".join(names.get(m, m) for m in markets)
 
 
 def alert(state: Dict[str, Any], age_days: Optional[float]) -> Optional[Dict[str, str]]:
