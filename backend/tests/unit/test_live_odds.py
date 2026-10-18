@@ -111,6 +111,30 @@ class TestOptimizerCheck:
         assert got["live_check"]["removed"][0]["home"] == "A" and got["live_check"]["repriced"] == 1
         assert len(calls) >= 2
 
+    def test_the_other_lines_on_a_picked_match_are_checked_too(self, monkeypatch):
+        """Basketball suspends many lines at once: the suspended sibling of a
+        picked line is dropped in the same round, never picked next."""
+        groups = [[opt("A", 1.5, prob=0.9), opt("A", 1.6, prob=0.85, market="dc", code="1X")], [opt("C", 1.5)]]
+        seen = []
+
+        async def states(picks, events, market_map):
+            seen.append({(p["home"], p["market"]) for p in picks})
+            return {main._pick_key(p): ("suspended", None) if p["home"] == "A" else ("open", p["odds"]) for p in picks}
+        monkeypatch.setattr(main, "_live_states", states)
+        got = asyncio.run(_check_loop(groups, 1.2, 2.0))
+        assert [p["home"] for p in got["picks"]] == ["C"]
+        assert {("A", "1x2"), ("A", "dc")} <= seen[0]                 # the sibling went to the first check
+
+    def test_a_slip_still_holding_a_suspended_pick_isnt_given_out(self, monkeypatch):
+        groups = [[opt(h, 1.5)] for h in "ABCDEFGH"]
+
+        async def states(picks, events, market_map):
+            # Whatever is picked turns out suspended
+            return {main._pick_key(p): ("suspended", None) for p in picks}
+        monkeypatch.setattr(main, "_live_states", states)
+        result, check = asyncio.run(main._solve_checked(groups, 2.0, 3.0, 2.4, optimizer.MAX_GAMES, {}, {}))
+        assert result is None and check["removed"]
+
     def test_live_pages_are_read_several_at_a_time_and_reused(self, monkeypatch):
         monkeypatch.setattr(main, "_live_pages", {})
         reads = []

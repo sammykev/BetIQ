@@ -188,6 +188,11 @@ def asdict_option(o) -> Dict[str, Any]:
     return {"home": o.home, "away": o.away, "date": o.date, "market": o.market, "code": o.code}
 
 
+def _option_dict(o) -> Dict[str, Any]:
+    """An option as a pick for the live check (with its own SportyBet ids)."""
+    return {**asdict_option(o), "sb": o.sb, "odds": o.odds}
+
+
 def _pick_key(x: Dict[str, Any]) -> Tuple:
     return (x.get("home"), x.get("away"), x.get("date"), x.get("market"), x.get("code"))
 
@@ -278,23 +283,37 @@ async def _solve_checked(groups, lo: float, hi: float, target: float, max_games:
     now: suspended, withdrawn or started ones are dropped and the slip solved
     again without them; the rest take SportyBet's current price (solved again
     when one moved), so the code books at the odds shown. Up to
-    LIVE_CHECK_ROUNDS rounds. Returns (slip or None, what the check did)."""
+    LIVE_CHECK_ROUNDS rounds, then a last check: a slip still holding a
+    suspended pick comes back None. Returns (slip or None, what the check did)."""
     import booking_slip
     check: Dict[str, Any] = {"checked": 0, "removed": [], "repriced": 0, "unchecked": 0}
     result = await main._solve(groups, lo, hi, target, max_games, min_chance)
-    for _ in range(main.LIVE_CHECK_ROUNDS):
+    for round_ in range(main.LIVE_CHECK_ROUNDS + 1):
         if not result or not result.get("picks"):
             break
-        states = await main._live_states(result["picks"], events, market_map)
-        check["checked"] = sum(1 for st in states.values() if st[0] != "unchecked")
-        check["unchecked"] = sum(1 for st in states.values() if st[0] == "unchecked")
+        picked = {main._pick_key(x) for x in result["picks"]}
+        # Every line on the picked matches, not just the picked one: a match
+        # page shows all its suspended lines at once (basketball suspends
+        # many together), so the next solve can't land on another of them
+        matches = {k[:3] for k in picked}
+        others = [_option_dict(o) for g in groups for o in g
+                  if (o.home, o.away, o.date) in matches and main._pick_key(main.asdict_option(o)) not in picked]
+        states = await main._live_states(list(result["picks"]) + others, events, market_map)
+        mine = {k: st for k, st in states.items() if k in picked}
+        check["checked"] = sum(1 for st in mine.values() if st[0] != "unchecked")
+        check["unchecked"] = sum(1 for st in mine.values() if st[0] == "unchecked")
         by_key = {main._pick_key(x): x for x in result["picks"]}
         gone = {k for k, (st, _) in states.items() if st in (booking_slip.SUSPENDED, booking_slip.MISSING, "started")}
-        moved = {k: o for k, (st, o) in states.items()
+        moved = {k: o for k, (st, o) in mine.items()
                  if st == booking_slip.OPEN and o and abs(o - by_key[k]["odds"]) >= 0.005}
-        if not gone and not moved:
+        if not gone & picked and not moved:
             break
-        for k in gone:
+        if round_ == main.LIVE_CHECK_ROUNDS:
+            # Out of rounds: a slip still holding a suspended pick isn't given out
+            if gone & picked:
+                result = None
+            break
+        for k in gone & picked:
             x = by_key[k]
             check["removed"].append({"home": x["home"], "away": x["away"], "label": x["label"],
                                      "reason": {"started": "Already started",

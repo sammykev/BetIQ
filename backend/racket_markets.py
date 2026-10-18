@@ -125,6 +125,9 @@ def offers(ev: Dict, sport: str) -> List[Dict[str, Any]]:
         if kind in ("set_handicap", "games_handicap", "total_games", "total_sets", "s_total", "s_handicap",
                     "home_games", "away_games") and line is None:
             continue
+        # SportyBet market status: 0 open; anything else suspended, deactivated or settled
+        if m.get("status") not in (None, 0, "0"):
+            continue
         for o in m.get("outcomes") or []:
             if not o.get("isActive", 1):
                 continue

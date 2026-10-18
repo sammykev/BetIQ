@@ -52,6 +52,11 @@ class TestOffers:
         assert ("bb_h1_total", "O80.5") in offs and ("bb_overtime", "OT-N") in offs
         assert ("bb_1x2", "X") in offs
 
+    def test_a_suspended_market_is_left_out(self):
+        shut = {**market("225", [("12", 1.90), ("13", 1.90)], "total=160.5"), "status": 1}
+        offs = {(o["market"], o["code"]) for o in bmk.offers(event(markets=[market("219", [("4", 1.45), ("5", 2.75)]), shut]))}
+        assert ("bb_winner", "1") in offs and not any(m == "bb_total" for m, _ in offs)
+
     def test_labels_and_names(self):
         by = {(o["market"], o["code"]): o for o in bmk.offers(event(home="Lakers", away="Celtics"))}
         assert bmk.label(by[("bb_handicap", "A+5.5")], "Lakers", "Celtics") == "Celtics +5.5"

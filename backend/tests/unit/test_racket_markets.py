@@ -54,6 +54,12 @@ def test_offers_read_every_line_with_ids():
     assert rkm.main_lines(offs) == {"winner": (1.8, 2.0), "total": (22.5, 1.9, 1.9)}
 
 
+def test_a_suspended_market_is_left_out():
+    ev = {**EV, "markets": [{**m, "status": 2} if m["id"] == "189" else m for m in EV["markets"]]}
+    codes = {o["market"] for o in rkm.offers(ev, "tennis")}
+    assert "rk_winner" in codes and "rk_total_games" not in codes
+
+
 def test_labels_and_names_in_each_sport():
     offs = {(o["market"], o["code"]): o for o in rkm.offers(EV, "tennis")}
     assert rkm.label(offs[("rk_set_handicap", "H-1.5")], "Sinner", "Alcaraz") == "Sinner -1.5 sets"
