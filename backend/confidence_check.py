@@ -159,7 +159,7 @@ def suspects(rows: List[Dict], rep: Dict, z: float = -3.0, limit: int = 60) -> D
         for c in cells:
             if isinstance(c["z"], (int, float)) and c["z"] <= z:
                 rs = [r for r in rows if r["cal"] >= LEVELS[0] and how(r) == c["cell"]]
-                out[c["cell"]] = [{k: r.get(k) for k in ("date", "match", "league", "market", "code", "prob", "cal", "won", "score")}
+                out[c["cell"]] = [{k: r.get(k) for k in ("date", "match", "league", "market", "code", "prob", "cal", "won", "score", "flags")}
                                   for r in sorted(rs, key=lambda r: (r["date"], r["match"]))[:limit]]
     return out
 
@@ -220,7 +220,7 @@ def print_report(rep: Dict) -> None:
         print(f"\n== SUSPECT {k}: its picks rated ≥ 80% ==")
         for r in rs:
             print(f"  {r['date']} {r['match'][:48]:<48} {r['league'] or '':<8} {r['market']:<14} {r['code']:<8} "
-                  f"raw {_pct(r['prob'])} cal {_pct(r['cal'])} {'WON ' if r['won'] else 'lost'} {r.get('score') or ''}")
+                  f"raw {_pct(r['prob'])} cal {_pct(r['cal'])} {'WON ' if r['won'] else 'lost'} {r.get('score') or ''} {r.get('flags') or ''}")
     for name, rows in rep["tickets"].items():
         print(f"\n== TICKETS ({name}): the day's top-N picks, one per match ==")
         for t in rows:

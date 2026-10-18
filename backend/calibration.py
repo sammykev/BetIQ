@@ -263,6 +263,16 @@ def check(rows: List[Dict]) -> Dict:
 
 # ── settled picks (Redis) ────────────────────────────────────────────────
 
+def _flags(pred: Dict) -> str:
+    """What the snapshot said about itself (for the confidence check's suspects)."""
+    out = [k for k in ("thin_history", "league_unproven") if pred.get(k)]
+    p = [pred.get(k) for k in ("p_home", "p_draw", "p_away")]
+    if all(isinstance(x, (int, float)) for x in p):
+        out.append("1x2 " + "/".join(f"{x:.2f}" for x in p))
+    out.append("odds" if pred.get("odds_home") else "no odds")
+    return " ".join(out)
+
+
 def _football_rows(e: Dict, day: str) -> List[Dict]:
     import market_accuracy
     if (e.get("result") or {}).get("status") != "finished":
@@ -270,7 +280,7 @@ def _football_rows(e: Dict, day: str) -> List[Dict]:
     return [{"sport": "football", "market": m, "code": c, "prob": float(p), "won": bool(w),
              "date": e.get("date") or day, "match": f"{e.get('home')}|{e.get('away')}|{e.get('date') or day}",
              "league": str(e.get("league") or ""), "league_name": str(e.get("league_name") or ""),
-             "score": f"{e['result'].get('hg')}-{e['result'].get('ag')}"}
+             "score": f"{e['result'].get('hg')}-{e['result'].get('ag')}", "flags": _flags(e.get("pred") or {})}
             for m, c, p, w in market_accuracy.settle(e) if isinstance(p, (int, float))]
 
 
