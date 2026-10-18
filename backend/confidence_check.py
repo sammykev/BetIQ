@@ -164,6 +164,23 @@ def suspects(rows: List[Dict], rep: Dict, z: float = -3.0, limit: int = 60) -> D
     return out
 
 
+WEAK_Z = -2.0
+WEAK_GAP = -0.03
+
+
+def weak_cells(rep: Optional[Dict], z: float = WEAK_Z, gap: float = WEAK_GAP) -> set:
+    """Market and league cells ("sport:market", "sport:league") whose picks
+    rated ≥ 80% came in clearly less often than we said: short by more than
+    |z| standard errors and by more than |gap|. High-confidence tickets
+    leave them out."""
+    out = set()
+    for c in (rep or {}).get("markets", []) + (rep or {}).get("leagues", []):
+        if (isinstance(c.get("z"), (int, float)) and c["z"] <= z
+                and isinstance(c.get("gap"), (int, float)) and c["gap"] <= gap):
+            out.add(c["cell"])
+    return out
+
+
 def report(rows: List[Dict], maps: Dict) -> Dict:
     rows = annotate(rows, maps)
     names = {league_key(r): r.get("league_name") or r.get("league") or "?" for r in rows}

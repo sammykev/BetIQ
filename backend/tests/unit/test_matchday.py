@@ -588,3 +588,17 @@ class TestApiFootballBackup:
         monkeypatch.setattr(main, "_af_live_last", [0.0])
         redis.kv[f"betiq:af:live:{date.today().isoformat()}"] = str(main.AF_LIVE_DAILY_CAP)
         assert "used today's" in asyncio.run(main._backup_results(redis, stale))[1]["skipped"]
+
+
+def test_constant_predictions_are_flagged_and_kept_in_the_snapshot():
+    same = {"league": "CL", "p_home": 0.05, "p_draw": 0.4, "p_away": 0.55, "p_over25": 0.3}
+    preds = [{**same, "home": f"H{i}", "away": f"A{i}"} for i in range(3)]
+    preds.append({"league": "CL", "home": "X", "away": "Y", "p_home": 0.05, "p_draw": 0.907, "p_away": 0.043})
+    preds.append({"league": "PL", "home": "A", "away": "B", "p_home": 0.5, "p_draw": 0.3, "p_away": 0.2})
+    preds.append({**same, "league": "PL", "home": "C", "away": "D"})    # same chances, other league
+    out = main._flag_constant(preds)
+    assert [bool(p.get("constant")) for p in out] == [True, True, True, True, False, False]
+    assert all(p["thin_history"] for p in out[:4]) and "thin_history" not in out[4]
+    snap = matchday.snapshot(out[0])
+    assert snap["constant"] is True and snap["thin_history"] is True
+    assert "constant" not in matchday.snapshot(out[4])

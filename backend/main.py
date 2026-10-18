@@ -1457,7 +1457,42 @@ def _build_predictions(predictor, fixtures: list, live_odds: dict) -> list:
             })
         except Exception:
             pass
-    return predictions
+    return _flag_constant(predictions)
+
+
+# This many matches of one league with the very same chances, or a draw
+# rated this likely, means the model fell back to a default (unknown clubs,
+# features it couldn't build) — CL in Oct 2026: a 90.7% draw on all 15 games
+CONSTANT_SAME = 3
+MAX_DRAW = 0.5
+
+
+def _flag_constant(predictions: list) -> list:
+    """Flag (thin_history + constant) the predictions that aren't real: the
+    same 1X2 and goals chances on CONSTANT_SAME+ matches of a league, or a
+    draw above MAX_DRAW. Flagged ones stay on the site but out of slips and
+    the accuracy records."""
+    def sig(p):
+        return (p.get("league"), *(p.get(k) for k in ("p_home", "p_draw", "p_away", "p_over25")))
+    counts: Dict[tuple, int] = {}
+    for p in predictions:
+        counts[sig(p)] = counts.get(sig(p), 0) + 1
+    out = []
+    for p in predictions:
+        draw = p.get("p_draw")
+        if counts[sig(p)] >= CONSTANT_SAME or (isinstance(draw, (int, float)) and draw > MAX_DRAW):
+            p = {**p, "thin_history": True, "constant": True}
+        out.append(p)
+    flagged = sorted({str(p.get("league")) for p in out if p.get("constant")})
+    if flagged:
+        # Which model and calibration gave them, to find the cause in the logs
+        def why(lg: str) -> str:
+            m = _europe_predictor if _europe_covers(lg) else _predictor
+            cal = (getattr(m, "calibration", None) or {}).get(lg)
+            return f"{lg} ({'europe' if m is _europe_predictor and m is not None else 'main'} model, calibration {cal or 'none'})"
+        print(f"[Predict] {sum(1 for p in out if p.get('constant'))} constant predictions kept off tickets: "
+              + ", ".join(why(lg) for lg in flagged))
+    return out
 
 
 # Current-season CSVs from football-data.co.uk (see football_data_sync.py)
@@ -2595,8 +2630,8 @@ from jobs.reviews import (  # noqa: E402
 )
 from routers.optimizer import (  # noqa: E402
     _bookable_markets, _cached_sport_predictions, _explain_empty, _live_pages_for, _live_states,
-    _optimize_request, _optimizer_sports, _pick_key, _prediction_for_leg, _solve, _solve_checked,
-    asdict_option,
+    _leg_note, _optimize_request, _optimizer_sports, _pick_key, _prediction_for_leg, _solve, _solve_checked,
+    _weak_cells, asdict_option,
 )
 from routers.daily import (  # noqa: E402
     _book_daily, _build_daily, _daily_load, _daily_public, _daily_save, _daily_slip, _daily_tick,

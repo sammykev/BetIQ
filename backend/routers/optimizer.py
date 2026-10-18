@@ -15,6 +15,44 @@ import main
 
 router = APIRouter()
 
+# A slip is "high confidence" when it asks each pick for at least this
+# chance, or sets a least chance for the whole slip
+HIGH_CONF_PROB = 0.80
+# High-confidence slips the user builds stop at this many legs: in the
+# confidence check's history the day's top 10 picks all won 73.9% of days,
+# the top 20 35.0% and the top 30 21% (10 legs: about the most that still
+# lands most days). Longer asks get the rest as separate slips of ≤ 10
+HIGH_CONF_LEGS = 10
+LEG_HISTORY = {10: 0.739, 20: 0.35, 30: 0.21}
+WEAK_TTL = 3600
+_weak_cache: Dict[str, Any] = {"at": 0.0, "cells": set()}
+
+
+def _weak_cells() -> set:
+    """Market and league cells ("sport:market", "sport:league") the last
+    confidence check found falling short (confidence_check.weak_cells), read
+    from Redis at most every WEAK_TTL seconds."""
+    import confidence_check
+    if time.time() - _weak_cache["at"] < WEAK_TTL:
+        return _weak_cache["cells"]
+    cells: set = set()
+    r = main._get_redis()
+    if r:
+        try:
+            raw = r.get(confidence_check.REPORT_KEY)
+            cells = confidence_check.weak_cells(json.loads(raw)) if raw else set()
+        except Exception as e:
+            print(f"[Optimizer] couldn't read the confidence check: {e}")
+    _weak_cache.update(at=time.time(), cells=cells)
+    return cells
+
+
+def _leg_note(asked: int, cap: int) -> str:
+    rates = ", ".join(f"{n} legs {round(r * 100)}%" for n, r in LEG_HISTORY.items())
+    return (f"High-confidence slips stop at {cap} legs: the longer a slip, the likelier one leg lets it down "
+            f"(how often the day's most confident picks all won: {rates}). "
+            f"You asked for up to {asked}, so the other matches are offered as separate slips of up to {cap}.")
+
 
 def _bookable_markets():
     """(market, code) → whether a SportyBet code can take the pick now:
@@ -299,6 +337,15 @@ async def _optimize_request(body: Dict[str, Any],
         # Optional cap on each pick's price (the daily slips use it): picks at or above it are left out
         max_leg = float(body["max_leg_odds"]) if body.get("max_leg_odds") else None
         days = min(main.PREDICTION_DAYS, max(1, int(body.get("days", 3))))
+        high = min_chance is not None or min_prob >= HIGH_CONF_PROB
+        # Markets and leagues the confidence check found falling short stay
+        # out of high-confidence slips ("healthy_only" overrides either way)
+        healthy = bool(body["healthy_only"]) if body.get("healthy_only") is not None else high
+        # A slip the user builds (not the daily slips: `window`) is cut to
+        # HIGH_CONF_LEGS when it's high confidence ("allow_long" keeps the ask)
+        asked = max_games
+        if high and window is None and not body.get("allow_long") and max_games > HIGH_CONF_LEGS:
+            max_games = HIGH_CONF_LEGS
     except (TypeError, ValueError):
         raise HTTPException(status_code=400, detail="Invalid optimizer settings")
     if not (1.01 <= lo <= hi <= 1_000_000):
@@ -411,6 +458,14 @@ async def _optimize_request(body: Dict[str, Any],
                        for p in ps]
     if max_leg:
         groups = [[o for o in g if o.odds < max_leg] for g in groups]
+    weak_out: List[str] = []
+    if healthy:
+        weak = main._weak_cells()
+        if weak:
+            def bad(o) -> Optional[str]:
+                return next((k for k in (f"{o.sport}:{o.market}", f"{o.sport}:{o.league_id}") if k in weak), None)
+            weak_out = sorted({k for g in groups for o in g for k in [bad(o)] if k})
+            groups = [[o for o in g if not bad(o)] for g in groups]
     # Matches already on another slip (the daily slips: no match in two categories)
     taken = {tuple(str(x) for x in m[:3]) for m in body.get("exclude_matches") or []
              if isinstance(m, (list, tuple)) and len(m) >= 3}
@@ -463,8 +518,10 @@ async def _optimize_request(body: Dict[str, Any],
                 "best_win_chance": result.get("win_chance"), "min_win_chance": min_win,
                 "matches_considered": considered, "target": [lo, hi], "target_odds": target, "thin_history": thin}
     if result is None:
+        capped = (f" High-confidence slips stop at {max_games} legs (you asked for {asked}): lower the target, "
+                  "or untick the cap." if max_games < asked else "")
         return {"error": (f"No slip from {considered} matches gets near {target:,.2f}x. "
-                          "Allow more games or days, add markets, or lower the minimum confidence."),
+                          "Allow more games or days, add markets, or lower the minimum confidence." + capped),
                 "matches_considered": considered, "target": [lo, hi], "target_odds": target, "thin_history": thin}
     # Which picks a SportyBet code can take: the match is linked to a SportyBet
     # event and SportyBet confirmed the market (shots, for one, it doesn't offer)
@@ -477,6 +534,25 @@ async def _optimize_request(body: Dict[str, Any],
         pick["bookable"] = (bool(events.get((pick["home"], pick["away"], pick["date"]))) and ok(pick["market"], pick["code"])
                             and (pick["market"] not in booking_slip.LISTED_ONLY or pick["odds_source"] == "sportybet"))
     result["bookable_picks"] = sum(1 for pick in result.get("picks") or [] if pick["bookable"])
+    if weak_out:
+        result["weak_left_out"] = weak_out
+    if max_games < asked:
+        # The rest of a long ask: more slips of ≤ HIGH_CONF_LEGS from the matches left
+        result["leg_cap"] = {"cap": max_games, "asked": asked, "note": main._leg_note(asked, max_games)}
+        used = {(p["home"], p["away"], p["date"]) for p in result.get("picks") or []}
+        extra: List[Dict[str, Any]] = []
+        for _ in range(-(-asked // max_games) - 1):
+            rest = [[o for o in g if (o.home, o.away, o.date) not in used] for g in groups]
+            more = await main._solve(rest, lo, hi, target, max_games, min_chance) if any(rest) else None
+            if not more or not more.get("picks"):
+                break
+            for pick in more["picks"]:
+                pick["bookable"] = (pick.get("sb") is not None or bool(events.get((pick["home"], pick["away"], pick["date"])))
+                                    and ok(pick["market"], pick["code"])
+                                    and (pick["market"] not in booking_slip.LISTED_ONLY or pick["odds_source"] == "sportybet"))
+            used |= {(p["home"], p["away"], p["date"]) for p in more["picks"]}
+            extra.append(more)
+        result["extra_slips"] = extra
     return {**result, "target": [lo, hi], "target_odds": round(target, 2), "matches_considered": considered, "thin_history": thin}
 
 

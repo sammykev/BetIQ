@@ -49,6 +49,12 @@ interface OptResult {
   /** Each pick checked on SportyBet's match page as the slip was made */
   live_check?: { checked: number; unchecked: number; repriced: number;
                  removed: { home: string; away: string; label: string; reason: string }[] };
+  /** Set when a high-confidence slip was held to fewer legs than asked */
+  leg_cap?: { cap: number; asked: number; note: string };
+  /** More slips of the same size from the matches this one didn't use */
+  extra_slips?: OptResult[];
+  /** Markets and leagues left out: their past high-confidence picks came in clearly short */
+  weak_left_out?: string[];
 }
 interface ThinMatch { home: string; away: string; date: string; time?: string; league?: string; league_name?: string;
   /** Left out for its league (check not passed), not for want of data on a club */
@@ -770,6 +776,7 @@ export default function OptimizerPage() {
               <StakeHint chance={result.win_chance} odds={result.total_odds} />
               <LiveCheckNote check={result.live_check} />
               <ThinLeftOut matches={result.thin_history} />
+              <LegCapNote result={result} />
 
               {booked?.code ? (
                 <div className="rounded-xl bg-surface-sunken p-4 space-y-3 [box-shadow:inset_0_0_0_1px_rgb(var(--accent)/0.4)]">
@@ -905,6 +912,44 @@ function LiveCheckNote({ check }: { check?: OptResult["live_check"] }) {
       )}
       {check.unchecked > 0 && (
         <p className="text-n-500">{check.unchecked} pick{check.unchecked === 1 ? "" : "s"} couldn&apos;t be checked right now; booking checks them again.</p>
+      )}
+    </div>
+  );
+}
+
+
+/** Why a high-confidence slip was kept short, the further slips it was split into,
+ *  and the weak markets and leagues left out. */
+function LegCapNote({ result }: { result: OptResult }) {
+  const cap = result.leg_cap, extra = result.extra_slips ?? [], weak = result.weak_left_out ?? [];
+  if (!cap && !weak.length) return null;
+  return (
+    <div className="rounded-xl bg-surface-sunken px-3 py-2.5 text-[12px] text-n-300 space-y-2">
+      {cap && (
+        <p className="flex items-start gap-1.5">
+          <AlertTriangle size={13} className="text-warn shrink-0 mt-px" />
+          <span>{cap.note}</span>
+        </p>
+      )}
+      {extra.map((x, i) => (
+        <details key={i} className="rounded-lg bg-surface px-3 py-2">
+          <summary className="cursor-pointer text-n-200 font-semibold">
+            Slip {i + 2}: {x.games} games · {odds(x.total_odds ?? 1)}x · all win {pct(x.win_chance ?? 0)}
+          </summary>
+          <ul className="mt-2 space-y-1">
+            {(x.picks ?? []).map((p, j) => (
+              <li key={j} className="flex justify-between gap-3">
+                <span className="truncate">{p.home} v {p.away} · {p.label}</span>
+                <span className="shrink-0 tabular-nums">{pct(p.prob)} · {odds(p.odds)}</span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      ))}
+      {weak.length > 0 && (
+        <p className="text-n-500">
+          Left out, their past high-confidence picks came in short: {weak.map(w => w.split(":").slice(1).join(":").replace(/_/g, " ")).join(", ")}.
+        </p>
       )}
     </div>
   );

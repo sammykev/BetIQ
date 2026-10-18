@@ -23,7 +23,7 @@ _PRED_FIELDS = ("p_home", "p_draw", "p_away", "p_home_model", "p_draw_model", "p
                 "p_over15", "p_over25", "p_over35", "p_btts",
                 "tip_1x2", "tip_code", "tip_confidence", "tip_goals", "goals_type", "goals_confidence",
                 "odds_home", "odds_draw", "odds_away", "value_edge", "is_value_bet", "thin_history",
-                "league_unproven")
+                "league_unproven", "constant")
 _HEADER_FIELDS = ("home", "away", "date", "time", "league", "league_name", "flag")
 # Main lines graded for corners and bookings (the model's side of each)
 SET_PIECE_LINES = {"corners": "9.5", "bookings": "4.5"}
@@ -65,6 +65,8 @@ def snapshot(pred: Dict) -> Dict[str, Any]:
         out.pop("thin_history", None)      # kept only where it's set
     if not out.get("league_unproven"):
         out.pop("league_unproven", None)
+    if not out.get("constant"):
+        out.pop("constant", None)
     sp = pred.get("set_pieces") or {}
     for stat, line in SET_PIECE_LINES.items():
         node = sp.get(stat) or {}
