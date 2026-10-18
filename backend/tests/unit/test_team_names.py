@@ -161,3 +161,32 @@ def test_thin_history_flags_a_fixture():
     assert main._unknown_clubs == {"C": "CL"}
     M.team_stats["B"]["pts"] = [1] * 10
     assert main._note_unknown_clubs(M, {"home": "A", "away": "B", "league": "CL"}) is False
+
+
+@pytest.mark.parametrize("live,trained", [
+    ("Heart of Midlothian", "Hearts"),
+    ("OH Leuven", "Oud-Heverlee Leuven"),
+    ("Union St.-Gilloise", "St. Gilloise"),
+    ("Union SG", "St. Gilloise"),
+    ("Asteras Tripoli", "Asteras Tripolis"),
+    ("AEK Athens", "AEK"),
+    ("Levadiakos", "Levadeiakos"),
+])
+def test_espn_names_resolve_to_extra_league_csv_names(live, trained):
+    """ESPN's names for group A clubs → football-data.co.uk's SC0/B1/G1 names."""
+    known = ["Hearts", "Celtic", "Oud-Heverlee Leuven", "St. Gilloise", "Asteras Tripolis",
+             "AEK", "Levadeiakos", "Panathinaikos"]
+    assert TeamResolver(known).resolve(live) == trained
+
+
+def test_aek_alias_leaves_other_aeks_alone():
+    assert TeamResolver(["AEK", "AEK Larnaca"]).resolve("AEK Larnaca") == "AEK Larnaca"
+    assert TeamResolver(["AEK"]).resolve("AEK Larnaca FC") == "AEK Larnaca FC"
+
+
+def test_suggest_lists_near_spellings():
+    from team_names import suggest
+    known = ["HamKam", "Ham-Kam", "Rosenborg", "Erzurumspor", "Goztepe"]
+    assert suggest("Erzurum BB", known)[:1] == ["Erzurumspor"]
+    assert "Rosenborg" not in suggest("Hamarkameratene", known)
+    assert suggest("Zzzz", known) == []

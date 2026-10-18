@@ -169,3 +169,5 @@ class TestDataStatus:
         assert r["leagues"]["E0"]["latest_match"] == "2026-08-04"
         assert r["renamed"] == {"Manchester United FC": "Man United"}
         assert [t["team"] for t in r["thin_history"]] == ["Paris FC"]
+        # Closest known names, for picking an alias; never the name itself
+        assert all(n["name"] != "Paris FC" for n in r["thin_history"][0]["near"])

@@ -21,9 +21,10 @@ Anything else stays as-is: merging two different clubs' histories is worse
 than leaving a new name unmatched.
 """
 
+import difflib
 import re
 import unicodedata
-from typing import Dict, Iterable, Optional, Set
+from typing import Dict, Iterable, List, Optional, Set
 
 # Club-type affixes that carry no identity
 _STOPWORDS = {
@@ -100,6 +101,19 @@ _ALIAS_SOURCE = {
     "Vasco da Gama": "Vasco",
     "Sport Club do Recife": "Sport Recife",
     "Sport Recife": "Sport Recife",
+    # ESPN (group A league and Europe fixtures) → football-data.co.uk's
+    # SC0 / B1 / G1 files
+    "Heart of Midlothian": "Hearts",
+    "OH Leuven": "Oud-Heverlee Leuven",
+    "Oud-Heverlee Leuven": "Oud-Heverlee Leuven",
+    "Union St.-Gilloise": "St. Gilloise",
+    "Union Saint-Gilloise": "St. Gilloise",
+    "Royale Union Saint-Gilloise": "St. Gilloise",
+    "Union SG": "St. Gilloise",
+    "Asteras Tripoli": "Asteras Tripolis",
+    "Asteras Tripolis": "Asteras Tripolis",
+    "AEK Athens": "AEK",
+    "Levadiakos": "Levadeiakos",
     # National teams: ESPN / The Odds API / FIFA name → international results CSV name
     "USA": "United States",
     "United States of America": "United States",
@@ -150,6 +164,18 @@ UCL_ALIASES = {
     "Frankfurt": "Ein Frankfurt",
     "Sporting CP": "Sp Lisbon",
 }
+
+
+
+def suggest(name: str, known: Iterable[str], n: int = 3) -> List[str]:
+    """The known names spelled most like `name`, best first — for a person
+    deciding which alias a club needs, never for matching."""
+    by_norm: Dict[str, str] = {}
+    for k in known:
+        by_norm.setdefault(normalise(k), k)
+    near = difflib.get_close_matches(normalise(name), list(by_norm), n=n, cutoff=0.6)
+    return [by_norm[m] for m in near]
+
 
 # Irregular names are matched by alias only, never by word containment
 # ("Inter Miami" must not become "Inter").

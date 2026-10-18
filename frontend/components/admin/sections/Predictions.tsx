@@ -1264,6 +1264,14 @@ export function PredictionsSection() {
               <p className="text-xs text-n-500">Little history (new club, or a name to add to backend/team_names.py):{" "}
                 {data.thin_history.map((t: any) => `${t.team} (${t.matches})`).join(", ")}</p>
             )}
+            {data.thin_history?.some((t: any) => t.near?.length) && (
+              <ul className="text-xs text-n-500 space-y-0.5">
+                {data.thin_history.filter((t: any) => t.near?.length).map((t: any) => (
+                  <li key={t.team}>{t.team} ({t.matches}) — closest in our data:{" "}
+                    {t.near.map((n: any) => `${n.name} (${n.matches})`).join(", ")}</li>
+                ))}
+              </ul>
+            )}
           </>
         )}
       </Card>

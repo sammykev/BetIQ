@@ -790,6 +790,14 @@ async def data_status(_admin: str = Depends(main.require_admin)):
                                "matches": len(main._predictor.team_stats.get(key, {}).get("pts", []))}
     thin = sorted(({"team": k, **v} for k, v in teams.items() if v["matches"] < 5),
                   key=lambda t: (t["matches"], t["team"]))
+    # The known names closest to each thin one: an alias it needs
+    # (team_names._ALIAS_SOURCE) shows up here with its match count
+    if thin:
+        from team_names import suggest
+        stats = main._predictor.team_stats
+        for t in thin:
+            t["near"] = [{"name": k, "matches": len(stats.get(k, {}).get("pts", []))}
+                         for k in suggest(t["team"], stats.keys()) if k != t["model_name"]]
     last = main._football_sync["at"]
     return {
         "leagues": leagues,
