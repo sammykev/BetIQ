@@ -47,6 +47,32 @@ def _weak_cells() -> set:
     return cells
 
 
+# Slips the user builds take markets whose picks came in at least this often
+# in the nightly ranking (market_ranking.py, last RANKING_DAYS days); the
+# daily slips ask for more (daily_slips.MIN_HIT_RATE)
+MIN_HIT_RATE = 0.70
+RANKING_TTL = 600
+_ranking_cache: Dict[str, Any] = {"at": 0.0, "codes": None}
+
+
+def _ranked_codes() -> Optional[Dict[str, Dict[str, Any]]]:
+    """The nightly ranking's hit rate per "sport:market" ({n, hit_rate}),
+    read from Redis at most every RANKING_TTL seconds; None before the
+    first ranking (no gate then)."""
+    if time.time() - _ranking_cache["at"] < RANKING_TTL:
+        return _ranking_cache["codes"]
+    codes = None
+    r = main._get_redis()
+    if r:
+        try:
+            raw = r.get(main.RANKING_KEY)
+            codes = (json.loads(raw) or {}).get("codes") if raw else None
+        except Exception as e:
+            print(f"[Optimizer] couldn't read the market ranking: {e}")
+    _ranking_cache.update(at=time.time(), codes=codes)
+    return codes
+
+
 def _leg_note(asked: int, cap: int) -> str:
     rates = ", ".join(f"{n} legs {round(r * 100)}%" for n, r in LEG_HISTORY.items())
     return (f"High-confidence slips stop at {cap} legs: the longer a slip, the likelier one leg lets it down "
@@ -355,6 +381,9 @@ async def _optimize_request(body: Dict[str, Any],
             min_win = min(0.5, max(0.0001, min_win))
         # Optional cap on each pick's price (the daily slips use it): picks at or above it are left out
         max_leg = float(body["max_leg_odds"]) if body.get("max_leg_odds") else None
+        # Markets whose ranked hit rate is below this are left out; 0 or "off": no gate
+        raw_hit = body.get("min_hit_rate", MIN_HIT_RATE)
+        min_hit = 0.0 if raw_hit in (None, 0, "off") else min(1.0, max(0.0, float(raw_hit)))
         days = min(main.PREDICTION_DAYS, max(1, int(body.get("days", 3))))
         high = min_chance is not None or min_prob >= HIGH_CONF_PROB
         # Markets and leagues the confidence check found falling short stay
@@ -478,6 +507,23 @@ async def _optimize_request(body: Dict[str, Any],
                        for p in ps]
     if max_leg:
         groups = [[o for o in g if o.odds < max_leg] for g in groups]
+    # Only markets that came in at least min_hit of the time in the nightly
+    # ranking; one without enough settled picks to be ranked is left out too
+    ranked = main._ranked_codes() if min_hit else None
+    hit_out: List[str] = []
+    if ranked is not None:
+        def low(o) -> bool:
+            x = ranked.get(f"{o.sport}:{o.market}")
+            return not x or x["hit_rate"] < min_hit
+        had = sum(1 for g in groups if g)
+        hit_out = sorted({f"{o.sport}:{o.market}" for g in groups for o in g if low(o)})
+        groups = [[o for o in g if not low(o)] for g in groups]
+        if had and not any(groups):
+            return {"error": (f"None of the picks on {had} matches is in a market that came in "
+                              f"{min_hit:.0%} of the time or more over the last {main.RANKING_DAYS} days. "
+                              "Try more days or sports."),
+                    "hit_rate_left_out": hit_out, "min_hit_rate": min_hit,
+                    "matches_considered": 0, "target": [lo, hi], "target_odds": target, "thin_history": thin}
     weak_out: List[str] = []
     if healthy:
         weak = main._weak_cells()
@@ -556,6 +602,9 @@ async def _optimize_request(body: Dict[str, Any],
     result["bookable_picks"] = sum(1 for pick in result.get("picks") or [] if pick["bookable"])
     if weak_out:
         result["weak_left_out"] = weak_out
+    if ranked is not None:
+        result["min_hit_rate"] = min_hit
+        result["hit_rate_left_out"] = hit_out
     if max_games < asked:
         # The rest of a long ask: more slips of ≤ HIGH_CONF_LEGS from the matches left
         result["leg_cap"] = {"cap": max_games, "asked": asked, "note": main._leg_note(asked, max_games)}

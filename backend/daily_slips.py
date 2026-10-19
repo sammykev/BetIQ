@@ -36,6 +36,9 @@ TARGETS = (5, 10, 20)    # 50x and 100x were dropped (14 Oct 2026): they need so
 # 1 in its odds (5x: 20%, 10x: 10%, 20x: 5%). Otherwise that target has no slip that day
 BREAK_EVEN = 1.0
 MIN_PROB = 0.80
+# Only markets whose picks came in at least this often in the nightly
+# ranking (the optimizer's own floor is 70%)
+MIN_HIT_RATE = 0.75
 MAX_LEG_ODDS = 2.0      # every pick priced under this
 SPREAD = 0.07          # total odds within ±7% of the target
 KEEP_DAYS = 120
@@ -63,7 +66,8 @@ PICK_FIELDS = ("home", "away", "date", "time", "league", "market", "market_name"
 def request(target: float, attempt: Dict[str, Any]) -> Dict[str, Any]:
     """The optimizer request for one target."""
     return {"target_odds": target, "min_odds": round(target * (1 - SPREAD), 2),
-            "max_odds": round(target * (1 + SPREAD), 2), "min_prob": MIN_PROB, "max_leg_odds": MAX_LEG_ODDS,
+            "max_odds": round(target * (1 + SPREAD), 2), "min_prob": MIN_PROB, "min_hit_rate": MIN_HIT_RATE,
+            "max_leg_odds": MAX_LEG_ODDS,
             "max_games": 30, "sport": "all", "bb_markets": list(BB_FAMILIES), "tn_markets": list(RK_FAMILIES),
             "tt_markets": list(RK_FAMILIES), "no_props": True, "min_win_chance": round(BREAK_EVEN / target, 4),
             **attempt}

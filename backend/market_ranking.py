@@ -21,7 +21,7 @@ import json
 from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
-Row = Tuple[str, str, float, bool, Optional[float]]     # sport, market, prob, won, odds
+Row = Tuple[str, str, float, bool, Optional[float], str]     # sport, market, prob, won, odds, market code
 
 SPORTS = {"basketball": "betiq:bbmd:{}", "tennis": "betiq:tennis:md:{}", "table_tennis": "betiq:table_tennis:md:{}"}
 FOOTBALL_KEY = "betiq:md:{}"
@@ -67,24 +67,30 @@ def _days(r, key: str, dates: List[str]) -> List[Dict]:
 def football_rows(entries: List[Dict]) -> List[Row]:
     import market_accuracy
     import optimizer
-    return [("football", optimizer.MARKET_NAMES.get(m, m), p, won, None)
+    return [("football", optimizer.MARKET_NAMES.get(m, m), p, won, None, m)
             for e in entries for m, _code, p, won in market_accuracy.settle(e)]
+
+
+# The market a winner or total tip settles as (basketball_matchday, racket_matchday)
+_GRADE_CODES = {"tip": "{p}_winner", "points": "bb_total", "games": "rk_total_games"}
 
 
 def sport_rows(sport: str, entries: List[Dict]) -> List[Row]:
     import sport_accuracy
     names = sport_accuracy.NAMES.get(sport, sport_accuracy.NAMES["tennis"])
+    prefix = "bb" if sport == "basketball" else "rk"
     rows = []
     for e in entries:
         for g, x in (e.get("grades") or {}).items():
             if x.get("verdict") not in ("won", "lost") or not isinstance(x.get("prob"), (int, float)):
                 continue
-            name = names.get(g, g)
+            name, code = names.get(g, g), _GRADE_CODES.get(g, "").format(p=prefix)
             if g == "best":
                 market = ((e.get("pred") or {}).get("best") or {}).get("market") or ""
                 name = f"Best line: {line_name(sport, market)}" if market else name
+                code = market
             odds = x.get("odds") if isinstance(x.get("odds"), (int, float)) else None
-            rows.append((sport, name, float(x["prob"]), x["verdict"] == "won", odds))
+            rows.append((sport, name, float(x["prob"]), x["verdict"] == "won", odds, code))
     return rows
 
 
@@ -102,6 +108,19 @@ def rank(rows: List[Row], min_n: int) -> List[Dict]:
                     "said": sum(r[2] for r in rs) / len(rs),
                     "roi": (sum(r[4] - 1 if r[3] else -1 for r in priced) / len(priced)) if len(priced) >= min_n else None})
     return sorted(out, key=lambda x: -x["hit_rate"])
+
+
+def by_code(rows: List[Row], min_n: int) -> Dict[str, Dict]:
+    """Each market code's picks pooled, as "sport:code" (an optimizer
+    option's sport and market): the hit-rate gate on slips reads this.
+    A basketball total tipped as "Total points" and as the best line
+    counts once under bb_total."""
+    groups: Dict[str, List[bool]] = {}
+    for r in rows:
+        if len(r) > 5 and r[5]:
+            groups.setdefault(f"{r[0]}:{r[5]}", []).append(r[3])
+    return {k: {"n": len(ws), "hit_rate": round(sum(ws) / len(ws), 4)}
+            for k, ws in sorted(groups.items()) if len(ws) >= min_n}
 
 
 def summary(rows: List[Row], markets: List[Dict], before: Optional[Dict] = None) -> Dict:
@@ -123,7 +142,7 @@ def report(r, days: int = 60, min_n: int = 10, before: Optional[Dict] = None) ->
     for sport, key in SPORTS.items():
         rows += sport_rows(sport, _days(r, key, dates))
     return {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "days": days, "min": min_n,
-            **summary(rows, rank(rows, min_n), before)}
+            **summary(rows, rank(rows, min_n), before), "codes": by_code(rows, min_n)}
 
 
 def main() -> None:

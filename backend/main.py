@@ -2701,7 +2701,7 @@ from jobs.reviews import (  # noqa: E402
 from routers.optimizer import (  # noqa: E402
     _bookable_markets, _cached_sport_predictions, _explain_empty, _live_pages_for, _live_states,
     _leg_note, _optimize_request, _optimizer_sports, _pick_key, _prediction_for_leg, _solve, _solve_checked,
-    _weak_cells, asdict_option,
+    _ranked_codes, _weak_cells, asdict_option,
 )
 from routers.daily import (  # noqa: E402
     _book_daily, _build_daily, _daily_load, _daily_public, _daily_save, _daily_slip, _daily_tick,

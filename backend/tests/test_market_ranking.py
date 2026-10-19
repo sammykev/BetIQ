@@ -17,8 +17,8 @@ def test_sport_rows_groups_best_line_by_market():
          "grades": {"tip": {"prob": 0.8, "verdict": "won"}, "best": {"prob": 0.75, "odds": 1.5, "verdict": "lost"},
                     "points": {"prob": None, "verdict": "won"}}}
     rows = mr.sport_rows("basketball", [e])
-    assert ("basketball", "Our tip (winner)", 0.8, True, None) in rows
-    assert ("basketball", "Best line: Handicap", 0.75, False, 1.5) in rows
+    assert ("basketball", "Our tip (winner)", 0.8, True, None, "bb_winner") in rows
+    assert ("basketball", "Best line: Handicap", 0.75, False, 1.5, "bb_handicap") in rows
     assert len(rows) == 2
 
 
