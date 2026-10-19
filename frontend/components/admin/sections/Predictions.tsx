@@ -490,6 +490,107 @@ function MarketAccuracy() {
   );
 }
 
+const SPORT_NAMES: Record<string, string> = {
+  football: "Football", basketball: "Basketball", tennis: "Tennis", table_tennis: "Table tennis",
+};
+
+/** Every sport's markets by how often their picks came in (market_ranking.py),
+ * made nightly at midnight (Lagos) from the stored match days. */
+function MarketRanking() {
+  const { get, post, flash } = useAdmin();
+  const [rep, setRep] = useState<any>(null);
+  const [sport, setSport] = useState("all");
+  const [busy, setBusy] = useState(false);
+  const load = () => get("/api/admin/market-ranking").then(d => setRep(d ?? { error: true })).catch(() => setRep({ error: true }));
+  useEffect(() => { load(); }, [get]);
+  const runNow = async () => {
+    setBusy(true);
+    try {
+      await post("/api/admin/jobs/market_ranking/run");
+      flash("ok", "Ranking every market…");
+      setTimeout(() => { load(); setBusy(false); }, 15_000);
+    } catch { flash("err", "Couldn't start the ranking"); setBusy(false); }
+  };
+
+  if (!rep) return <Skeleton rows={4} />;
+  if (rep.error) return <p className="text-xs text-n-400">Couldn&apos;t load the ranking.</p>;
+  const r = rep.report;
+  const markets = (r?.markets ?? []).filter((m: any) => sport === "all" || m.sport === sport);
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="text-xs text-n-400 flex-1 min-w-0">
+          {r ? `Last run ${ago(r.at)} · last ${r.days} days, markets with at least ${r.min} picks` : "Not run yet"} · nightly at midnight (Lagos)
+        </p>
+        <Btn onClick={runNow} busy={busy}>Run now</Btn>
+      </div>
+      {r && (
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {r.sports.map((s: any) => (
+              <Stat key={s.sport} label={SPORT_NAMES[s.sport] ?? s.sport} value={pctText(s.hit_rate)}
+                tone={s.hit_rate >= s.said - 0.03 ? "accent" : "warn"} sub={`${num(s.n)} picks · said ${pctText(s.said)}`} />
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {["all", ...r.sports.map((s: any) => s.sport)].map(s => (
+              <button key={s} onClick={() => setSport(s)}
+                className={clsx("rounded-full px-2.5 py-1 text-xs", s === sport ? "bg-accent/15 text-accent" : "bg-surface-sunken text-n-300")}>
+                {s === "all" ? "All sports" : SPORT_NAMES[s] ?? s}
+              </button>
+            ))}
+          </div>
+          {markets.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs tnum">
+                <thead>
+                  <tr className="text-left text-n-500">
+                    <th className="py-1.5 pr-2 font-medium">#</th><th className="py-1.5 px-2 font-medium">Sport</th>
+                    <th className="py-1.5 px-2 font-medium">Market</th><th className="py-1.5 px-2 font-medium text-right">Picks</th>
+                    <th className="py-1.5 px-2 font-medium text-right">Came in</th><th className="py-1.5 px-2 font-medium text-right">Said</th>
+                    <th className="py-1.5 pl-2 font-medium text-right">ROI</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {markets.map((m: any, i: number) => {
+                    const change = m.before == null ? null : Math.round((m.hit_rate - m.before) * 1000) / 10;
+                    return (
+                      <tr key={`${m.sport}:${m.market}`} className="border-t border-n-800">
+                        <td className="py-1.5 pr-2 text-n-500">{i + 1}</td>
+                        <td className="py-1.5 px-2 text-n-300 whitespace-nowrap">{SPORT_NAMES[m.sport] ?? m.sport}</td>
+                        <td className="py-1.5 px-2 text-n-200">{m.market}</td>
+                        <td className="py-1.5 px-2 text-right text-n-300">{num(m.n)}</td>
+                        <td className={clsx("py-1.5 px-2 text-right font-semibold whitespace-nowrap",
+                          m.hit_rate >= m.said - 0.03 ? "text-n-0" : m.hit_rate >= m.said - 0.08 ? "text-warn" : "text-danger")}>
+                          {pctText(m.hit_rate)}
+                          {change != null && change !== 0 && (
+                            <span className={clsx("ml-1 text-[10px] font-normal", change > 0 ? "text-accent" : "text-danger")}>
+                              {change > 0 ? "▲" : "▼"}{Math.abs(change)}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-1.5 px-2 text-right text-n-300">{pctText(m.said)}</td>
+                        <td className={clsx("py-1.5 pl-2 text-right", m.roi == null ? "text-n-500" : m.roi >= 0 ? "text-accent" : "text-danger")}>
+                          {m.roi == null ? "—" : `${m.roi >= 0 ? "+" : "−"}${Math.abs(Math.round(m.roi * 1000) / 10)}%`}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : <p className="text-xs text-n-400">No market has enough settled picks yet.</p>}
+          <p className="text-[11px] text-n-500">
+            Came in: how often the picks won; red when well below what the model said. The arrow is the change since
+            the night before. ROI is the flat-stake return at the price shown, where picks carry one (football&apos;s
+            don&apos;t, so it shows —).
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
 const REVIEW_TONE: Record<string, "ok" | "warn" | "danger" | "muted" | "info"> = {
   pause: "danger", watch: "warn", ok: "ok", better: "info", few: "muted",
 };
@@ -1227,6 +1328,11 @@ export function PredictionsSection() {
       <Card title="Accuracy by market" icon={<Target size={15} />}
         subtitle="How often each market's picks came in over the last few days, against what the model said">
         <MarketAccuracy />
+      </Card>
+
+      <Card title="Market ranking, every sport" icon={<Target size={15} />}
+        subtitle="Every sport's markets ranked by how often their picks came in, refreshed nightly at midnight (Lagos)">
+        <MarketRanking />
       </Card>
 
       <Card title="Profit at SportyBet prices" icon={<Target size={15} />}

@@ -228,3 +228,42 @@ async def _league_review_job() -> Dict[str, Any]:
             except Exception:
                 pass
     return result
+
+
+# ── Market ranking (market_ranking.py): every sport's markets by hit rate,
+# made nightly at midnight (Lagos) and kept for the admin panel ──
+
+def _run_ranking() -> Dict[str, Any]:
+    import market_ranking
+    r = main._get_redis()
+    if not r:
+        return {"skipped": "no Redis"}
+    try:
+        before = json.loads(r.get(main.RANKING_KEY) or "null")
+    except Exception:
+        before = None
+    rep = market_ranking.report(r, main.RANKING_DAYS, main.RANKING_MIN, before)
+    r.set(main.RANKING_KEY, json.dumps(rep, separators=(",", ":")))
+    print(f"[Ranking] {len(rep['markets'])} markets · " +
+          " · ".join(f"{s['sport']} {s['hit_rate']:.1%}" for s in rep["sports"]))
+    return {"markets": len(rep["markets"]), "at": rep["at"]}
+
+
+async def _ranking_job() -> Dict[str, Any]:
+    try:
+        return await asyncio.to_thread(main._run_ranking)
+    except Exception as e:
+        print(f"[Ranking] failed: {e}")
+        return {"error": str(e)}
+
+
+@router.get("/api/admin/market-ranking")
+async def get_market_ranking(_admin: str = Depends(main.require_admin)):
+    """The latest nightly ranking, or {"report": null} before the first."""
+    r = main._get_redis()
+    if not r:
+        raise HTTPException(status_code=503, detail="The database isn't connected")
+    try:
+        return {"report": json.loads(r.get(main.RANKING_KEY) or "null")}
+    except Exception:
+        return {"report": None}

@@ -2227,6 +2227,7 @@ ADMIN_JOBS = {
     "shot_blend": ("Score our shot lines against SportyBet's", lambda: _shot_blend_job()),
     "market_review": ("Weekly accuracy review (pause markets falling short)", lambda: _review_job()),
     "league_review": ("Weekly league drift check (flag or pause leagues falling short)", lambda: _league_review_job()),
+    "market_ranking": ("Rank every sport's markets by hit rate (last 60 days)", lambda: _ranking_job()),
     "set_pieces_reload": ("Reload corners, cards & shots models (after the nightly checks)",
                           lambda: _reload_set_pieces()),
 }
@@ -2381,6 +2382,12 @@ LEAGUE_REVIEW_KEY = "betiq:league_review"
 _league_review: Dict[str, Any] = {"mode": "flag", "overrides": {}, "latest": None, "history": [], "loaded": False}
 
 
+# ── Nightly market ranking, every sport (market_ranking.py) ──
+RANKING_KEY = "betiq:market_ranking"
+RANKING_DAYS = 60
+RANKING_MIN = 10       # settled picks a market needs to be ranked
+
+
 OPT_SPORTS = ("football", "basketball", "tennis", "table_tennis")
 
 
@@ -2512,6 +2519,9 @@ async def startup():
                       max_instances=1, coalesce=True)
     scheduler.add_job(_league_review_job, "cron", day_of_week="sun", hour=22, minute=40, id="league_review",
                       max_instances=1, coalesce=True)
+    # Every day 23:00 UTC (midnight Lagos)
+    scheduler.add_job(_ranking_job, "cron", hour=23, minute=0, id="market_ranking", max_instances=1, coalesce=True,
+                      misfire_grace_time=3600)
     # Basketball: results (and the backfill) every half hour, ratings after new
     # results and every 6 hours, SportyBet's matches priced every 15 minutes
     scheduler.add_job(_bb_collect, "interval", minutes=30, id="bb_collect", max_instances=1, coalesce=True,
@@ -2685,8 +2695,8 @@ from jobs.shots import (  # noqa: E402
 )
 from jobs.reviews import (  # noqa: E402
     _league_review_job, _league_review_view, _market_names, _paused_leagues, _paused_markets,
-    _restore_league_review, _restore_review, _review_job, _review_view, _run_league_review,
-    _run_review, _save_league_review, _save_review,
+    _ranking_job, _restore_league_review, _restore_review, _review_job, _review_view, _run_league_review,
+    _run_ranking, _run_review, _save_league_review, _save_review,
 )
 from routers.optimizer import (  # noqa: E402
     _bookable_markets, _cached_sport_predictions, _explain_empty, _live_pages_for, _live_states,
