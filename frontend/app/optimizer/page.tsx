@@ -41,8 +41,8 @@ interface OptPick {
   market_hit?: MarketHit;
 }
 interface MarketHit { n: number; hit_rate: number; said: number | null; roi: number | null;
-  /** Came in more than 3 points under what the model said */
-  below_said: boolean; negative_roi: boolean }
+  /** Came in under the 70% bar: let in only because no slip reached the odds without it */
+  below_min: boolean; negative_roi: boolean }
 interface OptResult {
   picks?: OptPick[]; games?: number; total_odds?: number; win_chance?: number;
   within_target?: boolean; estimated_prices?: number; matches_considered?: number; bookable_picks?: number;
@@ -60,9 +60,12 @@ interface OptResult {
   extra_slips?: OptResult[];
   /** Markets and leagues left out: their past high-confidence picks came in clearly short */
   weak_left_out?: string[];
-  /** Nothing made a slip from proven markets alone, so these below-said markets were let in */
-  below_said_used?: boolean;
-  below_said?: string[];
+  /** The bar a market's hit rate must clear (70%) */
+  min_hit_rate?: number;
+  /** No slip at the odds from 70%+ markets, so the ranking was stepped down to fallback_floor */
+  fallback_used?: boolean;
+  fallback_floor?: number;
+  below_min?: string[];
 }
 interface ThinMatch { home: string; away: string; date: string; time?: string; league?: string; league_name?: string;
   /** Left out for its league (check not passed), not for want of data on a club */
@@ -785,11 +788,12 @@ export default function OptimizerPage() {
               <LiveCheckNote check={result.live_check} />
               <ThinLeftOut matches={result.thin_history} />
               <LegCapNote result={result} />
-              {result.below_said_used && (
+              {result.fallback_used && (
                 <p className="text-xs text-warn flex gap-1.5">
                   <AlertTriangle size={13} className="shrink-0 mt-0.5" />
-                  No slip could be made from markets that came in at what we said, so this one uses some that came in
-                  a little under. Those picks are marked below; play it smaller.
+                  No slip reached your odds from markets that came in {pct(result.min_hit_rate ?? 0.7)} of the time or
+                  more, so this one goes down the ranking to markets that came in {pct(result.fallback_floor ?? 0)}+.
+                  Those picks are marked below; play it smaller.
                 </p>
               )}
 
@@ -956,7 +960,7 @@ function LegCapNote({ result }: { result: OptResult }) {
             {(x.picks ?? []).map((p, j) => (
               <li key={j} className="flex justify-between gap-3">
                 <span className="truncate">{p.home} v {p.away} · {p.label}
-                  {(p.market_hit?.below_said || p.market_hit?.negative_roi) && <span className="ml-1 text-warn">⚠</span>}
+                  {(p.market_hit?.below_min || p.market_hit?.negative_roi) && <span className="ml-1 text-warn">⚠</span>}
                 </span>
                 <span className="shrink-0 tabular-nums">{pct(p.prob)} · {odds(p.odds)}</span>
               </li>
@@ -975,15 +979,15 @@ function LegCapNote({ result }: { result: OptResult }) {
 
 
 /** How the pick's market came in over the last 60 days, with a warning when
- *  it came in under what we said or lost money at the odds taken. */
+ *  it came in under the 70% bar or lost money at the odds taken. */
 function MarketHitLine({ hit }: { hit?: MarketHit }) {
   if (!hit) return null;
-  const warn = hit.below_said || hit.negative_roi;
+  const warn = hit.below_min || hit.negative_roi;
   return (
     <p className={clsx("text-[11px] mt-0.5 tnum", warn ? "text-warn" : "text-n-500")}>
       This market came in {pct(hit.hit_rate)} of {hit.n} picks over 60 days
       {hit.said != null && ` (we said ${pct(hit.said)})`}
-      {hit.below_said && " · under what we said"}
+      {hit.below_min && " · under 70%"}
       {hit.negative_roi && " · lost money at these odds"}
     </p>
   );

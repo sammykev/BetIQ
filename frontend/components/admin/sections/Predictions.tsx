@@ -707,12 +707,12 @@ function LeftOutRuns() {
             <Pill tone={r.source === "daily" ? "info" : "muted"}>{r.source === "daily" ? "Daily odds" : "Optimizer"}</Pill>
             <span className="text-n-400">gate {pctText(r.min_hit)} · {num(r.considered)} matches left</span>
             <span className="ml-auto text-n-300">{num(r.left_out.length)} left out</span>
-            {r.below_said?.length > 0 && <Pill tone="warn">{r.below_said.length} below said used</Pill>}
+            {r.below_min?.length > 0 && <Pill tone="warn">down to {pctText(r.floor)}: {r.below_min.length} used</Pill>}
           </button>
           {open === i && (
             <div className="mt-2 space-y-1">
-              {r.below_said?.length > 0 && (
-                <p className="text-warn">Fell back on: {r.below_said.map(name).join(", ")}</p>
+              {r.below_min?.length > 0 && (
+                <p className="text-warn">Fell back on: {r.below_min.map(name).join(", ")}</p>
               )}
               <p className="text-n-400">{r.left_out.length ? r.left_out.map(name).join(", ") : "Nothing left out."}</p>
             </div>
@@ -720,9 +720,9 @@ function LeftOutRuns() {
         </div>
       ))}
       <p className="text-[11px] text-n-500">
-        Left out: markets under the run&apos;s hit-rate gate, or with too few settled picks to be ranked. Below said:
-        markets that came in more than {Math.round(data.gap_tolerance * 100)} points under what the model said; a slip
-        uses them only when none can be made without.
+        Left out: markets under the run&apos;s hit-rate gate, or with too few settled picks to be ranked. Fell back
+        on: no slip reached the customer&apos;s odds from markets at the gate, so the run went down the ranking{" "}
+        {Math.round(data.fallback_step * 100)} points at a time and used these. Daily odds never fall back.
       </p>
     </div>
   );
