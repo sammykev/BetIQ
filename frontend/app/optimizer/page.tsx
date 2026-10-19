@@ -127,7 +127,6 @@ function offBy(total: number, target: number) {
   return Math.abs(d) < 0.05 ? "exact" : `${d > 0 ? "+" : "−"}${Math.abs(d).toFixed(1)}%`;
 }
 const short = (x: number) => (x >= 1000 ? `${x / 1000}K` : `${x}x`);
-const CONFIDENCE = [0.5, 0.6, 0.7, 0.8, 0.9];
 // The whole slip's least chance to land (every pick's chance multiplied)
 const SLIP_CHANCE = [0.7, 0.8, 0.9];
 const DAYS = [{ label: "Today", n: 1 }, { label: "2 days", n: 2 }, { label: "3 days", n: 3 }, { label: "Week", n: 7 }];
@@ -305,7 +304,6 @@ export default function OptimizerPage() {
   const [targetOdds, setTargetOdds] = useState(10);
   const [typed, setTyped] = useState("10");
   const [tolerance, setTolerance] = useState(0.05);
-  const [minProb, setMinProb] = useState(0.6);
   const [slipChance, setSlipChance] = useState<number | null>(null);
   const [breakEven, setBreakEven] = useState(true);
   const [days, setDays] = useState(3);
@@ -443,7 +441,7 @@ export default function OptimizerPage() {
       const res = await authFetch(`${API}/api/optimizer`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ target_odds: targetOdds, min_odds: lo, max_odds: hi, min_prob: minProb, days, max_games: maxGames,
+        body: JSON.stringify({ target_odds: targetOdds, min_odds: lo, max_odds: hi, days, max_games: maxGames,
                                ...(slipChance ? { min_slip_chance: slipChance } : {}),
                                ...(!slipChance && breakEven ? { min_win_chance: 1 / targetOdds } : {}),
                                ...request(),
@@ -554,12 +552,6 @@ export default function OptimizerPage() {
           </div>
 
           <div className="grid gap-5 sm:grid-cols-2">
-            <Setting label="Each pick at least">
-              <Chip active={minProb === 0} onClick={() => setMinProb(0)}>Off</Chip>
-              {CONFIDENCE.map(c => (
-                <Chip key={c} active={minProb === c} onClick={() => setMinProb(c)}>{Math.round(c * 100)}% likely</Chip>
-              ))}
-            </Setting>
             <Setting label="Whole slip at least">
               <Chip active={slipChance === null && !breakEven} onClick={() => { setSlipChance(null); setBreakEven(false); }}>Off</Chip>
               <Chip active={slipChance === null && breakEven} onClick={() => { setSlipChance(null); setBreakEven(true); }}>

@@ -614,7 +614,7 @@ async def _optimize_request(body: Dict[str, Any],
         return {"error": (f"None of the {len(bb_preds)} basketball matches in the next {days} day{'s' if days != 1 else ''} "
                           + (f"has a line our model rates {min_prob:.0%} or more" if min_prob else "has a priced line")
                           + (" in the markets you chose" if bb_families else "")
-                          + (". Lower the minimum confidence, add markets or pick more days." if min_prob else ". Add markets or pick more days.")
+                          + ". Add markets or pick more days."
                           if bb_preds else "No basketball matches listed on SportyBet in those days yet."),
                 "matches_considered": 0, "target": [lo, hi], "target_odds": target, "thin_history": thin}
     if considered == 0 and sport in main.RK_SPORTS:
@@ -622,7 +622,7 @@ async def _optimize_request(body: Dict[str, Any],
         return {"error": (f"None of the {len(rk_preds)} {name} matches in the next {days} day{'s' if days != 1 else ''} "
                           + (f"has a line our model rates {min_prob:.0%} or more" if min_prob else "has a priced line")
                           + (" in the markets you chose" if rk_families[sport] else "")
-                          + (". Lower the minimum confidence, add markets or pick more days." if min_prob else ". Add markets or pick more days.")
+                          + ". Add markets or pick more days."
                           if rk_preds else f"No {name} matches listed on SportyBet in those days yet."),
                 "matches_considered": 0, "target": [lo, hi], "target_odds": target, "thin_history": thin}
     if considered == 0:
@@ -679,7 +679,7 @@ async def _optimize_request(body: Dict[str, Any],
         capped = (f" High-confidence slips stop at {max_games} legs (you asked for {asked}): lower the target, "
                   "or untick the cap." if max_games < asked else "")
         return {"error": (f"No slip from {considered} matches gets near {target:,.2f}x. "
-                          "Allow more games or days, add markets, or lower the minimum confidence." + capped),
+                          "Allow more games or days, or add markets." + capped),
                 "matches_considered": considered, "target": [lo, hi], "target_odds": target, "thin_history": thin}
     # Which picks a SportyBet code can take: the match is linked to a SportyBet
     # event and SportyBet confirmed the market (shots, for one, it doesn't offer)
