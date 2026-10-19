@@ -323,11 +323,13 @@ def _publish_sb_leagues(events: List[Dict]) -> List[Dict]:
     import collect_sb_leagues
     import league_fixtures
     import live_learning
+    import model_store
     import sb_league_fixtures
     r = main._get_redis()
     if r is None:
         return []
-    picked = sb_league_fixtures.leagues(collect_sb_leagues.load(r))
+    # binary client: the collected leagues are a gzip'd blob the text client can't decode
+    picked = sb_league_fixtures.leagues(collect_sb_leagues.load(model_store._client() or r))
     fixtures = sb_league_fixtures.from_catalog(events, picked, days_ahead=main.PREDICTION_DAYS)
     if not fixtures:
         return []
