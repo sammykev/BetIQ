@@ -494,57 +494,72 @@ const SPORT_NAMES: Record<string, string> = {
   football: "Football", basketball: "Basketball", tennis: "Tennis", table_tennis: "Table tennis",
 };
 
-/** Every sport's markets by how often their picks came in (market_ranking.py),
- * made nightly at midnight (Lagos) from the stored match days. */
+/** Every ticket the watched accounts book joins the current round on its
+ * own (ticket_watch.py); each is reported to Telegram as it finishes, then
+ * the round's comparison. */
 function TicketWatch() {
   const { get, post, flash, adminFetch } = useAdmin();
   const [st, setSt] = useState<any>(null);
-  const [codes, setCodes] = useState("");
+  const [emails, setEmails] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const load = () => get("/api/admin/tickets/watch").then(d => setSt(d ?? { error: true }));
   useEffect(() => { load(); }, [get]);
-  const start = async () => {
+  const checkNow = async () => {
     setBusy(true);
     try {
-      const list = codes.split(/[\s,]+/).filter(Boolean);
-      const d = await post("/api/admin/tickets/watch", list.length ? { codes: list } : {});
-      flash("ok", `Watching ${d.watching.join(", ")}`);
+      const d = await post("/api/admin/tickets/watch/check");
+      flash(d?.error ? "err" : "ok", d?.error ?? `Checked: ${d?.messages ?? 0} new message${d?.messages === 1 ? "" : "s"}`);
       await load();
-    } catch { flash("err", "Nothing to watch: no open tickets, or those codes weren't found"); }
+    } catch { flash("err", "Couldn't check the watch"); }
     setBusy(false);
   };
-  const stop = async () => {
-    await adminFetch(`${API}/api/admin/tickets/watch`, { method: "DELETE" });
-    setSt({ watch: null });
+  const saveEmails = async () => {
+    setBusy(true);
+    try {
+      const res = await adminFetch(`${API}/api/admin/tickets/watch/emails`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ emails: (emails ?? "").split(/[\s,]+/).filter(Boolean) }),
+      });
+      if (!res.ok) throw new Error();
+      flash("ok", "Watched accounts saved");
+      setEmails(null);
+      await load();
+    } catch { flash("err", "Couldn't save: check the email addresses"); }
+    setBusy(false);
   };
   const tierText = (t: any) => (t.n ? `${t.won}/${t.n}` : "—");
 
   if (!st) return <Skeleton rows={3} />;
   if (st.error) return <p className="text-xs text-n-400">Couldn&apos;t load the watch.</p>;
-  const w = st.watch, s = w?.summary;
+  const rnd = st.round, last = st.history?.[0], s = last?.summary;
+  const watched = Object.entries(st.emails ?? {});
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        <input value={codes} onChange={e => setCodes(e.target.value)} placeholder="Codes (blank: every open ticket)"
-          className={clsx(inputClass, "flex-1 min-w-0")} />
-        <Btn onClick={start} busy={busy} variant="primary">{codes.trim() ? "Watch these" : "Watch open tickets"}</Btn>
-        {w && <Btn onClick={stop}>Stop</Btn>}
+        <p className="text-xs text-n-400 flex-1 min-w-0">
+          Watching{" "}
+          {watched.length ? watched.map(([e, uid]) => uid ? e : `${e} (no account found)`).join(", ")
+            : st.accounts?.length ? `the admins (${st.accounts.map((a: any) => a.email || a.uid).join(", ")})` : "no one"}
+          {st.source === "env" ? " · from TICKET_WATCH_EMAILS" : st.source === "setting" ? " · set here" : ""}
+          {st.checked_at ? ` · checked ${ago(st.checked_at)}` : ""} · results go to the admin Telegram chat
+        </p>
+        <Btn onClick={() => setEmails(emails == null ? watched.map(([e]) => e).join(", ") : null)}>
+          {emails == null ? "Change" : "Cancel"}
+        </Btn>
+        <Btn onClick={checkNow} busy={busy}>Check now</Btn>
       </div>
-      {!w ? <p className="text-xs text-n-400">Not watching anything.</p> : (
+      {emails != null && (
+        <div className="flex flex-wrap items-center gap-2">
+          <input value={emails} onChange={e => setEmails(e.target.value)} placeholder="Emails (blank: TICKET_WATCH_EMAILS, or the admins)"
+            className={clsx(inputClass, "flex-1 min-w-0")} />
+          <Btn onClick={saveEmails} busy={busy} variant="primary">Save</Btn>
+        </div>
+      )}
+      {!rnd ? <p className="text-xs text-n-400">No tickets being played. New ones join on their own (checked hourly and after each settle).</p> : (
         <>
           <p className="text-xs text-n-400">
-            Started {ago(w.started_at)} · {w.done_at ? `all done ${ago(w.done_at)}` : `${w.reported.length} of ${w.tickets.length} done`}
-            {" "}· each result goes to the admin Telegram chat
-            {w.missing?.length ? ` · not found: ${w.missing.join(", ")}` : ""}
+            This round started {ago(rnd.started_at)} · {rnd.reported.length} of {rnd.tickets.length} done
           </p>
-          {s && (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <Stat label="Tickets won" value={`${s.won}/${s.tickets}`} />
-              <Stat label="Legs won" value={`${s.legs_won}/${s.legs}`} sub={s.expected != null ? `model expected ${s.expected}` : undefined} />
-              <Stat label="70%+ markets" value={tierText(s.top)} tone="accent" sub={`fallback ${tierText(s.fallback)}`} />
-              <Stat label="Underperformed" value={s.underperformer ?? "none"} tone={s.underperformer ? "warn" : "accent"} />
-            </div>
-          )}
           <div className="overflow-x-auto">
             <table className="w-full text-xs tnum">
               <thead>
@@ -555,7 +570,7 @@ function TicketWatch() {
                 </tr>
               </thead>
               <tbody>
-                {(st.tickets ?? []).map((t: any) => (
+                {rnd.tickets.map((t: any) => (
                   <tr key={t.code} className="border-t border-n-800">
                     <td className="py-1.5 pr-2 font-mono">{t.code}</td>
                     <td className="py-1.5 px-2">
@@ -574,10 +589,34 @@ function TicketWatch() {
           </div>
         </>
       )}
+      {s && (
+        <>
+          <p className="text-xs text-n-400">Last finished round ({ago(last.done_at)}): {last.codes.join(", ")}</p>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <Stat label="Tickets won" value={`${s.won}/${s.tickets}`} />
+            <Stat label="Legs won" value={`${s.legs_won}/${s.legs}`} sub={s.expected != null ? `model expected ${s.expected}` : undefined} />
+            <Stat label="70%+ markets" value={tierText(s.top)} tone="accent" sub={`fallback ${tierText(s.fallback)}`} />
+            <Stat label="Underperformed" value={s.underperformer ?? "none"} tone={s.underperformer ? "warn" : "accent"} />
+          </div>
+        </>
+      )}
+      {st.history?.length > 1 && (
+        <ul className="text-xs text-n-400 space-y-0.5">
+          {st.history.slice(1).map((h: any) => (
+            <li key={h.done_at}>
+              {ago(h.done_at)}: {h.summary.won}/{h.summary.tickets} won, legs {h.summary.legs_won}/{h.summary.legs},
+              {" "}70%+ {tierText(h.summary.top)}, fallback {tierText(h.summary.fallback)}
+              {h.summary.underperformer ? ` · weakest ${h.summary.underperformer}` : ""}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
 
+/** Every sport's markets by how often their picks came in (market_ranking.py),
+ * made nightly at midnight (Lagos) from the stored match days. */
 function MarketRanking() {
   const { post, flash, adminFetch } = useAdmin();
   const [rep, setRep] = useState<any>(null);
@@ -1550,7 +1589,7 @@ export function PredictionsSection() {
       </Card>
 
       <Card title="Ticket watch" icon={<Target size={15} />}
-        subtitle="Follow tickets until they're all done, then see which underperformed and how the 70%+ markets did next to the fallback ones">
+        subtitle="Every ticket the watched accounts book is followed on its own; when a round is done, see which underperformed and how the 70%+ markets did next to the fallback ones">
         <TicketWatch />
       </Card>
 

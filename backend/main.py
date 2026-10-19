@@ -2205,6 +2205,7 @@ ADMIN_JOBS = {
     "traffic_flush": ("Save traffic counts", lambda: asyncio.to_thread(_flush_traffic)),
     "referees": ("Find referees for upcoming matches", lambda: _refresh_referees("manual")),
     "fd_referees": ("Collect past referees (football-data.org)", lambda: _collect_fd_referees("manual")),
+    "ticket_watch": ("Ticket watch: pick up new tickets, report finished ones", lambda: _ticket_watch_tick()),
     "football_sync": ("Download league results (football-data.co.uk)", lambda: _manual_football_sync()),
     "matchday_sweep": ("Scores and grades for the last 7 days", lambda: _refresh_matchdays(MD_DAYS_BACK, "manual")),
     "bb_collect": ("Basketball: collect results from SportyBet (and older days)", lambda: _bb_collect()),
@@ -2494,6 +2495,10 @@ async def startup():
     asyncio.create_task(_link_on_startup())  # every deploy re-links to SportyBet straight away
     asyncio.create_task(_run_pipeline())
     asyncio.create_task(_load_fbref_data())
+    # Ticket watch (ticket_watch.py): picks up the watched accounts' new
+    # tickets and reports finished ones; first check a minute after deploy
+    scheduler.add_job(_ticket_watch_tick, "interval", hours=1, id="ticket_watch",
+                      next_run_time=datetime.now() + timedelta(minutes=1))
     # results fetcher runs via scheduler only — not on boot to avoid API contention with pipeline
     scheduler.add_job(_run_pipeline, "interval", hours=12, id="refresh")
     # ClubElo (clubelo.py): today's ratings, and the weekly history a few at a time
@@ -2647,7 +2652,7 @@ from routers.tickets import (  # noqa: E402
     _account_names, _all_tickets, _attach_live, _check_ticket_watch, _fs_result_for, _leg_results,
     _leg_sport, _md_entry_for, _other_sport_entry, _other_sport_live, _other_sport_md_result,
     _recheck_corrected_tickets, _record_ticket, _rescan_open_tickets, _settle_tickets,
-    _send_watch_messages, _sr_result_for, _take_code, _ticket_needs_settling,
+    _send_watch_messages, _ticket_watch_tick, _sr_result_for, _take_code, _ticket_needs_settling,
 )
 from routers.push import _push_daily, _send_push_notifications, _valid_push_subscription  # noqa: E402
 from routers.admin import _revenue_summary, _traffic_key_ok  # noqa: E402

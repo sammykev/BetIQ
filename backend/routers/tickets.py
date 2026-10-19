@@ -262,28 +262,70 @@ def _all_tickets(r) -> List[Dict[str, Any]]:
     return out
 
 
-def _watch_state(r) -> Optional[Dict[str, Any]]:
+def _watch_state(r) -> Dict[str, Any]:
     import ticket_watch
     raw = r.get(ticket_watch.KEY)
     try:
-        return json.loads(raw) if raw else None
+        watch = json.loads(raw) if raw else None
     except ValueError:
-        return None
+        watch = None
+    return ticket_watch._migrate(watch)
 
 
-def _check_ticket_watch(r) -> List[str]:
-    """Messages for watched tickets finished since the last check (and the
-    final comparison once all are done); saves the watch."""
+def _save_watch(r, watch: Dict[str, Any]) -> None:
+    import ticket_watch
+    r.set(ticket_watch.KEY, json.dumps(watch, separators=(",", ":")), ex=120 * 86400)
+
+
+def _watch_emails(r) -> Tuple[List[str], str]:
+    """(the watched accounts' emails, where the list came from: "setting",
+    "env", or "admins" when neither is set and the admins are watched)."""
+    import ticket_watch
+    try:
+        saved = json.loads(r.get(ticket_watch.EMAILS_KEY) or "null")
+    except ValueError:
+        saved = None
+    if isinstance(saved, list) and saved:
+        return [str(e).strip().lower() for e in saved if str(e).strip()], "setting"
+    env = [e.strip().lower() for e in os.getenv("TICKET_WATCH_EMAILS", "").split(",") if e.strip()]
+    return (env, "env") if env else ([], "admins")
+
+
+async def _watched_uids(r) -> Tuple[List[str], Dict[str, Optional[str]], str]:
+    """(the watched account ids, {email: id or None when no account has
+    it}, where the list came from). Ids found are kept in the watch."""
+    import auth
+    emails, source = _watch_emails(r)
+    if not emails:
+        return sorted(main.ADMIN_USER_IDS), {}, source
+    watch = _watch_state(r)
+    known = {e: u for e, u in (watch.get("uids") or {}).items() if e in emails}
+    missing = [e for e in emails if e not in known]
+    if missing:
+        try:
+            known.update(await auth.clerk_uids_by_email(missing))
+        except Exception as e:
+            print(f"[TicketWatch] Clerk lookup failed: {type(e).__name__}: {e}")
+        watch["uids"] = known
+        _save_watch(r, watch)
+    return sorted(set(known.values())), {e: known.get(e) for e in emails}, source
+
+
+def _check_ticket_watch(r, uids: List[str]) -> List[str]:
+    """Adds the watched accounts' new tickets to the round, and returns the
+    messages: tickets added, tickets finished since the last check, and the
+    round's comparison once all are done. Saves the watch."""
     import ticket_watch
     from routers.optimizer import MIN_HIT_RATE
     watch = _watch_state(r)
-    if not watch or watch.get("done_at"):
-        return []
-    main._all_tickets_cache[:] = [0.0, None]   # just settled: read them fresh
-    by_code = {t.get("code"): t for t in reversed(main._all_tickets(r))}
-    messages = ticket_watch.check(watch, by_code, date.today(), main._ranked_codes(),
-                                  MIN_HIT_RATE, main._leg_sport)
-    r.set(ticket_watch.KEY, json.dumps(watch, separators=(",", ":")), ex=60 * 86400)
+    main._all_tickets_cache[:] = [0.0, None]   # maybe just settled: read them fresh
+    items = main._all_tickets(r)
+    messages = [ticket_watch.added_text(t) for t in ticket_watch.add_new(watch, items, uids)]
+    by_code = {t.get("code"): t for t in reversed(items)}
+    messages += ticket_watch.check(watch, by_code, date.today(), main._ranked_codes(),
+                                   MIN_HIT_RATE, main._leg_sport)
+    watch["checked_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    _save_watch(r, watch)
     return messages
 
 
@@ -299,53 +341,68 @@ async def _send_watch_messages(messages: List[str]) -> Dict[str, Any]:
     return {"messages": len(messages), "sent": sent, **({"errors": errors} if errors else {})}
 
 
-@router.post("/api/admin/tickets/watch")
-async def start_ticket_watch(body: Optional[Dict[str, Any]] = None, _admin: str = Depends(main.require_admin)):
-    """Watch tickets until all are done, then report how each did. No codes:
-    every ticket still being played."""
-    import ticket_watch
+async def _ticket_watch_tick() -> Dict[str, Any]:
+    """One check of the ticket watch, its messages sent (on every deploy,
+    hourly, and after the match-day job settles tickets)."""
     r = main._get_redis()
     if not r:
-        raise HTTPException(503, "no_redis")
-    codes = (body or {}).get("codes") or None
-    main._all_tickets_cache[:] = [0.0, None]
-    watch = ticket_watch.start(main._all_tickets(r), codes)
-    if not watch["tickets"]:
-        raise HTTPException(400, "No open tickets to watch" if not codes else "None of those codes were found")
-    r.set(ticket_watch.KEY, json.dumps(watch, separators=(",", ":")), ex=60 * 86400)
-    sent = await _send_watch_messages(await asyncio.to_thread(_check_ticket_watch, r))
-    return {"watching": [t["code"] for t in watch["tickets"]], "missing": watch["missing"], "notified": sent}
+        return {"error": "no_redis"}
+    uids, _, _ = await _watched_uids(r)
+    if not uids:
+        return {"error": "no watched accounts found"}
+    msgs = await asyncio.to_thread(_check_ticket_watch, r, uids)
+    return await _send_watch_messages(msgs) if msgs else {"messages": 0}
 
 
 @router.get("/api/admin/tickets/watch")
 async def get_ticket_watch(_admin: str = Depends(main.require_admin)):
-    """The watch and how each watched ticket stands now."""
+    """Who is watched, the current round with how each ticket stands now,
+    and the finished rounds."""
     import ticket_watch
     from routers.optimizer import MIN_HIT_RATE
     r = main._get_redis()
     if not r:
         return {"error": "no_redis"}
+    uids, by_email, source = await _watched_uids(r)
     watch = _watch_state(r)
-    if not watch:
-        return {"watch": None}
-    by_code = {t.get("code"): t for t in reversed(main._all_tickets(r))}
-    ranked, today = main._ranked_codes(), date.today()
-    perfs = []
-    for w in watch.get("tickets") or []:
-        t = by_code.get(w["code"])
-        if t is not None:
-            perfs.append({**ticket_watch.performance(t, ranked, MIN_HIT_RATE, main._leg_sport),
-                          "finished": ticket_watch.finished(t, today)})
-    return {"watch": watch, "tickets": perfs}
+    rnd, perfs = watch["round"], []
+    if rnd:
+        by_code = {t.get("code"): t for t in reversed(main._all_tickets(r))}
+        ranked, today = main._ranked_codes(), date.today()
+        for w in rnd.get("tickets") or []:
+            t = by_code.get(w["code"])
+            if t is not None:
+                perfs.append({**ticket_watch.performance(t, ranked, MIN_HIT_RATE, main._leg_sport),
+                              "finished": ticket_watch.finished(t, today)})
+    names = await main._account_names(uids) if uids else {}
+    return {"source": source, "emails": by_email,
+            "accounts": [{"uid": u, **names.get(u, {})} for u in uids],
+            "round": rnd and {**rnd, "tickets": perfs}, "history": watch["history"],
+            "checked_at": watch.get("checked_at")}
 
 
-@router.delete("/api/admin/tickets/watch")
-async def stop_ticket_watch(_admin: str = Depends(main.require_admin)):
+@router.put("/api/admin/tickets/watch/emails")
+async def set_ticket_watch_emails(body: Dict[str, Any], admin: str = Depends(main.require_admin)):
+    """The accounts to watch, by email; an empty list goes back to
+    TICKET_WATCH_EMAILS (or the admins). Checks straight away."""
     import ticket_watch
     r = main._get_redis()
-    if r:
-        r.delete(ticket_watch.KEY)
-    return {"ok": True}
+    if not r:
+        raise HTTPException(503, "no_redis")
+    emails = [str(e).strip().lower() for e in body.get("emails") or [] if str(e).strip()]
+    if any(not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", e) for e in emails):
+        raise HTTPException(400, "Not an email address")
+    if emails:
+        r.set(ticket_watch.EMAILS_KEY, json.dumps(emails))
+    else:
+        r.delete(ticket_watch.EMAILS_KEY)
+    main._audit(admin, "ticket_watch_emails", emails=emails)
+    return {"ok": True, "check": await _ticket_watch_tick()}
+
+
+@router.post("/api/admin/tickets/watch/check")
+async def check_ticket_watch(_admin: str = Depends(main.require_admin)):
+    return await _ticket_watch_tick()
 
 
 async def _account_names(uids: List[str]) -> Dict[str, Dict[str, str]]:

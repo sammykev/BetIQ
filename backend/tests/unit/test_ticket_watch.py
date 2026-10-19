@@ -1,7 +1,7 @@
 """
-Ticket watch: follow chosen tickets until all are done, report each one as
-it finishes and then which underperformed, with the 70%+ market legs next
-to the fallback ones.
+Ticket watch: the watched accounts' tickets join a round on their own,
+each is reported as it finishes, then which underperformed, with the 70%+
+market legs next to the fallback ones.
 """
 
 import asyncio
@@ -12,6 +12,7 @@ from datetime import date
 import pytest
 from fastapi.testclient import TestClient
 
+import auth
 import main
 import telegram_poster
 import ticket_watch as tw
@@ -34,11 +35,20 @@ def ticket(code, status, legs):
     return {"code": code, "status": status, "source": "optimizer", "total_odds": 4.5, "legs": legs}
 
 
-def test_start_takes_the_open_tickets_or_the_codes_given():
-    items = [ticket("A1", "open", []), ticket("B2", "won", []), ticket("C3", "pending", []), ticket("A1", "open", [])]
-    assert [t["code"] for t in tw.start(items)["tickets"]] == ["A1", "C3"]
-    w = tw.start(items, ["b2", "zz9"])
-    assert [t["code"] for t in w["tickets"]] == ["B2"] and w["missing"] == ["ZZ9"]
+def test_new_tickets_from_watched_accounts_join_the_round_once():
+    w = tw._migrate(None)
+    items = [{**ticket("A1", "open", []), "uid": "u1"}, {**ticket("B2", "won", []), "uid": "u1"},
+             {**ticket("C3", "pending", []), "uid": "u2"}, {**ticket("D4", "open", []), "uid": "other"}]
+    assert [t["code"] for t in tw.add_new(w, items, ["u1", "u2"])] == ["A1", "C3"]
+    assert [t["code"] for t in w["round"]["tickets"]] == ["A1", "C3"]
+    assert tw.add_new(w, items, ["u1", "u2"]) == []
+    assert tw.added_text(items[0]).startswith("Watching ticket A1")
+
+
+def test_first_version_watch_is_carried_over():
+    w = tw._migrate({"started_at": "x", "tickets": [{"code": "A1", "uid": "u1"}], "reported": [],
+                     "done_at": None, "summary": None, "missing": []})
+    assert w["round"]["tickets"] == [{"code": "A1", "uid": "u1"}] and w["seen"] == ["A1"] and w["history"] == []
 
 
 def test_finished_when_settled_and_graded_or_long_past():
@@ -58,17 +68,19 @@ def test_performance_splits_70_percent_markets_from_fallback():
 
 
 def test_check_reports_each_ticket_once_then_the_comparison():
-    watch = tw.start([ticket("GOOD", "open", []), ticket("BAD", "open", [])])
+    watch = tw._migrate(None)
+    tw.add_new(watch, [{**ticket("GOOD", "open", []), "uid": "u"}, {**ticket("BAD", "open", []), "uid": "u"}], ["u"])
     good = ticket("GOOD", "won", [leg("1x2", .7, "won"), leg("1x2", .7, "won")])
     bad = ticket("BAD", "open", [leg("ou25", .8, "lost"), leg("1x2", .8)])
     msgs = tw.check(watch, {"GOOD": good, "BAD": bad}, TODAY, RANKED, .7, sport)
-    assert len(msgs) == 1 and msgs[0].startswith("Ticket GOOD") and not watch["done_at"]
+    assert len(msgs) == 1 and msgs[0].startswith("Ticket GOOD") and watch["round"]
     assert tw.check(watch, {"GOOD": good, "BAD": bad}, TODAY, RANKED, .7, sport) == []
     bad = ticket("BAD", "lost", [leg("ou25", .8, "lost"), leg("1x2", .8, "won")])
     msgs = tw.check(watch, {"GOOD": good, "BAD": bad}, TODAY, RANKED, .7, sport)
     assert len(msgs) == 2 and msgs[0].startswith("Ticket BAD") and "Underperformed most: BAD" in msgs[1]
-    assert watch["done_at"] and watch["summary"]["underperformer"] == "BAD"
-    assert watch["summary"]["top"] == {"won": 3, "n": 3} and watch["summary"]["fallback"] == {"won": 0, "n": 1}
+    assert watch["round"] is None and watch["history"][0]["codes"] == ["GOOD", "BAD"]
+    s = watch["history"][0]["summary"]
+    assert s["underperformer"] == "BAD" and s["top"] == {"won": 3, "n": 3} and s["fallback"] == {"won": 0, "n": 1}
     assert tw.check(watch, {"GOOD": good, "BAD": bad}, TODAY, RANKED, .7, sport) == []
 
 
@@ -101,17 +113,42 @@ def api(monkeypatch):
     main.app.dependency_overrides.pop(main.require_admin, None)
 
 
-def test_watch_endpoints_and_the_job_check(api):
+def test_watch_runs_by_itself_for_the_watched_email(api, monkeypatch):
     c, fake, sent = api
-    assert c.post("/api/admin/tickets/watch", json={}).json()["watching"] == ["T1"]
+    monkeypatch.setenv("TICKET_WATCH_EMAILS", "Watched@Example.com")
+    lookups = []
+
+    async def by_email(emails):
+        lookups.append(emails)
+        return {"watched@example.com": "u1"}
+    monkeypatch.setattr(auth, "clerk_uids_by_email", by_email)
+
+    async def names(uids):
+        return {u: {"name": "W", "email": "watched@example.com"} for u in uids}
+    monkeypatch.setattr(main, "_account_names", names)
+    fake.kv[main._ukey("u2", "tickets")] = json.dumps([ticket("NOT", "open", [leg("1x2", .8)])])
+    # the deploy / hourly check: T1 (open) joins on its own, T2 (won) and u2's ticket don't
+    assert asyncio.run(main._ticket_watch_tick()) == {"messages": 1, "sent": 1}
+    assert sent[0].startswith("Watching ticket T1")
     got = c.get("/api/admin/tickets/watch").json()
-    assert got["tickets"][0]["code"] == "T1" and got["tickets"][0]["finished"] is False and sent == []
-    # T1 settles: the job's check sends its result and then the comparison
+    assert got["source"] == "env" and got["emails"] == {"watched@example.com": "u1"}
+    assert [t["code"] for t in got["round"]["tickets"]] == ["T1"] and got["round"]["tickets"][0]["finished"] is False
+    assert lookups == [["watched@example.com"]]   # the id is kept
+    # a second ticket booked later joins the same round
     fake.kv[main._ukey("u1", "tickets")] = json.dumps([
-        ticket("T1", "lost", [leg("1x2", .8, "won"), leg("ou25", .8, "lost", "2026-10-20")])])
-    msgs = main._check_ticket_watch(fake)
-    assert asyncio.run(main._send_watch_messages(msgs)) == {"messages": 2, "sent": 2}
-    assert sent[0].startswith("Ticket T1") and "Underperformed most: T1" in sent[1]
-    assert main._check_ticket_watch(fake) == []
-    assert c.delete("/api/admin/tickets/watch").json()["ok"] and c.get("/api/admin/tickets/watch").json() == {"watch": None}
-    assert c.post("/api/admin/tickets/watch", json={"codes": ["nope"]}).status_code == 400
+        ticket("T1", "open", [leg("1x2", .8, "won"), leg("1x2", .8, day="2026-10-20")]),
+        ticket("T3", "pending", [leg("1x2", .7, day="2026-10-20")])])
+    assert c.post("/api/admin/tickets/watch/check").json()["messages"] == 1 and sent[-1].startswith("Watching ticket T3")
+    # both settle: each is reported, then the round's comparison, and the round is archived
+    fake.kv[main._ukey("u1", "tickets")] = json.dumps([
+        ticket("T1", "lost", [leg("1x2", .8, "won"), leg("ou25", .8, "lost", "2026-10-20")]),
+        ticket("T3", "won", [leg("1x2", .7, "won", "2026-10-20")])])
+    assert asyncio.run(main._ticket_watch_tick())["sent"] == 3
+    assert sent[-3].startswith("Ticket T1") and sent[-2].startswith("Ticket T3") and "Underperformed most: T1" in sent[-1]
+    got = c.get("/api/admin/tickets/watch").json()
+    assert got["round"] is None and got["history"][0]["codes"] == ["T1", "T3"]
+    assert asyncio.run(main._ticket_watch_tick()) == {"messages": 0}
+    # the admin's list replaces the env's
+    assert c.put("/api/admin/tickets/watch/emails", json={"emails": ["nope"]}).status_code == 400
+    assert c.put("/api/admin/tickets/watch/emails", json={"emails": ["other@example.com"]}).json()["ok"]
+    assert c.get("/api/admin/tickets/watch").json()["source"] == "setting"

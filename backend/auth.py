@@ -204,6 +204,27 @@ async def clerk_names(uids: list) -> dict:
     return out
 
 
+async def clerk_uids_by_email(emails: list) -> dict:
+    """{email (lower case): Clerk user id} for the accounts with these emails."""
+    import httpx
+    want = [e.strip().lower() for e in dict.fromkeys(emails) if e and e.strip()]
+    out: dict = {}
+    if not want or not CLERK_SECRET_KEY:
+        return out
+    async with httpx.AsyncClient(timeout=15) as client:
+        r = await client.get("https://api.clerk.com/v1/users",
+                             params=[("email_address", e) for e in want] + [("limit", "100")],
+                             headers={"Authorization": f"Bearer {CLERK_SECRET_KEY}"})
+        if r.status_code != 200:
+            return out
+        for u in r.json() or []:
+            for e in u.get("email_addresses") or []:
+                addr = str(e.get("email_address") or "").lower()
+                if addr in want:
+                    out[addr] = u["id"]
+    return out
+
+
 async def set_public_metadata(uid: str, values: dict) -> int:
     """Merge `values` into a Clerk user's public metadata; the HTTP status."""
     import httpx

@@ -153,11 +153,9 @@ async def _refresh_matchdays(days_back: int = 1, trigger: str = "schedule") -> D
             report["tickets"] = {"error": "settling took over 90s; next run retries"}
         except Exception as e:
             report["tickets"] = {"error": str(e)}
-        # Tickets the admin is watching: tell them as each finishes
+        # The ticket watch: the watched accounts' new tickets, and the ones just finished
         try:
-            msgs = await asyncio.wait_for(asyncio.to_thread(main._check_ticket_watch, r), 60)
-            if msgs:
-                report["ticket_watch"] = await main._send_watch_messages(msgs)
+            report["ticket_watch"] = await asyncio.wait_for(main._ticket_watch_tick(), 90)
         except Exception as e:
             report["ticket_watch"] = {"error": f"{type(e).__name__}: {e}"[:200]}
     main._md_status.update(at=now.isoformat(timespec="seconds"), trigger=trigger, report=report,
