@@ -496,6 +496,88 @@ const SPORT_NAMES: Record<string, string> = {
 
 /** Every sport's markets by how often their picks came in (market_ranking.py),
  * made nightly at midnight (Lagos) from the stored match days. */
+function TicketWatch() {
+  const { get, post, flash, adminFetch } = useAdmin();
+  const [st, setSt] = useState<any>(null);
+  const [codes, setCodes] = useState("");
+  const [busy, setBusy] = useState(false);
+  const load = () => get("/api/admin/tickets/watch").then(d => setSt(d ?? { error: true }));
+  useEffect(() => { load(); }, [get]);
+  const start = async () => {
+    setBusy(true);
+    try {
+      const list = codes.split(/[\s,]+/).filter(Boolean);
+      const d = await post("/api/admin/tickets/watch", list.length ? { codes: list } : {});
+      flash("ok", `Watching ${d.watching.join(", ")}`);
+      await load();
+    } catch { flash("err", "Nothing to watch: no open tickets, or those codes weren't found"); }
+    setBusy(false);
+  };
+  const stop = async () => {
+    await adminFetch(`${API}/api/admin/tickets/watch`, { method: "DELETE" });
+    setSt({ watch: null });
+  };
+  const tierText = (t: any) => (t.n ? `${t.won}/${t.n}` : "—");
+
+  if (!st) return <Skeleton rows={3} />;
+  if (st.error) return <p className="text-xs text-n-400">Couldn&apos;t load the watch.</p>;
+  const w = st.watch, s = w?.summary;
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <input value={codes} onChange={e => setCodes(e.target.value)} placeholder="Codes (blank: every open ticket)"
+          className={clsx(inputClass, "flex-1 min-w-0")} />
+        <Btn onClick={start} busy={busy} variant="primary">{codes.trim() ? "Watch these" : "Watch open tickets"}</Btn>
+        {w && <Btn onClick={stop}>Stop</Btn>}
+      </div>
+      {!w ? <p className="text-xs text-n-400">Not watching anything.</p> : (
+        <>
+          <p className="text-xs text-n-400">
+            Started {ago(w.started_at)} · {w.done_at ? `all done ${ago(w.done_at)}` : `${w.reported.length} of ${w.tickets.length} done`}
+            {" "}· each result goes to the admin Telegram chat
+            {w.missing?.length ? ` · not found: ${w.missing.join(", ")}` : ""}
+          </p>
+          {s && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <Stat label="Tickets won" value={`${s.won}/${s.tickets}`} />
+              <Stat label="Legs won" value={`${s.legs_won}/${s.legs}`} sub={s.expected != null ? `model expected ${s.expected}` : undefined} />
+              <Stat label="70%+ markets" value={tierText(s.top)} tone="accent" sub={`fallback ${tierText(s.fallback)}`} />
+              <Stat label="Underperformed" value={s.underperformer ?? "none"} tone={s.underperformer ? "warn" : "accent"} />
+            </div>
+          )}
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs tnum">
+              <thead>
+                <tr className="text-left text-n-500">
+                  <th className="py-1.5 pr-2 font-medium">Code</th><th className="py-1.5 px-2 font-medium">Status</th>
+                  <th className="py-1.5 px-2 font-medium text-right">Legs won</th><th className="py-1.5 px-2 font-medium text-right">Expected</th>
+                  <th className="py-1.5 px-2 font-medium text-right">70%+ mkts</th><th className="py-1.5 pl-2 font-medium text-right">Fallback</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(st.tickets ?? []).map((t: any) => (
+                  <tr key={t.code} className="border-t border-n-800">
+                    <td className="py-1.5 pr-2 font-mono">{t.code}</td>
+                    <td className="py-1.5 px-2">
+                      <Pill tone={t.status === "won" ? "ok" : t.status === "lost" ? "danger" : "muted"}>{t.finished ? t.status : `${t.status} · playing`}</Pill>
+                    </td>
+                    <td className="py-1.5 px-2 text-right">{t.won}/{t.graded}</td>
+                    <td className={clsx("py-1.5 px-2 text-right", t.gap != null && t.gap < 0 && "text-warn")}>
+                      {t.expected ?? "—"}{t.gap != null ? ` (${t.gap > 0 ? "+" : ""}${t.gap})` : ""}
+                    </td>
+                    <td className="py-1.5 px-2 text-right">{tierText(t.tiers.top)}</td>
+                    <td className="py-1.5 pl-2 text-right">{tierText(t.tiers.fallback)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function MarketRanking() {
   const { post, flash, adminFetch } = useAdmin();
   const [rep, setRep] = useState<any>(null);
@@ -1465,6 +1547,11 @@ export function PredictionsSection() {
       <Card title="Accuracy by market" icon={<Target size={15} />}
         subtitle="How often each market's picks came in over the last few days, against what the model said">
         <MarketAccuracy />
+      </Card>
+
+      <Card title="Ticket watch" icon={<Target size={15} />}
+        subtitle="Follow tickets until they're all done, then see which underperformed and how the 70%+ markets did next to the fallback ones">
+        <TicketWatch />
       </Card>
 
       <Card title="Market ranking, every sport" icon={<Target size={15} />}

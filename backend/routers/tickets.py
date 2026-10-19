@@ -262,6 +262,92 @@ def _all_tickets(r) -> List[Dict[str, Any]]:
     return out
 
 
+def _watch_state(r) -> Optional[Dict[str, Any]]:
+    import ticket_watch
+    raw = r.get(ticket_watch.KEY)
+    try:
+        return json.loads(raw) if raw else None
+    except ValueError:
+        return None
+
+
+def _check_ticket_watch(r) -> List[str]:
+    """Messages for watched tickets finished since the last check (and the
+    final comparison once all are done); saves the watch."""
+    import ticket_watch
+    from routers.optimizer import MIN_HIT_RATE
+    watch = _watch_state(r)
+    if not watch or watch.get("done_at"):
+        return []
+    main._all_tickets_cache[:] = [0.0, None]   # just settled: read them fresh
+    by_code = {t.get("code"): t for t in reversed(main._all_tickets(r))}
+    messages = ticket_watch.check(watch, by_code, date.today(), main._ranked_codes(),
+                                  MIN_HIT_RATE, main._leg_sport)
+    r.set(ticket_watch.KEY, json.dumps(watch, separators=(",", ":")), ex=60 * 86400)
+    return messages
+
+
+async def _send_watch_messages(messages: List[str]) -> Dict[str, Any]:
+    import telegram_poster
+    sent, errors = 0, []
+    for m in messages:
+        res = await telegram_poster.notify_admin(m)
+        if isinstance(res, dict) and res.get("ok") is False:
+            errors.append(str(res.get("error"))[:120])
+        else:
+            sent += 1
+    return {"messages": len(messages), "sent": sent, **({"errors": errors} if errors else {})}
+
+
+@router.post("/api/admin/tickets/watch")
+async def start_ticket_watch(body: Optional[Dict[str, Any]] = None, _admin: str = Depends(main.require_admin)):
+    """Watch tickets until all are done, then report how each did. No codes:
+    every ticket still being played."""
+    import ticket_watch
+    r = main._get_redis()
+    if not r:
+        raise HTTPException(503, "no_redis")
+    codes = (body or {}).get("codes") or None
+    main._all_tickets_cache[:] = [0.0, None]
+    watch = ticket_watch.start(main._all_tickets(r), codes)
+    if not watch["tickets"]:
+        raise HTTPException(400, "No open tickets to watch" if not codes else "None of those codes were found")
+    r.set(ticket_watch.KEY, json.dumps(watch, separators=(",", ":")), ex=60 * 86400)
+    sent = await _send_watch_messages(await asyncio.to_thread(_check_ticket_watch, r))
+    return {"watching": [t["code"] for t in watch["tickets"]], "missing": watch["missing"], "notified": sent}
+
+
+@router.get("/api/admin/tickets/watch")
+async def get_ticket_watch(_admin: str = Depends(main.require_admin)):
+    """The watch and how each watched ticket stands now."""
+    import ticket_watch
+    from routers.optimizer import MIN_HIT_RATE
+    r = main._get_redis()
+    if not r:
+        return {"error": "no_redis"}
+    watch = _watch_state(r)
+    if not watch:
+        return {"watch": None}
+    by_code = {t.get("code"): t for t in reversed(main._all_tickets(r))}
+    ranked, today = main._ranked_codes(), date.today()
+    perfs = []
+    for w in watch.get("tickets") or []:
+        t = by_code.get(w["code"])
+        if t is not None:
+            perfs.append({**ticket_watch.performance(t, ranked, MIN_HIT_RATE, main._leg_sport),
+                          "finished": ticket_watch.finished(t, today)})
+    return {"watch": watch, "tickets": perfs}
+
+
+@router.delete("/api/admin/tickets/watch")
+async def stop_ticket_watch(_admin: str = Depends(main.require_admin)):
+    import ticket_watch
+    r = main._get_redis()
+    if r:
+        r.delete(ticket_watch.KEY)
+    return {"ok": True}
+
+
 async def _account_names(uids: List[str]) -> Dict[str, Dict[str, str]]:
     """Name and email per account, from Clerk (kept 10 minutes)."""
     import auth

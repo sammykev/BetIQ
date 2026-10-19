@@ -2644,10 +2644,10 @@ from routers.matchday import (  # noqa: E402
     _read_history, _record_job, _repredict, _snapshot_matchdays, _sportybet_scores, _unscored,
 )
 from routers.tickets import (  # noqa: E402
-    _account_names, _all_tickets, _attach_live, _fs_result_for, _leg_results, _leg_sport,
-    _md_entry_for, _other_sport_entry, _other_sport_live, _other_sport_md_result,
+    _account_names, _all_tickets, _attach_live, _check_ticket_watch, _fs_result_for, _leg_results,
+    _leg_sport, _md_entry_for, _other_sport_entry, _other_sport_live, _other_sport_md_result,
     _recheck_corrected_tickets, _record_ticket, _rescan_open_tickets, _settle_tickets,
-    _sr_result_for, _take_code, _ticket_needs_settling,
+    _send_watch_messages, _sr_result_for, _take_code, _ticket_needs_settling,
 )
 from routers.push import _push_daily, _send_push_notifications, _valid_push_subscription  # noqa: E402
 from routers.admin import _revenue_summary, _traffic_key_ok  # noqa: E402
