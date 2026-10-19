@@ -37,7 +37,12 @@ interface OptPick {
   bookable?: boolean;  // a SportyBet code can take it (match listed, market confirmed)
   league_id?: string;  // the league's id (its header and pin go by it); `league` is its name
   why?: string[];      // "why this pick" (backend/reasons.py)
+  /** How this market's picks came in over the last 60 days (the nightly ranking) */
+  market_hit?: MarketHit;
 }
+interface MarketHit { n: number; hit_rate: number; said: number | null; roi: number | null;
+  /** Came in more than 3 points under what the model said */
+  below_said: boolean; negative_roi: boolean }
 interface OptResult {
   picks?: OptPick[]; games?: number; total_odds?: number; win_chance?: number;
   within_target?: boolean; estimated_prices?: number; matches_considered?: number; bookable_picks?: number;
@@ -55,6 +60,9 @@ interface OptResult {
   extra_slips?: OptResult[];
   /** Markets and leagues left out: their past high-confidence picks came in clearly short */
   weak_left_out?: string[];
+  /** Nothing made a slip from proven markets alone, so these below-said markets were let in */
+  below_said_used?: boolean;
+  below_said?: string[];
 }
 interface ThinMatch { home: string; away: string; date: string; time?: string; league?: string; league_name?: string;
   /** Left out for its league (check not passed), not for want of data on a club */
@@ -777,6 +785,13 @@ export default function OptimizerPage() {
               <LiveCheckNote check={result.live_check} />
               <ThinLeftOut matches={result.thin_history} />
               <LegCapNote result={result} />
+              {result.below_said_used && (
+                <p className="text-xs text-warn flex gap-1.5">
+                  <AlertTriangle size={13} className="shrink-0 mt-0.5" />
+                  No slip could be made from markets that came in at what we said, so this one uses some that came in
+                  a little under. Those picks are marked below; play it smaller.
+                </p>
+              )}
 
               {booked?.code ? (
                 <div className="rounded-xl bg-surface-sunken p-4 space-y-3 [box-shadow:inset_0_0_0_1px_rgb(var(--accent)/0.4)]">
@@ -870,6 +885,7 @@ export default function OptimizerPage() {
                         {p.bookable === false && <span className="ml-1.5 text-[10px] font-bold uppercase tracking-wide text-warn">not on SportyBet</span>}
                       </p>
                       <WhyPick why={p.why} className="mt-0.5" />
+                      <MarketHitLine hit={p.market_hit} />
                     </div>
                     <div className="text-right shrink-0">
                       <p className="text-sm font-bold text-n-0 tnum">{odds(p.odds)}</p>
@@ -939,7 +955,9 @@ function LegCapNote({ result }: { result: OptResult }) {
           <ul className="mt-2 space-y-1">
             {(x.picks ?? []).map((p, j) => (
               <li key={j} className="flex justify-between gap-3">
-                <span className="truncate">{p.home} v {p.away} · {p.label}</span>
+                <span className="truncate">{p.home} v {p.away} · {p.label}
+                  {(p.market_hit?.below_said || p.market_hit?.negative_roi) && <span className="ml-1 text-warn">⚠</span>}
+                </span>
                 <span className="shrink-0 tabular-nums">{pct(p.prob)} · {odds(p.odds)}</span>
               </li>
             ))}
@@ -955,6 +973,21 @@ function LegCapNote({ result }: { result: OptResult }) {
   );
 }
 
+
+/** How the pick's market came in over the last 60 days, with a warning when
+ *  it came in under what we said or lost money at the odds taken. */
+function MarketHitLine({ hit }: { hit?: MarketHit }) {
+  if (!hit) return null;
+  const warn = hit.below_said || hit.negative_roi;
+  return (
+    <p className={clsx("text-[11px] mt-0.5 tnum", warn ? "text-warn" : "text-n-500")}>
+      This market came in {pct(hit.hit_rate)} of {hit.n} picks over 60 days
+      {hit.said != null && ` (we said ${pct(hit.said)})`}
+      {hit.below_said && " · under what we said"}
+      {hit.negative_roi && " · lost money at these odds"}
+    </p>
+  );
+}
 
 /** The slip's picks under their league, pinned leagues first (the same pins as each sport's page). */
 function SlipByLeague({ picks, row }: { picks: OptPick[]; row: (p: OptPick) => React.ReactNode }) {

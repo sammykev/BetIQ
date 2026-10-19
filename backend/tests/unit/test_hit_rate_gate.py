@@ -64,8 +64,10 @@ def test_codes_pool_each_market_by_its_optimizer_name():
          "grades": {"tip": {"prob": 0.8, "verdict": "won"}, "best": {"prob": 0.75, "verdict": "lost"},
                     "points": {"prob": 0.7, "verdict": "won"}}}
     rows = market_ranking.sport_rows("basketball", [e] * 5)
-    assert market_ranking.by_code(rows, 5) == {"basketball:bb_total": {"n": 10, "hit_rate": 0.5},
-                                               "basketball:bb_winner": {"n": 5, "hit_rate": 1.0}}
+    codes = market_ranking.by_code(rows, 5)
+    assert {k: (x["n"], x["hit_rate"]) for k, x in codes.items()} == {"basketball:bb_total": (10, 0.5),
+                                                                      "basketball:bb_winner": (5, 1.0)}
+    assert codes["basketball:bb_winner"]["said"] == 0.8 and codes["basketball:bb_winner"]["roi"] is None
     tt = {"grades": {"tip": {"prob": 0.7, "verdict": "won"}, "games": {"prob": 0.6, "verdict": "lost"}}}
     assert set(market_ranking.by_code(market_ranking.sport_rows("table_tennis", [tt]), 1)) == \
         {"table_tennis:rk_winner", "table_tennis:rk_total_games"}
@@ -79,3 +81,46 @@ def test_ranked_codes_read_from_the_stored_ranking(monkeypatch):
     monkeypatch.setattr(main, "_get_redis", lambda: fake)
     monkeypatch.setattr(opt_router, "_ranking_cache", {"at": 0.0, "codes": None})
     assert opt_router._ranked_codes() == {"tennis:rk_winner": {"n": 20, "hit_rate": 0.8}}
+
+
+def test_below_said_markets_only_when_nothing_else_makes_a_slip(monkeypatch):
+    _, every = run(monkeypatch, None, BODY)
+    good, short = sorted(every)[:2]
+    codes = {f"football:{good}": {"n": 40, "hit_rate": 0.8, "said": 0.78, "roi": 0.05},
+             f"football:{short}": {"n": 40, "hit_rate": 0.72, "said": 0.8, "roi": -0.1}}
+    res, seen = run(monkeypatch, codes, BODY)
+    assert seen == {good} and res["below_said_used"] is False and res["below_said"] == [f"football:{short}"]
+
+    # No slip from the proven markets: the below-said one comes back, flagged
+    monkeypatch.setattr(main, "_predictions_cache", [{**pred(d=date.today().isoformat()), "sport": "football"}])
+    pools = []
+
+    async def solve(groups, *a, **k):
+        pools.append({o.market for g in groups for o in g})
+        if short not in pools[-1]:
+            return None
+        o = next(o for g in groups for o in g if o.market == short)
+        return {"picks": [opt_router.asdict_option(o)], "total_odds": 3.0, "win_chance": 0.4, "within_target": True}
+    monkeypatch.setattr(main, "_solve", solve)
+    res = asyncio.run(main._optimize_request(BODY))
+    assert pools[0] == {good} and short in pools[1]
+    assert res["below_said_used"] is True
+    hit = res["picks"][0]["market_hit"]
+    assert hit["below_said"] and hit["negative_roi"] and hit["hit_rate"] == 0.72
+
+
+def test_gated_runs_are_logged_for_the_admin(monkeypatch):
+    from fastapi.testclient import TestClient
+    from tests.unit.test_user_endpoints import FakeRedis
+    _, every = run(monkeypatch, None, BODY)
+    keep, low = sorted(every)[:2]
+    fake = FakeRedis()
+    run(monkeypatch, {f"football:{keep}": {"n": 40, "hit_rate": 0.9}}, BODY)   # no Redis: nothing logged
+    monkeypatch.setattr(main, "_get_redis", lambda: fake)
+    asyncio.run(main._optimize_request({**BODY, "_source": "daily"}))
+
+    async def identity(request):
+        return "secret", None
+    monkeypatch.setattr(main, "_admin_identity", identity)
+    runs = TestClient(main.app).get("/api/admin/optimizer/left-out").json()["runs"]
+    assert len(runs) == 1 and runs[0]["source"] == "daily" and f"football:{low}" in runs[0]["left_out"]

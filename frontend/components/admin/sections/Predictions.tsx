@@ -599,6 +599,135 @@ function MarketRanking() {
   );
 }
 
+const legRoi = (x: number | null | undefined) =>
+  x == null ? "—" : `${x >= 0 ? "+" : "−"}${Math.abs(Math.round(x * 1000) / 10)}%`;
+const gapClass = (gap: number | null | undefined) =>
+  gap == null ? "text-n-500" : gap >= -0.03 ? "text-accent" : gap >= -0.08 ? "text-warn" : "text-danger";
+
+/** Every booked leg that has settled, by sport and market (tickets.leg_markets). */
+function BookedLegs() {
+  const { adminFetch } = useAdmin();
+  const [source, setSource] = useState("optimizer");
+  const [part, setPart] = useState("");
+  const [days, setDays] = useState(60);
+  const [data, setData] = useState<any>(null);
+  useEffect(() => {
+    let live = true;
+    setData(null);
+    (async () => {
+      try {
+        const q = new URLSearchParams({ source, part, days: String(days) });
+        const res = await adminFetch(`${API}/api/admin/tickets/markets?${q}`);
+        const body = res.ok ? await res.json() : { error: `${res.status} from the server` };
+        if (live) setData(body);
+      } catch { if (live) setData({ error: "the server didn't answer" }); }
+    })();
+    return () => { live = false; };
+  }, [adminFetch, source, part, days]);
+
+  const chip = (on: boolean) => clsx("rounded-full px-2.5 py-1 text-xs", on ? "bg-accent/15 text-accent" : "bg-surface-sunken text-n-300");
+  const sources: Record<string, string> = { "": "All sources", ...(data?.sources ?? { optimizer: "Optimizer", daily: "Daily odds" }) };
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-1.5">
+        {Object.entries(sources).map(([k, name]) => (
+          <button key={k || "all"} onClick={() => setSource(k)} className={chip(k === source)}>{name as string}</button>
+        ))}
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {[["", "Every market"], ["quarter", "Quarters"], ["half", "Halves"], ["set", "Sets"]].map(([k, name]) => (
+          <button key={k || "all"} onClick={() => setPart(k)} className={chip(k === part)}>{name}</button>
+        ))}
+        <span className="w-px bg-n-800 mx-1" />
+        {[[30, "30 days"], [60, "60 days"], [0, "All time"]].map(([d, name]) => (
+          <button key={d} onClick={() => setDays(d as number)} className={chip(d === days)}>{name}</button>
+        ))}
+      </div>
+      {!data ? <Skeleton rows={3} /> : data.error ? (
+        <p className="text-xs text-n-400">Couldn&apos;t load the legs ({data.error}).</p>
+      ) : data.markets.length === 0 ? (
+        <p className="text-xs text-n-400">No settled legs for this choice yet.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs tnum">
+            <thead>
+              <tr className="text-left text-n-500">
+                <th className="py-1.5 pr-2 font-medium">Sport</th><th className="py-1.5 px-2 font-medium">Market</th>
+                <th className="py-1.5 px-2 font-medium text-right">Legs</th><th className="py-1.5 px-2 font-medium text-right">Came in</th>
+                <th className="py-1.5 px-2 font-medium text-right">Said</th><th className="py-1.5 px-2 font-medium text-right">Gap</th>
+                <th className="py-1.5 pl-2 font-medium text-right">ROI</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.markets.map((m: any) => (
+                <tr key={`${m.sport}:${m.market}`} className="border-t border-n-800">
+                  <td className="py-1.5 pr-2 text-n-300 whitespace-nowrap">{SPORT_NAMES[m.sport] ?? m.sport}</td>
+                  <td className="py-1.5 px-2 text-n-200">{m.name}</td>
+                  <td className="py-1.5 px-2 text-right text-n-300">{num(m.n)}</td>
+                  <td className="py-1.5 px-2 text-right font-semibold text-n-0">{pctText(m.hit_rate)}</td>
+                  <td className="py-1.5 px-2 text-right text-n-300">{pctText(m.said)}</td>
+                  <td className={clsx("py-1.5 px-2 text-right", gapClass(m.gap))}>{legRoi(m.gap)}</td>
+                  <td className={clsx("py-1.5 pl-2 text-right", m.roi == null ? "text-n-500" : m.roi >= 0 ? "text-accent" : "text-danger")}>
+                    {legRoi(m.roi)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="text-[11px] text-n-500">
+        {data?.legs ? `${num(data.legs)} settled legs. ` : ""}Came in: how often the booked legs won. Gap: came in minus
+        what the model said. ROI: the return at 1 a leg on the odds SportyBet booked.
+      </p>
+    </div>
+  );
+}
+
+/** The last gated optimizer and daily runs: markets the hit-rate gate left
+ * out, and the below-said markets a slip fell back on. */
+function LeftOutRuns() {
+  const { get } = useAdmin();
+  const [data, setData] = useState<any>(null);
+  const [open, setOpen] = useState<number | null>(0);
+  useEffect(() => { get("/api/admin/optimizer/left-out").then(d => setData(d ?? { error: true })); }, [get]);
+  if (!data) return <Skeleton rows={3} />;
+  if (data.error) return <p className="text-xs text-n-400">Couldn&apos;t load the runs.</p>;
+  if (!data.runs.length) return <p className="text-xs text-n-400">No gated run since this was switched on.</p>;
+  const name = (k: string) => {
+    const [sport, market] = k.split(":");
+    return `${SPORT_NAMES[sport] ?? sport} · ${market}`;
+  };
+  return (
+    <div className="space-y-1.5">
+      {data.runs.slice(0, 30).map((r: any, i: number) => (
+        <div key={i} className="rounded-lg bg-surface-sunken px-3 py-2 text-xs">
+          <button onClick={() => setOpen(open === i ? null : i)} className="flex w-full flex-wrap items-center gap-2 text-left">
+            <span className="text-n-300 whitespace-nowrap">{ago(r.at)}</span>
+            <Pill tone={r.source === "daily" ? "info" : "muted"}>{r.source === "daily" ? "Daily odds" : "Optimizer"}</Pill>
+            <span className="text-n-400">gate {pctText(r.min_hit)} · {num(r.considered)} matches left</span>
+            <span className="ml-auto text-n-300">{num(r.left_out.length)} left out</span>
+            {r.below_said?.length > 0 && <Pill tone="warn">{r.below_said.length} below said used</Pill>}
+          </button>
+          {open === i && (
+            <div className="mt-2 space-y-1">
+              {r.below_said?.length > 0 && (
+                <p className="text-warn">Fell back on: {r.below_said.map(name).join(", ")}</p>
+              )}
+              <p className="text-n-400">{r.left_out.length ? r.left_out.map(name).join(", ") : "Nothing left out."}</p>
+            </div>
+          )}
+        </div>
+      ))}
+      <p className="text-[11px] text-n-500">
+        Left out: markets under the run&apos;s hit-rate gate, or with too few settled picks to be ranked. Below said:
+        markets that came in more than {Math.round(data.gap_tolerance * 100)} points under what the model said; a slip
+        uses them only when none can be made without.
+      </p>
+    </div>
+  );
+}
+
 const REVIEW_TONE: Record<string, "ok" | "warn" | "danger" | "muted" | "info"> = {
   pause: "danger", watch: "warn", ok: "ok", better: "info", few: "muted",
 };
@@ -1341,6 +1470,16 @@ export function PredictionsSection() {
       <Card title="Market ranking, every sport" icon={<Target size={15} />}
         subtitle="Every sport's markets ranked by how often their picks came in, refreshed nightly at midnight (Lagos)">
         <MarketRanking />
+      </Card>
+
+      <Card title="Booked legs by market" icon={<Target size={15} />}
+        subtitle="Every leg booked on a code that has settled, by market: how often it came in against what the model said">
+        <BookedLegs />
+      </Card>
+
+      <Card title="Markets left out of slips" icon={<Target size={15} />}
+        subtitle="What the hit-rate gate left out of each optimizer and daily odds run">
+        <LeftOutRuns />
       </Card>
 
       <Card title="Profit at SportyBet prices" icon={<Target size={15} />}

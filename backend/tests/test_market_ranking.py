@@ -34,3 +34,18 @@ def test_summary_carries_the_previous_hit_rate():
     out = mr.summary(rows, mr.rank(rows, 1), {"markets": [{"sport": "tennis", "market": "Our tip (winner)", "hit_rate": 0.6}]})
     assert out["markets"][0]["before"] == 0.6
     assert out["sports"] == [{"sport": "tennis", "n": 4, "hit_rate": 0.75, "said": 0.7}]
+
+
+def test_every_quarter_line_is_graded_not_only_the_best():
+    e = {"result": {"status": "finished", "score": [85, 82], "periods": [[20, 20], [22, 20], [21, 22], [22, 20]], "ot": False},
+         "pred": {"best": {"market": "bb_q1_total"},
+                  "lines": [["bb_q1_total", "O35.5", 0.8], ["bb_q2_total", "U40.5", 0.7], ["bb_h1_total", "O80.5", 0.6],
+                            ["bb_q3_total", "O50.5", 0.3], ["bb_total", "O150.5", 0.9]]},
+         "grades": {"best": {"prob": 0.8, "odds": 1.3, "verdict": "won"}}}
+    rows = mr.sport_rows("basketball", [e])
+    assert ("basketball", "1st quarter total points", 0.8, True, None, "bb_q1_total") in rows
+    assert ("basketball", "2nd quarter total points", 0.7, False, None, "bb_q2_total") in rows
+    assert ("basketball", "1st half total points", 0.6, True, None, "bb_h1_total") in rows
+    # under 50% and full-game lines aren't part lines; the best line isn't counted twice
+    assert len(rows) == 3
+    assert mr.by_code(rows, 1)["basketball:bb_q2_total"] == {"n": 1, "hit_rate": 0.0, "said": 0.7, "roi": None}

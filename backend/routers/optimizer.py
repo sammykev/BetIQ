@@ -52,6 +52,11 @@ def _weak_cells() -> set:
 # daily slips ask for more (daily_slips.MIN_HIT_RATE)
 MIN_HIT_RATE = 0.70
 RANKING_TTL = 600
+# A market that came in this much below what the model said (gap = came in
+# − said) is "below said": slips use it only when no slip is found without
+GAP_TOLERANCE = 0.03
+LEFT_OUT_KEY = "betiq:optimizer:left_out"
+LEFT_OUT_KEEP = 100
 _ranking_cache: Dict[str, Any] = {"at": 0.0, "codes": None}
 
 
@@ -71,6 +76,49 @@ def _ranked_codes() -> Optional[Dict[str, Dict[str, Any]]]:
             print(f"[Optimizer] couldn't read the market ranking: {e}")
     _ranking_cache.update(at=time.time(), codes=codes)
     return codes
+
+
+def _below_said(ranked: Optional[Dict[str, Dict[str, Any]]]) -> set:
+    """The ranked markets that came in more than GAP_TOLERANCE below what the model said."""
+    return {k for k, x in (ranked or {}).items()
+            if x.get("said") is not None and x["hit_rate"] < x["said"] - GAP_TOLERANCE}
+
+
+def _market_hit(pick: Dict[str, Any], ranked: Dict[str, Dict[str, Any]]) -> None:
+    """The pick's market in the nightly ranking: {n, hit_rate, said, roi,
+    below_said}, and a warning flag when its return or its gap is negative."""
+    x = ranked.get(f"{pick.get('sport') or 'football'}:{pick.get('market')}")
+    if not x:
+        return
+    below = x.get("said") is not None and x["hit_rate"] < x["said"] - GAP_TOLERANCE
+    pick["market_hit"] = {"n": x["n"], "hit_rate": x["hit_rate"], "said": x.get("said"), "roi": x.get("roi"),
+                          "below_said": below, "negative_roi": x.get("roi") is not None and x["roi"] < 0}
+
+
+def _log_left_out(entry: Dict[str, Any]) -> None:
+    """Keep the last LEFT_OUT_KEEP gated runs (what the hit-rate gate left out) for the admin panel."""
+    r = main._get_redis()
+    if not r:
+        return
+    try:
+        runs = json.loads(r.get(LEFT_OUT_KEY) or "[]")
+        r.set(LEFT_OUT_KEY, json.dumps(([entry] + runs)[:LEFT_OUT_KEEP], separators=(",", ":")))
+    except Exception as e:
+        print(f"[Optimizer] couldn't log the left-out markets: {e}")
+
+
+@router.get("/api/admin/optimizer/left-out")
+async def admin_left_out(_admin: str = Depends(main.require_admin)):
+    """The last gated optimizer and daily runs: the markets the hit-rate gate
+    left out, and the below-said markets a slip had to fall back on."""
+    r = main._get_redis()
+    if not r:
+        raise HTTPException(status_code=503, detail="The database isn't connected")
+    try:
+        runs = json.loads(r.get(LEFT_OUT_KEY) or "[]")
+    except Exception:
+        runs = []
+    return {"runs": runs, "gap_tolerance": GAP_TOLERANCE}
 
 
 def _leg_note(asked: int, cap: int) -> str:
@@ -519,6 +567,9 @@ async def _optimize_request(body: Dict[str, Any],
         hit_out = sorted({f"{o.sport}:{o.market}" for g in groups for o in g if low(o)})
         groups = [[o for o in g if not low(o)] for g in groups]
         if had and not any(groups):
+            _log_left_out({"at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                           "source": body.get("_source") or "optimizer", "min_hit": min_hit,
+                           "considered": 0, "left_out": hit_out, "below_said": []})
             return {"error": (f"None of the picks on {had} matches is in a market that came in "
                               f"{min_hit:.0%} of the time or more over the last {main.RANKING_DAYS} days. "
                               "Try more days or sports."),
@@ -563,12 +614,29 @@ async def _optimize_request(body: Dict[str, Any],
                 "matches_considered": 0, "target": [lo, hi], "target_odds": target, "thin_history": thin}
     # Every pick checked on SportyBet's current match page (_solve_checked)
     events = {(p["home"], p["away"], p.get("date")): ev for p, ev in pairs}
-    if body.get("no_live_check"):
-        result = await main._solve(groups, lo, hi, target, max_games, min_chance)
-        live_check: Dict[str, Any] = {"checked": 0, "removed": [], "repriced": 0, "unchecked": 0}
-    else:
-        result, live_check = await main._solve_checked(groups, lo, hi, target, max_games, events, main._sb_market_map(),
-                                                  min_chance)
+    # Proven markets first: ones that came in near what the model said. The
+    # below-said ones are used only when no slip is found without them
+    short = _below_said(ranked) if ranked is not None else set()
+    proven = [[o for o in g if f"{o.sport}:{o.market}" not in short] for g in groups]
+    tries = [proven, groups] if short and any(proven) and proven != groups else [groups]
+    below_used = False
+    for i, pool in enumerate(tries):
+        if body.get("no_live_check"):
+            result = await main._solve(pool, lo, hi, target, max_games, min_chance)
+            live_check: Dict[str, Any] = {"checked": 0, "removed": [], "repriced": 0, "unchecked": 0}
+        else:
+            result, live_check = await main._solve_checked(pool, lo, hi, target, max_games, events,
+                                                      main._sb_market_map(), min_chance)
+        if result is not None:
+            groups, below_used = pool, i > 0
+            break
+    if ranked is not None:
+        _log_left_out({"at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                       "source": body.get("_source") or "optimizer", "min_hit": min_hit, "considered": considered,
+                       "left_out": hit_out,
+                       "below_said": sorted({f"{p.get('sport') or 'football'}:{p.get('market')}"
+                                             for p in (result or {}).get("picks") or []
+                                             if f"{p.get('sport') or 'football'}:{p.get('market')}" in short})})
     if result is None and live_check["removed"]:
         return {"error": (f"{len(live_check['removed'])} of the picks were suspended on SportyBet and "
                           "no slip without them reaches the target. Try again in a few minutes, or widen the target."),
@@ -605,6 +673,10 @@ async def _optimize_request(body: Dict[str, Any],
     if ranked is not None:
         result["min_hit_rate"] = min_hit
         result["hit_rate_left_out"] = hit_out
+        result["below_said_used"] = below_used
+        result["below_said"] = sorted(short)
+        for pick in result.get("picks") or []:
+            _market_hit(pick, ranked)
     if max_games < asked:
         # The rest of a long ask: more slips of ≤ HIGH_CONF_LEGS from the matches left
         result["leg_cap"] = {"cap": max_games, "asked": asked, "note": main._leg_note(asked, max_games)}
@@ -616,6 +688,8 @@ async def _optimize_request(body: Dict[str, Any],
             if not more or not more.get("picks"):
                 break
             for pick in more["picks"]:
+                if ranked is not None:
+                    _market_hit(pick, ranked)
                 pick["bookable"] = (pick.get("sb") is not None or bool(events.get((pick["home"], pick["away"], pick["date"])))
                                     and ok(pick["market"], pick["code"])
                                     and (pick["market"] not in booking_slip.LISTED_ONLY or pick["odds_source"] == "sportybet"))

@@ -308,6 +308,24 @@ async def admin_all_tickets(limit: int = 200, status: str = "", source: str = ""
         for t in page]}
 
 
+@router.get("/api/admin/tickets/markets")
+async def admin_ticket_markets(source: str = "", part: str = "", days: int = 0,
+                               _admin: str = Depends(main.require_admin)):
+    """Every booked leg that has settled, by sport and market: picks, hit
+    rate, what the model said and the return on the odds booked. Filters:
+    source (optimizer|daily|slip|code_check), part (quarter|half|set), days."""
+    import tickets
+    r = main._get_redis()
+    if not r:
+        raise HTTPException(status_code=503, detail="The database isn't connected")
+    if part not in ("", "quarter", "half", "set"):
+        raise HTTPException(status_code=400, detail="part is quarter, half or set")
+    items = await asyncio.to_thread(main._all_tickets, r)
+    since = (date.today() - timedelta(days=int(days))).isoformat() if days and int(days) > 0 else ""
+    rows = tickets.leg_markets(items, source, part, since)
+    return {"markets": rows, "legs": sum(x["n"] for x in rows), "sources": tickets.SOURCE_NAMES}
+
+
 def _leg_sport(leg: Dict) -> str:
     """football, basketball or a racket sport ("tennis", "table_tennis", or
     "racket" when the leg doesn't say which)."""

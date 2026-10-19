@@ -311,3 +311,39 @@ def _groups(priced: List[Dict], key, order: Optional[List[str]] = None) -> List[
     out = [{"name": k, "won": int(w), "lost": int(lo), "units": round(u, 2), "roi": round(u / (w + lo), 3)}
            for k, (w, lo, u) in rows.items()]
     return sorted(out, key=lambda r: order.index(r["name"]) if order else -(r["won"] + r["lost"]))
+
+def leg_markets(items: List[Dict], source: str = "", part: str = "", since: str = "") -> List[Dict[str, Any]]:
+    """Settled legs (won/lost) of `items` grouped by sport and market: picks,
+    hit rate, what the model said (average prob) and the return at 1 a leg
+    on the odds booked. source: a ticket source; part: quarter|half|set
+    (part-of-the-match lines only); since: legs played on or after."""
+    import market_ranking
+    rows: Dict[tuple, List[Dict]] = {}
+    for t in items:
+        if source and (t.get("source") or "other") != source:
+            continue
+        for leg in t.get("legs") or []:
+            m = str(leg.get("market") or "")
+            if leg.get("status") not in ("won", "lost") or not m or m == "sportybet":
+                continue
+            if part and market_ranking.part_kind(m) != part:
+                continue
+            if since and (leg.get("date") or "") < since:
+                continue
+            sport = leg.get("sport") or ("basketball" if m.startswith("bb_") else "football")
+            rows.setdefault((sport, m), []).append(leg)
+    out = []
+    for (sport, m), legs in rows.items():
+        won = sum(1 for l in legs if l["status"] == "won")
+        probs = [l["prob"] for l in legs if isinstance(l.get("prob"), (int, float))]
+        priced = [l for l in legs if isinstance(l.get("odds"), (int, float)) and l["odds"] > 1]
+        said = sum(probs) / len(probs) if probs else None
+        out.append({"sport": sport, "market": m,
+                    "name": market_ranking.line_name(sport, m) if m.startswith(("bb_", "rk_"))
+                    else (legs[0].get("marketName") or m),
+                    "n": len(legs), "won": won, "hit_rate": round(won / len(legs), 4),
+                    "said": round(said, 4) if said is not None else None,
+                    "gap": round(won / len(legs) - said, 4) if said is not None else None,
+                    "roi": round(sum(l["odds"] - 1 if l["status"] == "won" else -1 for l in priced) / len(priced), 4)
+                    if priced else None})
+    return sorted(out, key=lambda r: (-r["n"], r["sport"], r["market"]))

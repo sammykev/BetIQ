@@ -52,7 +52,7 @@ async def _daily_slip(target: float, day: str, exclude: Optional[List] = None) -
             # Racket sports not open to everyone stay out of the daily slips
             off = [rk for rk in main.RK_SPORTS if feats[access.SPORT_FEATURES[rk]]["state"] != "on"]
             res = await main._optimize_request({**daily_slips.request(target, attempt), "_rk_off": off,
-                                           "exclude_matches": exclude or []},
+                                           "_source": "daily", "exclude_matches": exclude or []},
                                           window=daily_slips.window(day))
         except HTTPException as e:
             res = {"error": str(e.detail)}

@@ -4,7 +4,10 @@ match days stored in Redis (settled pre-match snapshots, not a backtest).
 
 - football: every outcome the model rated ≥ 50% (market_accuracy.settle);
 - basketball, tennis, table tennis: our tip (winner), the total line we
-  tipped and the best line we showed, the best line grouped by its market.
+  tipped and the best line we showed, the best line grouped by its market;
+  and every quarter, half and set line the model priced at 50%+ (the
+  snapshot's "lines"), so those markets get a hit rate of their own and
+  aren't left out of slips as unranked.
 
 Where a pick carries the price it was shown at, the flat-stake return is
 given too: a high hit rate at short odds can still lose money.
@@ -27,7 +30,8 @@ SPORTS = {"basketball": "betiq:bbmd:{}", "tennis": "betiq:tennis:md:{}", "table_
 FOOTBALL_KEY = "betiq:md:{}"
 
 _PARTS = (("bb_h1_", "1st half"), ("bb_h2_", "2nd half"), ("bb_q1_", "1st quarter"), ("bb_q2_", "2nd quarter"),
-          ("bb_q3_", "3rd quarter"), ("bb_q4_", "4th quarter"), ("rk_s1_", "1st set"), ("rk_s2_", "2nd set"))
+          ("bb_q3_", "3rd quarter"), ("bb_q4_", "4th quarter"), ("rk_s1_", "1st set"), ("rk_s2_", "2nd set"),
+          ("rk_s3_", "3rd set"), ("rk_s4_", "4th set"), ("rk_s5_", "5th set"))
 _LINES = {"winner": "winner", "1x2": "1X2", "handicap": "handicap", "home_total": "home team points",
           "away_total": "away team points", "set_handicap": "set handicap", "games_handicap": "games handicap",
           "total_games": "total games", "home_games": "home player games", "away_games": "away player games",
@@ -75,15 +79,62 @@ def football_rows(entries: List[Dict]) -> List[Row]:
 _GRADE_CODES = {"tip": "{p}_winner", "points": "bb_total", "games": "rk_total_games"}
 
 
+def is_part(market: str) -> bool:
+    """A quarter, half or set market (bb_q1_total, rk_s2_winner …)."""
+    return any(market.startswith(prefix) for prefix, _ in _PARTS)
+
+
+def part_kind(market: str) -> Optional[str]:
+    """"quarter", "half" or "set" for a part-of-the-match line, else None."""
+    for prefix, label in _PARTS:
+        if market.startswith(prefix):
+            return label.split()[1]
+    return None
+
+
+def part_rows(sport: str, e: Dict) -> List[Row]:
+    """Every quarter/half/set line the model priced at 50%+ before the
+    start, settled from the final score (no odds kept with these)."""
+    res, lines = e.get("result") or {}, (e.get("pred") or {}).get("lines")
+    if res.get("status") != "finished" or not isinstance(lines, list):
+        return []
+    if sport == "basketball":
+        import basketball_markets as bmk
+        import basketball_matchday as bmd
+        settle, st = bmk.settle, bmd._settle_result(res)
+    else:
+        import racket_markets as rkm
+        import racket_matchday as rmd
+        settle, st = rkm.settle, rmd._settled(res)
+    rows = []
+    for x in lines:
+        if not isinstance(x, (list, tuple)) or len(x) < 3:
+            continue
+        market, code, prob = x[0], x[1], x[2]
+        if not market or not is_part(str(market)) or not isinstance(prob, (int, float)) or prob < 0.5:
+            continue
+        try:
+            v = settle(market, code, st)
+        except Exception:
+            continue
+        if v in ("won", "lost"):
+            rows.append((sport, line_name(sport, market), float(prob), v == "won", None, market))
+    return rows
+
+
 def sport_rows(sport: str, entries: List[Dict]) -> List[Row]:
     import sport_accuracy
     names = sport_accuracy.NAMES.get(sport, sport_accuracy.NAMES["tennis"])
     prefix = "bb" if sport == "basketball" else "rk"
     rows = []
     for e in entries:
+        parts = part_rows(sport, e)
+        rows += parts
         for g, x in (e.get("grades") or {}).items():
             if x.get("verdict") not in ("won", "lost") or not isinstance(x.get("prob"), (int, float)):
                 continue
+            if g == "best" and parts and is_part(((e.get("pred") or {}).get("best") or {}).get("market") or ""):
+                continue    # already counted with every part line
             name, code = names.get(g, g), _GRADE_CODES.get(g, "").format(p=prefix)
             if g == "best":
                 market = ((e.get("pred") or {}).get("best") or {}).get("market") or ""
@@ -114,13 +165,22 @@ def by_code(rows: List[Row], min_n: int) -> Dict[str, Dict]:
     """Each market code's picks pooled, as "sport:code" (an optimizer
     option's sport and market): the hit-rate gate on slips reads this.
     A basketball total tipped as "Total points" and as the best line
-    counts once under bb_total."""
-    groups: Dict[str, List[bool]] = {}
+    counts once under bb_total. With what the model said on average, and
+    the flat-stake return where enough picks carried their price."""
+    groups: Dict[str, List[Row]] = {}
     for r in rows:
         if len(r) > 5 and r[5]:
-            groups.setdefault(f"{r[0]}:{r[5]}", []).append(r[3])
-    return {k: {"n": len(ws), "hit_rate": round(sum(ws) / len(ws), 4)}
-            for k, ws in sorted(groups.items()) if len(ws) >= min_n}
+            groups.setdefault(f"{r[0]}:{r[5]}", []).append(r)
+    out = {}
+    for k, rs in sorted(groups.items()):
+        if len(rs) < min_n:
+            continue
+        priced = [r for r in rs if r[4] and r[4] > 1]
+        out[k] = {"n": len(rs), "hit_rate": round(sum(r[3] for r in rs) / len(rs), 4),
+                  "said": round(sum(r[2] for r in rs) / len(rs), 4),
+                  "roi": round(sum(r[4] - 1 if r[3] else -1 for r in priced) / len(priced), 4)
+                  if len(priced) >= min_n else None}
+    return out
 
 
 def summary(rows: List[Row], markets: List[Dict], before: Optional[Dict] = None) -> Dict:
