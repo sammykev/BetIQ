@@ -497,12 +497,20 @@ const SPORT_NAMES: Record<string, string> = {
 /** Every sport's markets by how often their picks came in (market_ranking.py),
  * made nightly at midnight (Lagos) from the stored match days. */
 function MarketRanking() {
-  const { get, post, flash } = useAdmin();
+  const { post, flash, adminFetch } = useAdmin();
   const [rep, setRep] = useState<any>(null);
   const [sport, setSport] = useState("all");
   const [busy, setBusy] = useState(false);
-  const load = () => get("/api/admin/market-ranking").then(d => setRep(d ?? { error: true })).catch(() => setRep({ error: true }));
-  useEffect(() => { load(); }, [get]);
+  const load = async () => {
+    try {
+      const res = await adminFetch(`${API}/api/admin/market-ranking`);
+      if (res.ok) return setRep(await res.json());
+      setRep({ error: res.status === 404 ? "404: the server hasn't picked up the new code yet"
+        : res.status === 503 ? "503: the database isn't connected"
+        : res.status === 401 || res.status === 403 ? `${res.status}: sign in again` : `${res.status} from the server` });
+    } catch { setRep({ error: "the server didn't answer" }); }
+  };
+  useEffect(() => { load(); }, [adminFetch]);
   const runNow = async () => {
     setBusy(true);
     try {
@@ -513,7 +521,7 @@ function MarketRanking() {
   };
 
   if (!rep) return <Skeleton rows={4} />;
-  if (rep.error) return <p className="text-xs text-n-400">Couldn&apos;t load the ranking.</p>;
+  if (rep.error) return <p className="text-xs text-n-400">Couldn&apos;t load the ranking ({rep.error}).</p>;
   const r = rep.report;
   const markets = (r?.markets ?? []).filter((m: any) => sport === "all" || m.sport === sport);
   return (
