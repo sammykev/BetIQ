@@ -132,6 +132,8 @@ export function TicketsList({ uid, authFetch }: { uid: string; authFetch: (url: 
   const [copied, setCopied] = useState<string | null>(null);
   const [removed, setRemoved] = useState<string | null>(null);   // the code Undo can bring back
   const [failed, setFailed] = useState<string | null>(null);
+  // Which ticket cards show their legs: open ones start expanded, settled ones collapsed
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   const load = useCallback(() =>
     authFetch(`${API}/api/user/tickets?uid=${encodeURIComponent(uid)}`)
@@ -220,13 +222,20 @@ export function TicketsList({ uid, authFetch }: { uid: string; authFetch: (url: 
   const tickets = data?.tickets ?? [];
   const older = data?.older ?? [];
   const s = data?.summary;
+  const isOpen = (t: Ticket) => expanded[t.code] ?? (t.status === "pending" || t.status === "open");
+  const setAll = (open: boolean) => setExpanded(Object.fromEntries(tickets.map(t => [t.code, open])));
 
   const card = (t: Ticket) => {
     const done = t.legs.filter(l => l.status !== "pending" && l.status !== "unknown").length;
     const playing = t.legs.filter(l => l.live?.status === "live").length;
+    const open = isOpen(t);
+    const legsId = `ticket-legs-${t.code}`;
     return (
       <article key={t.code} className={clsx("card overflow-hidden", t.status === "won" && "card-won", t.status === "lost" && "card-lost")}>
-        <header className="flex items-start justify-between gap-3 p-4">
+        <button type="button" onClick={() => setExpanded(e => ({ ...e, [t.code]: !open }))}
+          aria-expanded={open} aria-controls={legsId}
+          aria-label={`${open ? "Collapse" : "Expand"} ticket ${t.code}`}
+          className="w-full flex items-start justify-between gap-3 p-4 text-left">
           <div className="min-w-0">
             <p className="font-mono text-2xl font-bold text-n-0 tracking-[0.18em]">{t.code}</p>
             <p className="text-[11px] text-n-500 mt-0.5">
@@ -239,10 +248,14 @@ export function TicketsList({ uid, authFetch }: { uid: string; authFetch: (url: 
             <span className={clsx("inline-block rounded-full border px-2 py-0.5 text-[11px] font-bold", STATUS[t.status].cls)}>{STATUS[t.status].label}</span>
             {t.total_odds && <p className="font-display font-extrabold text-2xl text-n-0 leading-none tnum">{t.total_odds.toFixed(2)}x</p>}
           </div>
-        </header>
-        <ul className="px-4 border-t border-dashed border-n-700 divide-y divide-n-800/70">
-          {t.legs.map((l, i) => <LegRow key={i} leg={l} />)}
-        </ul>
+          <ChevronDown size={16} aria-hidden="true"
+            className={clsx("text-n-400 shrink-0 mt-1.5 transition-transform", open && "rotate-180")} />
+        </button>
+        {open && (
+          <ul id={legsId} className="px-4 border-t border-dashed border-n-700 divide-y divide-n-800/70">
+            {t.legs.map((l, i) => <LegRow key={i} leg={l} />)}
+          </ul>
+        )}
         <footer className="flex items-center justify-between gap-2 px-4 py-3 border-t border-n-800">
           {t.share_url ? (
             <a href={t.share_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-xs text-n-300 hover:text-n-0">
@@ -301,8 +314,14 @@ export function TicketsList({ uid, authFetch }: { uid: string; authFetch: (url: 
           <span><span className="text-n-500">Still open </span><span className="font-bold text-n-0 tnum">{s.pending}</span></span>
         </div>
       )}
+      {tickets.length > 1 && (
+        <div className="flex justify-end gap-3 text-xs">
+          <button type="button" onClick={() => setAll(true)} className="text-n-400 hover:text-n-0">Expand all</button>
+          <button type="button" onClick={() => setAll(false)} className="text-n-400 hover:text-n-0">Collapse all</button>
+        </div>
+      )}
       {active.length > 0 ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 short:grid-cols-2 gap-4 stagger">{active.map(card)}</div>
+        <div className="grid grid-cols-1 md:grid-cols-2 short:grid-cols-2 items-start gap-4 stagger">{active.map(card)}</div>
       ) : (
         <p className="card px-4 py-6 text-center text-sm text-n-400">No open tickets. Settled ones are below.</p>
       )}
@@ -312,7 +331,7 @@ export function TicketsList({ uid, authFetch }: { uid: string; authFetch: (url: 
             <span>Settled tickets ({settled.length}) · {settled.filter(t => t.status === "won").length} won</span>
             <ChevronDown size={16} className="text-n-400 transition-transform group-open:rotate-180" />
           </summary>
-          <div className="grid grid-cols-1 md:grid-cols-2 short:grid-cols-2 gap-4 mt-4 stagger">{settled.map(card)}</div>
+          <div className="grid grid-cols-1 md:grid-cols-2 short:grid-cols-2 items-start gap-4 mt-4 stagger">{settled.map(card)}</div>
         </details>
       )}
 
