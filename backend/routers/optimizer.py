@@ -6,6 +6,7 @@ Moved out of main.py; main's shared state is read as `main.<name>` at call time.
 
 import asyncio
 import json
+import os
 import time
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -58,6 +59,36 @@ FALLBACK_STEP = 0.05
 LEFT_OUT_KEY = "betiq:optimizer:left_out"
 LEFT_OUT_KEEP = 100
 _ranking_cache: Dict[str, Any] = {"at": 0.0, "codes": None}
+# A match already on this many of the account's open tickets isn't put on
+# another one: one bad match shouldn't sink every ticket at once. 0: no cap
+MAX_TICKETS_PER_MATCH = int(os.getenv("MAX_TICKETS_PER_MATCH", "2") or 0)
+
+
+def _crowded_matches(tickets: List[Dict[str, Any]], cap: int) -> List[Tuple[str, str, str]]:
+    """The matches (home, away, date) still to be played on `cap` or more of
+    these open tickets."""
+    if cap <= 0:
+        return []
+    counts: Dict[Tuple[str, str, str], int] = {}
+    for t in tickets:
+        if t.get("status") not in ("pending", "open"):
+            continue
+        for k in {(str(l.get("home")), str(l.get("away")), str(l.get("date"))) for l in t.get("legs") or []
+                  if (l.get("status") or "pending") in ("pending", "unknown")}:
+            counts[k] = counts.get(k, 0) + 1
+    return sorted(k for k, n in counts.items() if n >= cap)
+
+
+def _account_tickets(uid: Optional[str]) -> List[Dict[str, Any]]:
+    r = main._get_redis() if uid else None
+    if not r:
+        return []
+    try:
+        raw = r.get(main._ukey(uid, "tickets"))
+        items = json.loads(raw) if raw else []
+    except Exception:
+        return []
+    return [t for t in items if isinstance(t, dict)]
 
 
 def _ranked_codes() -> Optional[Dict[str, Dict[str, Any]]]:
@@ -262,7 +293,20 @@ async def optimize_slip(request: Request, body: Dict[str, Any], _access=Depends(
         if refused and len(off) == len(sports):
             raise refused
         body["_off"] = off
-    return await main._optimize_request(body)
+    # The account's open tickets: a match already on MAX_TICKETS_PER_MATCH of them is left out
+    crowded: List[Tuple[str, str, str]] = []
+    if MAX_TICKETS_PER_MATCH and body.get("spread_matches", True) is not False:
+        import auth
+        uid = await auth.optional_user(request)
+        if not uid and auth.unverified_uid_allowed():
+            uid = str(body.get("uid") or "")[:64] or None
+        crowded = _crowded_matches(await asyncio.to_thread(_account_tickets, uid), MAX_TICKETS_PER_MATCH)
+        if crowded:
+            body["exclude_matches"] = list(body.get("exclude_matches") or []) + [list(k) for k in crowded]
+    result = await main._optimize_request(body)
+    if crowded and isinstance(result, dict):
+        result["crowded_matches"] = {"left_out": len(crowded), "cap": MAX_TICKETS_PER_MATCH}
+    return result
 
 
 def asdict_option(o) -> Dict[str, Any]:

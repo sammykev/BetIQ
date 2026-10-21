@@ -27,6 +27,7 @@ interface Pick {
   market: string; market_name: string; code: string; label: string;
   prob: number | null; odds: number | null; odds_source: string;
   sb?: SlipSelection["sb"];
+  sport?: SlipSelection["sport"];
 }
 interface Slip { picks: Pick[]; games: number; total_odds: number | null; win_chance: number | null;
   unmodelled: number; estimated_prices: number; target_odds?: number }
@@ -61,7 +62,7 @@ const VERDICT: Record<Leg["verdict"], { label: string; cls: string }> = {
 function toSelection(p: Pick): SlipSelection {
   return { home: p.home, away: p.away, date: p.date, time: p.time, league: p.league,
            market: p.market, marketName: p.market_name, code: p.code, label: p.label, prob: p.prob,
-           ...(p.sb ? { sb: p.sb } : {}) };
+           ...(p.sb ? { sb: p.sb } : {}), ...(p.sport ? { sport: p.sport } : {}) };
 }
 
 function ImprovedSlip({ title, blurb, slip, original }: { title: string; blurb: string; slip: Slip; original: Report["original"] }) {

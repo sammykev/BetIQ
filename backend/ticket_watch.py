@@ -86,6 +86,16 @@ def _rank_key(leg: Dict, sport_of: Callable[[Dict], str]) -> str:
     return f"{sport}:{m}"
 
 
+def _ranked(ranked: Optional[Dict[str, Dict]], leg: Dict, sport_of: Callable[[Dict], str]) -> Optional[Dict]:
+    """The leg's market in the ranking. Older tennis and table tennis legs
+    were stored without their sport ("racket"): either sport's row will do."""
+    key = _rank_key(leg, sport_of)
+    if not key.startswith("racket:"):
+        return (ranked or {}).get(key)
+    m = key.split(":", 1)[1]
+    return (ranked or {}).get(f"tennis:{m}") or (ranked or {}).get(f"table_tennis:{m}")
+
+
 def performance(t: Dict, ranked: Optional[Dict[str, Dict]], min_hit: float,
                 sport_of: Callable[[Dict], str]) -> Dict[str, Any]:
     """One ticket against the model: legs won of those graded, how many the
@@ -95,7 +105,7 @@ def performance(t: Dict, ranked: Optional[Dict[str, Dict]], min_hit: float,
     tiers = {"top": {"won": 0, "n": 0}, "fallback": {"won": 0, "n": 0}, "unranked": {"won": 0, "n": 0}}
     out_legs = []
     for l in legs:
-        x = (ranked or {}).get(_rank_key(l, sport_of))
+        x = _ranked(ranked, l, sport_of)
         tier = "unranked" if not x else "top" if x["hit_rate"] >= min_hit else "fallback"
         st = l.get("status") or "pending"
         out_legs.append({"match": f"{l.get('home')} v {l.get('away')}", "pick": l.get("label") or l.get("code"),

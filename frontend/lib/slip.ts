@@ -19,6 +19,8 @@ export interface SlipSelection {
   odds?: number | null;
   /** A leg kept from a SportyBet code that we don't model: booked by SportyBet's own ids */
   sb?: { eventId: string; marketId: string; specifier: string; outcomeId: string };
+  /** Which sport (tennis and table tennis share the rk_ markets): ticket legs are ranked by it */
+  sport?: "football" | "basketball" | "tennis" | "table_tennis";
 }
 
 export const MAX_SLIP = 30;

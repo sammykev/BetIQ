@@ -60,6 +60,8 @@ interface OptResult {
   extra_slips?: OptResult[];
   /** Markets and leagues left out: their past high-confidence picks came in clearly short */
   weak_left_out?: string[];
+  /** Matches skipped because they're already on that many of your open tickets */
+  crowded_matches?: { left_out: number; cap: number };
   /** The bar a market's hit rate must clear (70%) */
   min_hit_rate?: number;
   /** No slip at the odds from 70%+ markets, so the ranking was stepped down to fallback_floor */
@@ -433,6 +435,7 @@ export default function OptimizerPage() {
     home: p.home, away: p.away, date: p.date, time: p.time, league: p.league,
     market: p.market, marketName: p.market_name, code: p.code, label: p.label, prob: p.prob, odds: p.odds,
     ...(p.sb ? { sb: p.sb } : {}),
+    ...(p.sport ? { sport: p.sport } : {}),
   }));
 
   const run = async (bookable = bookableOnly) => {
@@ -733,6 +736,7 @@ export default function OptimizerPage() {
             <div className="space-y-2">
               <p>{result.error}</p>
               <ThinLeftOut matches={result.thin_history} />
+              <CrowdedNote crowded={result.crowded_matches} />
               {bookableOnly && result.matches_considered === 0 && /SportyBet/.test(result.error) && (
                 <button onClick={() => { setBookableOnly(false); run(false); }}
                   className="chip chip-idle">Try all matches, not just SportyBet-listed ones</button>
@@ -934,7 +938,8 @@ function LiveCheckNote({ check }: { check?: OptResult["live_check"] }) {
  *  and the weak markets and leagues left out. */
 function LegCapNote({ result }: { result: OptResult }) {
   const cap = result.leg_cap, extra = result.extra_slips ?? [], weak = result.weak_left_out ?? [];
-  if (!cap && !weak.length) return null;
+  const crowded = result.crowded_matches?.left_out ? result.crowded_matches : undefined;
+  if (!cap && !weak.length && !crowded) return null;
   return (
     <div className="rounded-xl bg-surface-sunken px-3 py-2.5 text-[12px] text-n-300 space-y-2">
       {cap && (
@@ -960,6 +965,7 @@ function LegCapNote({ result }: { result: OptResult }) {
           </ul>
         </details>
       ))}
+      <CrowdedNote crowded={crowded} />
       {weak.length > 0 && (
         <p className="text-n-500">
           Left out, their past high-confidence picks came in short: {weak.map(w => w.split(":").slice(1).join(":").replace(/_/g, " ")).join(", ")}.
@@ -969,6 +975,17 @@ function LegCapNote({ result }: { result: OptResult }) {
   );
 }
 
+
+/** Matches the optimizer skipped so one bad result can't sink many tickets at once. */
+function CrowdedNote({ crowded }: { crowded?: OptResult["crowded_matches"] }) {
+  if (!crowded?.left_out) return null;
+  const n = crowded.left_out;
+  return (
+    <p className="text-n-500">
+      {n} match{n === 1 ? "" : "es"} left out: already on {crowded.cap} of your open tickets.
+    </p>
+  );
+}
 
 /** How the pick's market came in over the last 60 days, with a warning when
  *  it came in under the 70% bar or lost money at the odds taken. */

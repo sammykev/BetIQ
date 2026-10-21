@@ -79,10 +79,11 @@ export const RK_MODEL_NOTE: Record<RacketPrediction["model"], string> = {
   market: "SportyBet's prices (we haven't rated both players yet)",
 };
 
-export function rkSelection(p: Pick<RacketPrediction, "home" | "away" | "date" | "time" | "league_name">,
+export function rkSelection(p: Pick<RacketPrediction, "home" | "away" | "date" | "time" | "league_name"> & { sport?: RacketSport },
                             l: RKLine): SlipSelection {
   return { home: p.home, away: p.away, date: p.date, time: p.time, league: p.league_name,
-           market: l.market, marketName: l.market_name, code: l.code, label: l.label, prob: l.prob, sb: l.sb };
+           market: l.market, marketName: l.market_name, code: l.code, label: l.label, prob: l.prob, sb: l.sb,
+           ...(p.sport ? { sport: p.sport } : {}) };
 }
 
 // ── Match days (backend racket_matchday.py): the date strip, live, history ──

@@ -152,3 +152,12 @@ def test_watch_runs_by_itself_for_the_watched_email(api, monkeypatch):
     assert c.put("/api/admin/tickets/watch/emails", json={"emails": ["nope"]}).status_code == 400
     assert c.put("/api/admin/tickets/watch/emails", json={"emails": ["other@example.com"]}).json()["ok"]
     assert c.get("/api/admin/tickets/watch").json()["source"] == "setting"
+
+
+def test_old_racket_legs_are_ranked_by_either_sport():
+    ranked = {"tennis:rk_set1_games": {"n": 30, "hit_rate": 0.55}, "table_tennis:rk_winner": {"n": 30, "hit_rate": 0.8}}
+    racket = lambda l: l.get("sport") or "football"
+    assert tw._ranked(ranked, {"sport": "racket", "market": "rk_set1_games"}, racket)["hit_rate"] == 0.55
+    assert tw._ranked(ranked, {"sport": "racket", "market": "rk_winner"}, racket)["hit_rate"] == 0.8
+    assert tw._ranked(ranked, {"sport": "tennis", "market": "rk_winner"}, racket) is None
+    assert tw._ranked(None, {"sport": "racket", "market": "rk_winner"}, racket) is None

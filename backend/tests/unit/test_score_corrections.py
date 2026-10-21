@@ -74,7 +74,9 @@ def test_tickets_on_a_corrected_match_are_graded_again():
 
 def test_daily_slips_are_graded_again_and_a_wrong_cut_is_marked():
     import daily_slips
-    pick = lambda h, a: {"home": h, "away": a, "date": "2026-10-13", "market": "1x2", "code": "1", "status": "pending"}
+    from datetime import date, timedelta
+    day = (date.today() - timedelta(days=1)).isoformat()      # recent: within tickets.EXPIRE_DAYS
+    pick = lambda h, a: {"home": h, "away": a, "date": day, "market": "1x2", "code": "1", "status": "pending"}
     cut = {"target": 10, "status": "pending", "picks": [pick("Arsenal FC", "Lille OSC"), pick("Inter", "Brugge")],
            "booking": {"code": "OLD1"}}
     results = {"Arsenal FC": {"status": "finished", "hg": 2, "ag": 3, "source": "sportybet"}, "Inter": None}
