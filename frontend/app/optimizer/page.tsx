@@ -60,6 +60,7 @@ interface OptResult {
   extra_slips?: OptResult[];
   /** Markets and leagues left out: their past high-confidence picks came in clearly short */
   weak_left_out?: string[];
+  overconfident_left_out?: string[];
   /** Matches skipped because they're already on that many of your open tickets */
   crowded_matches?: { left_out: number; cap: number };
   /** The bar a market's hit rate must clear (70%) */
@@ -938,8 +939,9 @@ function LiveCheckNote({ check }: { check?: OptResult["live_check"] }) {
  *  and the weak markets and leagues left out. */
 function LegCapNote({ result }: { result: OptResult }) {
   const cap = result.leg_cap, extra = result.extra_slips ?? [], weak = result.weak_left_out ?? [];
+  const over = result.overconfident_left_out ?? [];
   const crowded = result.crowded_matches?.left_out ? result.crowded_matches : undefined;
-  if (!cap && !weak.length && !crowded) return null;
+  if (!cap && !weak.length && !over.length && !crowded) return null;
   return (
     <div className="rounded-xl bg-surface-sunken px-3 py-2.5 text-[12px] text-n-300 space-y-2">
       {cap && (
@@ -968,13 +970,20 @@ function LegCapNote({ result }: { result: OptResult }) {
       <CrowdedNote crowded={crowded} />
       {weak.length > 0 && (
         <p className="text-n-500">
-          Left out, their past high-confidence picks came in short: {weak.map(w => w.split(":").slice(1).join(":").replace(/_/g, " ")).join(", ")}.
+          Left out, their past high-confidence picks came in short: {weak.map(marketName).join(", ")}.
+        </p>
+      )}
+      {over.length > 0 && (
+        <p className="text-n-500">
+          Paused, their picks came in well under what our model said: {over.map(marketName).join(", ")}.
         </p>
       )}
     </div>
   );
 }
 
+
+const marketName = (code: string) => code.split(":").slice(1).join(":").replace(/_/g, " ");
 
 /** Matches the optimizer skipped so one bad result can't sink many tickets at once. */
 function CrowdedNote({ crowded }: { crowded?: OptResult["crowded_matches"] }) {

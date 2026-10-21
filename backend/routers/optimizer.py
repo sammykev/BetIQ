@@ -8,6 +8,7 @@ import asyncio
 import json
 import os
 import time
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -62,6 +63,37 @@ _ranking_cache: Dict[str, Any] = {"at": 0.0, "codes": None}
 # A match already on this many of the account's open tickets isn't put on
 # another one: one bad match shouldn't sink every ticket at once. 0: no cap
 MAX_TICKETS_PER_MATCH = int(os.getenv("MAX_TICKETS_PER_MATCH", "2") or 0)
+
+
+# A pick's chance is pulled down by how far its market's picks came in under
+# what the model said in the nightly ranking, weighted by how many settled:
+# n / (n + CALIBRATION_PRIOR) of the gap. Markets that came in over aren't raised
+CALIBRATION_PRIOR = 30
+# A market that came in this far under what the model said, over at least
+# OVERCONFIDENT_MIN_N settled picks, is left out of every slip until it recovers
+OVERCONFIDENT_GAP = 0.10
+OVERCONFIDENT_MIN_N = 20
+
+
+def _gap(x: Optional[Dict[str, Any]]) -> float:
+    """How far the market's picks came in under what the model said (0 if over or unknown)."""
+    if not x or not isinstance(x.get("said"), (int, float)) or not isinstance(x.get("hit_rate"), (int, float)):
+        return 0.0
+    return max(0.0, x["said"] - x["hit_rate"])
+
+
+def _overconfident(x: Optional[Dict[str, Any]]) -> bool:
+    return bool(x) and x.get("n", 0) >= OVERCONFIDENT_MIN_N and _gap(x) >= OVERCONFIDENT_GAP - 1e-9
+
+
+def _calibrated(o, x: Optional[Dict[str, Any]]):
+    """The option with its chance pulled down to its market's record; the model's own kept as model_prob."""
+    gap = _gap(x)
+    if gap <= 0:
+        return o
+    n = x.get("n", 0)
+    prob = max(0.01, o.prob - gap * n / (n + CALIBRATION_PRIOR))
+    return replace(o, prob=round(prob, 4), model_prob=o.prob)
 
 
 def _crowded_matches(tickets: List[Dict[str, Any]], cap: int) -> List[Tuple[str, str, str]]:
@@ -609,6 +641,16 @@ async def _optimize_request(body: Dict[str, Any],
                        for p in ps]
     if max_leg:
         groups = [[o for o in g if o.odds < max_leg] for g in groups]
+    # Each pick's chance pulled down to its market's real record, and markets
+    # far under what the model said left out ("calibrate": False keeps the model's)
+    codes = main._ranked_codes() if body.get("calibrate", True) is not False else None
+    over_out: List[str] = []
+    if codes:
+        over_out = sorted({k for g in groups for o in g for k in [f"{o.sport}:{o.market}"]
+                           if _overconfident(codes.get(k))})
+        groups = [[c for o in g if f"{o.sport}:{o.market}" not in over_out
+                   for c in [_calibrated(o, codes.get(f"{o.sport}:{o.market}"))] if c.prob >= min_prob]
+                  for g in groups]
     # Markets that came in at least min_hit of the time in the nightly ranking
     # first; the ones under it only as a fallback (below). A market without
     # enough settled picks to be ranked is left out
@@ -704,7 +746,8 @@ async def _optimize_request(body: Dict[str, Any],
     if ranked is not None:
         _log_left_out({"at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                        "source": body.get("_source") or "optimizer", "min_hit": min_hit, "considered": considered,
-                       "left_out": hit_out, "floor": floor, "below_min": below_min})
+                       "left_out": hit_out, "floor": floor, "below_min": below_min,
+                       **({"overconfident": over_out} if over_out else {})})
     if result is None and live_check["removed"]:
         return {"error": (f"{len(live_check['removed'])} of the picks were suspended on SportyBet and "
                           "no slip without them reaches the target. Try again in a few minutes, or widen the target."),
@@ -738,6 +781,8 @@ async def _optimize_request(body: Dict[str, Any],
     result["bookable_picks"] = sum(1 for pick in result.get("picks") or [] if pick["bookable"])
     if weak_out:
         result["weak_left_out"] = weak_out
+    if over_out:
+        result["overconfident_left_out"] = over_out
     if ranked is not None:
         result["min_hit_rate"] = min_hit
         result["hit_rate_left_out"] = hit_out

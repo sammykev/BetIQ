@@ -66,6 +66,8 @@ class Option:
     league_id: str = ""
     # Football's reasons from the prediction (reasons.context); the slip adds chance and price
     context: List[str] = field(default_factory=list)
+    # The model's own chance when `prob` was pulled down to the market's record
+    model_prob: Optional[float] = None
 
 
 def _line(stat: str, line: str, over: bool):

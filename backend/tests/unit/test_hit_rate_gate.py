@@ -142,3 +142,27 @@ def test_gated_runs_are_logged_for_the_admin(monkeypatch):
     monkeypatch.setattr(main, "_admin_identity", identity)
     runs = TestClient(main.app).get("/api/admin/optimizer/left-out").json()["runs"]
     assert len(runs) == 1 and runs[0]["source"] == "daily" and f"football:{low}" in runs[0]["left_out"]
+
+
+def test_chance_pulled_down_to_the_markets_record():
+    import optimizer
+    o = optimizer.Option("A", "B", "2026-10-21", "", "L", "m", "M", "c", "x", 0.8, 1.3, "sportybet")
+    assert opt_router._calibrated(o, None) is o
+    assert opt_router._calibrated(o, {"n": 30, "hit_rate": 0.8, "said": 0.75}) is o      # came in over: kept
+    c = opt_router._calibrated(o, {"n": 30, "hit_rate": 0.69, "said": 0.77})            # 8 under, half weight
+    assert c.prob == 0.76 and c.model_prob == 0.8
+    assert opt_router._calibrated(o, {"n": 300, "hit_rate": 0.69, "said": 0.77}).prob < 0.73
+
+
+def test_markets_far_under_what_the_model_said_are_left_out(monkeypatch):
+    assert opt_router._overconfident({"n": 20, "hit_rate": 0.65, "said": 0.75})
+    assert not opt_router._overconfident({"n": 19, "hit_rate": 0.5, "said": 0.75})       # too few to tell
+    assert not opt_router._overconfident({"n": 50, "hit_rate": 0.70, "said": 0.79})
+    _, every = run(monkeypatch, None, BODY)
+    good, bad = sorted(every)[:2]
+    codes = {f"football:{good}": {"n": 40, "hit_rate": 0.8, "said": 0.8},
+             f"football:{bad}": {"n": 40, "hit_rate": 0.72, "said": 0.85}}
+    res, seen = run(monkeypatch, codes, BODY)
+    assert seen == {good} and res["overconfident_left_out"] == [f"football:{bad}"]
+    _, seen = run(monkeypatch, codes, {**BODY, "calibrate": False})
+    assert bad in seen
