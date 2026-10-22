@@ -249,6 +249,15 @@ SHOT_COLS = ["Home_SOT_For", "Away_SOT_For", "Home_SOT_Against", "Away_SOT_Again
 USE_SHOTS = "goals"
 DEFAULT_SOT = 4.3  # shots on target per team per match, top European leagues
 
+# Expected goals (SofaScore, club_xg.py: HXG/AXG on the league rows of the
+# seasons it has): rolling xG for and against, the league average where a
+# team has fewer than 3. Off unless xg_check.py's walk-forward finds it helps
+# (main._train_new reads the verdict): the same False / True / "goals".
+XG_COLS = ["Home_xG_For", "Away_xG_For", "Home_xG_Against", "Away_xG_Against",
+           "xG_Atk_vs_Def", "xG_Def_vs_Atk"]
+USE_XG = False
+DEFAULT_XG = 1.35  # xG per team per match, top European leagues
+
 
 def _rounded_probs(p_h: float, p_d: float, p_a: float, p_o15: float, p_o25: float) -> Dict:
     return {
@@ -503,6 +512,8 @@ class LeaguePredictor:
         self.team_league: Dict[str, str] = {}        # team -> its latest domestic league
         self.league_offset: Dict[str, float] = {}    # league -> Elo offset (see LEAGUE_STRENGTH)
         self._league_sot: List[float] = []           # shots on target per team-match, for the default
+        self.use_xg = USE_XG                         # False / True / "goals" (see XG_COLS)
+        self._league_xg: List[float] = []            # xG per team-match, for the default
         self.league_params: Dict[str, Dict[str, float]] = {}   # league -> its own LEAGUE_PARAM_DEFAULTS
 
     def param(self, league: str, key: str) -> float:
@@ -565,15 +576,17 @@ class LeaguePredictor:
         self._update(r["HomeTeam"], r["AwayTeam"], r["Result"], r["FTHG"], r["FTAG"],
                      hyc=r.get("HY"), ayc=r.get("AY"), hrc=r.get("HR"), arc=r.get("AR"),
                      match_date=day, competition=str(r.get("league", "") or ""),
-                     hst=r.get("HST"), ast=r.get("AST"), baseline=False)
+                     hst=r.get("HST"), ast=r.get("AST"), hxg=r.get("HXG"), axg=r.get("AXG"),
+                     baseline=False)
 
     def cols(self, odds: bool = True, target: str = "win") -> List[str]:
         """The feature columns a model trains and predicts on: target "win"
         (the result model) or "goals" (the over/under models)."""
         base = FEATURE_COLS if odds else NO_ODDS_COLS
-        shots = getattr(self, "use_shots", False)
-        use = shots is True or (shots == "goals" and target == "goals")
-        return base + SHOT_COLS if use else list(base)
+        def on(setting) -> bool:
+            return setting is True or (setting == "goals" and target == "goals")
+        return (list(base) + (SHOT_COLS if on(getattr(self, "use_shots", False)) else [])
+                + (XG_COLS if on(getattr(self, "use_xg", False)) else []))
 
     # ------------------------------------------------------------------ #
     # Internal helpers
@@ -604,6 +617,8 @@ class LeaguePredictor:
                 "away_ga": [],      # goals conceded when playing away
                 "sotf": [],         # shots on target for
                 "sota": [],         # shots on target against
+                "xgf": [],          # xG for
+                "xga": [],          # xG against
             }
 
     # League-average implied odds — used when market odds aren't available at prediction time
@@ -709,6 +724,15 @@ class LeaguePredictor:
         h_sotf, h_sota = _sot(hs, "sotf"), _sot(hs, "sota")
         a_sotf, a_sota = _sot(as_, "sotf"), _sot(as_, "sota")
 
+        # ── Expected goals ───────────────────────────────────────────────────
+        league_xg = getattr(self, "_league_xg", [])
+        xg_default = float(np.mean(league_xg[-4000:])) if len(league_xg) >= 20 else DEFAULT_XG
+        def _xg(team_stats: dict, key: str) -> float:
+            vals = team_stats.get(key) or []
+            return _ewm(vals, alpha) if len(vals) >= 3 else xg_default
+        h_xgf, h_xga = _xg(hs, "xgf"), _xg(hs, "xga")
+        a_xgf, a_xga = _xg(as_, "xgf"), _xg(as_, "xga")
+
         # ── League context features ───────────────────────────────────────────
         lg_stats = self.league_stats.get(league, {})
         league_avg_goals   = lg_stats.get("avg_goals",    xg_h + xg_a)
@@ -743,6 +767,10 @@ class LeaguePredictor:
             "Home_SOT_Against": round(h_sota, 4), "Away_SOT_Against": round(a_sota, 4),
             "SOT_Atk_vs_Def": round(h_sotf - a_sota, 4),
             "SOT_Def_vs_Atk": round(a_sotf - h_sota, 4),
+            "Home_xG_For": round(h_xgf, 4), "Away_xG_For": round(a_xgf, 4),
+            "Home_xG_Against": round(h_xga, 4), "Away_xG_Against": round(a_xga, 4),
+            "xG_Atk_vs_Def": round(h_xgf - a_xga, 4),
+            "xG_Def_vs_Atk": round(a_xgf - h_xga, 4),
             "_has_odds": has_odds,  # routes predict_proba; not a model feature
             "_league": league,      # picks a calibration (predict_proba); not a feature
         }
@@ -755,6 +783,7 @@ class LeaguePredictor:
         match_date: str = None,
         competition: str = "",
         hst: float = None, ast: float = None,
+        hxg: float = None, axg: float = None,
         baseline: bool = True,
     ):
         """One played match into the ratings and rolling stats. baseline=False
@@ -778,6 +807,15 @@ class LeaguePredictor:
                 self._league_sot = []
             if baseline:
                 self._league_sot += [hst, ast]
+        if _known(hxg) and _known(axg):
+            hxg, axg = float(hxg), float(axg)
+            for team, f, a in ((home, hxg, axg), (away, axg, hxg)):
+                self.team_stats[team].setdefault("xgf", []).append(f)
+                self.team_stats[team].setdefault("xga", []).append(a)
+            if not hasattr(self, "_league_xg"):
+                self._league_xg = []
+            if baseline:
+                self._league_xg += [hxg, axg]
         # Reject NaN goals — can come from CSV rows with missing scores
         try:
             fthg, ftag = float(fthg), float(ftag)
@@ -861,9 +899,12 @@ class LeaguePredictor:
         self.league_stats = {}
         self.dc_rho = -0.13
         self._league_sot = []
+        self._league_xg = []
         self.team_league, self.league_offset = {}, {}
         if not hasattr(self, "use_shots"):
             self.use_shots = USE_SHOTS
+        if not hasattr(self, "use_xg"):
+            self.use_xg = USE_XG
         if not hasattr(self, "use_league_strength"):
             self.use_league_strength = LEAGUE_STRENGTH
 
@@ -956,6 +997,7 @@ class LeaguePredictor:
                 match_date=match_date_str,
                 competition=lg,
                 hst=r.get("HST"), ast=r.get("AST"),
+                hxg=r.get("HXG"), axg=r.get("AXG"),
             )
 
         df = pd.DataFrame(rows).dropna(subset=self.cols(target="goals"))
@@ -990,6 +1032,8 @@ class LeaguePredictor:
             "team_league": getattr(self, "team_league", {}),
             "league_offset": getattr(self, "league_offset", {}),
             "_league_sot": getattr(self, "_league_sot", []),
+            "use_xg": getattr(self, "use_xg", False),
+            "_league_xg": getattr(self, "_league_xg", []),
             "league_params": getattr(self, "league_params", {}),
             "data_mtime": data_mtime,
         }
@@ -1015,6 +1059,8 @@ class LeaguePredictor:
         inst.team_league          = payload.get("team_league", {})
         inst.league_offset        = payload.get("league_offset", {})
         inst._league_sot          = payload.get("_league_sot", [])
+        inst.use_xg               = payload.get("use_xg", False)
+        inst._league_xg           = payload.get("_league_xg", [])
         inst.league_params        = payload.get("league_params", {})
         inst._ready               = True
         return inst

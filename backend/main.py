@@ -1928,6 +1928,19 @@ def _train_new(combined: pd.DataFrame) -> LeaguePredictor:
         predictor.league_params = tune_goals.load(model_store._client())
     except Exception as e:
         print(f"[train] goals tuning not loaded: {e}")
+    # SofaScore xG, only where the walk-forward backtest found it helps
+    # (backend/xg_check.py, run by collect-club-xg.yml)
+    try:
+        import club_xg
+        import model_store
+        r = model_store._client()
+        verdict = club_xg.load_check(r) if r is not None else {}
+        if verdict.get("use_xg") in (True, "goals"):
+            combined = club_xg.attach(combined, club_xg.load(r))
+            predictor.use_xg = verdict["use_xg"]
+            print(f"[train] xG on ({predictor.use_xg}): {int(combined['HXG'].notna().sum())} matches with xG")
+    except Exception as e:
+        print(f"[train] xG not loaded: {e}")
     predictor.train(combined)
     return predictor
 

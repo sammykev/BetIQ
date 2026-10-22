@@ -118,6 +118,7 @@ def walk_forward(matches: pd.DataFrame, start: str, end: str,
                 r["HomeTeam"], r["AwayTeam"], r["Result"], r["FTHG"], r["FTAG"],
                 hyc=r.get("HY"), ayc=r.get("AY"), hrc=r.get("HR"), arc=r.get("AR"),
                 match_date=day, competition=league, hst=r.get("HST"), ast=r.get("AST"),
+                hxg=r.get("HXG"), axg=r.get("AXG"),
             )
     return records
 
