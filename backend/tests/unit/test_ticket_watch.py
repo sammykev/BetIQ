@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 import auth
 import main
 import telegram_poster
+from routers import tickets as tickets_router
 import ticket_watch as tw
 from tests.unit.test_user_endpoints import FakeRedis
 
@@ -96,6 +97,12 @@ class ScanRedis(FakeRedis):
 @pytest.fixture
 def api(monkeypatch):
     fake = ScanRedis()
+
+    class Today(date):
+        @classmethod
+        def today(cls):
+            return TODAY
+    monkeypatch.setattr(tickets_router, "date", Today)   # the legs' dates are fixed
     monkeypatch.setattr(main, "_get_redis", lambda: fake)
     monkeypatch.setattr(main, "_all_tickets_cache", [0.0, None])
     monkeypatch.setattr(main, "_ranked_codes", lambda: RANKED)
