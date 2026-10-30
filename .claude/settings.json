@@ -2,5 +2,10 @@
   "env": {
     "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "35"
   },
+  "attribution":{
+    "commit":"",
+    "pr": ""
+  },
+  "includeCoAuthoredBy": false
   "autoCompactWindow": 350000
 }
