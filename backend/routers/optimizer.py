@@ -63,6 +63,19 @@ _ranking_cache: Dict[str, Any] = {"at": 0.0, "codes": None}
 # A match already on this many of the account's open tickets isn't put on
 # another one: one bad match shouldn't sink every ticket at once. 0: no cap
 MAX_TICKETS_PER_MATCH = int(os.getenv("MAX_TICKETS_PER_MATCH", "2") or 0)
+# Each pick's least chance when the request doesn't say. A market's hit rate
+# doesn't vouch for its weaker picks: in the Oct 2026 confidence check picks
+# rated 80–85% came in 80%, so a 60% floor let long shots onto tickets
+MIN_PICK_PROB = 0.85
+# Markets left out of every slip: in the Oct 2026 confidence check their
+# 80%+ picks came in well under what the model said (basketball total 78% vs
+# 82%, Q1 74% vs 85%, Q3 78% vs 87%, first-half total 50% vs 81%, tennis
+# set 1 handicap 76% vs 83%). Extra codes (sport:market, comma-separated)
+# from HELD_OUT_MARKETS; "none" clears the list
+HELD_OUT_MARKETS = (set() if os.getenv("HELD_OUT_MARKETS", "").strip().lower() == "none" else
+                    {"basketball:bb_total", "basketball:bb_q1_1x2", "basketball:bb_q3_1x2",
+                     "basketball:bb_h1_total", "tennis:rk_s1_handicap"}
+                    | {c.strip() for c in os.getenv("HELD_OUT_MARKETS", "").split(",") if ":" in c})
 
 
 # A pick's chance is pulled down by how far its market's picks came in under
@@ -499,7 +512,7 @@ async def _optimize_request(body: Dict[str, Any],
         target = float(body.get("target_odds") or (lo * hi) ** 0.5)
         max_games = int(body.get("max_games", optimizer.MAX_GAMES))
         # Each pick's least chance; 0 or null: off (any pick, e.g. a ~30% highest scoring quarter)
-        raw = body.get("min_prob", 0.6)
+        raw = body.get("min_prob", MIN_PICK_PROB)
         min_prob = 0.0 if raw in (None, 0, "off") else min(0.95, max(0.5, float(raw)))
         # The whole slip's least win chance (e.g. 0.9): the highest odds that keep it
         min_chance = float(body["min_slip_chance"]) if body.get("min_slip_chance") else None
@@ -516,8 +529,9 @@ async def _optimize_request(body: Dict[str, Any],
         raw_hit = body.get("min_hit_rate", MIN_HIT_RATE)
         min_hit = 0.0 if raw_hit in (None, 0, "off") else min(1.0, max(0.0, float(raw_hit)))
         # Without a slip at the customer's odds from those markets, step down
-        # the ranking to the ones under min_hit; False (the daily slips): never
-        hit_fallback = body.get("hit_fallback", True) is not False
+        # the ranking to the ones under min_hit only when asked (True): those
+        # picks were the weakest legs on the tickets
+        hit_fallback = body.get("hit_fallback") is True
         days = min(main.PREDICTION_DAYS, max(1, int(body.get("days", 3))))
         high = min_chance is not None or min_prob >= HIGH_CONF_PROB
         # Markets and leagues the confidence check found falling short stay
@@ -645,6 +659,9 @@ async def _optimize_request(body: Dict[str, Any],
     # far under what the model said left out ("calibrate": False keeps the model's)
     codes = main._ranked_codes() if body.get("calibrate", True) is not False else None
     over_out: List[str] = []
+    held_out = sorted({k for g in groups for o in g for k in [f"{o.sport}:{o.market}"] if k in HELD_OUT_MARKETS})
+    if held_out:
+        groups = [[o for o in g if f"{o.sport}:{o.market}" not in HELD_OUT_MARKETS] for g in groups]
     if codes:
         over_out = sorted({k for g in groups for o in g for k in [f"{o.sport}:{o.market}"]
                            if _overconfident(codes.get(k))})
@@ -783,6 +800,8 @@ async def _optimize_request(body: Dict[str, Any],
         result["weak_left_out"] = weak_out
     if over_out:
         result["overconfident_left_out"] = over_out
+    if held_out:
+        result["held_out"] = held_out
     if ranked is not None:
         result["min_hit_rate"] = min_hit
         result["hit_rate_left_out"] = hit_out
