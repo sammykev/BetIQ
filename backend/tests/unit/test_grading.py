@@ -136,34 +136,34 @@ def client():
 
 class TestHistoryEndpoints:
     def test_history_regrades_legacy_entries(self, client, redis):
-        redis.set("betiq:history:2026-09-20", json.dumps([
-            {**PRED, "date": "2026-09-20", "outcome": "lost", "actual_result": "H", "score": "3-0"},
+        redis.set("betiq:history:2026-08-20", json.dumps([
+            {**PRED, "date": "2026-08-20", "outcome": "lost", "actual_result": "H", "score": "3-0"},
         ]))
-        [p] = client.get("/api/history?date=2026-09-20").json()
+        [p] = client.get("/api/history?date=2026-08-20").json()
         assert p["outcome"] == "won" and p["goals_outcome"] == "won"
 
     def test_calendar_counts_goals_tips(self, client, redis, monkeypatch):
         monkeypatch.setattr(main, "_predictions_cache", [])
-        redis.set("betiq:history:2026-09-20", json.dumps([
+        redis.set("betiq:history:2026-08-20", json.dumps([
             {**PRED, "outcome": "won", "actual_result": "D", "score": "1-1"},      # goals push
             {**PRED, "home": "Leeds", "outcome": "won", "actual_result": "H", "score": "2-1"},      # goals won
             {**PRED, "home": "Fulham", "tip_code": "?", "outcome": "pending", "actual_result": "A",
              "score": "0-1"},  # void; goals lost
         ]))
-        day = client.get("/api/calendar?month=2026-09").json()["2026-09-20"]
+        day = client.get("/api/calendar?month=2026-08").json()["2026-08-20"]
         assert (day["won"], day["lost"], day["pending"]) == (2, 0, 0)
         assert (day["goals_won"], day["goals_lost"]) == (1, 1)
 
     def test_feedback_settles_both_markets(self, client, redis, monkeypatch, tmp_path):
         monkeypatch.setattr(main, "RESULTS_CSV", str(tmp_path / "results.csv"))
         monkeypatch.setattr(main, "ADMIN_SECRET", "s3cret")
-        redis.set("betiq:history:2026-09-20", json.dumps([{**PRED, "outcome": "pending", "actual_result": None}]))
-        body = {"home": "Arsenal", "away": "Chelsea", "date": "2026-09-20",
+        redis.set("betiq:history:2026-08-20", json.dumps([{**PRED, "outcome": "pending", "actual_result": None}]))
+        body = {"home": "Arsenal", "away": "Chelsea", "date": "2026-08-20",
                 "result": "D", "home_score": 1, "away_score": 1}
         # Results change the track record and the training data: admins only
         assert client.post("/api/feedback/result", json=body).status_code == 403
         r = client.post("/api/feedback/result", json=body, headers={"X-Admin-Secret": "s3cret"})
         assert r.status_code == 200
-        [p] = client.get("/api/history?date=2026-09-20").json()
+        [p] = client.get("/api/history?date=2026-08-20").json()
         assert (p["outcome"], p["goals_outcome"], p["score"]) == ("won", "push", "1-1")
-        assert "betiq:md:2026-09-20" in redis.kv  # stored in the match-day format from now on
+        assert "betiq:md:2026-08-20" in redis.kv  # stored in the match-day format from now on

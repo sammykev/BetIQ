@@ -602,3 +602,32 @@ def test_constant_predictions_are_flagged_and_kept_in_the_snapshot():
     snap = matchday.snapshot(out[0])
     assert snap["constant"] is True and snap["thin_history"] is True
     assert "constant" not in matchday.snapshot(out[4])
+
+
+def test_old_history_entries_are_replaced_before_kickoff_and_left_out_after():
+    old = {"home": "Arsenal", "away": "Chelsea", "date": "2026-09-25", "league": "PL",
+           "p_home": 0.606, "p_draw": 0.232, "p_away": 0.162, "p_over25": 0.18, "tip_code": "1X"}
+    day = {matchday.key(f"H{i}", f"A{i}"): matchday.from_legacy({**old, "home": f"H{i}", "away": f"A{i}"})
+           for i in range(3)}
+    day[matchday.key("Arsenal", "Chelsea")] = matchday.from_legacy(old)
+    # Before kick-off the live prediction takes the old one's place
+    assert matchday.merge_predictions(day, [pred()], NOW)
+    e = day[matchday.key("Arsenal", "Chelsea")]
+    assert e["snap_at"] and not e["locked"] and e["pred"]["p_home"] != 0.606
+    # The rest repeat on 3 matches of the league: not real, out of every record
+    assert matchday.flag_constant(day)
+    assert all(matchday.placeholder(day[matchday.key(f"H{i}", f"A{i}")]) for i in range(3))
+    assert not matchday.placeholder(e)
+    import market_accuracy
+    finished = {**day[matchday.key("H0", "A0")], "result": {"status": "finished", "hg": 2, "ag": 0}}
+    assert market_accuracy.settle(finished) == []
+
+
+def test_old_history_format_is_not_read_for_recent_dates(monkeypatch):
+    fake = FakeRedis()
+    monkeypatch.setattr(main, "_get_redis", lambda: fake)
+    row = [{"home": "Arsenal", "away": "Chelsea", "p_home": 0.6, "p_draw": 0.2, "p_away": 0.2}]
+    fake.kv["betiq:history:2026-10-31"] = json.dumps(row)
+    fake.kv["betiq:history:2026-08-20"] = json.dumps(row)
+    assert main._md_load(fake, "2026-10-31") == {}
+    assert list(main._md_load(fake, "2026-08-20")) == [matchday.key("Arsenal", "Chelsea")]

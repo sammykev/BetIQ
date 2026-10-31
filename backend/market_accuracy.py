@@ -49,6 +49,8 @@ def _entry_picks(entry: Dict) -> Dict[str, Dict[str, float]]:
 def settle(entry: Dict) -> List[Tuple[str, str, float, bool]]:
     """(market, code, prob, won) for a finished match's picks."""
     res = entry.get("result") or {}
+    if (entry.get("pred") or {}).get("constant"):
+        return []          # not a real prediction (matchday.flag_constant)
     out = []
     for market, codes in _entry_picks(entry).items():
         for code, prob in codes.items():

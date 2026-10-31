@@ -31,6 +31,18 @@ SET_PIECE_LINES = {"corners": "9.5", "bookings": "4.5"}
 RESULT_STATS = (*SET_PIECE_LINES, "shots", "sot")
 # Shown live on the site (results_feed.live_stats / key_events)
 LIVE_FIELDS = ("stats", "events")
+# The old history format (betiq:history:{date}) is read only for dates
+# before this (it came in locked). Something outside this server also writes
+# entries without a snapshot time into the match days, locked: Sep–Oct 2026
+# every PL, CL and international entry, from a model that didn't know the
+# clubs (PL 61/23/16 on every match, no odds; CL a 90.7% draw). Before
+# kick-off the live prediction replaces such an entry (merge_predictions)
+LEGACY_UNTIL = "2026-09-01"
+# The same 1X2 and over 2.5 chances on this many matches of one league in a
+# day, or a draw rated above MAX_DRAW, isn't a real prediction (as the live
+# check in main._flag_constant): kept on the page, out of every record
+CONSTANT_SAME = 3
+MAX_DRAW = 0.5
 
 FINISHED, LIVE, SCHEDULED, POSTPONED = "finished", "live", "scheduled", "postponed"
 MARKET_NAMES = {"tip": "Our tip (1X2 / double chance)", "goals": "Goals tip", "favourite": "Most likely result",
@@ -112,6 +124,8 @@ def merge_predictions(day: Dict[str, Dict], preds: Iterable[Dict], now: datetime
         k = key(p["home"], p["away"])
         e = day.get(k)
         started = (kickoff(p) or now) <= now
+        if e is not None and not e.get("snap_at") and not started and not e.get("result"):
+            e = None    # not this server's snapshot (no snap_at): the live prediction replaces it
         if e is not None and (e.get("locked") or started):
             if not e.get("locked"):
                 e["locked"] = True
@@ -129,6 +143,34 @@ def merge_predictions(day: Dict[str, Dict], preds: Iterable[Dict], now: datetime
         if not started:
             import price_book
             changed = price_book.note_open(e, snap.get("prices"), now.isoformat(timespec="minutes")) or changed
+    return changed
+
+
+def placeholder(entry: Dict) -> bool:
+    """A prediction that wasn't a real one (flag_constant): out of the records."""
+    return bool((entry.get("pred") or {}).get("constant"))
+
+
+def flag_constant(day: Dict[str, Dict]) -> bool:
+    """Mark the entries whose chances repeat on CONSTANT_SAME+ matches of
+    their league that day, or that rate a draw above MAX_DRAW. True if any
+    entry changed."""
+    def sig(e):
+        p = e.get("pred") or {}
+        return (e.get("league"), *(p.get(k) for k in ("p_home", "p_draw", "p_away", "p_over25")))
+    counts: Dict[tuple, int] = {}
+    for e in day.values():
+        if (e.get("pred") or {}).get("p_home") is not None:
+            counts[sig(e)] = counts.get(sig(e), 0) + 1
+    changed = False
+    for e in day.values():
+        p = e.get("pred") or {}
+        if p.get("p_home") is None or p.get("constant"):
+            continue
+        draw = p.get("p_draw")
+        if counts.get(sig(e), 0) >= CONSTANT_SAME or (isinstance(draw, (int, float)) and draw > MAX_DRAW):
+            p["constant"] = True
+            changed = True
     return changed
 
 
@@ -372,7 +414,7 @@ def accuracy(days: Dict[str, Dict[str, Dict]]) -> Dict[str, Any]:
         day_n, day_hit = 0, 0.0
         for e in days[d].values():
             grades, res = e.get("grades") or {}, e.get("result") or {}
-            if not grades:
+            if not grades or placeholder(e):
                 continue
             matches += 1
             for m, g in grades.items():

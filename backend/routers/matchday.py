@@ -25,13 +25,16 @@ def _md_load(r, d: str) -> Dict[str, Dict]:
     import matchday
     raw = r.get(main.MD_KEY.format(d))
     if raw:
-        return json.loads(raw)
-    legacy = r.get(f"betiq:history:{d}")
+        day = json.loads(raw)
+        matchday.flag_constant(day)
+        return day
+    legacy = r.get(f"betiq:history:{d}") if d < matchday.LEGACY_UNTIL else None
     if legacy:
         day = {}
         for p in json.loads(legacy):
             if p.get("home") and p.get("away"):
                 day[matchday.key(p["home"], p["away"])] = matchday.from_legacy({**p, "date": p.get("date") or d})
+        matchday.flag_constant(day)
         return day
     return {}
 
