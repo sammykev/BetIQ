@@ -198,7 +198,7 @@ class TestOptimizerLeavesPausedMarketsOut:
                                               "latest": {"paused": ["1x2"]}})
 
     def post(self, **body):
-        return TestClient(main.app).post("/api/optimizer", json={"min_odds": 3, "max_odds": 6, "days": 3, **body}).json()
+        return TestClient(main.app).post("/api/optimizer", json={"min_odds": 3, "max_odds": 6, "days": 3, "min_prob": 0.5, **body}).json()
 
     def test_paused_market_never_picked(self):
         r = self.post(markets=["1x2", "double_chance", "goals_ou"])

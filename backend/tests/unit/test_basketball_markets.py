@@ -222,8 +222,13 @@ class TestServer:
                                                 "min_prob": 0.6, "days": 3}))
         assert r.get("picks"), r
         assert all(p["sb"] and p["bookable"] and p["sport"] == "basketball" for p in r["picks"])
-        only_totals = asyncio.run(main._optimize_request({"sport": "basketball", "min_odds": 1.2, "max_odds": 3,
-                                                          "min_prob": 0.55, "days": 3, "bb_markets": ["bb_total"]}))
+        from routers import optimizer as opt_router
+        held, opt_router.HELD_OUT_MARKETS = opt_router.HELD_OUT_MARKETS, set()   # bb_total is held out live
+        try:
+            only_totals = asyncio.run(main._optimize_request({"sport": "basketball", "min_odds": 1.2, "max_odds": 3,
+                                                              "min_prob": 0.55, "days": 3, "bb_markets": ["bb_total"]}))
+        finally:
+            opt_router.HELD_OUT_MARKETS = held
         assert {p["market"] for p in only_totals["picks"]} == {"bb_total"}
         none = asyncio.run(main._optimize_request({"sport": "basketball", "min_odds": 2, "max_odds": 3,
                                                    "min_prob": 0.95, "days": 3, "bb_markets": ["bb_quarters"]}))
