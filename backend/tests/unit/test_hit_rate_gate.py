@@ -99,7 +99,8 @@ def test_under_70_markets_only_when_no_slip_reaches_the_odds(monkeypatch):
     res, seen = run(monkeypatch, codes, BODY)
     assert seen == {good} and res["fallback_used"] is False and res["below_min"] == []
 
-    # No slip at the odds from the 70%+ markets: the next ones down the ranking come in, flagged
+    # No slip at the odds from the 70%+ markets: by default the under-70 ones stay out;
+    # asked for (hit_fallback), the next ones down the ranking come in, flagged
     monkeypatch.setattr(main, "_predictions_cache", [{**pred(d=date.today().isoformat()), "sport": "football"}])
     pools = []
 
@@ -111,17 +112,22 @@ def test_under_70_markets_only_when_no_slip_reaches_the_odds(monkeypatch):
         return {"picks": [opt_router.asdict_option(o)], "total_odds": 3.0, "win_chance": 0.4, "within_target": True}
     monkeypatch.setattr(main, "_solve", solve)
     res = asyncio.run(main._optimize_request(BODY))
+    assert pools == [{good}] and not res.get("fallback_used")
+    pools.clear()
+    res = asyncio.run(main._optimize_request({**BODY, "hit_fallback": True}))
     assert pools[:2] == [{good}, {good, near}] and far not in set().union(*pools)
     assert res["fallback_used"] is True and res["below_min"] == [f"football:{near}"] and res["fallback_floor"] == 0.65
     hit = res["picks"][0]["market_hit"]
     assert hit["below_min"] and hit["negative_roi"] and hit["hit_rate"] == 0.66
 
 
-def test_no_70_market_at_all_falls_back_but_daily_slips_dont(monkeypatch):
+def test_no_70_market_at_all_falls_back_only_when_asked(monkeypatch):
     _, every = run(monkeypatch, None, BODY)
     m = sorted(every)[0]
     codes = {f"football:{m}": {"n": 40, "hit_rate": 0.6}}
     res, seen = run(monkeypatch, codes, BODY)
+    assert not seen and "70%" in res["error"]
+    res, seen = run(monkeypatch, codes, {**BODY, "hit_fallback": True})
     assert seen == {m} and "error" not in res
     res, seen = run(monkeypatch, codes, {**BODY, "min_hit_rate": 0.75, "hit_fallback": False})
     assert not seen and "error" in res
@@ -166,3 +172,18 @@ def test_markets_far_under_what_the_model_said_are_left_out(monkeypatch):
     assert seen == {good} and res["overconfident_left_out"] == [f"football:{bad}"]
     _, seen = run(monkeypatch, codes, {**BODY, "calibrate": False})
     assert bad in seen
+
+
+def test_picks_default_to_85_percent(monkeypatch):
+    body = {k: v for k, v in BODY.items() if k != "min_prob"}
+    _, low = run(monkeypatch, None, BODY)
+    _, high = run(monkeypatch, None, body)
+    assert opt_router.MIN_PICK_PROB == 0.85 and high < low
+
+
+def test_held_out_markets_never_reach_a_slip(monkeypatch):
+    _, every = run(monkeypatch, None, BODY)
+    m = sorted(every)[0]
+    monkeypatch.setattr(opt_router, "HELD_OUT_MARKETS", {f"football:{m}"})
+    res, seen = run(monkeypatch, None, BODY)
+    assert m not in seen and res["held_out"] == [f"football:{m}"]
