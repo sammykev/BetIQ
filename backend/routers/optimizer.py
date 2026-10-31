@@ -242,7 +242,7 @@ def _explain_empty(reasons: List[Dict], matches: int, days: int, min_prob: float
                      if r["market"] in ("corners_ou", "cards_ou") else "")
             parts.append(f"{r['name']}: no predictions for {span}.{extra}")
         elif r["reason"] == "below_minimum":
-            parts.append(f"{r['name']}: the likeliest pick is {round(r['best'] * 100)}%, under the "
+            parts.append(f"{r['name']}: the likeliest pick is {round(r['best'] * 100)}%, under your "
                          f"{round(min_prob * 100)}% minimum.")
         else:
             parts.append(f"{r['name']}: SportyBet hasn't confirmed this market yet, so codes can't include it. "
