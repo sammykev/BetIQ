@@ -427,6 +427,21 @@ async def _live_states(picks: List[Dict[str, Any]], events: Dict[Tuple, Optional
     return out
 
 
+def _best_odds(groups, legs: int) -> Optional[Dict[str, Any]]:
+    """The highest odds a slip of at most `legs` picks (one per match) can
+    reach from `groups`, with that slip's win chance: what to tell a
+    customer whose target is out of reach."""
+    tops = sorted((max(g, key=lambda o: o.odds) for g in groups if g), key=lambda o: -o.odds)[:max(0, legs)]
+    tops = [o for o in tops if o.odds > 1]
+    if not tops:
+        return None
+    odds = chance = 1.0
+    for o in tops:
+        odds *= o.odds
+        chance *= o.prob
+    return {"odds": round(odds, 2), "legs": len(tops), "win_chance": round(chance, 4)}
+
+
 async def _solve(groups, lo: float, hi: float, target: float, max_games: int,
                  min_chance: Optional[float] = None) -> Optional[Dict]:
     """The best slip in [lo, hi]; failing that, the nearest within ±25% of the
@@ -780,11 +795,21 @@ async def _optimize_request(body: Dict[str, Any],
                 "best_win_chance": result.get("win_chance"), "min_win_chance": min_win,
                 "matches_considered": considered, "target": [lo, hi], "target_odds": target, "thin_history": thin}
     if result is None:
-        capped = (f" High-confidence slips stop at {max_games} legs (you asked for {asked}): lower the target, "
-                  "or untick the cap." if max_games < asked else "")
-        return {"error": (f"No slip from {considered} matches gets near {target:,.2f}x. "
-                          "Allow more games or days, or add markets." + capped),
-                "matches_considered": considered, "target": [lo, hi], "target_odds": target, "thin_history": thin}
+        best = _best_odds(groups, max_games)
+        reach = (f" The highest these picks reach is {best['odds']:,.2f}x ({best['legs']} "
+                 f"leg{'s' if best['legs'] != 1 else ''}{f', each rated {min_prob:.0%}+' if min_prob else ''}): "
+                 "lower the target to about that, or add days, markets or sports." if best else
+                 " Allow more games or days, or add markets.")
+        capped = ""
+        if max_games < asked:
+            more = _best_odds(groups, asked)
+            # Only point at the cap when more legs would get there (the solver takes ±25% of the target)
+            if more and more["odds"] >= target * 0.75:
+                capped = (f" High-confidence slips stop at {max_games} legs; with {asked} the best is "
+                          f"{more['odds']:,.2f}x: untick the cap to allow it.")
+        return {"error": f"No slip from {considered} matches gets near {target:,.2f}x." + reach + capped,
+                "best_odds": best, "matches_considered": considered, "target": [lo, hi], "target_odds": target,
+                "thin_history": thin}
     # Which picks a SportyBet code can take: the match is linked to a SportyBet
     # event and SportyBet confirmed the market (shots, for one, it doesn't offer)
     ok = bookable or main._bookable_markets()

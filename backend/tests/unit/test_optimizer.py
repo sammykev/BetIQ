@@ -139,8 +139,18 @@ class TestEndpoint:
         assert bad.status_code == 400
 
     def test_unreachable_target_explains(self):
-        r = self.post(min_odds=100000, max_odds=200000, max_games=2).json()
-        assert "gets near" in r["error"]
+        r = self.post(min_odds=100000, max_odds=200000, max_games=2, min_prob=0.5).json()
+        assert "gets near" in r["error"] and "The highest these picks reach is" in r["error"]
+        assert r["best_odds"]["legs"] == 2 and 1 < r["best_odds"]["odds"] < 100000
+        assert "untick the cap" not in r["error"]
+
+
+def test_best_odds_takes_each_matchs_longest_price():
+    from types import SimpleNamespace as O
+    groups = [[O(odds=1.2, prob=0.9), O(odds=1.5, prob=0.8)], [O(odds=2.0, prob=0.6)], [O(odds=1.1, prob=0.95)], []]
+    from routers import optimizer as ro
+    assert ro._best_odds(groups, 2) == {"odds": 3.0, "legs": 2, "win_chance": 0.48}
+    assert ro._best_odds(groups, 10)["legs"] == 3 and ro._best_odds([[]], 3) is None
 
     @pytest.mark.parametrize("body", [{"min_odds": 5, "max_odds": 2}, {"min_odds": 0.5, "max_odds": 2},
                                       {"min_odds": "x", "max_odds": 2}])
