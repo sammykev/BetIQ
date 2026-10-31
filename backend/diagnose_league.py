@@ -51,5 +51,37 @@ def run(league: str) -> None:
                 print(f"  duplicate names for {p[side]!r}: {[(t, len(stats[t].get('pts') or [])) for t in by[k]]}")
 
 
+
+def stored_days(r, league: str, days: int = 50) -> None:
+    """The league's graded match days: what was stored for each match, and
+    every league whose stored 1X2 chances repeat on 3+ matches of a day."""
+    from collections import Counter
+    from datetime import date, timedelta
+    keys = [(date.today() - timedelta(days=i)).isoformat() for i in range(days)]
+    repeats = Counter()
+    for d, raw in zip(keys, r.mget([f"betiq:md:{d}" for d in keys])):
+        if not raw:
+            continue
+        day = json.loads(raw)
+        sig = Counter()
+        for e in day.values():
+            p = e.get("pred") or {}
+            sig[(e.get("league"), p.get("p_home"), p.get("p_draw"), p.get("p_away"))] += 1
+            if e.get("league") == league:
+                print(f"  {d} {e.get('home')} v {e.get('away')}: {p.get('p_home')}/{p.get('p_draw')}/{p.get('p_away')} "
+                      f"model {p.get('p_home_model')} o25 {p.get('p_over25')} odds {p.get('odds_home')} "
+                      f"snap {e.get('snap_at')} locked {e.get('locked')} flags "
+                      f"{[k for k in ('thin_history', 'constant', 'league_unproven') if p.get(k)]} "
+                      f"result {(e.get('result') or {}).get('source')}")
+        for (lg, *probs), n in sig.items():
+            if n >= 3 and probs[0] is not None:
+                repeats[(lg, tuple(probs))] += n
+    print("\nrepeated 1X2 chances (league, chances: matches):")
+    for (lg, probs), n in repeats.most_common(30):
+        print(f"  {lg} {probs}: {n}")
+
+
 if __name__ == "__main__":
-    run(sys.argv[1] if len(sys.argv) > 1 else "PL")
+    lg = sys.argv[1] if len(sys.argv) > 1 else "PL"
+    run(lg)
+    stored_days(model_store._client(), lg)
