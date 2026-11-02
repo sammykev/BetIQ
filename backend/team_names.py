@@ -145,12 +145,37 @@ _ALIAS_SOURCE = {
     "East Timor": "Timor-Leste",
     "FYR Macedonia": "North Macedonia",
     "Holland": "Netherlands",
+    # Fixture names the left-out report (left_out.py, Nov 2026) found with no
+    # history: their clubs are in the league files under these names
+    "Halmstads BK": "Halmstad",
+    "Brøndby IF": "Brondby",
+    "FC Nordsjælland": "Nordsjaelland",
+    "Sønderjyske Fodbold": "Sonderjyske",
+    "F.C. København": "FC Copenhagen",
+    "AGF": "Aarhus",
+    "Cercle Brugge KSV": "Cercle Brugge",
+    "Sint-Truidense": "St Truiden",
+    "Sint-Truidense VV": "St Truiden",
+    "Goztepe": "Goztep",
+    "Amed SFK": "Amedspor",
+    "Erzurum BB": "Erzurumspor",
+    "Rayo Vallecano de Madrid": "Vallecano",
+    "CF Estrela da Amadora": "Estrela",
+    "NEC Nijmegen": "Nijmegen",
+    "FK Bodø/Glimt": "Bodo/Glimt",
+    "St. Martin": "Saint Martin",
+    "Inter D'Escaldes": "Inter Club de Escaldes",
 }
+
+
+# Letters NFKD doesn't take apart, so they'd be dropped ("Brøndby" → "brndby")
+_TRANSLIT = str.maketrans({"ø": "o", "Ø": "O", "æ": "ae", "Æ": "Ae", "ß": "ss", "đ": "d", "Đ": "D",
+                           "ł": "l", "Ł": "L", "ı": "i", "œ": "oe", "Œ": "Oe", "þ": "th", "ð": "d"})
 
 
 def normalise(name: str) -> str:
     """Lowercase ASCII words, without affixes, years or punctuation."""
-    s = unicodedata.normalize("NFKD", str(name or "")).encode("ascii", "ignore").decode()
+    s = unicodedata.normalize("NFKD", str(name or "").translate(_TRANSLIT)).encode("ascii", "ignore").decode()
     s = re.sub(r"[^a-z0-9 ]+", " ", s.lower().replace("'", ""))
     words = [w for w in s.split() if w not in _STOPWORDS and not w.isdigit()]
     return " ".join(words)
