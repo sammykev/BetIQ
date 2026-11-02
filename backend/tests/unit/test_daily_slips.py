@@ -381,7 +381,21 @@ def test_the_optimizer_leaves_out_unproven_leagues_too(monkeypatch):
     res = asyncio.run(main._optimize_request({"min_odds": 2, "max_odds": 3, "bookable_only": True},
                                              window=daily_slips.window(day)))
     assert seen == ["A"]
-    assert [(m["home"], m.get("league_unproven")) for m in res["thin_history"]] == [("C", True)]
+    assert res.get("thin_history") == []        # not offered at all, so not listed as left out either
+
+
+def test_the_optimizers_league_bar_skips_leagues_we_cant_predict(monkeypatch):
+    import asyncio
+    from datetime import date, timedelta
+    from routers import optimizer as opt_router
+    day = (date.today() + timedelta(days=1)).isoformat()
+    monkeypatch.setattr(main, "_predictions_cache", [
+        {**pred(home="A", away="A2", d=day, t="18:00"), "sport": "football", "league": "PL"},
+        {**pred(home="C", away="C2", d=day, t="18:00"), "sport": "football", "league": "MEX", "league_unproven": True},
+        {**pred(home="D", away="D2", d=day, t="18:00"), "sport": "football", "league": "NOR"}])
+    monkeypatch.setattr(main, "_paused_leagues", lambda: {"NOR"})
+    got = asyncio.run(opt_router.optimizer_leagues(None, days=3, sports="football"))
+    assert [x["id"] for x in got["leagues"]] == ["PL"]
 
 
 def test_a_slip_below_break_even_isnt_offered(monkeypatch):

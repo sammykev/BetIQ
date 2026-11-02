@@ -274,6 +274,7 @@ async def optimizer_leagues(request: Request, days: int = 3, sports: str = "foot
     today, last = now.date().isoformat(), (now.date() + timedelta(days=days - 1)).isoformat()
     kicked_off = now.strftime("%H:%M")
     out: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    paused = main._paused_leagues()
 
     def add(sport: str, preds: Iterable[Dict]) -> None:
         for p in preds:
@@ -281,7 +282,8 @@ async def optimizer_leagues(request: Request, days: int = 3, sports: str = "foot
             if not today <= d <= last or (d == today and (p.get("time") or "99:99") <= kicked_off):
                 continue
             lg = str(p.get("league") or "")
-            if not lg:
+            # A league we can't predict yet (check not passed, or paused) isn't offered at all
+            if not lg or p.get("league_unproven") or lg in paused:
                 continue
             row = out.setdefault((sport, lg), {"sport": sport, "id": lg, "name": p.get("league_name") or lg,
                                                "flag": p.get("flag") or "", "matches": 0})
@@ -595,13 +597,14 @@ async def _optimize_request(body: Dict[str, Any],
     # guesswork, so the match stays out (the page lists what was left out)
     # A league whose check hasn't passed (league_unproven) is left out the same way
     # So is a league the weekly drift check paused (or the admin switched off)
+    # Those leagues aren't offered at all (nor listed as left out): only the
+    # matches of leagues we do predict that lack data on a club are listed
     paused_lg = main._paused_leagues()
-    out_lg = lambda p: str(p.get("league") or "") in paused_lg
-    thin = [{**{k: p.get(k) for k in ("home", "away", "date", "time", "league", "league_name", "flag")},
-             **({"league_unproven": True} if p.get("league_unproven") and not p.get("thin_history") else {}),
-             **({"league_paused": True} if out_lg(p) else {})}
-            for p in upcoming if p.get("thin_history") or p.get("league_unproven") or out_lg(p)]
-    upcoming = [p for p in upcoming if not (p.get("thin_history") or p.get("league_unproven") or out_lg(p))]
+    out_lg = lambda p: p.get("league_unproven") or str(p.get("league") or "") in paused_lg
+    upcoming = [p for p in upcoming if not out_lg(p)]
+    thin = [{k: p.get(k) for k in ("home", "away", "date", "time", "league", "league_name", "flag")}
+            for p in upcoming if p.get("thin_history")]
+    upcoming = [p for p in upcoming if not p.get("thin_history")]
     # Bookable = linked to a SportyBet event. Asked of the stored links, not
     # the prediction's "sportybet" flag: a predictions rebuild replaces the
     # predictions (flags and all) minutes before the next linking run.
