@@ -38,7 +38,8 @@ def reasons(p: Dict) -> List[str]:
     return out
 
 
-def predictions_report(preds: List[Dict], model=None) -> None:
+def predictions_report(preds: List[Dict], model=None, europe=None, europe_leagues=()) -> None:
+    from team_names import suggest
     football = [p for p in preds if p.get("sport") in (None, "football")]
     by_league: Dict[str, Counter] = defaultdict(Counter)
     thin_clubs: Dict[str, Counter] = defaultdict(Counter)
@@ -52,12 +53,16 @@ def predictions_report(preds: List[Dict], model=None) -> None:
             by_league[lg]["left out"] += 1
         for w in why:
             by_league[lg][w] += 1
-        if "thin club data" in why and model is not None:
-            stats, canon = model.team_stats, model.canon
+        m = europe if (europe is not None and lg in europe_leagues) else model
+        if "thin club data" in why and m is not None:
+            stats, canon = m.team_stats, m.canon
             for side in ("home", "away"):
                 n = len((stats.get(canon(p[side])) or {}).get("pts") or [])
                 if n < THIN_HISTORY:
-                    thin_clubs[lg][f"{p[side]} ({n})"] += 1
+                    # The names the model does know that look like it: a missing alias?
+                    near = [f"{k} ({len((stats.get(k) or {}).get('pts') or [])})"
+                            for k in suggest(p[side], [k for k, v in stats.items() if len(v.get("pts") or []) >= 10])]
+                    thin_clubs[lg][f"{p[side]} ({n}) ~ {' / '.join(near) or 'nothing close'}"] += 1
     out = sum(c["left out"] for c in by_league.values())
     print(f"== Our football predictions: {len(football)}, {out} left out of slips ==")
     for lg, c in sorted(by_league.items(), key=lambda kv: (-kv[1]["left out"], kv[0])):
@@ -66,7 +71,8 @@ def predictions_report(preds: List[Dict], model=None) -> None:
         why = ", ".join(f"{k} {v}" for k, v in c.items() if k not in ("matches", "left out"))
         print(f"  {lg:<10} {names[lg][:34]:<34} {c['left out']:>3} of {c['matches']:>3}: {why}")
         if thin_clubs.get(lg):
-            print(f"             clubs with < {THIN_HISTORY} matches: " + ", ".join(sorted(thin_clubs[lg])))
+            for c in sorted(thin_clubs[lg]):
+                print(f"             {c}")
     print()
 
 
@@ -122,7 +128,15 @@ def main() -> None:
     preds = json.loads(raw).get("predictions", []) if raw else []
     got = model_store.fetch(MODEL_CACHE_VERSION, max_age_hours=24 * 14, client=r)
     model = LeaguePredictor.from_bytes(got[0]) if got else None
-    predictions_report(preds, model)
+    import europe_model
+    eu = model_store.fetch(MODEL_CACHE_VERSION, max_age_hours=24 * 14, client=r, name=europe_model.MODEL_NAME)
+    europe = LeaguePredictor.from_bytes(eu[0]) if eu else None
+    try:
+        verdict = json.loads(r.get(europe_model.CHECK_KEY) or "{}")
+        eu_leagues = europe_model.competitions(verdict)
+    except Exception:
+        eu_leagues = ["CL", "EL", "UECL"]
+    predictions_report(preds, model, europe, eu_leagues)
     links = json.loads(r.get("betiq:sportybet:links") or "{}")
     linked = {str((v or {}).get("eventId")) for v in links.values() if isinstance(v, dict)}
     asyncio.run(sportybet_report(linked))
