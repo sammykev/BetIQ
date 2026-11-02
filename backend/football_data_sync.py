@@ -39,7 +39,9 @@ REQUIRED = ["Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG", "FTR"]
 EXTRA_DIR = os.path.join(os.path.dirname(__file__), "data", "football_extra")
 EXTRA_DIVISIONS = ("B1", "SC0", "SC1", "G1", "T1")
 NEW_BASE_URL = "https://www.football-data.co.uk/new"
-NEW_LEAGUES = ("AUT", "SWZ", "DNK", "NOR", "SWE", "POL", "ROU", "BRA")
+NEW_LEAGUES = ("AUT", "SWZ", "DNK", "NOR", "SWE", "POL", "ROU", "BRA",
+               # beyond Europe (Nov 2026: SportyBet lists them, we had no history)
+               "ARG", "MEX", "USA", "JPN", "CHN", "RUS")
 NEW_REQUIRED = ["Date", "Home", "Away", "HG", "AG", "Res"]
 
 INTERNATIONAL_URL = "https://raw.githubusercontent.com/martj42/international_results/master/results.csv"

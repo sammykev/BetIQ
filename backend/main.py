@@ -893,7 +893,8 @@ def _load_football_data_csvs(directory: Optional[str] = None) -> pd.DataFrame:
 EXTRA_DATA_DIR = os.path.join(os.path.dirname(__file__), "data", "football_extra")
 # football-data.co.uk/new/ country files → our league codes
 _NEW_LEAGUE_CODES = {"AUT": "AUT", "SWZ": "SUI", "DNK": "DEN", "NOR": "NOR", "SWE": "SWE",
-                     "POL": "POL", "ROU": "ROU", "BRA": "BSA"}
+                     "POL": "POL", "ROU": "ROU", "BRA": "BSA",
+                     "ARG": "ARG", "MEX": "MEX", "USA": "MLS", "JPN": "JPN", "CHN": "CHN", "RUS": "RUS"}
 EXTRA_SINCE = "2019-07-01"
 
 
@@ -922,6 +923,7 @@ def _load_new_league_csv(path: str, league: str) -> pd.DataFrame:
 # The Brasileirão and the European leagues we publish (league_fixtures.py):
 # context rows — ratings and form, no training rows
 MAIN_EXTRA_LEAGUES = {"BSA", "JPL", "SPL", "GSL", "TSL", "AUT", "SUI", "DEN", "NOR", "SWE", "POL", "ROU",
+                      "ARG", "MEX", "MLS", "JPN", "CHN", "RUS",
                       "D1"}  # Scotland's second tier (SC1): promoted clubs' history
 # A second division's clashing names take its top flight's tag, so a promoted
 # club keeps one history across both

@@ -1,7 +1,8 @@
 """
 Fixtures for the European leagues we predict beyond football-data.org's free
 plan (group A: Belgium, Scotland, Greece, Turkey, Austria, Switzerland,
-Denmark, Norway, Sweden, Poland, Romania), from ESPN — as the Europa League's
+Denmark, Norway, Sweden, Poland, Romania; and beyond Europe Argentina,
+Mexico, MLS, Japan, China and Russia), from ESPN — as the Europa League's
 come (europe_fixtures.py). Their history comes from football-data.co.uk's
 CSVs (main._load_extra_leagues, as context rows of the main model), their
 scores from ESPN (results_feed.ESPN_SLUGS) and their corners, cards and
@@ -30,6 +31,13 @@ COMPETITIONS: Dict[str, Tuple[str, str, str, str]] = {
     "SWE": ("swe.1", "Allsvenskan", "Sweden", "🇸🇪"),
     "POL": ("pol.1", "Ekstraklasa", "Poland", "🇵🇱"),
     "ROU": ("rou.1", "Romanian Liga I", "Romania", "🇷🇴"),
+    # Beyond Europe (football-data.co.uk/new/ history, ESPN fixtures)
+    "ARG": ("arg.1", "Argentine Primera División", "Argentina", "🇦🇷"),
+    "MEX": ("mex.1", "Liga MX", "Mexico", "🇲🇽"),
+    "MLS": ("usa.1", "Major League Soccer", "USA", "🇺🇸"),
+    "JPN": ("jpn.1", "J1 League", "Japan", "🇯🇵"),
+    "CHN": ("chn.1", "Chinese Super League", "China", "🇨🇳"),
+    "RUS": ("rus.1", "Russian Premier League", "Russia", "🇷🇺"),
 }
 UNPROVEN_KEY = "betiq:extra_leagues:check"
 
