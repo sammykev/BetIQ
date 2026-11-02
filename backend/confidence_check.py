@@ -186,7 +186,7 @@ def report(rows: List[Dict], maps: Dict) -> Dict:
     names = {league_key(r): r.get("league_name") or r.get("league") or "?" for r in rows}
     dates = sorted(r["date"] for r in rows)
     rep = {"picks": len(rows), "days": DAYS, "first_day": dates[0] if dates else None,
-           "last_day": dates[-1] if dates else None, "corrected_markets": len(maps),
+           "last_day": dates[-1] if dates else None, "corrected_markets": sum(1 for k in maps if not k.endswith("|" + calibration.TAIL)),
            "overall": {"raw": bands(rows, "prob"), "corrected": bands(rows, "cal")},
            "sports": {}, "markets": table(rows, market_key), "leagues": table(rows, league_key),
            "league_names": names}

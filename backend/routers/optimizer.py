@@ -67,15 +67,8 @@ MAX_TICKETS_PER_MATCH = int(os.getenv("MAX_TICKETS_PER_MATCH", "2") or 0)
 # doesn't vouch for its weaker picks: in the Oct 2026 confidence check picks
 # rated 80–85% came in 80%, so a 60% floor let long shots onto tickets
 MIN_PICK_PROB = 0.85
-# Markets left out of every slip: in the Oct 2026 confidence check their
-# 80%+ picks came in well under what the model said (basketball total 78% vs
-# 82%, Q1 74% vs 85%, Q3 78% vs 87%, first-half total 50% vs 81%, tennis
-# set 1 handicap 76% vs 83%). Extra codes (sport:market, comma-separated)
-# from HELD_OUT_MARKETS; "none" clears the list
-HELD_OUT_MARKETS = (set() if os.getenv("HELD_OUT_MARKETS", "").strip().lower() == "none" else
-                    {"basketball:bb_total", "basketball:bb_q1_1x2", "basketball:bb_q3_1x2",
-                     "basketball:bb_h1_total", "tennis:rk_s1_handicap"}
-                    | {c.strip() for c in os.getenv("HELD_OUT_MARKETS", "").split(",") if ":" in c})
+# Markets left out of every slip (market_holds.py)
+from market_holds import HELD_OUT_MARKETS  # noqa: E402
 
 
 # A pick's chance is pulled down by how far its market's picks came in under

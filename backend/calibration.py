@@ -52,6 +52,15 @@ SPORTS = ("football", "basketball", "tennis", "table_tennis")
 # Ticket legs before this carry the optimizer's raw chances (basketball and
 # racket had no correction then); later ones are already corrected
 RAW_TICKETS_UNTIL = "2026-10-12"
+# The maps fit mostly 50–70% picks, so a sport's 80%+ ones can stay
+# overconfident (basketball, Nov 2026: 80.3% for 82.1%, 85.0% for 87.2%
+# after the maps). Above TAIL_FROM a sport's chances are pulled towards it,
+# q -> sig(L + c (logit q - L)) with L = logit TAIL_FROM and c in TAIL_C, fitted
+# on the earlier days' 80%+ picks (held-out markets left out: they never reach a
+# slip) and kept only if it beats no pull on at least MIN_TEST later ones
+TAIL_FROM = 0.80
+TAIL_C = tuple(round(0.5 + 0.02 * i, 2) for i in range(26))     # 0.50 … 1.00
+TAIL = "_tail"            # its key in the maps: "sport|_tail" -> (c, TAIL_FROM)
 
 Map = Tuple[float, float]
 _maps: Dict[str, Map] = {}          # "sport|market" → map
@@ -95,14 +104,45 @@ def key(sport: str, market: str) -> str:
 
 
 def apply(sport: str, market: str, p: float, maps: Optional[Dict[str, Map]] = None) -> float:
-    """Our chance for a pick, through its market's live map (unchanged without one)."""
-    m = (_maps if maps is None else maps).get(key(sport, market))
-    if not m or not LO <= p < HI:
+    """Our chance for a pick, through its market's live map and its sport's
+    tail pull (unchanged without either)."""
+    if not LO <= p < HI:
         return p
-    q = _sig(m[0] + m[1] * _logit(p))
-    # The maps are fitted mostly on 50–85% picks: they may lower a high chance,
-    # but never lift one past MAX_LIFT_TO (or past ours, if that's higher already)
-    return min(max(p, MAX_LIFT_TO), max(0.01, q))
+    mp = _maps if maps is None else maps
+    m, t = mp.get(key(sport, market)), mp.get(key(sport, TAIL))
+    q = p
+    if m:
+        # The maps are fitted mostly on 50–85% picks: they may lower a high chance,
+        # but never lift one past MAX_LIFT_TO (or past ours, if that's higher already)
+        q = min(max(p, MAX_LIFT_TO), max(0.01, _sig(m[0] + m[1] * _logit(p))))
+    return tail(q, t[0], t[1]) if t else q
+
+
+def tail(q: float, c: float, start: float = TAIL_FROM) -> float:
+    """A chance above `start` pulled towards it (c < 1); never raised."""
+    if q <= start or c >= 1:
+        return q
+    lo = _logit(start)
+    return min(q, _sig(lo + c * (_logit(q) - lo)))
+
+
+def tail_choice(train: List[Dict], test: List[Dict], how: Callable[[Dict], float]) -> Dict:
+    """Fit the pull on `train`'s 80%+ picks, keep it if it lowers `test`'s log loss."""
+    c = fit_tail(train, how)
+    if c is None or len(test) < MIN_TEST:
+        return {"train": len(train), "test": len(test), "choice": "too few picks"}
+    pulled = lambda r: tail(how(r), c)
+    before, after = score(test, how), score(test, pulled)
+    use = c < 1 and after["log_loss"] < before["log_loss"]
+    return {"train": len(train), "test": len(test), "c_earlier": c, "none": before, "pulled": after,
+            "z": _z(test, pulled, how), "choice": "pulled" if use else "none"}
+
+
+def fit_tail(rows: List[Dict], how: Callable[[Dict], float]) -> Optional[float]:
+    """The TAIL_C value with the lowest log loss on `rows` (chances by `how`)."""
+    if not rows:
+        return None
+    return min(TAIL_C, key=lambda c: (sum(_ll(tail(how(r), c), r["won"]) for r in rows), -c))
 
 
 def set_maps(maps: Dict[str, Map]) -> None:
@@ -188,8 +228,11 @@ def score(rows: List[Dict], how: Callable[[Dict], float]) -> Dict:
             "brier": round(sum((p - w) ** 2 for p, w in zip(q, won)) / n, 5)}
 
 
-def _z(rows: List[Dict], how: Callable[[Dict], float]) -> float:
-    d = [_ll(how(r), r["won"]) - _ll(r["prob"], r["won"]) for r in rows]
+def _z(rows: List[Dict], how: Callable[[Dict], float],
+       base: Optional[Callable[[Dict], float]] = None) -> float:
+    """Log loss of `how` against `base` (our raw chance by default), in standard errors."""
+    base = base or (lambda r: r["prob"])
+    d = [_ll(how(r), r["won"]) - _ll(base(r), r["won"]) for r in rows]
     if len(d) < 2:
         return 0.0
     mean = sum(d) / len(d)
@@ -258,6 +301,21 @@ def check(rows: List[Dict]) -> Dict:
     for mk, c in chosen.items():
         if c == "corrected" and mk in full:
             rep["maps"][mk] = [round(v, 4) for v in full[mk]]
+    # Each sport's 80%+ picks: a pull towards TAIL_FROM where it beats none on the later days
+    from market_holds import HELD_OUT_MARKETS
+    final = {k: tuple(v) for k, v in rep["maps"].items()}
+    in_tail = lambda r, how: how(r) > TAIL_FROM and f"{r['sport']}:{r['market']}" not in HELD_OUT_MARKETS
+    rep["tails"] = {}
+    for s in SPORTS:
+        tr = [r for r in train if r["sport"] == s and in_tail(r, live)]
+        te = [r for r in test if r["sport"] == s and in_tail(r, live)]
+        rep["tails"][s] = tail_choice(tr, te, live)
+        if rep["tails"][s]["choice"] == "pulled":
+            on_all = lambda r: apply(r["sport"], r["market"], r["prob"], final)
+            c_all = fit_tail([r for r in rows if r["sport"] == s and in_tail(r, on_all)], on_all)
+            if c_all is not None and c_all < 1:
+                rep["maps"][key(s, TAIL)] = [c_all, TAIL_FROM]
+                rep["tails"][s]["c"] = c_all
     return rep
 
 
@@ -436,7 +494,17 @@ def print_report(rep: Dict) -> None:
         print(f"  {mk:<34} n {r_.get('n', 0):>5} hit {_pct(r_.get('hit'))} said {_pct(r_.get('said'))} → "
               f"{_pct(c_.get('said'))} · ll {r_.get('log_loss', '—')} → {c_.get('log_loss', '—')} · "
               f"{v['choice']} ({v['decided_on']})")
-    print(f"\n{len(rep['maps'])} markets corrected live")
+    print("\n80%+ picks, pulled towards 80% where that beat no pull on the later days:")
+    for s, v in (rep.get("tails") or {}).items():
+        if "none" not in v:
+            print(f"  {s:<13} {v['choice']} (earlier {v['train']} picks, later {v['test']})")
+            continue
+        a, b = v["none"], v["pulled"]
+        print(f"  {s:<13} c {v['c_earlier']} on the earlier days · later {v['test']} picks hit {_pct(a['hit'])}: "
+              f"said {_pct(a['said'])} → {_pct(b['said'])}, log loss {a['log_loss']} → {b['log_loss']} (z {v['z']}) · "
+              f"{v['choice']}" + (f", live c {v['c']}" if v.get("c") else ""))
+    n = sum(1 for k in rep["maps"] if not k.endswith("|" + TAIL))
+    print(f"\n{n} markets corrected live, {len(rep['maps']) - n} sports' 80%+ picks pulled")
 
 
 def main() -> None:

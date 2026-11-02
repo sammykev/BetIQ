@@ -77,3 +77,32 @@ def test_match_day_lines_and_grades_become_rows():
            "pred": {"lines": {"model_margin": 1.0}},
            "grades": {"tip": {"prob": 0.66, "verdict": "won"}}}
     assert [(r["market"], r["won"]) for r in cal._other_rows("basketball", old, "2026-10-01")] == [("bb_winner", True)]
+
+
+def test_the_tail_pull_only_lowers_and_starts_at_80():
+    assert cal.tail(0.7, 0.8) == 0.7 and cal.tail(0.9, 1.0) == 0.9
+    assert 0.8 < cal.tail(0.9, 0.8) < 0.9 and cal.tail(0.95, 0.8) > cal.tail(0.9, 0.8)
+    maps = {"basketball|_tail": (0.8, 0.8)}
+    assert cal.apply("basketball", "bb_winner", 0.9, maps) == cal.tail(0.9, 0.8)
+    assert cal.apply("tennis", "rk_winner", 0.9, maps) == 0.9
+
+
+def test_overrated_80_percent_picks_get_a_tail_pull_and_right_ones_none():
+    rnd = random.Random(11)
+    hi = lambda n, truth: [r for r in _rows("basketball", "bb_handicap", n, 0.88, truth, rnd) if r["prob"] > 0.8]
+    short = lambda p: p - 0.05
+    got = cal.tail_choice(hi(2000, short), hi(800, short), lambda r: r["prob"])
+    assert got["choice"] == "pulled" and got["pulled"]["log_loss"] < got["none"]["log_loss"] and got["c_earlier"] < 1
+    right = cal.tail_choice(hi(2000, lambda p: p), hi(800, lambda p: p), lambda r: r["prob"])
+    assert right["choice"] == "none" or right["c_earlier"] > 0.9
+    assert cal.tail_choice(hi(50, short), hi(10, short), lambda r: r["prob"])["choice"] == "too few picks"
+
+
+def test_check_reports_each_sports_tail_and_leaves_held_out_markets_out():
+    rnd = random.Random(5)
+    rows = (_rows("tennis", "rk_winner", 3000, 0.8, lambda p: p, rnd)
+            + _rows("basketball", "bb_total", 3000, 0.85, lambda p: p - 0.3, rnd))     # held out
+    rep = cal.check(rows)
+    assert set(rep["tails"]) == set(cal.SPORTS)
+    assert rep["tails"]["basketball"]["choice"] == "too few picks"       # bb_total never counted
+    assert "tennis|_tail" not in rep["maps"] or rep["maps"]["tennis|_tail"][0] > 0.9
