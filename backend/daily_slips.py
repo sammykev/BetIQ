@@ -2,10 +2,10 @@
 Daily odds: three slips a day at about 5x, 10x and 20x, built by the
 optimizer only from the day's own matches (football and basketball: see
 BB_FAMILIES for basketball's markets), and only from picks the model
-rates 80% or more, none of them priced at 2.0 odds or more (a long price on
+rates 85% or more, none of them priced at 2.0 odds or more (a long price on
 one leg means a riskier slip, whatever the model says).
 
-Every pick being 80%+ doesn't make the slip 80%: the chances multiply, so a
+Every pick being 85%+ doesn't make the slip 85%: the chances multiply, so a
 10x slip lands far less often than any one of its picks. Each slip carries that
 honest combined chance (the optimizer's win_chance), and every slip is kept
 and graded, so the record shows how they really do.
@@ -35,7 +35,9 @@ TARGETS = (5, 10, 20)    # 50x and 100x were dropped (14 Oct 2026): they need so
 # A slip goes out only if it's at least break-even on our (corrected) chances:
 # 1 in its odds (5x: 20%, 10x: 10%, 20x: 5%). Otherwise that target has no slip that day
 BREAK_EVEN = 1.0
-MIN_PROB = 0.80
+# Each pick's least chance, as the optimizer's default: picks rated 80–85%
+# came in 80% in the Oct 2026 confidence check, too weak for a long slip
+MIN_PROB = 0.85
 # Only markets whose picks came in at least this often in the nightly
 # ranking (the optimizer's own floor is 70%)
 MIN_HIT_RATE = 0.75

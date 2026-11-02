@@ -24,9 +24,9 @@ def result(target, legs, time="00:00"):
 
 
 class TestSlips:
-    def test_requests_ask_for_80_percent_picks_under_2_odds_near_the_target(self):
+    def test_requests_ask_for_85_percent_picks_under_2_odds_near_the_target(self):
         body = daily_slips.request(10, daily_slips.ATTEMPTS[0])
-        assert body["min_prob"] == 0.80 and body["max_leg_odds"] == 2.0
+        assert body["min_prob"] == 0.85 and body["max_leg_odds"] == 2.0
         assert body["min_odds"] < 10 < body["max_odds"]
         assert body["bookable_only"] is True and body["days"] == 1
 
