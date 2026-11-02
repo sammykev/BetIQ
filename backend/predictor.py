@@ -86,7 +86,7 @@ LEAGUE_STRENGTH = False
 DOMESTIC_LEAGUES = {"PL", "ELC", "EL1", "EL2", "PD", "SD", "SA", "SB", "BL1", "BL2", "FL1", "FL2", "DED", "JPL",
                     "PPL", "SPL", "D1", "GSL", "BSA", "TSL", "AUT", "SUI", "DEN", "NOR", "SWE", "POL", "ROU",
                     "CYP", "IRL", "ISR", "MLT", "WAL", "NIR", "CZE", "FIN",
-                    "ARG", "MEX", "MLS", "JPN", "CHN", "RUS",
+                    "ARG", "MEX", "MLS", "JPN", "CHN",
                     # second divisions (club_cups.SECOND_TIERS; Scotland's is D1)
                     "BEL2", "GRE2", "TUR2", "AUT2", "SUI2", "DEN2", "NOR2", "SWE2", "POL2", "ROU2"}
 LEAGUE_OFFSET_PRIOR = {"PL": 0.0, "PD": -15.0, "SA": -25.0, "BL1": -25.0, "FL1": -60.0, "PPL": -90.0,
@@ -99,7 +99,7 @@ LEAGUE_OFFSET_PRIOR = {"PL": 0.0, "PD": -15.0, "SA": -25.0, "BL1": -25.0, "FL1":
                        "NIR": -420.0, "MLT": -430.0, "WAL": -450.0,
                        # Beyond Europe: no cross-league games move these, and only
                        # their own clubs meet, so they matter little (rough levels)
-                       "ARG": -150.0, "MEX": -170.0, "MLS": -200.0, "JPN": -200.0, "RUS": -190.0,
+                       "ARG": -150.0, "MEX": -170.0, "MLS": -200.0, "JPN": -200.0,
                        "CHN": -300.0,
                        # Second divisions: roughly a top flight's level less a Championship-to-PL gap
                        "D1": -320.0, "BEL2": -280.0, "GRE2": -330.0, "TUR2": -300.0, "AUT2": -320.0,

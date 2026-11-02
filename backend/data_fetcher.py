@@ -37,7 +37,7 @@ API_BASE = "https://api.football-data.org/v4"
 # server restarted, which left the site with no Premier League, La Liga,
 # Serie A... for days after one bad answer.
 ESPN_ONLY = {"EL", "UECL", "JPL", "SPL", "GSL", "TSL", "AUT", "SUI", "DEN", "NOR", "SWE", "POL", "ROU",
-             "ARG", "MEX", "MLS", "JPN", "CHN", "RUS"}
+             "ARG", "MEX", "MLS", "JPN", "CHN"}
 NOT_IN_PLAN: set = set(ESPN_ONLY)
 SKIP_HOURS = 6
 _skipped_at: Dict[str, float] = {}
@@ -98,7 +98,6 @@ LEAGUES: Dict[str, Dict] = {
     "MLS": {"name": "Major League Soccer", "country": "USA", "flag": "🇺🇸"},
     "JPN": {"name": "J1 League", "country": "Japan", "flag": "🇯🇵"},
     "CHN": {"name": "Chinese Super League", "country": "China", "flag": "🇨🇳"},
-    "RUS": {"name": "Russian Premier League", "country": "Russia", "flag": "🇷🇺"},
 }
 
 
