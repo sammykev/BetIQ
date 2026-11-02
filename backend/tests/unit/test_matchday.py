@@ -631,3 +631,15 @@ def test_old_history_format_is_not_read_for_recent_dates(monkeypatch):
     fake.kv["betiq:history:2026-08-20"] = json.dumps(row)
     assert main._md_load(fake, "2026-10-31") == {}
     assert list(main._md_load(fake, "2026-08-20")) == [matchday.key("Arsenal", "Chelsea")]
+
+
+def test_records_leave_repeated_chances_out(monkeypatch):
+    import calibration
+    fake = FakeRedis()
+    same = {"p_home": 0.606, "p_draw": 0.232, "p_away": 0.162, "p_over25": 0.18, "tip_code": "1X"}
+    day = {f"h{i}|a{i}": {"home": f"H{i}", "away": f"A{i}", "date": "2026-10-24", "league": "PL", "pred": dict(same),
+                          "locked": True, "result": {"status": "finished", "hg": 2, "ag": 0}} for i in range(3)}
+    fake.kv["betiq:md:2026-10-24"] = json.dumps(day)
+    assert all(matchday.placeholder(e) for e in main._md_many(fake, ["2026-10-24"])["2026-10-24"].values())
+    rows = calibration.load_rows(fake, days=3, today=date(2026, 10, 25))
+    assert not [x for x in rows if x["sport"] == "football"]

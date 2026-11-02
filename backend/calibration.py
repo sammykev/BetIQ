@@ -388,6 +388,9 @@ def load_rows(r, days: int = DAYS, today: Optional[date] = None) -> List[Dict]:
                     day = json.loads(raw)
                 except ValueError:
                     continue
+                if sport == "football":
+                    import matchday
+                    matchday.flag_constant(day)    # repeated chances aren't real predictions
                 for e in day.values():
                     try:
                         rows += _football_rows(e, d) if sport == "football" else _other_rows(sport, e, d)

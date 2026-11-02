@@ -47,10 +47,13 @@ def _md_save(r, d: str, day: Dict[str, Dict]) -> None:
 def _md_many(r, dates: List[str]) -> Dict[str, Dict[str, Dict]]:
     """Several dates in one request (MGET); dates only in the old format are
     read one by one."""
+    import matchday
     raws = r.mget([main.MD_KEY.format(d) for d in dates]) if dates else []
     out = {}
     for d, raw in zip(dates, raws):
         out[d] = json.loads(raw) if raw else (main._md_load(r, d) if d < date.today().isoformat() else {})
+        if raw:
+            matchday.flag_constant(out[d])     # placeholders out of every record
     return out
 
 

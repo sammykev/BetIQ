@@ -120,6 +120,8 @@ def load(r, days: int = DAYS, today: Optional[date] = None) -> List[Dict]:
                 day = json.loads(raw)
             except ValueError:
                 continue
+            import matchday
+            matchday.flag_constant(day)
             for e in day.values():
                 rows.extend(sets_of(e))
     return rows
