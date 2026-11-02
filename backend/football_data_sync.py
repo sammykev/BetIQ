@@ -37,7 +37,10 @@ REQUIRED = ["Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG", "FTR"]
 # the others as one file per country with every season since 2012
 # (football-data.co.uk/new/), results and closing odds.
 EXTRA_DIR = os.path.join(os.path.dirname(__file__), "data", "football_extra")
-EXTRA_DIVISIONS = ("B1", "SC0", "SC1", "G1", "T1")
+EXTRA_DIVISIONS = ("B1", "SC0", "SC1", "G1", "T1",
+                   # second divisions SportyBet lists (Nov 2026): League One and Two, the
+                   # National League, LaLiga 2, Serie B, Ligue 2
+                   "E2", "E3", "EC", "SP2", "I2", "F2")
 NEW_BASE_URL = "https://www.football-data.co.uk/new"
 NEW_LEAGUES = ("AUT", "SWZ", "DNK", "NOR", "SWE", "POL", "ROU", "BRA",
                # beyond Europe (Nov 2026: SportyBet lists them, we had no history)

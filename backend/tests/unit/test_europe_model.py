@@ -122,3 +122,17 @@ def test_calibration_is_applied_per_competition(trained_predictor):
     assert (p1["p_home"], p1["p_draw"], p1["p_away"]) == (0.5, 0.25, 0.25)
     assert p2["p_home"] == trained_predictor.predict_match("Arsenal", "Chelsea", league="PL")["p_home"]
     assert p0["p_over25"] == p1["p_over25"]          # goal markets untouched
+
+
+def test_second_divisions_share_their_clubs_history_and_the_national_league_isnt_the_euros(tmp_path, monkeypatch):
+    import pandas as pd
+    import main
+    row = lambda h, a: {"Date": "01/09/2024", "HomeTeam": h, "AwayTeam": a, "FTHG": 1, "FTAG": 0, "FTR": "H"}
+    pd.DataFrame([row("Sunderland", "Wigan")]).to_csv(tmp_path / "E2_2425.csv", index=False)
+    pd.DataFrame([row("Ipswich", "Halifax")]).to_csv(tmp_path / "EC_2425.csv", index=False)
+    pd.DataFrame([row("Arsenal", "Rostov")]).to_csv(tmp_path / "T1_2425.csv", index=False)
+    monkeypatch.setattr(main, "EXTRA_DATA_DIR", str(tmp_path))
+    df = main._load_extra_leagues({"Sunderland", "Ipswich", "Arsenal"}, leagues=main.MAIN_EXTRA_LEAGUES)
+    got = {(r.HomeTeam, r.league) for r in df.itertuples()}
+    # The promoted/relegated club is the same club; a clash in another country isn't
+    assert got == {("Sunderland", "EL1"), ("Ipswich", "ENL"), ("Arsenal (TSL)", "TSL")}

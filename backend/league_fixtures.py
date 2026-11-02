@@ -37,6 +37,13 @@ COMPETITIONS: Dict[str, Tuple[str, str, str, str]] = {
     "MLS": ("usa.1", "Major League Soccer", "USA", "🇺🇸"),
     "JPN": ("jpn.1", "J1 League", "Japan", "🇯🇵"),
     "CHN": ("chn.1", "Chinese Super League", "China", "🇨🇳"),
+    # Second divisions (football-data.co.uk history alongside the top flights)
+    "EL1": ("eng.3", "League One", "England", "🏴󠁧󠁢󠁥󠁮󠁧󠁿"),
+    "EL2": ("eng.4", "League Two", "England", "🏴󠁧󠁢󠁥󠁮󠁧󠁿"),
+    "ENL": ("eng.5", "National League", "England", "🏴󠁧󠁢󠁥󠁮󠁧󠁿"),
+    "SD": ("esp.2", "LaLiga 2", "Spain", "🇪🇸"),
+    "SB": ("ita.2", "Serie B", "Italy", "🇮🇹"),
+    "FL2": ("fra.2", "Ligue 2", "France", "🇫🇷"),
 }
 UNPROVEN_KEY = "betiq:extra_leagues:check"
 

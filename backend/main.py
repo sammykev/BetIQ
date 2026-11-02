@@ -821,7 +821,7 @@ def _load_football_data_csvs(directory: Optional[str] = None) -> pd.DataFrame:
     """
     # Map filename prefix → league code (football-data.co.uk naming convention)
     _LEAGUE_CODES = {
-        "E0": "PL",  "E1": "ELC", "E2": "EL1", "E3": "EL2",
+        "E0": "PL",  "E1": "ELC", "E2": "EL1", "E3": "EL2", "EC": "ENL",
         "SP1": "PD", "SP2": "SD",
         "I1": "SA",  "I2": "SB",
         "D1": "BL1", "D2": "BL2",
@@ -924,10 +924,14 @@ def _load_new_league_csv(path: str, league: str) -> pd.DataFrame:
 # context rows — ratings and form, no training rows
 MAIN_EXTRA_LEAGUES = {"BSA", "JPL", "SPL", "GSL", "TSL", "AUT", "SUI", "DEN", "NOR", "SWE", "POL", "ROU",
                       "ARG", "MEX", "MLS", "JPN", "CHN",
+                      "EL1", "EL2", "ENL", "SD", "SB", "FL2",
                       "D1"}  # Scotland's second tier (SC1): promoted clubs' history
 # A second division's clashing names take its top flight's tag, so a promoted
 # club keeps one history across both
 _TAG_AS = {"D1": "SPL"}
+# Second divisions of countries we train on: a name that clashes with a
+# trained club is that club (promoted or relegated), never tagged apart
+_SAME_CLUBS = {"EL1", "EL2", "ENL", "SD", "SB", "FL2"}
 # Leagues whose walk-forward check hasn't passed: published with a warning, kept out of slips
 _unproven_leagues: set = set()
 # Group B (sb_league_fixtures.py): fixtures from SportyBet's catalog, kept between linking runs
@@ -985,7 +989,7 @@ def _load_extra_leagues(known: Optional[set] = None, leagues: Optional[set] = No
         return pd.DataFrame()
     clash = {normalise(n) for n in (known or set())}
     for col in ("HomeTeam", "AwayTeam"):
-        df[col] = [f"{n} ({_TAG_AS.get(lg, lg)})" if normalise(n) in clash else n
+        df[col] = [f"{n} ({_TAG_AS.get(lg, lg)})" if normalise(n) in clash and lg not in _SAME_CLUBS else n
                    for n, lg in zip(df[col], df["league"])]
     df = df.drop_duplicates(subset=["Date", "HomeTeam", "AwayTeam"]).sort_values("Date").reset_index(drop=True)
     df["Context"] = True

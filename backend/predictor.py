@@ -86,12 +86,12 @@ LEAGUE_STRENGTH = False
 DOMESTIC_LEAGUES = {"PL", "ELC", "EL1", "EL2", "PD", "SD", "SA", "SB", "BL1", "BL2", "FL1", "FL2", "DED", "JPL",
                     "PPL", "SPL", "D1", "GSL", "BSA", "TSL", "AUT", "SUI", "DEN", "NOR", "SWE", "POL", "ROU",
                     "CYP", "IRL", "ISR", "MLT", "WAL", "NIR", "CZE", "FIN",
-                    "ARG", "MEX", "MLS", "JPN", "CHN",
+                    "ARG", "MEX", "MLS", "JPN", "CHN", "ENL",
                     # second divisions (club_cups.SECOND_TIERS; Scotland's is D1)
                     "BEL2", "GRE2", "TUR2", "AUT2", "SUI2", "DEN2", "NOR2", "SWE2", "POL2", "ROU2"}
 LEAGUE_OFFSET_PRIOR = {"PL": 0.0, "PD": -15.0, "SA": -25.0, "BL1": -25.0, "FL1": -60.0, "PPL": -90.0,
                        "DED": -100.0, "ELC": -170.0, "BL2": -190.0, "SD": -190.0, "SB": -200.0, "FL2": -230.0,
-                       "EL1": -280.0, "EL2": -360.0, "JPL": -110.0, "SPL": -150.0, "GSL": -150.0, "BSA": -80.0,
+                       "EL1": -280.0, "EL2": -360.0, "ENL": -430.0, "JPL": -110.0, "SPL": -150.0, "GSL": -150.0, "BSA": -80.0,
                        # Rough starting points (UEFA coefficients); European results move them
                        "TSL": -140.0, "AUT": -150.0, "SUI": -160.0, "DEN": -170.0, "NOR": -180.0,
                        "POL": -200.0, "SWE": -210.0, "ROU": -230.0,
