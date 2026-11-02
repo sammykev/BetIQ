@@ -316,6 +316,8 @@ def check(rows: List[Dict]) -> Dict:
             if c_all is not None and c_all < 1:
                 rep["maps"][key(s, TAIL)] = [c_all, TAIL_FROM]
                 rep["tails"][s]["c"] = c_all
+            else:
+                rep["tails"][s]["choice"] = "none (no pull on every day)"
     return rep
 
 
