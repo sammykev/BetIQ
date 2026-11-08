@@ -80,3 +80,8 @@ class TestHighConfidenceSlips:
         assert "leg_cap" not in self.post(max_games=30, min_prob=0.6)
         assert "leg_cap" not in self.post(max_games=30, allow_long=True)
         assert "leg_cap" not in self.post(max_games=8)
+
+    def test_75_percent_picks_are_high_confidence(self):
+        assert opt_router.HIGH_CONF_PROB == 0.75
+        assert self.post(max_games=30, min_prob=0.75)["leg_cap"]["cap"] == opt_router.HIGH_CONF_LEGS
+        assert "leg_cap" not in self.post(max_games=30, min_prob=0.7)

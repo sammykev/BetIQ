@@ -18,8 +18,9 @@ import main
 router = APIRouter()
 
 # A slip is "high confidence" when it asks each pick for at least this
-# chance, or sets a least chance for the whole slip
-HIGH_CONF_PROB = 0.80
+# chance, or sets a least chance for the whole slip (75% since Nov 2026: the
+# page offers 75% picks, which came in 76.6%, and long slips of them rarely land)
+HIGH_CONF_PROB = 0.75
 # High-confidence slips the user builds stop at this many legs: in the
 # confidence check's history the day's top 10 picks all won 73.9% of days,
 # the top 20 35.0% and the top 30 21% (10 legs: about the most that still
