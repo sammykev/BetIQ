@@ -133,7 +133,7 @@ const short = (x: number) => (x >= 1000 ? `${x / 1000}K` : `${x}x`);
 // The whole slip's least chance to land (every pick's chance multiplied)
 const SLIP_CHANCE = [0.7, 0.8, 0.9];
 // Each pick's least chance; 85% is the server's default (picks under it lost most tickets)
-const CONFIDENCE = [0.6, 0.7, 0.8, 0.85, 0.9, 0.95];
+const CONFIDENCE = [0.6, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95];
 const DAYS = [{ label: "Today", n: 1 }, { label: "2 days", n: 2 }, { label: "3 days", n: 3 }, { label: "Week", n: 7 }];
 // Each chip covers one or more backend markets (optimizer.py _PICKS). `needs`
 // are the booking_slip.VERIFIED markets SportyBet must confirm before codes
