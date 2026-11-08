@@ -42,6 +42,7 @@ MIN_PROB = 0.85
 # ranking (the optimizer's own floor is 70%)
 MIN_HIT_RATE = 0.75
 MAX_LEG_ODDS = 2.0      # every pick priced under this
+MAX_LEGS = 10           # legs per daily slip: longer ones rarely land
 SPREAD = 0.07          # total odds within ±7% of the target
 KEEP_DAYS = 120
 TZ = timezone(timedelta(hours=1))   # Lagos (WAT: no daylight saving)
@@ -70,7 +71,7 @@ def request(target: float, attempt: Dict[str, Any]) -> Dict[str, Any]:
     return {"target_odds": target, "min_odds": round(target * (1 - SPREAD), 2),
             "max_odds": round(target * (1 + SPREAD), 2), "min_prob": MIN_PROB, "min_hit_rate": MIN_HIT_RATE,
             "hit_fallback": False, "max_leg_odds": MAX_LEG_ODDS,
-            "max_games": 30, "sport": "all", "bb_markets": list(BB_FAMILIES), "tn_markets": list(RK_FAMILIES),
+            "max_games": MAX_LEGS, "sport": "all", "bb_markets": list(BB_FAMILIES), "tn_markets": list(RK_FAMILIES),
             "tt_markets": list(RK_FAMILIES), "no_props": True, "min_win_chance": round(BREAK_EVEN / target, 4),
             **attempt}
 

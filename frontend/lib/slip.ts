@@ -23,7 +23,7 @@ export interface SlipSelection {
   sport?: "football" | "basketball" | "tennis" | "table_tennis";
 }
 
-export const MAX_SLIP = 30;
+export const MAX_SLIP = 50;   // as booking_slip.MAX_SELECTIONS
 
 /** One selection per match, like a bookmaker accumulator. */
 export const matchKey = (s: Pick<SlipSelection, "home" | "away" | "date">) => `${s.home}:${s.away}:${s.date}`;

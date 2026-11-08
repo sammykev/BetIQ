@@ -35,7 +35,7 @@ from booking_slip import _event_odds, sportybet_ids
 
 MARGIN = 0.93          # bookmaker payout assumed when estimating a price
 STEP = 0.01            # log-odds resolution of the search (1%)
-MAX_GAMES = 30         # SportyBet's limit per booking code
+MAX_GAMES = 50         # legs per slip (booking_slip.MAX_SELECTIONS)
 MAX_MATCHES = 150      # candidates considered, best first
 # Picks whose real price pays clearly less than our chance is worth
 # (chance × odds below 1 + MIN_EDGE) are left out: on 120 days of settled

@@ -175,7 +175,8 @@ def resolve_markets(details: Optional[Dict[str, Any]]) -> Dict[str, Dict[str, An
     return out
 
 
-MAX_SELECTIONS = 30
+# Selections per booking code (was 30; raised with the optimizer's 50 legs, Nov 2026)
+MAX_SELECTIONS = 50
 
 
 def sportybet_ids(market: str, code: str) -> Optional[Dict[str, str]]:

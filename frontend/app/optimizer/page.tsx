@@ -597,7 +597,7 @@ export default function OptimizerPage() {
             )}
             <div className="space-y-2">
               <p className="eyebrow">At most {maxGames} games</p>
-              <input type="range" min={1} max={30} value={maxGames} onChange={e => setMaxGames(Number(e.target.value))}
+              <input type="range" min={1} max={50} value={maxGames} onChange={e => setMaxGames(Number(e.target.value))}
                 className="w-full accent-[rgb(var(--accent))]" aria-label="Maximum games" />
             </div>
           </div>

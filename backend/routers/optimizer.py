@@ -548,11 +548,9 @@ async def _optimize_request(body: Dict[str, Any],
         # Markets and leagues the confidence check found falling short stay
         # out of high-confidence slips ("healthy_only" overrides either way)
         healthy = bool(body["healthy_only"]) if body.get("healthy_only") is not None else high
-        # A slip the user builds (not the daily slips: `window`) is cut to
-        # HIGH_CONF_LEGS when it's high confidence ("allow_long" keeps the ask)
+        # Slips the user builds take up to optimizer.MAX_GAMES legs (Nov 2026:
+        # the 10-leg cap is the daily slips' only, daily_slips.MAX_LEGS)
         asked = max_games
-        if high and window is None and not body.get("allow_long") and max_games > HIGH_CONF_LEGS:
-            max_games = HIGH_CONF_LEGS
     except (TypeError, ValueError):
         raise HTTPException(status_code=400, detail="Invalid optimizer settings")
     if not (1.01 <= lo <= hi <= 1_000_000):
