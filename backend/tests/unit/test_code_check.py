@@ -290,3 +290,12 @@ def test_zero_zero_corners_are_no_data():
     res = {"status": "finished", "hg": 1, "ag": 0, "corners": [0, 0]}
     assert tickets.grade_leg("corners_ou", "U85", res) == "pending"
     assert tickets.grade_leg("corners_ou", "U85", {**res, "corners": [3, 4]}) == "won"
+
+
+def test_a_game_with_hundreds_of_lines():
+    import optimizer
+    groups = [[optimizer.Option(f"H{i}", "A", TOMORROW, "", "L", "bb_total", "T", f"c{j}", "x",
+                                0.3 + 0.002 * j, round(1 / (0.3 + 0.002 * j), 2), "sportybet") for j in range(300)]
+              for i in range(3)]
+    res = optimizer.optimize_safe(groups, 0.5, 1e6, 3, min_edge=None, most_games=True)
+    assert res and res["win_chance"] >= 0.5

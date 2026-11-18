@@ -41,6 +41,7 @@ MIN_OPTION_PROB = 0.30    # options looked at on each game (a risky ticket takes
 ODDS_MARGIN = 0.95        # a leg we don't price: chance ≈ ODDS_MARGIN / its odds
 PRICE_MARGIN = 1.05       # a model chance counts at no more than PRICE_MARGIN / its odds
 MAX_TICKET_ODDS = 1e6
+MAX_OPTIONS = 80          # per game on a ticket (a basketball game can have hundreds of lines)
 
 
 def _when(ms: Any) -> tuple:
@@ -192,6 +193,14 @@ def analyse(selections: List[Dict], find_pred: Callable[[Dict], Optional[Dict]],
         chances.append(chance)
         if chance is None or not odds or odds <= 1.01 or not leg["active"]:
             continue                       # suspended or unpriced: can't go on a ticket
+        if len(options) > MAX_OPTIONS:
+            # The most even spread of prices to choose from: the likeliest pick at each price step
+            by_step: Dict[float, Option] = {}
+            for o in options:
+                k = round(math.log(o.odds), 2)
+                if k not in by_step or o.prob > by_step[k].prob:
+                    by_step[k] = o
+            options = sorted(by_step.values(), key=lambda o: -o.prob)[:MAX_OPTIONS]
         own = Option(sel["home"], sel["away"], date, time, leg["league"], own_market, sel["market"], own_code,
                      sel["outcome"], round(chance, 4), round(float(odds), 2),
                      "sportybet" if prob is not None else "odds_only", sb=_ids(sel), sport=sport)

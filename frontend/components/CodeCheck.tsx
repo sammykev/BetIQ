@@ -248,8 +248,10 @@ export function CodeCheck({ onLocked }: { onLocked?: () => void }) {
       const r = await authFetch(`${API}/api/optimizer/code`, { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code }) });
       if ((r.status === 401 || r.status === 402) && onLocked) { setBusy(false); onLocked(); return; }
-      const d = await r.json();
-      if (!r.ok) throw new Error(d?.detail || "Couldn't check that code.");
+      const d = await r.json().catch(() => null);
+      if (!r.ok || !d) throw new Error(d?.detail || (r.status >= 500
+        ? "Our server had a problem rating that code. Try again in a minute."
+        : "Couldn't check that code."));
       setReport(d);
     } catch (e: any) { setError(e?.message || "Couldn't check that code."); }
     setBusy(false);

@@ -327,7 +327,7 @@ def _solve(groups: List[List[Option]], L: int, W: int, max_games: int,
         w = [max(1, int(round(math.log(o.odds) / STEP))) for o in g]
         c = [-math.log(o.prob) for o in g]
         new = dp.copy()
-        ch = np.full(dp.shape, -1, dtype=np.int8)
+        ch = np.full(dp.shape, -1, dtype=np.int16)   # a basketball game can have hundreds of lines
         for j, (wj, cj) in enumerate(zip(w, c)):
             if wj > W:
                 continue

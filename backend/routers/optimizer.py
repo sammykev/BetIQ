@@ -996,10 +996,15 @@ async def optimize_code(request: Request, body: Dict[str, Any],
             o = _calibrated(o, codes[key])
         return price_checked(o)
 
-    report = await asyncio.to_thread(
-        code_check.analyse, selections, find,
-        main._linked_event, confirmed, lambda m, c: m not in paused and bookable(m, c),
-        lambda sel: by_sb.get(str(sel.get("eventId"))), adjust)
+    try:
+        report = await asyncio.to_thread(
+            code_check.analyse, selections, find,
+            main._linked_event, confirmed, lambda m, c: m not in paused and bookable(m, c),
+            lambda sel: by_sb.get(str(sel.get("eventId"))), adjust)
+    except Exception as e:
+        import traceback
+        print(f"[CodeCheck] {code}: {type(e).__name__}: {e}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail="Something went wrong rating that code. We've logged it; try again in a few minutes.")
     # Kept and settled, so each ticket's record shows whether its chance is honest
     r = main._get_redis()
     try:
