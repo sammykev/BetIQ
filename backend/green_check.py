@@ -107,6 +107,37 @@ def tickets_report(r, start: float) -> None:
     print(f"  tickets with every leg {start:.0%}+: landed {tickets['won']}  lost {tickets['lost']}  ({pct(tickets)})")
 
 
+def daily_report(r) -> None:
+    """The daily slips per target: how many landed against how many their
+    combined chances (win_chance) said would, and by how sure the slip was."""
+    rows: Dict[str, List] = defaultdict(list)
+    bands: Dict[str, List] = defaultdict(list)
+    for i in range(DAYS):
+        d = (date.today() - timedelta(days=i)).isoformat()
+        try:
+            doc = json.loads(r.get(f"betiq:daily:{d}") or "null")
+        except ValueError:
+            continue
+        for sl in ((doc or {}).get("slips") or []) + ((doc or {}).get("cut") or []):
+            wc = sl.get("win_chance")
+            if sl.get("status") not in ("won", "lost") or not isinstance(wc, (int, float)):
+                continue
+            won = sl["status"] == "won"
+            rows[str(int(sl.get("target") or 0))].append((wc, won))
+            band = "40%+" if wc >= 0.4 else "30-40%" if wc >= 0.3 else "20-30%" if wc >= 0.2 else "10-20%" if wc >= 0.1 else "<10%"
+            bands[band].append((wc, won))
+    print(f"\n== Daily slips (last {DAYS} days): landed vs what their chances said ==")
+    show = lambda k, v: print(f"  {k:<8} n {len(v):>4}  landed {sum(w for _, w in v):>3}  "
+                              f"said {sum(c for c, _ in v):6.1f}  ({100 * sum(w for _, w in v) / len(v):.0f}% vs "
+                              f"{100 * sum(c for c, _ in v) / len(v):.0f}%)")
+    for k in sorted(rows, key=lambda k: int(k)):
+        show(f"{k}x", rows[k])
+    print("  by the slip's own chance:")
+    for k in ("<10%", "10-20%", "20-30%", "30-40%", "40%+"):
+        if bands.get(k):
+            show(k, bands[k])
+
+
 _r = None
 
 
@@ -124,6 +155,7 @@ def main() -> None:
           f"(as of {datetime.now(timezone.utc).isoformat(timespec='minutes')})")
     picks_report(rows, a.start)
     tickets_report(_r, a.start)
+    daily_report(_r)
 
 
 if __name__ == "__main__":
