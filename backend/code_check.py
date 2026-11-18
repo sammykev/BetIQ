@@ -347,6 +347,11 @@ def _tickets(groups: List[List[Option]], settings: Optional[Dict[str, Any]] = No
         slip = {**_slip(res["picks"]), "target_chance": least, "left_out": left,
                 "left_because": "value" if settings["value"] else "chance"}
         slip["bonus"] = round(bonus(slip["picks"]), 4)
+        try:
+            import multi_bonus
+            slip["bonus_top"] = multi_bonus.share_top(slip["picks"])
+        except Exception:
+            slip["bonus_top"] = 0.0
         slip["expected_return"] = expected_return(slip)
         out[name] = slip
     return out, notes

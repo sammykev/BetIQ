@@ -997,6 +997,12 @@ async def optimize_code(request: Request, body: Dict[str, Any],
             o = _calibrated(o, codes[key])
         return price_checked(o)
 
+    try:   # SportyBet's multi-bet bonus plan, every few hours (multi_bonus.py)
+        import multi_bonus
+        await multi_bonus.refresh()
+    except Exception as e:
+        print(f"[CodeCheck] bonus plan: {e}")
+
     def market_paid(sport: str, market: str) -> bool:
         """Value mode: the market's picks made money at their odds in the nightly ranking."""
         x = (codes or {}).get(f"{sport}:{market}") or {}

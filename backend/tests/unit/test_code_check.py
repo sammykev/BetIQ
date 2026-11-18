@@ -373,12 +373,12 @@ def test_value_mode_takes_only_picks_worth_their_price():
 
 def test_multi_bonus_share():
     import multi_bonus
-    old = dict(multi_bonus.TABLE)
-    multi_bonus.TABLE.update({3: 0.03, 5: 0.05})
-    try:
-        picks = [{"odds": 1.5}] * 4 + [{"odds": 1.1}]
-        assert multi_bonus.share(picks) == 0.03          # the 1.10 doesn't count
-        assert multi_bonus.share([{"odds": 1.5}] * 6) == 0.05
-    finally:
-        multi_bonus.TABLE.clear()
-        multi_bonus.TABLE.update(old)
+    # 5 legs at 1.5 and one at 1.1 (doesn't qualify): 5 qualify → 5% to 12%, on the qualifying legs' odds
+    picks = [{"odds": 1.5, "sport": "football"}] * 5 + [{"odds": 1.1, "sport": "football"}]
+    assert multi_bonus.share(picks) == pytest.approx(0.05 / 1.1, abs=1e-4)
+    assert multi_bonus.share_top(picks) == pytest.approx(0.12 * 0.6 / 1.1, abs=1e-4)   # football: 0.6 of the top
+    assert multi_bonus.share([{"odds": 1.5}] * 3) == 0                                    # 3 legs: nothing sure
+    got = multi_bonus.parse({"entityList": [{"qualifyingOddsLimit": 12000, "bonusRatios": [
+        {"qualifyingSelections": 2, "min": 0, "max": 300}]}],
+        "bonusFactorVOList": [{"sportId": "sr:sport:1", "bonusFactor": 6000, "isEnabled": True, "tournamentId": ""}]})
+    assert got == (1.2, {2: (0.0, 0.03)}, {"football": 0.6})

@@ -36,7 +36,7 @@ interface Slip { picks: Pick[]; games: number; total_odds: number | null; win_ch
   unmodelled: number; estimated_prices: number; target_odds?: number;
   from_odds?: number; target_chance?: number; left_out?: string[];
   /** What 1 staked returns on average (chance × odds, with SportyBet's bonus) */
-  expected_return?: number | null; bonus?: number; left_because?: "chance" | "value" }
+  expected_return?: number | null; bonus?: number; bonus_top?: number; left_because?: "chance" | "value" }
 interface Report {
   code: string; legs: Leg[];
   original: { games: number; total_odds: number | null; win_chance: number | null; unmodelled: number; from_odds?: number };
@@ -223,8 +223,14 @@ function ImprovedSlip({ title, blurb, slip, original }: { title: string; blurb: 
             ₦100 on this ticket returns about{" "}
             <span className={clsx("font-bold tnum", slip.expected_return >= 1 ? "text-accent" : "text-n-0")}>
               ₦{Math.round(slip.expected_return * 100)}</span> on average
-            {slip.bonus ? <> (with SportyBet&apos;s {Math.round(slip.bonus * 100)}% bonus)</> : null}.
+            {slip.bonus ? <> (with SportyBet&apos;s sure {+(slip.bonus * 100).toFixed(1)}% multi-bet bonus)</> : null}.
           </p>
+          {(slip.bonus_top ?? 0) > (slip.bonus ?? 0) && (
+            <p className="text-[11px] text-n-400 mt-0.5">
+              SportyBet&apos;s bonus on this ticket could go up to {+((slip.bonus_top ?? 0) * 100).toFixed(1)}%;
+              we count only the part it&apos;s sure to pay.
+            </p>
+          )}
           <p className="text-[11px] text-n-400 mt-0.5 text-pretty">
             {slip.expected_return >= 1
               ? "Worth more than it costs by our checked chances. It can still lose: that's the average over many tickets."
