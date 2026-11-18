@@ -254,12 +254,24 @@ def _headers() -> Dict[str, str]:
 
 
 async def _get(session, path: str, params: Optional[Dict] = None) -> Any:
+    import asyncio
     import sportybet
-    r = await session.get(sportybet.BASE + path, headers=_headers(), params=params or {})
-    body = r.json() if r.text else {}
-    if r.status_code != 200 or body.get("bizCode") != sportybet.OK:
-        raise RuntimeError(f"{path}: HTTP {r.status_code} {str(body)[:200]}")
-    return body.get("data")
+    last = ""
+    for attempt in range(4):         # SportyBet sometimes answers with a blank or HTML page
+        if attempt:
+            await asyncio.sleep(3 * attempt)
+        r = await session.get(sportybet.BASE + path, headers=_headers(), params=params or {})
+        try:
+            body = r.json() if r.text else {}
+        except ValueError:
+            last = f"HTTP {r.status_code}, not JSON: {(r.text or '')[:120]!r}"
+            continue
+        if r.status_code == 200 and body.get("bizCode") == sportybet.OK:
+            return body.get("data")
+        last = f"HTTP {r.status_code} {str(body)[:200]}"
+        if r.status_code < 500 and r.status_code != 429:
+            break
+    raise RuntimeError(f"{path}: {last}")
 
 
 async def fetch_line_price(session) -> Optional[float]:
@@ -307,7 +319,10 @@ async def fetch_previous(session, period: Dict) -> Optional[Dict]:
         return await _get(session, "/jackpot/previous", params)
     except RuntimeError as first:
         r = await session.post(sportybet.BASE + "/jackpot/previous", headers=_headers(), json=params)
-        body = r.json() if r.text else {}
+        try:
+            body = r.json() if r.text else {}
+        except ValueError:
+            body = {}
         if r.status_code == 200 and body.get("bizCode") == sportybet.OK:
             return body.get("data")
         print(f"  previous {params['periodNumber']}: GET {first}; POST HTTP {r.status_code} {str(body)[:200]}")

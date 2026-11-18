@@ -113,6 +113,7 @@ def daily_report(r) -> None:
     rows: Dict[str, List] = defaultdict(list)
     bands: Dict[str, List] = defaultdict(list)
     legs: Dict[str, List] = defaultdict(list)
+    priced: Dict[str, List] = defaultdict(list)
     for i in range(DAYS):
         d = (date.today() - timedelta(days=i)).isoformat()
         try:
@@ -130,6 +131,14 @@ def daily_report(r) -> None:
                     sport = "basketball" if m.startswith("bb_") else "tennis" if m.startswith("rk_") else "football"
                     for key in ("all", sport, f"{sport}:{m}", f"month {d[:7]}"):
                         legs[key].append((pk["prob"], pk["status"] == "won"))
+                    o = pk.get("odds")
+                    if isinstance(o, (int, float)) and o > 1:
+                        # what the price says (less a ~5% margin), and how far we disagreed
+                        imp = min(0.99, 1.05 / o)
+                        edge = pk["prob"] - imp
+                        band = "edge <0" if edge < 0 else "edge 0-5" if edge < .05 else "edge 5-10" if edge < .1 else "edge 10+"
+                        for key in (f"{sport} {band}", f"{sport} all priced"):
+                            priced[key].append((pk["prob"], imp, pk["status"] == "won"))
             rows[str(int(sl.get("target") or 0))].append((wc, won))
             band = "40%+" if wc >= 0.4 else "30-40%" if wc >= 0.3 else "20-30%" if wc >= 0.2 else "10-20%" if wc >= 0.1 else "<10%"
             bands[band].append((wc, won))
@@ -149,6 +158,11 @@ def daily_report(r) -> None:
     for k in ["all", "football", "basketball", "tennis"] + sorted(k for k in legs if k.startswith("month")):
         if legs.get(k):
             leg(k, legs[k])
+    print("  ours vs the price's chance, by how far we disagreed (edge = ours - price, points):")
+    for k in sorted(priced):
+        v = priced[k]
+        print(f"    {k:<30} n {len(v):>4}  hit {100 * sum(w for *_, w in v) / len(v):5.1f}%  "
+              f"ours {100 * sum(a for a, *_ in v) / len(v):5.1f}%  price {100 * sum(b for _, b, _ in v) / len(v):5.1f}%")
     for k, v in sorted(((k, v) for k, v in legs.items() if ":" in k and len(v) >= 15),
                        key=lambda kv: sum(w for _, w in kv[1]) / len(kv[1]) - sum(c for c, _ in kv[1]) / len(kv[1])):
         leg(k, v)
