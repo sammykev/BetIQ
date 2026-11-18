@@ -986,7 +986,7 @@ function LegCapNote({ result }: { result: OptResult }) {
       )}
       {over.length > 0 && (
         <p className="text-n-500">
-          Paused, their picks came in well under what our model said: {over.map(marketName).join(", ")}.
+          Paused, their picks keep coming in under what our model said and don&apos;t pay: {over.map(marketName).join(", ")}.
         </p>
       )}
       {priced > 0 && (

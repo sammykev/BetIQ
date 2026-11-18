@@ -6,6 +6,7 @@ Moved out of main.py; main's shared state is read as `main.<name>` at call time.
 
 import asyncio
 import json
+import math
 import os
 import time
 from dataclasses import replace
@@ -80,6 +81,13 @@ CALIBRATION_PRIOR = 30
 # OVERCONFIDENT_MIN_N settled picks, is left out of every slip until it recovers
 OVERCONFIDENT_GAP = 0.10
 OVERCONFIDENT_MIN_N = 20
+# ...and a market that keeps coming in under what we said: over at least
+# UNDER_MIN_N picks, UNDER_GAP or more short and beyond chance (UNDER_Z
+# standard errors), unless its picks still made money at their odds
+# (Nov 18 2026: e.g. tennis set 1 total, 75.0% of 12,279 for 77.2% said, -2.2%)
+UNDER_MIN_N = 100
+UNDER_GAP = 0.015
+UNDER_Z = 2.0
 
 
 def _gap(x: Optional[Dict[str, Any]]) -> float:
@@ -90,7 +98,19 @@ def _gap(x: Optional[Dict[str, Any]]) -> float:
 
 
 def _overconfident(x: Optional[Dict[str, Any]]) -> bool:
-    return bool(x) and x.get("n", 0) >= OVERCONFIDENT_MIN_N and _gap(x) >= OVERCONFIDENT_GAP - 1e-9
+    """Far under what we said (OVERCONFIDENT_GAP), or steadily under it and
+    not paying (UNDER_*)."""
+    if not x:
+        return False
+    n, gap = x.get("n", 0), _gap(x)
+    if n >= OVERCONFIDENT_MIN_N and gap >= OVERCONFIDENT_GAP - 1e-9:
+        return True
+    if n < UNDER_MIN_N or gap < UNDER_GAP - 1e-9:
+        return False
+    h = x["hit_rate"]
+    z = gap / math.sqrt(max(h * (1 - h), 1e-6) / n)
+    roi = x.get("roi")
+    return z >= UNDER_Z and not (isinstance(roi, (int, float)) and roi >= 0)
 
 
 def _calibrated(o, x: Optional[Dict[str, Any]]):

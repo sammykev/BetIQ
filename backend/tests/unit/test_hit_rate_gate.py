@@ -187,3 +187,15 @@ def test_held_out_markets_never_reach_a_slip(monkeypatch):
     monkeypatch.setattr(opt_router, "HELD_OUT_MARKETS", {f"football:{m}"})
     res, seen = run(monkeypatch, None, BODY)
     assert m not in seen and res["held_out"] == [f"football:{m}"]
+
+
+def test_a_market_steadily_under_what_we_said_and_not_paying_is_left_out():
+    # 75.0% of 12,279 for 77.2% said, losing 2.2%: out
+    assert opt_router._overconfident({"n": 12279, "hit_rate": 0.750, "said": 0.772, "roi": -0.022})
+    # the same with no price record: out too
+    assert opt_router._overconfident({"n": 12279, "hit_rate": 0.750, "said": 0.772})
+    # still making money at its odds: kept
+    assert not opt_router._overconfident({"n": 20485, "hit_rate": 0.585, "said": 0.599, "roi": 0.02})
+    # under by less than 1.5 points, or within chance on few picks: kept
+    assert not opt_router._overconfident({"n": 100286, "hit_rate": 0.596, "said": 0.597, "roi": -0.075})
+    assert not opt_router._overconfident({"n": 150, "hit_rate": 0.75, "said": 0.78, "roi": -0.05})
