@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { Home, Flame, Target, LayoutDashboard, Sparkles } from "lucide-react";
+import { Home, Flame, Target, LayoutDashboard, Sparkles, Trophy } from "lucide-react";
 import { UserMenu } from "@/components/UserMenu";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { SlipButton, SlipDrawer } from "@/components/BetSlip";
@@ -22,6 +22,7 @@ const NAV: { href: string; label: string; icon: typeof Home; features?: FeatureI
   { href: "/", label: "Predictions", icon: Home },
   { href: "/daily", label: "Daily odds", icon: Flame, features: ["daily_slips"] },
   { href: "/optimizer", label: "Optimizer", icon: Sparkles, features: ["optimizer", "code_check"] },
+  { href: "/jackpot", label: "Jackpot", icon: Trophy, features: ["jackpot"] },
   { href: "/history", label: "Record", icon: Target, features: ["record"] },
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, features: ["dashboard"] },
 ];
@@ -192,7 +193,7 @@ function DockLink({ item: { href, label, icon: Icon }, active, compact }: { item
       className={clsx(
         "relative flex flex-col items-center justify-center min-w-0 rounded-[22px] font-medium",
         "transition-[color,scale] duration-150 ease-[cubic-bezier(0.2,0,0,1)] active:scale-[0.94]",
-        compact ? "min-h-[44px] w-12" : "min-h-[52px] w-[clamp(60px,17.5vw,70px)]",
+        compact ? "min-h-[44px] w-12" : "min-h-[52px] w-[clamp(52px,15vw,70px)]",
         active ? "text-n-0" : "text-n-400 hover:text-n-200"
       )}
     >

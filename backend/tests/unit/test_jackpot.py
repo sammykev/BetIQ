@@ -66,3 +66,44 @@ def test_a_week_is_scored_once_every_result_is_in():
 def test_correct_counts_add_up():
     d = jp.correct_counts([0.5, 0.5])
     assert d == [0.25, 0.5, 0.25] and jp.at_least(d, 1) == 0.75
+
+
+def test_the_page_endpoint_serves_the_stored_week_and_the_record(monkeypatch):
+    import json
+    from fastapi.testclient import TestClient
+    import main
+    from routers import jackpot as jr
+    from tests.unit.test_user_endpoints import FakeRedis
+    fake = FakeRedis()
+    fake.kv[jp.KEY] = json.dumps({"current": jp.analyse(period()), "banner": {"firstPrizeCorrect": 12}, "at": "x",
+                                  "history": {"20261115": {"results": "X2112X22XX1X", "favourites_right": 4},
+                                              "20261108": {"results": "1XXX12X2112X", "favourites_right": 4,
+                                                           "ours": {"1": "1"}, "ours_right": 6},
+                                              "20261122": {"ours": {"1": "1"}}}})
+    monkeypatch.setattr(main, "_get_redis", lambda: fake)
+    monkeypatch.setattr(jr, "_cache", {"at": 0.0, "data": None})
+    main.app.dependency_overrides[main.require_feature("jackpot")] = lambda: None
+    try:
+        got = TestClient(main.app).get("/api/jackpot")
+    finally:
+        main.app.dependency_overrides.clear()
+    assert got.status_code == 200, got.text
+    d = got.json()
+    assert d["current"]["periodNumber"] == "20261122" and len(d["current"]["tickets"]) >= 5
+    rec = d["record"]
+    assert [w["period"] for w in rec["weeks"]] == ["20261115", "20261108"]
+    assert rec["favourites_avg"] == 4 and rec["ours_avg"] == 6 and rec["ours_weeks"] == 1
+
+
+def test_a_weeks_pool_and_a_tickets_rough_return():
+    week = {"sales": "56851400.00", "maxWinnings": 83076910, "winnings": [
+        {"correctEvents": 11, "winNum": 12, "perWinnings": "568514.00"},
+        {"correctEvents": 10, "winNum": 176, "perWinnings": "9690.58"}]}
+    p = jp.pool_of(week)
+    assert p["sales"] == 56851400 and p["tiers"]["11"] == {"winners": 12, "each": 568514.0}
+    # 12% and 3% of sales went to the 11 and 10 tiers
+    assert round(12 * 568514 / p["sales"], 3) == 0.12 and round(176 * 9690.58 / p["sales"], 3) == 0.03
+    t = {"lines": 1, "prizes": {"12": 0.0001, "11": 0.001, "10": 0.01}}
+    r = jp.expected_return(t, 100, 1_000_000, [p])
+    assert r["stake"] == 100 and abs(r["return"] - (0.0001 * 1e6 + 0.0009 * 568514 + 0.009 * 9690.58)) < 0.01
+    assert jp.expected_return(t, 0, 1, [p]) is None

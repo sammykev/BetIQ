@@ -14,7 +14,7 @@ import type { Tier } from "@/lib/pricing";
 const API = process.env.NEXT_PUBLIC_API_URL || "https://betiq-backend-jcwa.onrender.com";
 
 export type FeatureId =
-  | "daily_slips" | "optimizer" | "code_check" | "record" | "dashboard"
+  | "daily_slips" | "optimizer" | "code_check" | "record" | "dashboard" | "jackpot"
   | "sport.basketball" | "sport.tennis" | "sport.table_tennis"
   | "match_analysis" | "ai_preview" | "ai_chat" | "bet_slip" | "live_stats";
 
@@ -27,6 +27,7 @@ const DEFAULTS: Record<FeatureId, FeatureState> = {
   daily_slips: { visible: true, tier: "premium", granted: false },
   optimizer: { visible: true, tier: "premium", granted: false },
   code_check: { visible: true, tier: "lite", granted: false },
+  jackpot: { visible: true, tier: "free", granted: false },
   record: { visible: true, tier: "free", granted: false },
   dashboard: { visible: true, tier: "free", granted: false },
   "sport.basketball": { visible: false, tier: "free", granted: false },

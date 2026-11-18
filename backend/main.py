@@ -2747,13 +2747,13 @@ from jobs.sports import (  # noqa: E402
 )
 from routers.config import _trial_config  # noqa: E402
 from routers import (  # noqa: E402
-    admin, basketball, community, config, daily, logos, matchday, matches, optimizer, props, push,
+    admin, basketball, community, config, daily, jackpot, logos, matchday, matches, optimizer, props, push,
     racket, sports, tickets, user,
 )
 from jobs import reviews, social, sportybet_links  # noqa: E402
 
 for _routes in (
     matches, matchday, tickets, push, admin, user, sports, basketball, racket, props, logos,
-    community, sportybet_links, reviews, optimizer, daily, social, config,
+    community, sportybet_links, reviews, optimizer, daily, social, config, jackpot,
 ):
     app.include_router(_routes.router)

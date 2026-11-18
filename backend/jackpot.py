@@ -154,6 +154,45 @@ def analyse(period: Dict, ours: Optional[Dict[str, Dict]] = None, prizes: Sequen
             "model_matches": sum(1 for m in matches if m["source"] == "model")}
 
 
+def pool_of(week: Dict) -> Dict[str, Any]:
+    """A settled week's money: sales, the top prize then, and per prize tier
+    (correct results) its winners and each one's payout. Tiers 2 and 3 are
+    shares of sales split among their winners (Nov 2026: 12% and 3%)."""
+    tiers = {}
+    for w in week.get("winnings") or []:
+        try:
+            tiers[str(int(w["correctEvents"]))] = {"winners": int(w.get("winNum") or 0),
+                                                  "each": float(w.get("perWinnings") or 0)}
+        except (KeyError, TypeError, ValueError):
+            continue
+    try:
+        sales = float(week.get("sales") or 0) or None
+    except (TypeError, ValueError):
+        sales = None
+    return {"sales": sales, "top_prize": week.get("maxWinnings"), "tiers": tiers}
+
+
+def expected_return(ticket: Dict, price: float, top_prize: float, past: List[Dict]) -> Optional[Dict[str, float]]:
+    """Rough return on a ticket at `price` a line, from recent weeks: the top
+    prize if the best line gets every match (shared with nobody else, which
+    flatters it), and the other tiers at what their winners were paid on
+    average. Only the best line is counted, so a combination ticket's extra
+    lower-tier wins are left out."""
+    if not price or not past:
+        return None
+    pay = {}
+    for k in {k for w in past for k in (w.get("tiers") or {})}:
+        each = [w["tiers"][k]["each"] for w in past if (w.get("tiers") or {}).get(k, {}).get("winners")]
+        if each:
+            pay[k] = sum(each) / len(each)
+    pz = ticket.get("prizes") or {}
+    keys = sorted(pz, key=int, reverse=True)
+    exact = {k: pz[k] - (pz[keys[i - 1]] if i else 0) for i, k in enumerate(keys)}   # at-least → exactly
+    ret = sum(exact[k] * (top_prize if i == 0 else pay.get(k, 0)) for i, k in enumerate(keys))
+    stake = ticket["lines"] * price
+    return {"stake": stake, "return": round(ret, 2), "per_naira": round(ret / stake, 3) if stake else None}
+
+
 def score_week(elements: List[Dict], picks: Dict[int, str]) -> Optional[int]:
     """How many of `picks` ({index: "1"/"X"/"2"}) came in, once every match has a result."""
     res = {}
@@ -273,7 +312,7 @@ async def main_async(history: int) -> None:
             res = "".join({"1": "1", "2": "X", "3": "2"}.get(str(el.get("result")), "?") for el in
                           sorted(els, key=lambda e: e.get("index") or 0))
             h = hist.setdefault(str(opt.get("periodNumber")), {})
-            h.update({"results": res, "favourites_right": got})
+            h.update({"results": res, "favourites_right": got, **pool_of(week)})
             if h.get("ours"):
                 h["ours_right"] = score_week(els, {int(k): v for k, v in h["ours"].items()})
             if got is not None:
