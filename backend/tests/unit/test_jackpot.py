@@ -123,3 +123,13 @@ def test_returns_go_on_every_ticket_from_recent_weeks():
     assert all(t["value"]["stake"] == t["lines"] * 50 and t["value"]["lower_back"] == 0.15 for t in a["tickets"])
     jp.add_returns(a, None, hist)
     assert all(t["value"] is None for t in a["tickets"])
+
+
+def test_a_match_without_a_link_is_found_by_names_and_date():
+    # 23:00 UTC on Nov 21 (ms); our prediction dated the next day (other side of midnight)
+    el = {"eventId": "sr:match:999", "home": "Brøndby IF", "away": "AGF", "date": 1795302000000}
+    pred = {"home": "Brondby", "away": "Aarhus", "date": "2026-11-22", "p_home": 0.5, "p_draw": 0.3, "p_away": 0.2}
+    ours = {jp.name_key(pred["home"], pred["away"], pred["date"]): pred}
+    assert jp.find_ours(el, ours) is pred
+    assert jp.find_ours({**el, "home": "Someone Else"}, ours) is None
+    assert jp.find_ours({**el, "date": None}, ours) is None

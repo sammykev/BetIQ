@@ -24,7 +24,7 @@ import argparse
 import asyncio
 import json
 import math
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 KEY = "betiq:jackpot:v1"            # {"current": analysis, "history": {periodNumber: week}}
@@ -123,6 +123,32 @@ def at_least(dist: List[float], k: int) -> float:
     return sum(dist[k:])
 
 
+def name_key(home: str, away: str, day: str) -> str:
+    """Our prediction's key by club names and date: for jackpot matches the
+    SportyBet links don't cover (they're listed days ahead)."""
+    import team_names
+    norm = lambda n: team_names.normalise(team_names.ALIASES.get(team_names.normalise(n or ""), n or ""))
+    return f"n:{norm(home)}|{norm(away)}|{day}"
+
+
+def find_ours(el: Dict, ours: Dict[str, Dict]) -> Optional[Dict]:
+    """Our prediction for a jackpot match: by its SportyBet event, else by
+    the clubs' names on its kickoff date (or the day either side: our dates
+    and SportyBet's can sit on different sides of midnight)."""
+    hit = ours.get(str(el.get("eventId")))
+    if hit or not el.get("date"):
+        return hit
+    try:
+        day = datetime.fromtimestamp(float(el["date"]) / 1000, tz=timezone.utc).date()
+    except (TypeError, ValueError, OverflowError):
+        return None
+    for d in (day, day - timedelta(days=1), day + timedelta(days=1)):
+        hit = ours.get(name_key(el.get("home"), el.get("away"), d.isoformat()))
+        if hit:
+            return hit
+    return None
+
+
 def analyse(period: Dict, ours: Optional[Dict[str, Dict]] = None, prizes: Sequence[int] = (12, 11, 10)) -> Dict:
     """The week's matches with their chances, the single line and the best
     ticket per budget, each with its chance of every prize."""
@@ -130,7 +156,7 @@ def analyse(period: Dict, ours: Optional[Dict[str, Dict]] = None, prizes: Sequen
     els = sorted(period.get("elements") or [], key=lambda e: e.get("index") or 0)
     matches, probs = [], []
     for el in els:
-        p, src = chances(el, ours.get(str(el.get("eventId"))))
+        p, src = chances(el, find_ours(el, ours))
         probs.append(p)
         matches.append({"index": el.get("index"), "home": el.get("home"), "away": el.get("away"),
                         "eventId": el.get("eventId"), "kickoff": el.get("date"),
@@ -302,6 +328,9 @@ def our_predictions(r) -> Dict[str, Dict]:
     for k, ev in links.items():
         if isinstance(ev, dict) and ev.get("eventId") and k in by_key:
             out[str(ev["eventId"])] = by_key[k]
+    for p in preds:
+        if p.get("home") and p.get("away") and p.get("date"):
+            out.setdefault(name_key(p["home"], p["away"], str(p["date"])[:10]), p)
     return out
 
 

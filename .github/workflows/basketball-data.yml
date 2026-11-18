@@ -372,3 +372,4 @@ jobs:
           name: basketball-probe
           path: backend/basketball_probe.json
           if-no-files-found: ignore
+          retention-days: 3
