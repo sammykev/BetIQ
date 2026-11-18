@@ -187,9 +187,42 @@ async def with_headers(session) -> None:
             print(f"  [{k}] …{html[max(0, m.start() - 80):m.end() + 120]}…")
 
 
+async def money(session) -> None:
+    """Where the price per line and the prize amounts are: a past week's
+    full detail, the stake sum in the bundle, the how-to-play page."""
+    import jackpot
+    h = jackpot._headers()
+    opts = (await session.get(sportybet.BASE + "/jackpot/periodOptions", headers=h)).json().get("data") or []
+    if opts:
+        o = opts[0]
+        r = await session.get(sportybet.BASE + "/jackpot/previous", headers=h,
+                              params={"periodNumber": o["periodNumber"], "periodId": o["id"]})
+        d = (r.json() or {}).get("data") or {}
+        print("\n== a past week's detail: every field but the matches ==")
+        print(json.dumps({k: v for k, v in d.items() if k != "elements"}, indent=1)[:6000])
+        if d.get("elements"):
+            print("one match:", json.dumps(d["elements"][0])[:1500])
+    cur = (await session.get(sportybet.BASE + "/jackpot/period", headers=h)).json().get("data") or {}
+    print("\n== this week's fields but the matches ==")
+    print(json.dumps({k: v for k, v in cur.items() if k != "elements"}, indent=1)[:3000])
+    print("\n== the stake sum in the bundles ==")
+    for url in BUNDLES:
+        text = (await session.get(url, headers={"Accept": "*/*"})).text or ""
+        for pat in (r'"jackpot/combinations"\]\*', r"stakePerLine|unitStake|perStake|singleStake|betAmount|minStake"):
+            for m in list(re.finditer(pat, text))[:4]:
+                print(f"  [{pat}] …{text[max(0, m.start() - 600):m.end() + 300]}…\n")
+    for page in ("how-to-play/jackpot?source=jackpot", "m/how-to-play/jackpot"):
+        r = await session.get(sportybet.SITE + page, headers={"Accept": "text/html"})
+        txt = re.sub(r"<script.*?</script>|<style.*?</style>", " ", r.text or "", flags=re.S)
+        txt = re.sub(r"<[^>]+>", " ", txt)
+        txt = re.sub(r"\s+", " ", txt)
+        i = txt.lower().find("jackpot")
+        print(f"\n== {page}: HTTP {r.status_code} ==\n{txt[max(0, i - 200):i + 5000]}")
+
+
 async def main() -> None:
     session = sportybet.shared_session()
-    await with_headers(session)
+    await money(session)
 
 
 if __name__ == "__main__":
