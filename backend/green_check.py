@@ -196,6 +196,57 @@ def ranking_report(r) -> None:
         print(f"    {k[:32]:<32} n {n:>6}  hit {100 * h:5.1f}%  said {100 * said:5.1f}%  z {z:5.1f}  return {roi_s}  {flag}")
 
 
+def corners_report(r) -> None:
+    """Why corners legs miss: the corner counts behind them. Finished matches'
+    corner totals (too many zeros would mean a source writing 0 for 'no
+    data'), and every corners leg on the daily slips with its match's count."""
+    import tickets as tk
+    totals: Dict[str, int] = defaultdict(int)
+    by_source: Dict[str, List[int]] = defaultdict(list)
+    results: Dict[tuple, Dict] = {}
+    for i in range(DAYS):
+        d = (date.today() - timedelta(days=i)).isoformat()
+        try:
+            day = json.loads(r.get(f"betiq:md:{d}") or "null") or {}
+        except ValueError:
+            continue
+        for e in day.values():
+            res = (e or {}).get("result") or {}
+            if res.get("status") != "finished":
+                continue
+            results[(e.get("home"), e.get("away"), d)] = res
+            c = res.get("corners")
+            if not isinstance(c, list):
+                totals["no count"] += 1
+                continue
+            t = sum(c)
+            totals["0" if t == 0 else "1-3" if t <= 3 else "4-7" if t <= 7 else "8-11" if t <= 11 else "12+"] += 1
+            by_source[str(res.get("source") or "?")].append(t)
+    print(f"\n== Corners: finished matches' corner totals (last {DAYS} days) ==")
+    print("  " + "  ".join(f"{k}: {totals[k]}" for k in ("no count", "0", "1-3", "4-7", "8-11", "12+")))
+    for src, ts in sorted(by_source.items()):
+        zero = sum(1 for t in ts if t == 0)
+        print(f"    source {src:<12} {len(ts):>5} counted  average {sum(ts) / len(ts):5.1f}  zero {zero}")
+    print("  corners legs on the daily slips: code, status, the match's corners, what grading gives now")
+    shown = 0
+    for i in range(DAYS):
+        d = (date.today() - timedelta(days=i)).isoformat()
+        try:
+            doc = json.loads(r.get(f"betiq:daily:{d}") or "null") or {}
+        except ValueError:
+            continue
+        for sl in (doc.get("slips") or []) + (doc.get("cut") or []):
+            for pk in sl.get("picks") or []:
+                if pk.get("market") != "corners_ou" or shown >= 60:
+                    continue
+                res = results.get((pk.get("home"), pk.get("away"), pk.get("date")))
+                now = tk.grade_leg("corners_ou", pk.get("code", ""), res) if res else "no result found"
+                print(f"    {pk.get('date')} {pk.get('home')} v {pk.get('away')}  {pk.get('code')} @ {pk.get('odds')}  "
+                      f"stored {pk.get('status')}  corners {res.get('corners') if res else None} "
+                      f"({res.get('source') if res else '-'})  grades {now}")
+                shown += 1
+
+
 _r = None
 
 
@@ -215,6 +266,7 @@ def main() -> None:
     tickets_report(_r, a.start)
     daily_report(_r)
     ranking_report(_r)
+    corners_report(_r)
 
 
 if __name__ == "__main__":
