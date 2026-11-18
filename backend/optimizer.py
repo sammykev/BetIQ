@@ -313,11 +313,12 @@ def _miss(total: float, lo: float, hi: float) -> float:
 
 
 def _solve(groups: List[List[Option]], L: int, W: int, max_games: int,
-           budget: Optional[float] = None) -> Optional[List[Option]]:
+           budget: Optional[float] = None, most_games: bool = False) -> Optional[List[Option]]:
     """Exact group knapsack: ≤ one option per group, ≤ max_games picks,
     rounded log-odds in [L, W], lowest Σ -log(p). With `budget` (a most
     Σ -log(p), i.e. a least win chance): the highest log-odds in [L, W]
-    whose lowest Σ -log(p) is within it."""
+    whose lowest Σ -log(p) is within it; with `most_games` too, the most
+    picks the budget allows first, then the highest log-odds for that many."""
     inf = np.inf
     dp = np.full((max_games + 1, W + 1), inf)
     dp[0, 0] = 0.0
@@ -347,8 +348,12 @@ def _solve(groups: List[List[Option]], L: int, W: int, max_games: int,
         cols = np.where(fits.any(axis=0))[0]
         if not len(cols):
             return None
-        wi = int(cols[-1])                       # the highest odds within the chance
-        gi = int(np.argmin(np.where(fits[:, wi], window[:, wi], np.inf)))
+        if most_games:
+            gi = int(np.where(fits.any(axis=1))[0][-1])  # the most picks within the chance
+            wi = int(np.where(fits[gi])[0][-1])            # then the highest odds for that many
+        else:
+            wi = int(cols[-1])                       # the highest odds within the chance
+            gi = int(np.argmin(np.where(fits[:, wi], window[:, wi], np.inf)))
     else:
         gi, wi = np.unravel_index(np.argmin(window), window.shape)
     n, w = int(gi) + 1, int(wi) + L
@@ -397,7 +402,8 @@ def usable(groups: List[List[Option]], min_edge: Optional[float] = MIN_EDGE,
 
 
 def optimize_safe(groups: List[List[Option]], min_chance: float, hi: float,
-                  max_games: int = MAX_GAMES, min_edge: Optional[float] = MIN_EDGE) -> Optional[Dict]:
+                  max_games: int = MAX_GAMES, min_edge: Optional[float] = MIN_EDGE,
+                  most_games: bool = False) -> Optional[Dict]:
     """The slip with the highest total odds (up to `hi`) whose win chance —
     every pick's chance multiplied — is at least `min_chance`; None if not
     even one pick is that likely."""
@@ -406,7 +412,7 @@ def optimize_safe(groups: List[List[Option]], min_chance: float, hi: float,
     max_games = max(1, min(int(max_games), MAX_GAMES))
     groups = usable(groups, min_edge, min_chance)
     W = int(math.floor(math.log(max(hi, 1.02)) / STEP))
-    picks = _solve(groups, 1, W, max_games, budget=-math.log(min_chance)) if groups else None
+    picks = _solve(groups, 1, W, max_games, budget=-math.log(min_chance), most_games=most_games) if groups else None
     if not picks:
         return None
     out = _result(picks, 1.0, hi)

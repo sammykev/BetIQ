@@ -946,11 +946,12 @@ def _cached_sport_predictions(sport: str) -> List[Dict]:
 
 
 @router.post("/api/optimizer/code")
-async def optimize_code(body: Dict[str, Any], _access=Depends(main.require_feature("code_check"))):
+async def optimize_code(request: Request, body: Dict[str, Any],
+                        _access=Depends(main.require_feature("code_check"))):
     """
     Check a SportyBet booking code with the model: each leg's chance, a
-    better pick where there is one, and two improved slips (code_check.py).
-    Body: {"code": "ABC123"}.
+    better pick where there is one, and three tickets at a 50%, 25% and
+    12.5% chance (code_check.py). Body: {"code": "ABC123"}.
     """
     import code_check
     import sportybet
@@ -972,9 +973,33 @@ async def optimize_code(body: Dict[str, Any], _access=Depends(main.require_featu
         return main._with_priced_set_pieces(p, main._linked_event(p)) if p else None
 
     bookable, paused = main._bookable_markets(), main._paused_markets()
+    # Basketball, tennis and table tennis by SportyBet's event, for the sports this visitor may see
+    by_sb: Dict[str, Dict] = {}
+    for sport, preds in (("basketball", main._bb_predictions),
+                         *((s, main._rk_predictions.get(s) or []) for s in ("tennis", "table_tennis"))):
+        try:
+            await main._check_sport_access(request, sport)
+        except HTTPException:
+            continue
+        for p in preds:
+            if p.get("sportybet_event_id"):
+                by_sb[str(p["sportybet_event_id"])] = {"sport": sport, **p}
+    codes = main._ranked_codes()
+
+    def adjust(o):
+        """An option as the optimizer counts it: held-out and paused markets
+        left out, the market's record and the price check applied."""
+        key = f"{o.sport}:{o.market}"
+        if key in HELD_OUT_MARKETS or (codes and _overconfident(codes.get(key))):
+            return None
+        if codes and codes.get(key):
+            o = _calibrated(o, codes[key])
+        return price_checked(o)
+
     report = await asyncio.to_thread(
         code_check.analyse, selections, find,
-        main._linked_event, confirmed, lambda m, c: m not in paused and bookable(m, c))
+        main._linked_event, confirmed, lambda m, c: m not in paused and bookable(m, c),
+        lambda sel: by_sb.get(str(sel.get("eventId"))), adjust)
     return {"code": code.upper(), **report}
 
 

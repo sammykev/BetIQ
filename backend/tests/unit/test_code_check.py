@@ -62,19 +62,16 @@ class TestAnalyse:
     def test_legs_get_our_chance_and_a_verdict(self):
         r = self.run()
         under, unknown = r["legs"]
-        assert under["our_prob"] == pytest.approx(0.42) and under["verdict"] == "risky"
+        assert 0.3 < under["our_prob"] < 0.55 and under["verdict"] == "risky" and under["chance_from"] == "model"
         assert under["implied"] == pytest.approx(1 / 1.9, abs=1e-3)
         assert under["suggestion"] and under["suggestion"]["prob"] >= 0.5
-        assert unknown["verdict"] == "not_modelled" and unknown["note"] == "We don't predict this match"
+        # a match we don't predict still gets a chance: SportyBet's odds less their margin
+        assert unknown["verdict"] == "not_modelled" and unknown["chance_from"] == "odds"
+        assert unknown["chance"] == pytest.approx(code_check.ODDS_MARGIN / 1.5, abs=1e-3)
+        assert "SportyBet's odds" in unknown["note"]
+        assert r["original"]["win_chance"] == pytest.approx(under["chance"] * unknown["chance"], abs=1e-3)
 
-    def test_improved_slips_keep_unmodelled_legs(self):
-        r = self.run()
-        for slip in (r["same_odds"], r["safest"]):
-            assert slip and any(p.get("sb") for p in slip["picks"])  # the unknown leg, booked by its ids
-            assert slip["unmodelled"] == 1
-        assert r["safest"]["win_chance"] > r["original"]["win_chance"]
-
-    def test_three_tickets_from_safe_to_risky(self):
+    def test_three_tickets_at_a_half_a_quarter_and_an_eighth(self):
         share = {"shareCode": "T3", "outcomes": SHARE["outcomes"] + [
             {"eventId": "sr:match:3", "homeTeamName": "Leeds", "awayTeamName": "Everton", "estimateStartTime": KICKOFF_MS,
              "markets": [market("1", [("1", 2.1, "Home")], "", "1X2")]},
@@ -83,23 +80,52 @@ class TestAnalyse:
         preds = {"sr:match:1": pred(),
                  "sr:match:3": pred(home="Leeds", away="Everton", p_home=0.48, p_draw=0.27, p_away=0.25),
                  "sr:match:4": pred(home="Fulham", away="Brentford", p_home=0.4, p_draw=0.28, p_away=0.32, p_over25=0.55)}
-        r = code_check.analyse(sportybet.parse_share(share), lambda sel: preds.get(sel["eventId"]),
-                               lambda _: None, confirmed={})
+        # Every other option priced by SportyBet (the tickets only take bookable prices)
+        def priced(o):
+            return o if o.odds_source == "sportybet" else None
+        import optimizer
+        orig = optimizer.candidates
+
+        def with_prices(*a, **k):
+            from dataclasses import replace
+            return [replace(o, odds_source="sportybet") for o in orig(*a, **k)]
+        code_check.candidates = with_prices
+        try:
+            r = code_check.analyse(sportybet.parse_share(share), lambda sel: preds.get(sel["eventId"]),
+                                   lambda _: None, confirmed={}, adjust=priced)
+        finally:
+            code_check.candidates = orig
         t = r["tickets"]
         safe, cons, risky = t["safe"], t["conservative"], t["risky"]
+        for ticket, least in ((safe, 0.5), (cons, 0.25), (risky, 0.125)):
+            assert ticket and ticket["win_chance"] >= least - 1e-4 and ticket["target_chance"] == least
+            assert all(p.get("sb") or p["market"] != "sportybet" for p in ticket["picks"])
+            assert ticket["games"] + len(ticket["left_out"]) == 4
         assert safe["total_odds"] < cons["total_odds"] < risky["total_odds"]
         assert safe["win_chance"] > cons["win_chance"] > risky["win_chance"]
-        for ticket in (safe, cons, risky):
-            assert ticket["games"] == 4 and ticket["unmodelled"] == 1       # the unknown leg kept in all three
-            assert len({(p["home"], p["away"]) for p in ticket["picks"]}) == 4
-        rated = [p for p in cons["picks"] if p.get("prob") is not None]
-        assert all(p["odds"] >= code_check.CONSERVATIVE_MIN_ODDS for p in rated)
-        assert risky["total_odds"] >= 0.5 * risky["target_odds"]
+        # the game we don't predict is on the tickets at its odds' chance, booked by its ids
+        assert any(p["odds_source"] == "odds_only" and p["sb"]["eventId"] == "sr:match:2"
+                   for p in risky["picks"])
 
-    def test_no_tickets_without_rated_games(self):
+    def test_tickets_from_the_odds_alone(self):
         sels = [s for s in sportybet.parse_share(SHARE) if s["eventId"] == "sr:match:2"]
         r = code_check.analyse(sels, lambda _: None, lambda _: None, confirmed={})
-        assert r["tickets"] is None
+        # 1.5 → 63%: on the safe ticket; nothing else to choose from
+        assert r["tickets"]["safe"]["games"] == 1 and r["tickets"]["safe"]["from_odds"] == 1
+
+    def test_a_basketball_leg_is_rated_by_its_sportybet_event(self):
+        sb = {"eventId": "sr:match:7", "marketId": "18", "specifier": "total=160.5", "outcomeId": "12"}
+        sel = {**sb, "home": "Lakers", "away": "Celtics", "start": KICKOFF_MS, "market": "Over/Under",
+               "outcome": "Over 160.5", "odds": 1.5, "active": True}
+        line = lambda code, prob, odds, out: {"market": "bb_total", "market_name": "Total points", "code": code,
+                                              "label": code, "prob": prob, "odds": odds,
+                                              "sb": {**sb, "outcomeId": out}}
+        bb = {"sport": "basketball", "home": "Lakers", "away": "Celtics", "date": TOMORROW, "time": "15:00",
+              "bb_markets": [line("O160.5", 0.66, 1.5, "12"), line("U160.5", 0.34, 2.5, "13")]}
+        r = code_check.analyse([sel], lambda _: None, lambda _: None, confirmed={},
+                               find_other=lambda s: bb if s["eventId"] == "sr:match:7" else None)
+        leg = r["legs"][0]
+        assert leg["chance_from"] == "model" and leg["our_prob"] is not None and leg["matched"]
 
     def test_unconfirmed_markets_are_not_matched(self):
         sel = {"eventId": "sr:match:1", "marketId": "19", "specifier": "total=0.5", "outcomeId": "12"}

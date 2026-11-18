@@ -10,28 +10,36 @@ it gets our probability beside SportyBet's price. Then:
 - "same odds": the slip with the best chance of winning whose total stays
   near the code's (optimizer.optimize over the code's matches only);
 - "safest": each match's likeliest pick at odds ≥ 1.15;
-- three tickets to book (the "Refine" button on the site):
-  safe = the safest slip; conservative = each match's likeliest pick paying
-  at least 1.40; risky = the best chance at the code's own total or twice
-  the conservative total, whichever is higher.
+- three tickets to book (the "Refine" button on the site), each the
+  highest odds whose chance of every leg winning is at least:
+      safe 50%, conservative 25%, risky 12.5%
+  digging into every market we price on each game, and keeping as many of
+  the code's games as that chance allows (the rest are listed as left out).
 
-Legs we can't model (a market or match we don't predict) are kept as they
-are in both slips, and booked by their SportyBet ids.
+Every leg gets a chance: our model's where we price the match (football,
+basketball, tennis, table tennis: matched by SportyBet's event), else
+SportyBet's own odds less their margin (ODDS_MARGIN / odds). A model chance
+counts at no more than its price's (routers.optimizer.price_checked: where
+we rated legs well over their price they came in far under). Every pick is
+booked by SportyBet's own ids.
 """
 
 import math
-from dataclasses import asdict
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 
 import booking_slip
-from optimizer import _PICKS, Option, candidates, optimize
+from optimizer import _PICKS, Option, candidates, optimize_safe
 
 STRONG, FAIR = 0.75, 0.55
 BETTER_BY = 0.08          # a suggestion must beat the leg by this much
-SAFE_MIN_ODDS = 1.15
-CONSERVATIVE_MIN_ODDS = 1.40
-RISKY_OVER_CONSERVATIVE = 2.0   # the risky ticket pays at least this much more
+# Each ticket's least chance of every leg winning (Nov 2026: halved each step)
+TICKETS = (("safe", 0.50), ("conservative", 0.25), ("risky", 0.125))
+MIN_OPTION_PROB = 0.30    # options looked at on each game (a risky ticket takes longer prices)
+ODDS_MARGIN = 0.95        # a leg we don't price: chance ≈ ODDS_MARGIN / its odds
+PRICE_MARGIN = 1.05       # a model chance counts at no more than PRICE_MARGIN / its odds
+MAX_TICKET_ODDS = 1e6
 
 
 def _when(ms: Any) -> tuple:
@@ -79,12 +87,24 @@ def _verdict(prob: Optional[float]) -> str:
     return "strong" if prob >= STRONG else "fair" if prob >= FAIR else "risky"
 
 
-def _kept_option(sel: Dict, date: str, time: str) -> Dict[str, Any]:
-    """A leg we don't model, carried into the improved slips unchanged."""
-    return {"home": sel["home"], "away": sel["away"], "date": date, "time": time, "league": sel.get("tournament", ""),
-            "market": "sportybet", "market_name": sel["market"], "code": sel["outcomeId"],
-            "label": sel["outcome"], "prob": None, "odds": sel["odds"], "odds_source": "sportybet",
-            "sb": {k: sel[k] for k in ("eventId", "marketId", "specifier", "outcomeId")}}
+def odds_chance(odds: Optional[float]) -> Optional[float]:
+    """A leg's chance from SportyBet's price alone, less its margin."""
+    return min(0.97, ODDS_MARGIN / odds) if odds and odds > 1 else None
+
+
+def _capped(prob: float, odds: Optional[float]) -> float:
+    """A model chance counted at no more than its price says."""
+    return min(prob, PRICE_MARGIN / odds) if odds and odds > 1 else prob
+
+
+def _ids(sel: Dict) -> Dict[str, str]:
+    return {k: sel[k] for k in ("eventId", "marketId", "specifier", "outcomeId")}
+
+
+def _same_outcome(o: Option, sel: Dict) -> bool:
+    sb = o.sb or {}
+    return (str(sb.get("marketId")), str(sb.get("specifier") or ""), str(sb.get("outcomeId"))) == \
+        (str(sel["marketId"]), str(sel.get("specifier") or ""), str(sel["outcomeId"]))
 
 
 def _slip(picks: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -92,102 +112,112 @@ def _slip(picks: List[Dict[str, Any]]) -> Dict[str, Any]:
     odds = [p["odds"] for p in picks if p.get("odds")]
     return {"picks": picks, "games": len(picks), "total_odds": round(math.prod(odds), 2) if odds else None,
             "win_chance": round(math.prod(known), 4) if known else None,
-            "unmodelled": sum(1 for p in picks if p.get("prob") is None),
+            "from_odds": sum(1 for p in picks if p.get("odds_source") == "odds_only"),
+            # older clients read these
+            "unmodelled": sum(1 for p in picks if p.get("odds_source") == "odds_only"),
             "estimated_prices": sum(1 for p in picks if p.get("odds_source") == "estimated")}
 
 
 def analyse(selections: List[Dict], find_pred: Callable[[Dict], Optional[Dict]],
             event_for: Callable[[Dict], Optional[Dict]], confirmed: Dict[str, str],
-            allowed: Optional[Callable[[str, str], bool]] = None) -> Dict[str, Any]:
-    """Legs with verdicts and suggestions, the code as it stands, and the two
-    improved slips. `find_pred(sel)` → our prediction for its match or None;
-    `event_for(pred)` → its linked SportyBet event (prices) or None."""
-    legs, groups, kept, original_odds = [], [], [], []
+            allowed: Optional[Callable[[str, str], bool]] = None,
+            find_other: Optional[Callable[[Dict], Optional[Dict]]] = None,
+            adjust: Optional[Callable[[Option], Optional[Option]]] = None) -> Dict[str, Any]:
+    """Legs with verdicts and suggestions, the code as it stands, and the
+    three tickets. `find_pred(sel)` → our football prediction for its match;
+    `find_other(sel)` → our basketball / tennis / table tennis prediction for
+    its SportyBet event; `event_for(pred)` → a football match's linked
+    SportyBet event (prices); `adjust(option)` → the option as the optimizer
+    would count it, or None to leave it out (held-out markets, the price check)."""
+    legs, groups, chances = [], [], []
     for sel in selections:
         date, time = _when(sel.get("start"))
-        pred = find_pred(sel)
-        pick = model_pick(pred, sel, confirmed) if pred else None
-        prob = pick["prob"] if pick else None
         odds = sel.get("odds")
+        pred = find_pred(sel)
+        other = find_other(sel) if find_other and not pred else None
+        prob: Optional[float] = None
+        options: List[Option] = []
+        own_market, own_code, sport = "sportybet", str(sel["outcomeId"]), "football"
+        if pred and pred.get("sport") in (None, "football"):
+            pick = model_pick(pred, sel, confirmed)
+            options = candidates(pred, event_for(pred), MIN_OPTION_PROB, None, allowed)
+            if pick:
+                own_market, own_code = pick["market"], pick["code"]
+                same = next((o for o in options if (o.market, o.code) == (own_market, own_code)), None)
+                prob = same.prob if same else pick["prob"]       # through calibration where the optimizer has it
+                options = [o for o in options if (o.market, o.code) != (own_market, own_code)]
+        elif pred or other:
+            import basketball_predictions
+            import racket_predictions
+            p = pred or other
+            sport = p.get("sport") or "basketball"
+            mod = basketball_predictions if sport == "basketball" else racket_predictions
+            options = mod.options(p, MIN_OPTION_PROB) if (p.get("bb_markets") or p.get("rk_markets")) else []
+            same = next((o for o in options if _same_outcome(o, sel)), None)
+            if same:
+                prob, own_market, own_code = same.prob, same.market, same.code
+            elif not options:
+                pick = model_pick(p, sel, confirmed)              # tennis winner from a bare prediction
+                if pick:
+                    prob, own_market, own_code = pick["prob"], pick["market"], pick["code"]
+            options = [o for o in options if not _same_outcome(o, sel)]
+            pred = p
+        if adjust:
+            options = [c for o in options for c in [adjust(o)] if c is not None]
+        suggestable = options
+        # On a ticket: SportyBet's price only (bookable), under the code's own names and kick-off
+        options = [replace(o, home=sel["home"], away=sel["away"], date=date or o.date, time=time or o.time)
+                   for o in options if o.odds_source == "sportybet"]
+        chance = _capped(prob, odds) if prob is not None else odds_chance(odds)
         leg = {"home": sel["home"], "away": sel["away"], "date": date, "time": time,
                "league": (pred or {}).get("league_name") or sel.get("tournament", ""),
                "market": sel["market"], "pick": sel["outcome"], "odds": odds, "active": sel.get("active", True),
                "our_prob": round(prob, 3) if prob is not None else None,
+               "chance": round(chance, 3) if chance is not None else None,
+               "chance_from": "model" if prob is not None else "odds",
                "implied": round(1 / odds, 3) if odds else None,
                "value": round(prob * odds - 1, 3) if prob is not None and odds else None,
-               "verdict": _verdict(prob), "matched": pred is not None, "suggestion": None,
-               "sb": {k: sel[k] for k in ("eventId", "marketId", "specifier", "outcomeId")}}
+               "verdict": _verdict(prob), "matched": pred is not None, "suggestion": None, "sb": _ids(sel)}
         if not pred:
-            leg["note"] = "We don't predict this match"
+            leg["note"] = "We don't predict this match: its chance is from SportyBet's odds"
         elif prob is None:
-            leg["note"] = "We don't model this market"
-        options: List[Option] = []
-        if pred and pred.get("sport") in (None, "football"):
-            options = candidates(pred, event_for(pred), 0.5, None, allowed)
-            if pick and odds and odds > 1.01:
-                # The code's own pick stays an option (priced as SportyBet has it)
-                options = [o for o in options if (o.market, o.code) != (pick["market"], pick["code"])] + [
-                    Option(pred["home"], pred["away"], pred["date"], pred.get("time") or "",
-                           pred.get("league_name") or "", pick["market"], pick["market_name"], pick["code"],
-                           pick["label"], round(prob, 4), round(float(odds), 2), "sportybet",
-                           league_id=str(pred.get("league") or ""))]
-            better = max((o for o in options if o.odds >= 1.2 and o.prob >= (prob or 0) + BETTER_BY),
-                         key=lambda o: (o.prob, o.odds), default=None)
-            if better and (prob is None or better.code != pick["code"] or better.market != pick["market"]):
-                leg["suggestion"] = {"market_name": better.market_name, "label": better.label,
-                                     "prob": better.prob, "odds": better.odds, "odds_source": better.odds_source}
+            leg["note"] = "We don't price this market: its chance is from SportyBet's odds"
+        better = max((o for o in suggestable if o.odds >= 1.2 and o.prob >= (prob or chance or 0) + BETTER_BY),
+                     key=lambda o: (o.prob, o.odds), default=None)
+        if better:
+            leg["suggestion"] = {"market_name": better.market_name, "label": better.label,
+                                 "prob": better.prob, "odds": better.odds, "odds_source": better.odds_source}
         legs.append(leg)
-        if options and pick is not None and odds:
-            groups.append(options)
-            original_odds.append(float(odds))
-        else:
-            kept.append(_kept_option(sel, date, time))
+        chances.append(chance)
+        if chance is None or not odds or odds <= 1.01 or not leg["active"]:
+            continue                       # suspended or unpriced: can't go on a ticket
+        own = Option(sel["home"], sel["away"], date, time, leg["league"], own_market, sel["market"], own_code,
+                     sel["outcome"], round(chance, 4), round(float(odds), 2),
+                     "sportybet" if prob is not None else "odds_only", sb=_ids(sel), sport=sport)
+        groups.append([own] + options)
 
-    original = [{"prob": l["our_prob"], "odds": l["odds"]} for l in legs]
-    report = {"legs": legs, "original": {k: v for k, v in _slip(original).items() if k != "picks"},
-              "same_odds": None, "safest": None, "tickets": None}
-    if groups:
-        target = math.prod(original_odds)  # the modelled legs' total as booked
-        best = None
-        for spread in (0.1, 0.25):
-            best = optimize(groups, max(1.01, target * (1 - spread)), target * (1 + spread), len(groups))
-            if best:
-                break
-        if best:
-            kept_odds = math.prod(k["odds"] for k in kept if k.get("odds"))
-            report["same_odds"] = {**_slip(best["picks"] + kept), "target_odds": round(target * kept_odds, 2),
-                                   "within_target": best["within_target"]}
-        safest = [asdict(max([o for o in g if o.odds >= SAFE_MIN_ODDS] or g, key=lambda o: (o.prob, o.odds)))
-                  for g in groups]
-        report["safest"] = _slip(safest + kept)
-        report["tickets"] = _tickets(groups, kept, safest, target)
+    known = [c for c in chances if c is not None]
+    odds_all = [l["odds"] for l in legs if l["odds"]]
+    report = {"legs": legs,
+              "original": {"games": len(legs), "total_odds": round(math.prod(odds_all), 2) if odds_all else None,
+                           "win_chance": round(math.prod(known), 4) if known else None,
+                           "from_odds": sum(1 for l in legs if l["chance_from"] == "odds"),
+                           "unmodelled": sum(1 for l in legs if l["chance_from"] == "odds")},
+              "same_odds": None, "safest": None, "tickets": _tickets(groups) if groups else None}
     return report
 
 
-def _likeliest(group: List[Option], min_odds: float) -> Optional[Option]:
-    pool = [o for o in group if o.odds >= min_odds]
-    return max(pool, key=lambda o: (o.prob, o.odds)) if pool else None
-
-
-def _tickets(groups: List[List[Option]], kept: List[Dict], safest: List[Dict],
-             booked_total: float) -> Dict[str, Dict[str, Any]]:
-    """Safe, conservative and risky versions of the code, on its own
-    matches (legs we can't model kept in all three)."""
-    conservative = [_likeliest(g, CONSERVATIVE_MIN_ODDS) or _likeliest(g, SAFE_MIN_ODDS) or max(g, key=lambda o: o.prob)
-                    for g in groups]
-    target = max(booked_total, math.prod(o.odds for o in conservative) * RISKY_OVER_CONSERVATIVE)
-    risky = None
-    for spread in (0.1, 0.25, 0.5):
-        best = optimize(groups, max(1.01, target * (1 - spread)), target * (1 + spread), len(groups))
-        if best and len(best["picks"]) == len(groups):
-            risky = best["picks"]
-            break
-    if risky is None:
-        # Too few matches or markets to reach it: each match's likeliest long price
-        risky = [asdict(_likeliest(g, 2.0) or c) for g, c in zip(groups, conservative)]
-    kept_odds = math.prod(k["odds"] for k in kept if k.get("odds"))
-    return {
-        "safe": _slip(safest + kept),
-        "conservative": _slip([asdict(o) for o in conservative] + kept),
-        "risky": {**_slip(risky + kept), "target_odds": round(target * kept_odds, 2)},
-    }
+def _tickets(groups: List[List[Option]]) -> Dict[str, Optional[Dict[str, Any]]]:
+    """Each ticket: the highest odds at its least chance, on as many of the
+    code's games as that chance allows (None when not even one leg is that
+    likely)."""
+    out: Dict[str, Optional[Dict[str, Any]]] = {}
+    for name, least in TICKETS:
+        res = optimize_safe(groups, least, MAX_TICKET_ODDS, len(groups), min_edge=None, most_games=True)
+        if not res:
+            out[name] = None
+            continue
+        on = {(p["home"], p["away"]) for p in res["picks"]}
+        left = [f"{g[0].home} v {g[0].away}" for g in groups if (g[0].home, g[0].away) not in on]
+        out[name] = {**_slip(res["picks"]), "target_chance": least, "left_out": left}
+    return out

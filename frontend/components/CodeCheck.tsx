@@ -19,6 +19,8 @@ interface Leg {
   home: string; away: string; date: string; time: string; league: string;
   market: string; pick: string; odds: number | null; active: boolean;
   our_prob: number | null; implied: number | null; value: number | null;
+  /** The chance counted for the leg: our model's, or SportyBet's odds less their margin */
+  chance?: number | null; chance_from?: "model" | "odds";
   verdict: "strong" | "fair" | "risky" | "not_modelled"; note?: string;
   suggestion: { market_name: string; label: string; prob: number; odds: number; odds_source: string } | null;
 }
@@ -30,21 +32,22 @@ interface Pick {
   sport?: SlipSelection["sport"];
 }
 interface Slip { picks: Pick[]; games: number; total_odds: number | null; win_chance: number | null;
-  unmodelled: number; estimated_prices: number; target_odds?: number }
+  unmodelled: number; estimated_prices: number; target_odds?: number;
+  from_odds?: number; target_chance?: number; left_out?: string[] }
 interface Report {
   code: string; legs: Leg[];
-  original: { games: number; total_odds: number | null; win_chance: number | null; unmodelled: number };
+  original: { games: number; total_odds: number | null; win_chance: number | null; unmodelled: number; from_odds?: number };
   same_odds: Slip | null; safest: Slip | null;
-  tickets?: { safe: Slip; conservative: Slip; risky: Slip } | null;
+  tickets?: { safe: Slip | null; conservative: Slip | null; risky: Slip | null } | null;
 }
 
 const TICKETS = [
-  { id: "safe", name: "Safe", icon: Shield, tone: "text-accent",
-    blurb: "Each game's likeliest pick (odds 1.15 or more). Small payout, best chance." },
-  { id: "conservative", name: "Conservative", icon: Scale, tone: "text-info",
-    blurb: "Each game's likeliest pick that still pays 1.40 or more. A balance of payout and chance." },
-  { id: "risky", name: "Risky", icon: Flame, tone: "text-warn",
-    blurb: "A big payout (your code's odds, or double the conservative ticket's) with the best chance we can find for it." },
+  { id: "safe", name: "Safe", icon: Shield, tone: "text-accent", least: 0.5,
+    blurb: "A 50% chance of winning: the highest odds we can find on your games at that chance." },
+  { id: "conservative", name: "Conservative", icon: Scale, tone: "text-info", least: 0.25,
+    blurb: "A 25% chance of winning, for bigger odds: other markets on each game where they pay more." },
+  { id: "risky", name: "Risky", icon: Flame, tone: "text-warn", least: 0.125,
+    blurb: "A 12.5% chance of winning: longer prices on each game for the biggest payout at that chance." },
 ] as const;
 type TicketId = (typeof TICKETS)[number]["id"];
 
@@ -52,11 +55,14 @@ const odds = (x: number | null | undefined) => (x ? x.toFixed(2) : "—");
 const pct = (x: number | null | undefined) =>
   x === null || x === undefined ? "—" : x >= 0.1 ? `${Math.round(x * 100)}%` : x >= 0.001 ? `${(x * 100).toFixed(1)}%` : "<0.1%";
 
+/** A ticket's target chance: 50%, 25%, 12.5% */
+const target = (x: number | null | undefined) => (x == null ? "—" : `${+(x * 100).toFixed(1)}%`);
+
 const VERDICT: Record<Leg["verdict"], { label: string; cls: string }> = {
   strong: { label: "Strong", cls: "text-accent border-accent/30 bg-accent/10" },
   fair: { label: "Fair", cls: "text-info border-info/30 bg-info/10" },
   risky: { label: "Risky", cls: "text-danger border-danger/30 bg-danger/10" },
-  not_modelled: { label: "Not rated", cls: "text-n-400 border-n-800 bg-surface-sunken" },
+  not_modelled: { label: "From the odds", cls: "text-n-400 border-n-800 bg-surface-sunken" },
 };
 
 function toSelection(p: Pick): SlipSelection {
@@ -103,8 +109,18 @@ function ImprovedSlip({ title, blurb, slip, original }: { title: string; blurb: 
       </div>
       {better !== null && better > 1.05 && (
         <p className="text-xs text-accent flex items-center gap-1.5"><Check size={13} />
-          {better >= 2 ? `${better.toFixed(1)}×` : `${Math.round((better - 1) * 100)}%`} more likely to win than your code
-          {slip.unmodelled > 0 && ` (${slip.unmodelled} leg${slip.unmodelled === 1 ? "" : "s"} we don't rate kept as is)`}</p>
+          {better >= 2 ? `${better.toFixed(1)}×` : `${Math.round((better - 1) * 100)}%`} more likely to win than your code</p>
+      )}
+      {(slip.left_out?.length ?? 0) > 0 && (
+        <p className="text-xs text-n-400 text-pretty">
+          Left out to keep the chance at {target(slip.target_chance)}: {slip.left_out!.join(", ")}.
+          Even their surest picks would pull it under.
+        </p>
+      )}
+      {(slip.from_odds ?? 0) > 0 && (
+        <p className="text-xs text-n-500 text-pretty">
+          {slip.from_odds} leg{slip.from_odds === 1 ? "" : "s"} on games we don&apos;t price, counted at SportyBet&apos;s odds less their margin.
+        </p>
       )}
       <ul className="divide-y divide-n-800 text-sm">
         {slip.picks.map(p => (
@@ -115,7 +131,8 @@ function ImprovedSlip({ title, blurb, slip, original }: { title: string; blurb: 
             </div>
             <div className="text-right shrink-0">
               <p className="font-bold text-n-0 tnum">{odds(p.odds)}</p>
-              <p className="text-[11px] text-n-500 tnum">{p.prob === null ? "kept" : pct(p.prob)}{p.odds_source === "estimated" ? " · est." : ""}</p>
+              <p className="text-[11px] text-n-500 tnum">{p.prob === null ? "kept" : pct(p.prob)}
+                {p.odds_source === "estimated" ? " · est." : p.odds_source === "odds_only" ? " · from odds" : ""}</p>
             </div>
           </li>
         ))}
@@ -153,8 +170,8 @@ function Tickets({ tickets, original }: { tickets: NonNullable<Report["tickets"]
   if (!open) {
     return (
       <section className="card p-5 space-y-3 text-center">
-        <p className="text-sm text-n-300">Turn your code into three tickets on the same games, from safe to risky,
-          each with its own SportyBet code.</p>
+        <p className="text-sm text-n-300">Turn your code into three tickets on its games: a 50%, a 25% and a 12.5% chance
+          of winning, each at the highest odds we can find for it, with its own SportyBet code.</p>
         <button onClick={() => setOpen(true)}
           className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl bg-brand-400 hover:bg-brand-300 text-ink font-bold px-6 py-3">
           <Wand2 size={16} /> Refine into 3 tickets
@@ -168,6 +185,15 @@ function Tickets({ tickets, original }: { tickets: NonNullable<Report["tickets"]
         {TICKETS.map(t => {
           const slip = tickets[t.id];
           const active = tab === t.id;
+          if (!slip) {
+            return (
+              <button key={t.id} role="tab" aria-selected={active} onClick={() => setTab(t.id)}
+                className={clsx("card min-w-0 px-2 py-3 sm:p-4 text-left", active ? "card-selected" : "opacity-60")}>
+                <p className={clsx("text-xs sm:text-sm font-bold", t.tone)}>{t.name}</p>
+                <p className="text-[11px] text-n-400 mt-1">None at {target(t.least)}</p>
+              </button>
+            );
+          }
           return (
             <button key={t.id} role="tab" aria-selected={active} onClick={() => setTab(t.id)}
               className={clsx("card min-w-0 px-2 py-3 sm:p-4 text-left transition-[opacity,box-shadow,scale] duration-150 ease-[cubic-bezier(0.2,0,0,1)] active:scale-[0.97]",
@@ -180,11 +206,15 @@ function Tickets({ tickets, original }: { tickets: NonNullable<Report["tickets"]
           );
         })}
       </div>
-      {TICKETS.map(t => (
-        <div key={t.id} role="tabpanel" hidden={tab !== t.id}>
-          <ImprovedSlip title={`${t.name} ticket`} blurb={t.blurb} slip={tickets[t.id]} original={original} />
-        </div>
-      ))}
+      {TICKETS.map(t => {
+        const slip = tickets[t.id];
+        return (
+          <div key={t.id} role="tabpanel" hidden={tab !== t.id}>
+            {slip ? <ImprovedSlip title={`${t.name} ticket`} blurb={t.blurb} slip={slip} original={original} />
+              : <p className="card p-4 text-sm text-n-400">No pick on these games is {target(t.least)} likely on its own, so there&apos;s no {t.name.toLowerCase()} ticket.</p>}
+          </div>
+        );
+      })}
     </section>
   );
 }
@@ -238,7 +268,8 @@ export function CodeCheck({ onLocked }: { onLocked?: () => void }) {
               <p className="font-semibold text-n-0">Code <span className="font-mono tracking-[0.15em]">{report.code}</span></p>
               <p className="text-sm text-n-400 tnum">{report.original.games} games · {odds(report.original.total_odds)}x ·{" "}
                 <span className="text-n-0 font-semibold">{pct(report.original.win_chance)}</span> chance all win
-                {report.original.unmodelled > 0 && ` (${report.original.unmodelled} not rated)`}</p>
+                {(report.original.from_odds ?? report.original.unmodelled) > 0 &&
+                  ` (${report.original.from_odds ?? report.original.unmodelled} from SportyBet's odds)`}</p>
             </div>
             <ul className="divide-y divide-n-800">
               {report.legs.map((l, i) => (
@@ -249,7 +280,8 @@ export function CodeCheck({ onLocked }: { onLocked?: () => void }) {
                       <p className="text-sm text-n-0 font-semibold truncate">{l.home} vs {l.away}</p>
                       <p className="text-xs text-n-400">{l.market}: <span className="text-n-200">{l.pick}</span>{!l.active && <span className="text-danger"> · suspended</span>}</p>
                       <p className="text-[11px] text-n-400 tnum mt-0.5">
-                        {l.our_prob !== null ? <>Our chance <span className="text-n-0 font-semibold">{pct(l.our_prob)}</span> · </> : null}
+                        {l.our_prob !== null ? <>Our chance <span className="text-n-0 font-semibold">{pct(l.our_prob)}</span> · </>
+                          : l.chance != null ? <>Chance from the odds <span className="text-n-0 font-semibold">{pct(l.chance)}</span> · </> : null}
                         SportyBet&apos;s odds {odds(l.odds)} (implies {pct(l.implied)})
                       </p>
                     </div>
