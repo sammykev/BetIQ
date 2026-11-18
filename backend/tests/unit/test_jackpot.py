@@ -106,6 +106,9 @@ def test_a_weeks_pool_and_what_a_ticket_buys():
     # prizes 2 and 3 were 12% + 3% of sales; 1e6 × 0.0001 = 100 back for 100 staked: nobody else can share
     assert v["stake"] == 100 and v["lower_back"] == 0.15 and v["top_ev_unshared"] == 100 and v["breakeven_sharers"] == 0
     assert jp.ticket_value(t, 0, 1, [p]) is None
+    # A week someone hit all 12: the top prize isn't part of what prizes 2 and 3 pay back
+    won = jp.pool_of({**week, "winnings": week["winnings"] + [{"correctEvents": 12, "winNum": 1, "perWinnings": "83076910"}]})
+    assert jp.ticket_value(t, 100, 1_000_000, [won])["lower_back"] == 0.15
     hist = {"20261115": p, "20261108": {"tiers": {"12": {"winners": 1, "each": 5e7}}}, "20261101": p}
     assert jp.weeks_without_top(hist) == 1
 

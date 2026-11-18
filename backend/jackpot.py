@@ -185,9 +185,11 @@ def ticket_value(ticket: Dict, price: float, top_prize: float, past: List[Dict])
     if not price:
         return None
     stake = ticket["lines"] * price
-    shares = [sum(t["winners"] * t["each"] for k, t in (w.get("tiers") or {}).items()) / w["sales"]
-              for w in past if w.get("sales")]
     keys = sorted(ticket.get("prizes") or {}, key=int, reverse=True)
+    lower = set(keys[1:])
+    # Prizes 2 and 3 only: the top prize, when someone hits it, isn't a share of sales
+    shares = [sum(t["winners"] * t["each"] for k, t in (w.get("tiers") or {}).items() if k in lower) / w["sales"]
+              for w in past if w.get("sales")]
     top_ev = (ticket["prizes"][keys[0]] if keys else 0) * top_prize
     return {"stake": stake, "lower_back": round(sum(shares) / len(shares), 3) if shares else None,
             "top_ev_unshared": round(top_ev, 2), "breakeven_sharers": max(0, int(top_ev / stake) - 1) if stake else None}
