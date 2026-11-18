@@ -283,3 +283,10 @@ def test_refined_tickets_are_kept_settled_and_scored_by_tier():
     assert code_check.settle_record(r, lambda leg: won) == 1
     rec = code_check.record(r)["safe"]
     assert rec["landed"] == 1 and rec["lost"] == 0 and rec["said"] == 0.6 and rec["aim"] == 0.5
+
+
+def test_zero_zero_corners_are_no_data():
+    import tickets
+    res = {"status": "finished", "hg": 1, "ag": 0, "corners": [0, 0]}
+    assert tickets.grade_leg("corners_ou", "U85", res) == "pending"
+    assert tickets.grade_leg("corners_ou", "U85", {**res, "corners": [3, 4]}) == "won"

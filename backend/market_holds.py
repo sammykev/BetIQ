@@ -9,9 +9,12 @@ confidence checks their 80%+ picks came in well under what the model said.
   Nov 18 2026: green check of 75%+ picks: home total 54% vs 77%, first-half
                home total 68% vs 78%, first-half away total 70% vs 79%,
                first-half handicap 69% vs 78%; and on the daily slips' legs:
-               corners 23% vs 82% (60 legs: being looked into), Q4 winner
+               Q4 winner
                63% vs 83%, second-half winner 69% vs 87%, second-half
                handicap 63% vs 82%
+  (Corners, 23% vs 82% on slips, came back the same day: a few international
+  unders priced far longer than we rated them, repeated across slips — the
+  price check leaves those out — and ESPN's 0-0 "no data" counts, now ignored.)
 
 Codes are "sport:market". HELD_OUT_MARKETS (comma-separated) adds codes;
 "none" clears the list.
@@ -26,5 +29,5 @@ HELD_OUT_MARKETS = (set() if _ENV.strip().lower() == "none" else
                      "basketball:bb_h1_total", "basketball:bb_home_total", "basketball:bb_h1_home_total",
                      "basketball:bb_h1_away_total", "basketball:bb_h1_handicap",
                      "basketball:bb_q4_1x2", "basketball:bb_h2_1x2", "basketball:bb_h2_handicap",
-                     "football:corners_ou", "tennis:rk_s1_handicap", "tennis:rk_total_games"}
+                     "tennis:rk_s1_handicap", "tennis:rk_total_games"}
                     | {c.strip() for c in _ENV.split(",") if ":" in c})

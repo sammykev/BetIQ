@@ -154,7 +154,7 @@ def parse_espn(data: Dict) -> List[Dict]:
             res["events"] = key_events(comp, home, away) or None
         if status == "finished":
             corners = [_stat(home, "wonCorners", "cornerKicks"), _stat(away, "wonCorners", "cornerKicks")]
-            if None not in corners:
+            if None not in corners and any(corners):     # 0-0 is ESPN without corner data
                 res["corners"] = corners
             res["bookings"] = _bookings(comp, home, away)
             for key, names in (("shots", ("totalShots",)), ("sot", ("shotsOnTarget",))):

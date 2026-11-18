@@ -85,6 +85,8 @@ def grade_leg(market: str, code: str, result: Optional[Dict]) -> str:
     hg, ag = int(result["hg"]), int(result["ag"])
     outcome = "H" if hg > ag else "A" if hg < ag else "D"
     corners, bookings = result.get("corners"), result.get("bookings")
+    if isinstance(corners, list) and not any(corners):
+        corners = None    # 0-0: a source with no corner data (ESPN, Nov 2026: 54 such), not a real count
     verdict: Optional[str] = None
     if market == "1x2":
         verdict = {"1": "H", "X": "D", "2": "A"}.get(code) == outcome
