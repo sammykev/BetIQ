@@ -137,10 +137,33 @@ async def try_paths(session) -> None:
             print(f"  {pre + p}: HTTP {r.status_code} · {(r.text or '').strip()[:400]}")
 
 
+async def wrapper(session) -> None:
+    """How the bundle's request helper (tB / ao) sends a jackpot call."""
+    print("\n== the request helper ==")
+    for url, name in ((BUNDLES[0], "tB"), (BUNDLES[1], "ao")):
+        text = (await session.get(url, headers={"Accept": "*/*"})).text or ""
+        for pat in (rf"function {name}\(", rf"[,;\s]{name}=function", rf"[,;\s]{name}=\(", rf"var {name}="):
+            for m in list(re.finditer(pat, text))[:2]:
+                print(f"  [{name} {pat}] …{text[max(0, m.start() - 200):m.end() + 900]}…\n")
+
+
+async def try_posts(session) -> None:
+    print("\n== jackpot endpoints by POST ==")
+    for p in ("/jackpot/period", "/jackpot/periodOptions", "/jackpot/banner"):
+        for kind, kw in (("json {}", {"json": {}}), ("no body", {}),
+                         ("json sport", {"json": {"sportId": sportybet.FOOTBALL}})):
+            try:
+                r = await session.post(sportybet.BASE + p, headers={"Content-Type": "application/json"}, **kw)
+            except Exception as e:
+                print(f"  POST {p} ({kind}): {type(e).__name__}")
+                continue
+            print(f"  POST {p} ({kind}): HTTP {r.status_code} · {(r.text or '').strip()[:1500]}")
+
+
 async def main() -> None:
     session = sportybet.shared_session()
-    await contexts(session)
-    await try_paths(session)
+    await wrapper(session)
+    await try_posts(session)
 
 
 if __name__ == "__main__":
