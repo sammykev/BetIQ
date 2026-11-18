@@ -4,6 +4,7 @@ search for the highest win chance within a target odds range.
 """
 
 import itertools
+from dataclasses import replace
 import math
 import random
 from datetime import date, timedelta
@@ -301,3 +302,17 @@ class TestSlipChance:
         groups = [[option(i, 0.99, 1.2)] for i in range(10)]
         res = optimizer.optimize_safe(groups, 0.9, 1.5, min_edge=None)
         assert res["total_odds"] <= 1.5 * 1.02 and res["win_chance"] >= 0.9
+
+
+def test_a_leg_is_counted_at_no_more_than_its_price_says():
+    import routers.optimizer as ro
+    from optimizer import Option
+    o = Option("A", "B", "2026-11-20", "", "PL", "goals_ou", "Goals", "O15", "Over 1.5", 0.86, 1.25, "sportybet")
+    # 1.05 / 1.25 = 84%: 2 points over → counted at 84%, ours kept
+    c = ro.price_checked(o)
+    assert c.prob == 0.84 and c.model_prob == 0.86
+    # 1.05 / 1.4 = 75%: 11 points over → left out
+    assert ro.price_checked(replace(o, odds=1.4)) is None
+    # under the price, or an estimated price: as it is
+    assert ro.price_checked(replace(o, odds=1.15)).prob == 0.86
+    assert ro.price_checked(replace(o, odds=1.4, odds_source="estimated")).prob == 0.86

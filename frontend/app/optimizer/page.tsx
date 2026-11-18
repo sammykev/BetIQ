@@ -61,6 +61,8 @@ interface OptResult {
   /** Markets and leagues left out: their past high-confidence picks came in clearly short */
   weak_left_out?: string[];
   overconfident_left_out?: string[];
+  /** Picks left out because we rated them well over what their price says */
+  price_left_out?: number;
   /** Matches skipped because they're already on that many of your open tickets */
   crowded_matches?: { left_out: number; cap: number };
   /** The bar a market's hit rate must clear (70%) */
@@ -949,7 +951,8 @@ function LegCapNote({ result }: { result: OptResult }) {
   const cap = result.leg_cap, extra = result.extra_slips ?? [], weak = result.weak_left_out ?? [];
   const over = result.overconfident_left_out ?? [];
   const crowded = result.crowded_matches?.left_out ? result.crowded_matches : undefined;
-  if (!cap && !weak.length && !over.length && !crowded) return null;
+  const priced = result.price_left_out ?? 0;
+  if (!cap && !weak.length && !over.length && !crowded && !priced) return null;
   return (
     <div className="rounded-xl bg-surface-sunken px-3 py-2.5 text-[12px] text-n-300 space-y-2">
       {cap && (
@@ -984,6 +987,13 @@ function LegCapNote({ result }: { result: OptResult }) {
       {over.length > 0 && (
         <p className="text-n-500">
           Paused, their picks came in well under what our model said: {over.map(marketName).join(", ")}.
+        </p>
+      )}
+      {priced > 0 && (
+        <p className="text-n-500">
+          {priced} pick{priced === 1 ? "" : "s"} left out: we rated {priced === 1 ? "it" : "them"} well above what the
+          odds say, and picks like that have come in far less often than we said. Every pick counts at no more than its
+          odds&apos; chance.
         </p>
       )}
     </div>

@@ -103,6 +103,30 @@ def _calibrated(o, x: Optional[Dict[str, Any]]):
     return replace(o, prob=round(prob, 4), model_prob=o.prob)
 
 
+# Against the price (Nov 18 2026, green_check.py on 2,600 daily-slip legs):
+# where our chance beat the price's by 5+ points the legs hit 49% (football)
+# and 64-67% (basketball) for 84-86% said; within 5 points the price's chance
+# was the right one (84.0% for 84.1% hit). So a leg we rate well over its
+# price is left out, and one a little over is counted at the price's chance
+PRICE_MARGIN = 1.05     # the price's chance ≈ PRICE_MARGIN / odds (a ~5% margin)
+MAX_PRICE_EDGE = 0.05
+REAL_PRICES = ("sportybet", "bookmaker")
+
+
+def price_checked(o):
+    """The option counted at no more than its price's chance, or None if we
+    rate it more than MAX_PRICE_EDGE over that. Estimated prices (made from
+    our own chance) aren't a second opinion, so those pass as they are."""
+    if o.odds_source not in REAL_PRICES or not o.odds or o.odds <= 1:
+        return o
+    implied = min(0.99, PRICE_MARGIN / o.odds)
+    if o.prob - implied > MAX_PRICE_EDGE + 1e-9:
+        return None
+    if o.prob > implied:
+        return replace(o, prob=round(implied, 4), model_prob=o.model_prob or o.prob)
+    return o
+
+
 def _crowded_matches(tickets: List[Dict[str, Any]], cap: int) -> List[Tuple[str, str, str]]:
     """The matches (home, away, date) still to be played on `cap` or more of
     these open tickets."""
@@ -678,6 +702,12 @@ async def _optimize_request(body: Dict[str, Any],
         groups = [[c for o in g if f"{o.sport}:{o.market}" not in over_out
                    for c in [_calibrated(o, codes.get(f"{o.sport}:{o.market}"))] if c.prob >= min_prob]
                   for g in groups]
+    # Each leg against its price (price_checked); "price_check": False keeps ours
+    price_out = 0
+    if body.get("price_check", True) is not False:
+        before = sum(len(g) for g in groups)
+        groups = [[c for o in g for c in [price_checked(o)] if c is not None and c.prob >= min_prob] for g in groups]
+        price_out = before - sum(len(g) for g in groups)
     # Markets that came in at least min_hit of the time in the nightly ranking
     # first; the ones under it only as a fallback (below). A market without
     # enough settled picks to be ranked is left out
@@ -822,6 +852,8 @@ async def _optimize_request(body: Dict[str, Any],
         result["overconfident_left_out"] = over_out
     if held_out:
         result["held_out"] = held_out
+    if price_out:
+        result["price_left_out"] = price_out
     if ranked is not None:
         result["min_hit_rate"] = min_hit
         result["hit_rate_left_out"] = hit_out

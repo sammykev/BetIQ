@@ -219,6 +219,8 @@ class TestPricedCorners:
 
     def test_internationals_get_corner_picks_from_prices(self, monkeypatch):
         p = pred(league="INT-WCQ")
+        import routers.optimizer as ro
+        monkeypatch.setattr(ro, "HELD_OUT_MARKETS", set())   # corners are held out of slips (Nov 2026)
         monkeypatch.setattr(main, "_get_redis", lambda: None)
         monkeypatch.setattr(main, "_sb_link_status", {"at": "x", "market_map": {"corners_ou": {"id": "166", "ok": True}}})
         monkeypatch.setattr(main, "_predictions_cache", [p])
