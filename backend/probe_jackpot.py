@@ -220,9 +220,19 @@ async def money(session) -> None:
         print(f"\n== {page}: HTTP {r.status_code} ==\n{txt[max(0, i - 200):i + 5000]}")
 
 
+async def line_price(session) -> None:
+    """The constant the page multiplies the line count by (the stake per line)."""
+    print("\n== the stake per line ==")
+    for url in BUNDLES:
+        text = (await session.get(url, headers={"Accept": "*/*"})).text or ""
+        for pat in (r"[,;(\s]I=[^,;]{1,60}", r"(?i)per.?line|line.?stake|stake.?per|lineAmount|perBet|unitPrice|\bprice\b"):
+            for m in list(re.finditer(pat, text))[:8]:
+                print(f"  [{pat[:24]}] …{text[max(0, m.start() - 160):m.end() + 160]}…")
+
+
 async def main() -> None:
     session = sportybet.shared_session()
-    await money(session)
+    await line_price(session)
 
 
 if __name__ == "__main__":
