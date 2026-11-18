@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import clsx from "clsx";
-import { Check, ChevronDown, Clock, Copy, ExternalLink, HelpCircle, Link2, Loader2, Share2, Ticket as TicketIcon, Trash2, Undo2 } from "lucide-react";
+import { Check, ChevronDown, Clock, Copy, ExternalLink, HelpCircle, Link2, Loader2, Share2, Ticket as TicketIcon, Trash2, Undo2, Wand2 } from "lucide-react";
 import { VerdictIcon } from "@/components/MatchdayList";
 import { LiveStats, SportStats } from "@/components/LiveStats";
 import { useAccess } from "@/lib/access";
@@ -261,11 +261,15 @@ export function TicketsList({ uid, authFetch }: { uid: string; authFetch: (url: 
             <a href={t.share_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-xs text-n-300 hover:text-n-0">
               <ExternalLink size={12} /> Open on SportyBet</a>
           ) : <span />}
-          <span className="flex items-center gap-1.5">
+          <span className="flex flex-wrap items-center justify-end gap-1.5">
             <button onClick={() => remove(t.code)} aria-label={`Remove ticket ${t.code}`} title="Remove ticket"
               className="p-1.5 rounded-lg text-n-500 hover:text-danger hover:bg-danger/10">
               <Trash2 size={14} />
             </button>
+            {(t.status === "pending" || t.status === "open") && (
+              <a href={`/optimizer?code=${encodeURIComponent(t.code)}`} title="Make it safer or riskier in the code checker"
+                className="btn-secondary !px-3 !py-1.5 !text-xs !rounded-lg"><Wand2 size={12} />Refine</a>
+            )}
             <button onClick={() => share(t.code)} aria-label={`Share ticket ${t.code}`} title="Share a link to this ticket"
               className="btn-secondary !px-3 !py-1.5 !text-xs !rounded-lg">
               {copied === `link:${t.code}` ? <><Link2 size={12} />Link copied</> : <><Share2 size={12} />Share</>}

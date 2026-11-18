@@ -299,3 +299,45 @@ def test_a_game_with_hundreds_of_lines():
               for i in range(3)]
     res = optimizer.optimize_safe(groups, 0.5, 1e6, 3, min_edge=None, most_games=True)
     assert res and res["win_chance"] >= 0.5
+
+
+def _refine(settings):
+    import optimizer
+    from dataclasses import replace
+    share = {"shareCode": "T3", "outcomes": SHARE["outcomes"] + [
+        {"eventId": "sr:match:3", "homeTeamName": "Leeds", "awayTeamName": "Everton", "estimateStartTime": KICKOFF_MS,
+         "markets": [market("1", [("1", 2.1, "Home")], "", "1X2")]}]}
+    preds = {"sr:match:1": pred(), "sr:match:3": pred(home="Leeds", away="Everton", p_home=0.48, p_draw=0.27, p_away=0.25)}
+    orig = code_check.candidates
+    code_check.candidates = lambda *a, **k: [replace(o, odds_source="sportybet") for o in orig(*a, **k)]
+    try:
+        return code_check.analyse(sportybet.parse_share(share), lambda sel: preds.get(sel["eventId"]),
+                                  lambda _: None, confirmed={}, settings=settings)
+    finally:
+        code_check.candidates = orig
+
+
+def test_refine_settings():
+    s = code_check.settings_of({"strictness": "strict", "min_odds": "9", "max_odds": 3, "keep_all": True,
+                                "max_leg_odds": "x", "main_markets": True, "keep_strong": 2})
+    assert s["strictness"] == "strict" and (s["min_odds"], s["max_odds"]) == (3, 9)
+    assert s["keep_all"] and s["main_markets"] and s["max_leg_odds"] is None and s["keep_strong"] is None
+    assert code_check.settings_of(None) == code_check.DEFAULTS
+
+    base = _refine(None)["tickets"]
+    strict = _refine({"strictness": "strict"})["tickets"]
+    assert strict["safe"]["win_chance"] >= 0.6 - 1e-4 and strict["safe"]["target_chance"] == 0.6
+    # the most odds a ticket pays
+    capped = _refine({"max_odds": 2.0})["tickets"]
+    assert all(t is None or t["total_odds"] <= 2.0 for t in capped.values())
+    # the most odds a game
+    legs = _refine({"max_leg_odds": 1.3})["tickets"]
+    assert all(p["odds"] <= 1.3 for t in legs.values() if t for p in t["picks"])
+    # a minimum the safe ticket can't reach is explained, not faked
+    r = _refine({"min_odds": 50})
+    assert r["tickets"]["safe"] is None and "minimum" in r["ticket_notes"]["safe"]
+    # main markets only
+    main = _refine({"main_markets": True})["tickets"]
+    assert all(p["market"] in code_check.MAIN_MARKETS or p["market"] == "sportybet" or p.get("sb")
+               for t in main.values() if t for p in t["picks"])
+    assert base["safe"]

@@ -951,7 +951,8 @@ async def optimize_code(request: Request, body: Dict[str, Any],
     """
     Check a SportyBet booking code with the model: each leg's chance, a
     better pick where there is one, and three tickets at a 50%, 25% and
-    12.5% chance (code_check.py). Body: {"code": "ABC123"}.
+    12.5% chance (code_check.py). Body: {"code": "ABC123", "settings": {strictness:
+    strict|balanced|loose, min_odds, max_odds, max_leg_odds, keep_all, keep_strong, main_markets}}.
     """
     import code_check
     import sportybet
@@ -1000,15 +1001,16 @@ async def optimize_code(request: Request, body: Dict[str, Any],
         report = await asyncio.to_thread(
             code_check.analyse, selections, find,
             main._linked_event, confirmed, lambda m, c: m not in paused and bookable(m, c),
-            lambda sel: by_sb.get(str(sel.get("eventId"))), adjust)
+            lambda sel: by_sb.get(str(sel.get("eventId"))), adjust, code_check.settings_of(body.get("settings")))
     except Exception as e:
         import traceback
         print(f"[CodeCheck] {code}: {type(e).__name__}: {e}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail="Something went wrong rating that code. We've logged it; try again in a few minutes.")
     # Kept and settled, so each ticket's record shows whether its chance is honest
     r = main._get_redis()
-    try:
-        code_check.record_tickets(r, code.upper(), report, datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    try:   # the record compares each ticket with its aim: Balanced runs only, so the aims stay 50/25/12.5%
+        if report.get("settings", {}).get("strictness") == "balanced":
+            code_check.record_tickets(r, code.upper(), report, datetime.now(timezone.utc).isoformat(timespec="seconds"))
     except Exception as e:
         print(f"[CodeCheck] couldn't keep the tickets: {e}")
     if time.time() - _code_record["at"] > 600:

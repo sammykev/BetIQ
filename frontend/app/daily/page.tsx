@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import clsx from "clsx";
 import { useUser } from "@clerk/nextjs";
-import { Check, Copy, ExternalLink, Info, Loader2, RefreshCw, Ticket } from "lucide-react";
+import { Check, Copy, ExternalLink, Info, Loader2, RefreshCw, Ticket, Wand2 } from "lucide-react";
 import { AppShell } from "@/components/shell/AppShell";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { FeatureGate, Locked, Unavailable } from "@/components/FeatureGate";
@@ -163,6 +163,8 @@ function SlipView({ s, isToday, date, retry, minProb, cut }: {
               <span className="font-mono text-3xl font-bold text-n-0 tracking-[0.18em]">{b.code}</span>
               <span className="flex gap-2">
                 {b.share_url && <a href={b.share_url} target="_blank" rel="noreferrer" className="btn-secondary !px-3 !py-1.5 !text-xs"><ExternalLink size={12} /> Open</a>}
+                <a href={`/optimizer?code=${encodeURIComponent(b.code)}`} className="btn-secondary !px-3 !py-1.5 !text-xs"
+                  title="Make it safer or riskier in the code checker"><Wand2 size={12} /> Refine</a>
                 <button onClick={() => copy(b.code!)} className="btn-primary !px-3 !py-1.5 !text-xs">
                   {copied ? <Check size={12} /> : <Copy size={12} />}{copied ? "Copied" : "Copy code"}</button>
               </span>

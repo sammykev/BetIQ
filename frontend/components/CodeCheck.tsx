@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import clsx from "clsx";
 import { AlertTriangle, ArrowRight, Check, CheckCircle2, Copy, ExternalLink, Flame, Loader2, Scale, ScanSearch, Shield, ShieldCheck,
-  Ticket, Wand2 } from "lucide-react";
+  SlidersHorizontal, Ticket, Wand2 } from "lucide-react";
 import { useBetSlip } from "@/lib/useBetSlip";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
 import { useUser } from "@clerk/nextjs";
@@ -39,6 +39,10 @@ interface Report {
   original: { games: number; total_odds: number | null; win_chance: number | null; unmodelled: number; from_odds?: number };
   same_odds: Slip | null; safest: Slip | null;
   tickets?: { safe: Slip | null; conservative: Slip | null; risky: Slip | null } | null;
+  /** Why a ticket couldn't be made with these settings */
+  ticket_notes?: Partial<Record<"safe" | "conservative" | "risky", string>>;
+  settings?: Settings;
+  kept_strong?: number;
   /** How each kind of refined ticket has done so far (code_check.record) */
   record?: Record<"safe" | "conservative" | "risky",
     { aim: number; landed: number; lost: number; open: number; said: number | null; rate: number | null }> | null;
@@ -53,6 +57,100 @@ const TICKETS = [
     blurb: "A 12.5% chance of winning: longer prices on each game for the biggest payout at that chance." },
 ] as const;
 type TicketId = (typeof TICKETS)[number]["id"];
+
+/** The refine settings (code_check.settings_of) */
+interface Settings {
+  strictness: "strict" | "balanced" | "loose";
+  min_odds: number | null; max_odds: number | null; max_leg_odds: number | null;
+  keep_all: boolean; keep_strong: number | null; main_markets: boolean;
+}
+const DEFAULT_SETTINGS: Settings = { strictness: "balanced", min_odds: null, max_odds: null, max_leg_odds: null,
+  keep_all: false, keep_strong: null, main_markets: false };
+const STRICTNESS: { id: Settings["strictness"]; name: string; chances: [number, number, number]; note: string }[] = [
+  { id: "strict", name: "Strict", chances: [0.6, 0.3, 0.15], note: "Surer tickets, smaller odds" },
+  { id: "balanced", name: "Balanced", chances: [0.5, 0.25, 0.125], note: "50%, 25% and 12.5%" },
+  { id: "loose", name: "Loose", chances: [0.4, 0.2, 0.1], note: "Bigger odds, less sure" },
+];
+const leastFor = (s: Settings | undefined, id: TicketId) =>
+  (STRICTNESS.find(x => x.id === (s?.strictness ?? "balanced")) ?? STRICTNESS[1]).chances[TICKETS.findIndex(t => t.id === id)];
+const LEG_CAPS = [null, 1.5, 2, 3, 5] as const;
+
+/** "Refine settings": how strict, the odds range and what may change. */
+function RefineSettings({ value, onApply, busy }: { value: Settings; onApply: (s: Settings) => void; busy: boolean }) {
+  const [s, setS] = useState<Settings>(value);
+  const [minT, setMinT] = useState(value.min_odds ? String(value.min_odds) : "");
+  const [maxT, setMaxT] = useState(value.max_odds ? String(value.max_odds) : "");
+  const num = (t: string) => { const v = parseFloat(t); return Number.isFinite(v) && v > 1 ? v : null; };
+  const toggle = (k: "keep_all" | "main_markets", label: string, help: string) => (
+    <label className="flex items-start gap-2.5 text-sm text-n-200 cursor-pointer">
+      <input type="checkbox" checked={s[k]} onChange={e => setS({ ...s, [k]: e.target.checked })}
+        className="mt-0.5 size-4 accent-[rgb(var(--accent))]" />
+      <span>{label}<span className="block text-[11px] text-n-500">{help}</span></span>
+    </label>
+  );
+  return (
+    <div className="space-y-4">
+      <div>
+        <p className="eyebrow">How strict</p>
+        <div className="grid grid-cols-3 gap-2 mt-2" role="radiogroup" aria-label="How strict">
+          {STRICTNESS.map(x => (
+            <button key={x.id} type="button" role="radio" aria-checked={s.strictness === x.id}
+              onClick={() => setS({ ...s, strictness: x.id })}
+              className={clsx("rounded-xl px-2 py-2 text-left", s.strictness === x.id ? "card-selected bg-surface" : "bg-surface-sunken")}>
+              <p className="text-sm font-semibold text-n-0">{x.name}</p>
+              <p className="text-[11px] text-n-400 tnum">{x.chances.map(target).join(" · ")}</p>
+            </button>
+          ))}
+        </div>
+        <p className="text-[11px] text-n-500 mt-1.5">The chance each ticket (safe · conservative · risky) wins at least.</p>
+      </div>
+      <div>
+        <p className="eyebrow">Total odds</p>
+        <div className="flex items-center gap-2 mt-2">
+          <input inputMode="decimal" value={minT} onChange={e => setMinT(e.target.value.replace(/[^0-9.]/g, ""))}
+            placeholder="Any" aria-label="Lowest total odds"
+            className="w-24 rounded-xl bg-surface-sunken border border-n-800 px-3 py-2 tnum text-n-0 outline-none focus:border-accent" />
+          <span className="text-sm text-n-400">to</span>
+          <input inputMode="decimal" value={maxT} onChange={e => setMaxT(e.target.value.replace(/[^0-9.]/g, ""))}
+            placeholder="Any" aria-label="Highest total odds"
+            className="w-24 rounded-xl bg-surface-sunken border border-n-800 px-3 py-2 tnum text-n-0 outline-none focus:border-accent" />
+          <span className="text-sm text-n-400">x</span>
+        </div>
+        <p className="text-[11px] text-n-500 mt-1.5">A ticket above the highest is held down to it; one that can&apos;t reach the lowest at its chance isn&apos;t made.</p>
+      </div>
+      <div>
+        <p className="eyebrow">Most odds a game</p>
+        <div className="flex flex-wrap gap-1.5 mt-2" role="radiogroup" aria-label="Most odds a game">
+          {LEG_CAPS.map(c => (
+            <button key={String(c)} type="button" role="radio" aria-checked={s.max_leg_odds === c}
+              onClick={() => setS({ ...s, max_leg_odds: c })}
+              className={clsx("chip tnum", s.max_leg_odds === c ? "chip-active" : "chip-idle")}>
+              {c === null ? "Any" : `${c.toFixed(c % 1 ? 1 : 0)}x`}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="space-y-3">
+        {toggle("keep_all", "Keep all my games", "Don't drop a game to reach the chance; no ticket if they can't all fit.")}
+        <label className="flex items-start gap-2.5 text-sm text-n-200 cursor-pointer">
+          <input type="checkbox" checked={s.keep_strong !== null} onChange={e => setS({ ...s, keep_strong: e.target.checked ? 0.75 : null })}
+            className="mt-0.5 size-4 accent-[rgb(var(--accent))]" />
+          <span>Keep my strong picks<span className="block text-[11px] text-n-500">Picks we rate 75%+ stay as you chose them; only the others change.</span></span>
+        </label>
+        {toggle("main_markets", "Main markets only", "Results, double chance, goals, handicaps and winners: no corners, cards or quarters.")}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <button type="button" disabled={busy}
+          onClick={() => onApply({ ...s, min_odds: num(minT), max_odds: num(maxT) })}
+          className="flex-1 min-w-[10rem] inline-flex items-center justify-center gap-2 rounded-xl bg-brand-400 hover:bg-brand-300 text-ink font-bold px-4 py-2.5 disabled:opacity-50">
+          {busy ? <Loader2 size={15} className="animate-spin" /> : <Wand2 size={15} />} Refine again
+        </button>
+        <button type="button" onClick={() => { setS(DEFAULT_SETTINGS); setMinT(""); setMaxT(""); }}
+          className="rounded-xl [box-shadow:var(--ring-control)] text-n-200 font-semibold px-4 py-2.5">Reset</button>
+      </div>
+    </div>
+  );
+}
 
 const odds = (x: number | null | undefined) => (x ? x.toFixed(2) : "—");
 const pct = (x: number | null | undefined) =>
@@ -148,6 +246,8 @@ function ImprovedSlip({ title, blurb, slip, original }: { title: string; blurb: 
             {copied ? <Check size={14} /> : <Copy size={14} />} {copied ? "Copied" : "Copy"}</button>
           {code.url && <a href={code.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-sm text-n-200">
             <ExternalLink size={14} /> Open on SportyBet</a>}
+          <a href={`/optimizer?code=${encodeURIComponent(code.code)}`} className="inline-flex items-center gap-1.5 text-sm text-n-200">
+            <Wand2 size={14} /> Refine this code</a>
         </div>
       ) : (
         <div className="flex flex-wrap gap-2">
@@ -166,16 +266,19 @@ function ImprovedSlip({ title, blurb, slip, original }: { title: string; blurb: 
 
 /** "Refine": the code as three tickets. All three stay mounted so a code
  * booked on one isn't lost when switching to another. */
-function Tickets({ tickets, original, record }: { tickets: NonNullable<Report["tickets"]>; original: Report["original"];
-  record?: Report["record"] }) {
-  const [open, setOpen] = useState(false);
+function Tickets({ tickets, original, record, notes, settings, onRefine, busy, startOpen }: {
+  tickets: NonNullable<Report["tickets"]>; original: Report["original"]; record?: Report["record"];
+  notes?: Report["ticket_notes"]; settings: Settings; onRefine: (s: Settings) => void; busy: boolean; startOpen: boolean }) {
+  const [open, setOpen] = useState(startOpen);
+  const [showSettings, setShowSettings] = useState(false);
+  const changed = JSON.stringify(settings) !== JSON.stringify(DEFAULT_SETTINGS);
   const [tab, setTab] = useState<TicketId>("conservative");
 
   if (!open) {
     return (
       <section className="card p-5 space-y-3 text-center">
         <p className="text-sm text-n-300">Turn your code into three tickets on its games: a 50%, a 25% and a 12.5% chance
-          of winning, each at the highest odds we can find for it, with its own SportyBet code.</p>
+          of winning, each at the highest odds we can find for it, with its own SportyBet code. Adjust how in Refine settings.</p>
         <button onClick={() => setOpen(true)}
           className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl bg-brand-400 hover:bg-brand-300 text-ink font-bold px-6 py-3">
           <Wand2 size={16} /> Refine into 3 tickets
@@ -185,6 +288,15 @@ function Tickets({ tickets, original, record }: { tickets: NonNullable<Report["t
   }
   return (
     <section className="space-y-3">
+      <div className="card p-4">
+        <button type="button" onClick={() => setShowSettings(v => !v)} aria-expanded={showSettings}
+          className="w-full flex items-center justify-between gap-2 text-sm font-semibold text-n-0">
+          <span className="flex items-center gap-2"><SlidersHorizontal size={15} className="text-accent" /> Refine settings
+            {changed && <span className="text-[11px] font-normal text-accent">changed</span>}</span>
+          <span className="text-xs text-n-400">{showSettings ? "Hide" : "Show"}</span>
+        </button>
+        {showSettings && <div className="mt-4"><RefineSettings value={settings} busy={busy} onApply={onRefine} /></div>}
+      </div>
       <div className="grid grid-cols-3 gap-2" role="tablist" aria-label="Tickets">
         {TICKETS.map(t => {
           const slip = tickets[t.id];
@@ -194,7 +306,7 @@ function Tickets({ tickets, original, record }: { tickets: NonNullable<Report["t
               <button key={t.id} role="tab" aria-selected={active} onClick={() => setTab(t.id)}
                 className={clsx("card min-w-0 px-2 py-3 sm:p-4 text-left", active ? "card-selected" : "opacity-60")}>
                 <p className={clsx("text-xs sm:text-sm font-bold", t.tone)}>{t.name}</p>
-                <p className="text-[11px] text-n-400 mt-1">None at {target(t.least)}</p>
+                <p className="text-[11px] text-n-400 mt-1">None at {target(leastFor(settings, t.id))}</p>
               </button>
             );
           }
@@ -213,7 +325,7 @@ function Tickets({ tickets, original, record }: { tickets: NonNullable<Report["t
       {(() => {
         const rec = record?.[tab];
         const n = rec ? rec.landed + rec.lost : 0;
-        return rec && n > 0 ? (
+        return rec && n > 0 && settings.strictness === "balanced" ? (
           <p className="text-xs text-n-400 tnum text-pretty">
             Our {TICKETS.find(t => t.id === tab)!.name.toLowerCase()} tickets so far: landed {rec.landed} of {n}
             {" "}({pct(rec.rate)}), aiming at {target(rec.aim)}.{n < 30 ? " Too few yet to judge." : ""}
@@ -224,8 +336,10 @@ function Tickets({ tickets, original, record }: { tickets: NonNullable<Report["t
         const slip = tickets[t.id];
         return (
           <div key={t.id} role="tabpanel" hidden={tab !== t.id}>
-            {slip ? <ImprovedSlip title={`${t.name} ticket`} blurb={t.blurb} slip={slip} original={original} />
-              : <p className="card p-4 text-sm text-n-400">No pick on these games is {target(t.least)} likely on its own, so there&apos;s no {t.name.toLowerCase()} ticket.</p>}
+            {slip ? <ImprovedSlip title={`${t.name} ticket`} original={original} slip={slip}
+                blurb={changed ? `At least a ${target(slip.target_chance ?? leastFor(settings, t.id))} chance of winning, within your settings.` : t.blurb} />
+              : <p className="card p-4 text-sm text-n-400 text-pretty">{notes?.[t.id] ??
+                  `No pick on these games is ${target(leastFor(settings, t.id))} likely on its own, so there's no ${t.name.toLowerCase()} ticket.`}</p>}
           </div>
         );
       })}
@@ -233,20 +347,23 @@ function Tickets({ tickets, original, record }: { tickets: NonNullable<Report["t
   );
 }
 
-export function CodeCheck({ onLocked }: { onLocked?: () => void }) {
+export function CodeCheck({ onLocked, initialCode }: { onLocked?: () => void; initialCode?: string | null }) {
   const authFetch = useAuthedFetch();
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(initialCode ?? "");
   const [busy, setBusy] = useState(false);
   const [report, setReport] = useState<Report | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  const [refined, setRefined] = useState(false);   // settings applied: show the tickets straight away
 
-  const check = async () => {
+  const check = async (withSettings: Settings = settings, keepReport = false) => {
     const code = input.trim().toUpperCase();
     if (!code) return;
-    setBusy(true); setError(null); setReport(null);
+    setBusy(true); setError(null);
+    if (!keepReport) setReport(null);
     try {
       const r = await authFetch(`${API}/api/optimizer/code`, { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code }) });
+        body: JSON.stringify({ code, settings: withSettings }) });
       if ((r.status === 401 || r.status === 402) && onLocked) { setBusy(false); onLocked(); return; }
       const d = await r.json().catch(() => null);
       if (!r.ok || !d) throw new Error(d?.detail || (r.status >= 500
@@ -256,6 +373,14 @@ export function CodeCheck({ onLocked }: { onLocked?: () => void }) {
     } catch (e: any) { setError(e?.message || "Couldn't check that code."); }
     setBusy(false);
   };
+  const refine = (s: Settings) => { setSettings(s); setRefined(true); check(s, true); };
+
+  // Opened from a booked code ("Refine" on a ticket or slip): check it straight away
+  const started = useRef(false);
+  useEffect(() => {
+    if (initialCode && !started.current) { started.current = true; check(); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialCode]);
 
   return (
     <div className="space-y-4">
@@ -265,7 +390,7 @@ export function CodeCheck({ onLocked }: { onLocked?: () => void }) {
           <p className="text-xs text-n-400 mt-0.5">Paste any booking code. We rate every game with our model, point out the risky ones,
             and build a version with a better chance of winning.</p>
         </div>
-        <form className="flex gap-2" onSubmit={e => { e.preventDefault(); check(); }}>
+        <form className="flex gap-2" onSubmit={e => { e.preventDefault(); setRefined(false); check(); }}>
           <input value={input} onChange={e => setInput(e.target.value.replace(/[^A-Za-z0-9]/g, "").slice(0, 16))}
             placeholder="e.g. 7XK2P9" autoCapitalize="characters" spellCheck={false}
             className="flex-1 min-w-0 rounded-xl bg-surface-sunken border border-n-800 px-4 py-2.5 font-mono tracking-[0.15em] uppercase text-n-0 outline-none focus:border-accent" />
@@ -318,7 +443,8 @@ export function CodeCheck({ onLocked }: { onLocked?: () => void }) {
           </section>
 
           {report.tickets ? (
-            <Tickets tickets={report.tickets} original={report.original} record={report.record} />
+            <Tickets tickets={report.tickets} original={report.original} record={report.record}
+              notes={report.ticket_notes} settings={settings} onRefine={refine} busy={busy} startOpen={refined || !!initialCode} />
           ) : !report.same_odds && !report.safest ? (
             <p className="card p-4 text-sm text-n-400 flex items-center gap-2"><CheckCircle2 size={15} />
               None of these games are ones we predict, so there&apos;s nothing to improve.</p>

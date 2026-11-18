@@ -304,6 +304,12 @@ export default function OptimizerPage() {
   const slip = useBetSlip();
 
   const [mode, setMode] = useState<"build" | "code">("build");
+  // /optimizer?code=ABC123 ("Refine" on a booked code): the code checker, with that code checked
+  const [linkedCode, setLinkedCode] = useState<string | null>(null);
+  useEffect(() => {
+    const c = new URLSearchParams(window.location.search).get("code");
+    if (c && /^[A-Za-z0-9]{4,16}$/.test(c)) { setLinkedCode(c.toUpperCase()); setMode("code"); }
+  }, []);
   // The modes switched on for this visitor (admin → Access)
   const modes = ([["build", "Build a slip", "optimizer"], ["code", "Check my SportyBet code", "code_check"]] as const)
     .filter(([, , f]) => access.shown(f));
@@ -522,7 +528,7 @@ export default function OptimizerPage() {
 
         {active === "code" ? (
           <FeatureGate feature="code_check" title="Check a SportyBet code" perks={CODE_PERKS} locked={locked === "code"}>
-            <CodeCheck onLocked={() => setLocked("code")} />
+            <CodeCheck key={linkedCode ?? ""} initialCode={linkedCode} onLocked={() => setLocked("code")} />
           </FeatureGate>
         ) : <FeatureGate feature="optimizer" title="Optimizer" perks={BUILD_PERKS} locked={locked === "build"}>
         {/* Settings */}

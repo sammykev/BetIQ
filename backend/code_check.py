@@ -43,6 +43,46 @@ PRICE_MARGIN = 1.05       # a model chance counts at no more than PRICE_MARGIN /
 MAX_TICKET_ODDS = 1e6
 MAX_OPTIONS = 80          # per game on a ticket (a basketball game can have hundreds of lines)
 
+# ── the refine settings (the "Refine settings" panel) ────────────────────
+# How strict: each ticket's least chance of every leg winning
+STRICTNESS = {"strict": (0.60, 0.30, 0.15), "balanced": (0.50, 0.25, 0.125), "loose": (0.40, 0.20, 0.10)}
+# "Main markets only": the result, goals and winner lines everyone knows
+MAIN_MARKETS = {"1x2", "double_chance", "dnb", "goals_ou", "btts", "handicap", "home_goals_ou", "away_goals_ou",
+                "bb_winner", "bb_1x2", "bb_handicap", "bb_total", "winner", "rk_winner", "rk_set_handicap",
+                "rk_games_handicap", "rk_total_games", "rk_total_sets"}
+DEFAULTS = {"strictness": "balanced", "min_odds": None, "max_odds": None, "max_leg_odds": None,
+            "keep_all": False, "keep_strong": None, "main_markets": False}
+
+
+def settings_of(raw: Any) -> Dict[str, Any]:
+    """The refine settings from a request, each checked; anything missing or
+    out of range falls back to the default."""
+    raw = raw if isinstance(raw, dict) else {}
+    out = dict(DEFAULTS)
+    if raw.get("strictness") in STRICTNESS:
+        out["strictness"] = raw["strictness"]
+
+    def num(k, lo, hi):
+        try:
+            v = float(raw.get(k))
+        except (TypeError, ValueError):
+            return None
+        return v if lo <= v <= hi else None
+    out["min_odds"] = num("min_odds", 1.01, 1e6)
+    out["max_odds"] = num("max_odds", 1.01, 1e6)
+    if out["min_odds"] and out["max_odds"] and out["min_odds"] > out["max_odds"]:
+        out["min_odds"], out["max_odds"] = out["max_odds"], out["min_odds"]
+    out["max_leg_odds"] = num("max_leg_odds", 1.05, 100)
+    out["keep_strong"] = num("keep_strong", 0.5, 0.99)
+    out["keep_all"] = raw.get("keep_all") is True
+    out["main_markets"] = raw.get("main_markets") is True
+    return out
+
+
+def chances_of(settings: Dict[str, Any]) -> List[tuple]:
+    """[(ticket, least chance)] for the settings' strictness."""
+    return list(zip(("safe", "conservative", "risky"), STRICTNESS[settings.get("strictness") or "balanced"]))
+
 
 def _when(ms: Any) -> tuple:
     try:
@@ -124,14 +164,16 @@ def analyse(selections: List[Dict], find_pred: Callable[[Dict], Optional[Dict]],
             event_for: Callable[[Dict], Optional[Dict]], confirmed: Dict[str, str],
             allowed: Optional[Callable[[str, str], bool]] = None,
             find_other: Optional[Callable[[Dict], Optional[Dict]]] = None,
-            adjust: Optional[Callable[[Option], Optional[Option]]] = None) -> Dict[str, Any]:
+            adjust: Optional[Callable[[Option], Optional[Option]]] = None,
+            settings: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Legs with verdicts and suggestions, the code as it stands, and the
     three tickets. `find_pred(sel)` → our football prediction for its match;
     `find_other(sel)` → our basketball / tennis / table tennis prediction for
     its SportyBet event; `event_for(pred)` → a football match's linked
     SportyBet event (prices); `adjust(option)` → the option as the optimizer
     would count it, or None to leave it out (held-out markets, the price check)."""
-    legs, groups, chances = [], [], []
+    settings = settings_of(settings)
+    legs, groups, chances, games, kept_mine = [], [], [], [], 0
     for sel in selections:
         date, time = _when(sel.get("start"))
         odds = sel.get("odds")
@@ -204,7 +246,18 @@ def analyse(selections: List[Dict], find_pred: Callable[[Dict], Optional[Dict]],
         own = Option(sel["home"], sel["away"], date, time, leg["league"], own_market, sel["market"], own_code,
                      sel["outcome"], round(chance, 4), round(float(odds), 2),
                      "sportybet" if prob is not None else "odds_only", sb=_ids(sel), sport=sport)
-        groups.append([own] + options)
+        games.append(f"{sel['home']} v {sel['away']}")
+        # The refine settings: main markets only, a strong pick of yours kept, the most odds a game
+        if settings["main_markets"]:
+            options = [o for o in options if o.market in MAIN_MARKETS]
+        group = [own] + options
+        if settings["keep_strong"] and prob is not None and chance >= settings["keep_strong"]:
+            group = [own]
+            kept_mine += 1
+        if settings["max_leg_odds"]:
+            group = [o for o in group if o.odds <= settings["max_leg_odds"]]
+        if group:
+            groups.append(group)
 
     known = [c for c in chances if c is not None]
     odds_all = [l["odds"] for l in legs if l["odds"]]
@@ -213,24 +266,51 @@ def analyse(selections: List[Dict], find_pred: Callable[[Dict], Optional[Dict]],
                            "win_chance": round(math.prod(known), 4) if known else None,
                            "from_odds": sum(1 for l in legs if l["chance_from"] == "odds"),
                            "unmodelled": sum(1 for l in legs if l["chance_from"] == "odds")},
-              "same_odds": None, "safest": None, "tickets": _tickets(groups) if groups else None}
+              "same_odds": None, "safest": None, "tickets": None, "ticket_notes": {},
+              "settings": settings, "kept_strong": kept_mine}
+    if groups:
+        report["tickets"], report["ticket_notes"] = _tickets(groups, settings, games)
     return report
 
 
-def _tickets(groups: List[List[Option]]) -> Dict[str, Optional[Dict[str, Any]]]:
-    """Each ticket: the highest odds at its least chance, on as many of the
-    code's games as that chance allows (None when not even one leg is that
-    likely)."""
+def _pc(x: float) -> str:
+    return f"{x * 100:.1f}".rstrip("0").rstrip(".") + "%"
+
+
+def _tickets(groups: List[List[Option]], settings: Optional[Dict[str, Any]] = None,
+             games: Optional[List[str]] = None) -> tuple:
+    """Each ticket: the highest odds (up to the settings' most) at its least
+    chance, on as many of the code's games as that chance allows. Returns
+    ({ticket: slip or None}, {ticket: why there's none})."""
+    settings = settings_of(settings)
+    games = games or [f"{g[0].home} v {g[0].away}" for g in groups]
+    hi = settings["max_odds"] or MAX_TICKET_ODDS
     out: Dict[str, Optional[Dict[str, Any]]] = {}
-    for name, least in TICKETS:
-        res = optimize_safe(groups, least, MAX_TICKET_ODDS, len(groups), min_edge=None, most_games=True)
+    notes: Dict[str, str] = {}
+    surest = math.prod(max(o.prob for o in g) for g in groups)
+    for name, least in chances_of(settings):
+        if settings["keep_all"] and (len(groups) < len(games) or surest < least - 1e-9):
+            out[name] = None
+            notes[name] = (f"Keeping all {len(games)} games, the best chance is {_pc(surest)}: under {_pc(least)}. "
+                           "Untick \"keep all my games\" or pick a looser setting."
+                           if len(groups) == len(games) else
+                           f"{len(games) - len(groups)} of your games have no pick within your settings, "
+                           "so they can't all be kept.")
+            continue
+        res = optimize_safe(groups, least, hi, len(groups), min_edge=None, most_games=True)
         if not res:
             out[name] = None
+            notes[name] = f"No pick on these games is {_pc(least)} likely within your settings."
+            continue
+        if settings["min_odds"] and res["total_odds"] < settings["min_odds"] - 1e-9:
+            out[name] = None
+            notes[name] = (f"At {_pc(least)} these games pay at most {res['total_odds']:,.2f}x, "
+                           f"under your {settings['min_odds']:,.2f}x minimum.")
             continue
         on = {(p["home"], p["away"]) for p in res["picks"]}
-        left = [f"{g[0].home} v {g[0].away}" for g in groups if (g[0].home, g[0].away) not in on]
+        left = [g for g in games if tuple(g.split(" v ", 1)) not in on]
         out[name] = {**_slip(res["picks"]), "target_chance": least, "left_out": left}
-    return out
+    return out, notes
 
 
 # ── how the refined tickets do ────────────────────────────────────────────
