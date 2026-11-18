@@ -95,18 +95,19 @@ def test_the_page_endpoint_serves_the_stored_week_and_the_record(monkeypatch):
     assert rec["favourites_avg"] == 4 and rec["ours_avg"] == 6 and rec["ours_weeks"] == 1
 
 
-def test_a_weeks_pool_and_a_tickets_rough_return():
+def test_a_weeks_pool_and_what_a_ticket_buys():
     week = {"sales": "56851400.00", "maxWinnings": 83076910, "winnings": [
         {"correctEvents": 11, "winNum": 12, "perWinnings": "568514.00"},
         {"correctEvents": 10, "winNum": 176, "perWinnings": "9690.58"}]}
     p = jp.pool_of(week)
     assert p["sales"] == 56851400 and p["tiers"]["11"] == {"winners": 12, "each": 568514.0}
-    # 12% and 3% of sales went to the 11 and 10 tiers
-    assert round(12 * 568514 / p["sales"], 3) == 0.12 and round(176 * 9690.58 / p["sales"], 3) == 0.03
     t = {"lines": 1, "prizes": {"12": 0.0001, "11": 0.001, "10": 0.01}}
-    r = jp.expected_return(t, 100, 1_000_000, [p])
-    assert r["stake"] == 100 and abs(r["return"] - (0.0001 * 1e6 + 0.0009 * 568514 + 0.009 * 9690.58)) < 0.01
-    assert jp.expected_return(t, 0, 1, [p]) is None
+    v = jp.ticket_value(t, 100, 1_000_000, [p])
+    # prizes 2 and 3 were 12% + 3% of sales; 1e6 × 0.0001 = 100 back for 100 staked: nobody else can share
+    assert v["stake"] == 100 and v["lower_back"] == 0.15 and v["top_ev_unshared"] == 100 and v["breakeven_sharers"] == 0
+    assert jp.ticket_value(t, 0, 1, [p]) is None
+    hist = {"20261115": p, "20261108": {"tiers": {"12": {"winners": 1, "each": 5e7}}}, "20261101": p}
+    assert jp.weeks_without_top(hist) == 1
 
 
 def test_returns_go_on_every_ticket_from_recent_weeks():
@@ -116,6 +117,6 @@ def test_returns_go_on_every_ticket_from_recent_weeks():
         {"correctEvents": 10, "winNum": 176, "perWinnings": "9690.58"}]}), "20261122": {"ours": {}}}
     jp.add_returns(a, 50.0, hist)
     assert a["line_price"] == 50.0
-    assert all(t["value"]["stake"] == t["lines"] * 50 for t in a["tickets"])
+    assert all(t["value"]["stake"] == t["lines"] * 50 and t["value"]["lower_back"] == 0.15 for t in a["tickets"])
     jp.add_returns(a, None, hist)
     assert all(t["value"] is None for t in a["tickets"])

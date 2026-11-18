@@ -21,12 +21,13 @@ interface Match {
 }
 interface Ticket {
   lines: number; picks: string[]; prizes: Record<string, number>; one_in: number | null;
-  /** Rough return at the line price: top prize if unshared, lower tiers at recent payouts */
-  value?: { stake: number; return: number; per_naira: number | null } | null;
+  /** What the stake buys: prizes 2 and 3 pay a share of all stakes; the top prize's worth depends on who shares it */
+  value?: { stake: number; lower_back: number | null; top_ev_unshared: number; breakeven_sharers: number | null } | null;
 }
 interface Current {
   periodNumber: string; deadline?: number; maxWinnings?: number; currency?: string; games: number;
   matches: Match[]; tickets: Ticket[]; model_matches: number; line_price?: number | null;
+  weeks_without_top?: number | null;
 }
 interface Week { period: string; results: string | null; favourites_right: number | null; ours_right: number | null }
 interface JackpotResponse {
@@ -130,15 +131,27 @@ function Jackpot() {
           ))}
         </div>
         {ticket.value && (
-          <p className="text-sm text-n-300 text-pretty">
-            Stake <span className="font-semibold text-n-100 tnum">{naira(ticket.value.stake, cur.currency)}</span>
-            {" "}({ticket.lines} × {naira(cur.line_price ?? undefined, cur.currency)}). Expected back, roughly:
-            {" "}<span className="font-semibold text-n-100 tnum">{naira(Math.round(ticket.value.return), cur.currency)}</span>
-            {ticket.value.per_naira != null && <> ({ticket.value.per_naira.toFixed(2)} per 1 staked)</>}.
-            <span className="block text-xs text-n-500 mt-1">
-              Counts the top prize as if nobody shared it, and the smaller prizes at what winners were paid in recent weeks.
-            </span>
-          </p>
+          <div className="text-sm text-n-300 space-y-1.5 text-pretty">
+            <p>
+              Stake <span className="font-semibold text-n-100 tnum">{naira(ticket.value.stake, cur.currency)}</span>
+              {cur.line_price ? <> ({ticket.lines} × {naira(cur.line_price, cur.currency)})</> : null}.
+            </p>
+            {ticket.value.lower_back != null && (
+              <p className="text-xs text-n-400">
+                The {prizes[1]}- and {prizes[2]}-right prizes share {Math.round(ticket.value.lower_back * 100)}% of everyone&apos;s
+                stakes between their winners, so across all players they pay back about {Math.round(ticket.value.lower_back * 100)}
+                {" "}kobo per naira.
+              </p>
+            )}
+            {ticket.value.breakeven_sharers != null && (
+              <p className="text-xs text-n-400">
+                The rest is the top prize: this ticket pays back on average only if no more than
+                {" "}<span className="tnum">{ticket.value.breakeven_sharers.toLocaleString("en-US")}</span> other players also get
+                all {prizes[0]}, and most players pick the favourites.
+                {cur.weeks_without_top ? <> Nobody has got all {prizes[0]} in the last {cur.weeks_without_top} weeks.</> : null}
+              </p>
+            )}
+          </div>
         )}
       </section>
 

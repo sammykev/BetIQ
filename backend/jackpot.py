@@ -172,25 +172,37 @@ def pool_of(week: Dict) -> Dict[str, Any]:
     return {"sales": sales, "top_prize": week.get("maxWinnings"), "tiers": tiers}
 
 
-def expected_return(ticket: Dict, price: float, top_prize: float, past: List[Dict]) -> Optional[Dict[str, float]]:
-    """Rough return on a ticket at `price` a line, from recent weeks: the top
-    prize if the best line gets every match (shared with nobody else, which
-    flatters it), and the other tiers at what their winners were paid on
-    average. Only the best line is counted, so a combination ticket's extra
-    lower-tier wins are left out."""
-    if not price or not past:
+def ticket_value(ticket: Dict, price: float, top_prize: float, past: List[Dict]) -> Optional[Dict[str, Any]]:
+    """What a ticket's stake buys, without pretending to know how many others
+    share a prize (prizes 2 and 3 are shares of sales split among however
+    many hit them, and favourites-heavy results have many winners):
+    - stake: lines × price;
+    - lower_back: what prizes 2 and 3 paid out per 1 staked across all
+      players in recent weeks (their share of sales);
+    - top_ev_unshared: the top prize × this ticket's chance of all correct;
+    - breakeven_sharers: how many others could also hit all correct before
+      the top prize alone, on average, stops paying back the stake."""
+    if not price:
         return None
-    pay = {}
-    for k in {k for w in past for k in (w.get("tiers") or {})}:
-        each = [w["tiers"][k]["each"] for w in past if (w.get("tiers") or {}).get(k, {}).get("winners")]
-        if each:
-            pay[k] = sum(each) / len(each)
-    pz = ticket.get("prizes") or {}
-    keys = sorted(pz, key=int, reverse=True)
-    exact = {k: pz[k] - (pz[keys[i - 1]] if i else 0) for i, k in enumerate(keys)}   # at-least → exactly
-    ret = sum(exact[k] * (top_prize if i == 0 else pay.get(k, 0)) for i, k in enumerate(keys))
     stake = ticket["lines"] * price
-    return {"stake": stake, "return": round(ret, 2), "per_naira": round(ret / stake, 3) if stake else None}
+    shares = [sum(t["winners"] * t["each"] for k, t in (w.get("tiers") or {}).items()) / w["sales"]
+              for w in past if w.get("sales")]
+    keys = sorted(ticket.get("prizes") or {}, key=int, reverse=True)
+    top_ev = (ticket["prizes"][keys[0]] if keys else 0) * top_prize
+    return {"stake": stake, "lower_back": round(sum(shares) / len(shares), 3) if shares else None,
+            "top_ev_unshared": round(top_ev, 2), "breakeven_sharers": max(0, int(top_ev / stake) - 1) if stake else None}
+
+
+def weeks_without_top(history: Dict[str, Dict], top: str = "12") -> Optional[int]:
+    """Settled weeks in a row, newest first, where nobody hit every match."""
+    n = 0
+    for _, h in sorted(history.items(), reverse=True):
+        if "tiers" not in h:
+            continue
+        if (h["tiers"].get(top) or {}).get("winners"):
+            return n
+        n += 1
+    return n if n else None
 
 
 def score_week(elements: List[Dict], picks: Dict[int, str]) -> Optional[int]:
@@ -250,8 +262,9 @@ def add_returns(a: Dict, price: Optional[float], history: Dict[str, Dict], weeks
     settled weeks' payouts and this week's top prize."""
     past = [h for _, h in sorted(history.items(), reverse=True) if h.get("tiers")][:weeks]
     a["line_price"] = price
+    a["weeks_without_top"] = weeks_without_top(history)
     for t in a["tickets"]:
-        t["value"] = expected_return(t, price or 0, float(a.get("maxWinnings") or 0), past)
+        t["value"] = ticket_value(t, price or 0, float(a.get("maxWinnings") or 0), past)
 
 
 async def fetch_current(session) -> Tuple[Dict, Dict]:
@@ -359,13 +372,14 @@ async def main_async(history: int) -> None:
             print(json.dumps(await fetch_previous(session, options[0]), default=str)[:3000])
     price = await fetch_line_price(session)
     add_returns(a, price, hist)
-    print(f"\n== Rough return at {a.get('currency')} {price} a line (top prize if unshared; "
-          "lower tiers at recent weeks' payouts) ==")
+    print(f"\n== At {a.get('currency')} {price} a line: prizes 2 and 3 paid back "
+          f"{(a['tickets'][0].get('value') or {}).get('lower_back')} per 1 staked across all players lately; "
+          f"{a.get('weeks_without_top')} weeks in a row without anyone hitting all {a['games']} ==")
     for t in a["tickets"]:
         v = t.get("value")
         if v:
-            print(f"  {t['lines']:>4} lines: stake {v['stake']:,.0f}, expected back {v['return']:,.0f} "
-                  f"({v['per_naira']:.2f} per 1 staked)")
+            print(f"  {t['lines']:>4} lines: stake {v['stake']:,.0f}; the top prize alone pays back on average only if "
+                  f"no more than {v['breakeven_sharers']:,} others also hit all {a['games']}")
     if r is not None:
         r.set(KEY, json.dumps({"current": a, "banner": banner, "history": hist,
                                "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}))
