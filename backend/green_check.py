@@ -112,6 +112,7 @@ def daily_report(r) -> None:
     combined chances (win_chance) said would, and by how sure the slip was."""
     rows: Dict[str, List] = defaultdict(list)
     bands: Dict[str, List] = defaultdict(list)
+    legs: Dict[str, List] = defaultdict(list)
     for i in range(DAYS):
         d = (date.today() - timedelta(days=i)).isoformat()
         try:
@@ -123,6 +124,12 @@ def daily_report(r) -> None:
             if sl.get("status") not in ("won", "lost") or not isinstance(wc, (int, float)):
                 continue
             won = sl["status"] == "won"
+            for pk in sl.get("picks") or []:
+                if pk.get("status") in ("won", "lost") and isinstance(pk.get("prob"), (int, float)):
+                    m = str(pk.get("market") or "")
+                    sport = "basketball" if m.startswith("bb_") else "tennis" if m.startswith("rk_") else "football"
+                    for key in ("all", sport, f"{sport}:{m}", f"month {d[:7]}"):
+                        legs[key].append((pk["prob"], pk["status"] == "won"))
             rows[str(int(sl.get("target") or 0))].append((wc, won))
             band = "40%+" if wc >= 0.4 else "30-40%" if wc >= 0.3 else "20-30%" if wc >= 0.2 else "10-20%" if wc >= 0.1 else "<10%"
             bands[band].append((wc, won))
@@ -136,6 +143,15 @@ def daily_report(r) -> None:
     for k in ("<10%", "10-20%", "20-30%", "30-40%", "40%+"):
         if bands.get(k):
             show(k, bands[k])
+    print("  the slips' legs (hit vs said):")
+    leg = lambda k, v: print(f"    {k[:30]:<30} n {len(v):>4}  hit {100 * sum(w for _, w in v) / len(v):5.1f}%  "
+                             f"said {100 * sum(c for c, _ in v) / len(v):5.1f}%")
+    for k in ["all", "football", "basketball", "tennis"] + sorted(k for k in legs if k.startswith("month")):
+        if legs.get(k):
+            leg(k, legs[k])
+    for k, v in sorted(((k, v) for k, v in legs.items() if ":" in k and len(v) >= 15),
+                       key=lambda kv: sum(w for _, w in kv[1]) / len(kv[1]) - sum(c for c, _ in kv[1]) / len(kv[1])):
+        leg(k, v)
 
 
 _r = None
