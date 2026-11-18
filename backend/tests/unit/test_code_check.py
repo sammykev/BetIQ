@@ -341,3 +341,44 @@ def test_refine_settings():
     assert all(p["market"] in code_check.MAIN_MARKETS or p["market"] == "sportybet" or p.get("sb")
                for t in main.values() if t for p in t["picks"])
     assert base["safe"]
+
+
+def test_every_ticket_shows_its_expected_return():
+    t = _refine(None)["tickets"]
+    for slip in t.values():
+        if slip:
+            assert slip["expected_return"] == pytest.approx(slip["win_chance"] * slip["total_odds"], rel=1e-2)
+
+
+def test_value_mode_takes_only_picks_worth_their_price():
+    r = _refine({"value": True})
+    for slip in r["tickets"].values():
+        if slip:
+            assert slip["games"] <= code_check.VALUE_MAX_LEGS
+            assert all(p["prob"] * p["odds"] >= code_check.VALUE_MIN_RETURN for p in slip["picks"])
+            assert slip["expected_return"] >= 1.0
+    # nothing qualifies: explained
+    import optimizer
+    from dataclasses import replace
+    orig = code_check.candidates
+    code_check.candidates = lambda *a, **k: [replace(o, odds_source="sportybet", odds=round(0.9 / o.prob, 2))
+                                             for o in orig(*a, **k)]
+    try:
+        r = code_check.analyse(sportybet.parse_share(SHARE), lambda s: pred() if s["eventId"] == "sr:match:1" else None,
+                               lambda _: None, confirmed={}, settings={"value": True})
+    finally:
+        code_check.candidates = orig
+    assert r["tickets"]["safe"] is None and "value mode" in r["ticket_notes"]["safe"]
+
+
+def test_multi_bonus_share():
+    import multi_bonus
+    old = dict(multi_bonus.TABLE)
+    multi_bonus.TABLE.update({3: 0.03, 5: 0.05})
+    try:
+        picks = [{"odds": 1.5}] * 4 + [{"odds": 1.1}]
+        assert multi_bonus.share(picks) == 0.03          # the 1.10 doesn't count
+        assert multi_bonus.share([{"odds": 1.5}] * 6) == 0.05
+    finally:
+        multi_bonus.TABLE.clear()
+        multi_bonus.TABLE.update(old)

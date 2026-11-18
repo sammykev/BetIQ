@@ -8,6 +8,7 @@ import { useBetSlip } from "@/lib/useBetSlip";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
 import { useUser } from "@clerk/nextjs";
 import type { SlipSelection } from "@/lib/slip";
+import { StakeHint } from "@/components/StakeHint";
 
 // Paste a SportyBet booking code: backend/code_check.py scores every leg
 // with the model, suggests better picks, and "Refine" turns it into three
@@ -33,7 +34,9 @@ interface Pick {
 }
 interface Slip { picks: Pick[]; games: number; total_odds: number | null; win_chance: number | null;
   unmodelled: number; estimated_prices: number; target_odds?: number;
-  from_odds?: number; target_chance?: number; left_out?: string[] }
+  from_odds?: number; target_chance?: number; left_out?: string[];
+  /** What 1 staked returns on average (chance × odds, with SportyBet's bonus) */
+  expected_return?: number | null; bonus?: number; left_because?: "chance" | "value" }
 interface Report {
   code: string; legs: Leg[];
   original: { games: number; total_odds: number | null; win_chance: number | null; unmodelled: number; from_odds?: number };
@@ -62,10 +65,10 @@ type TicketId = (typeof TICKETS)[number]["id"];
 interface Settings {
   strictness: "strict" | "balanced" | "loose";
   min_odds: number | null; max_odds: number | null; max_leg_odds: number | null;
-  keep_all: boolean; keep_strong: number | null; main_markets: boolean;
+  keep_all: boolean; keep_strong: number | null; main_markets: boolean; value: boolean;
 }
 const DEFAULT_SETTINGS: Settings = { strictness: "balanced", min_odds: null, max_odds: null, max_leg_odds: null,
-  keep_all: false, keep_strong: null, main_markets: false };
+  keep_all: false, keep_strong: null, main_markets: false, value: false };
 const STRICTNESS: { id: Settings["strictness"]; name: string; chances: [number, number, number]; note: string }[] = [
   { id: "strict", name: "Strict", chances: [0.6, 0.3, 0.15], note: "Surer tickets, smaller odds" },
   { id: "balanced", name: "Balanced", chances: [0.5, 0.25, 0.125], note: "50%, 25% and 12.5%" },
@@ -81,7 +84,7 @@ function RefineSettings({ value, onApply, busy }: { value: Settings; onApply: (s
   const [minT, setMinT] = useState(value.min_odds ? String(value.min_odds) : "");
   const [maxT, setMaxT] = useState(value.max_odds ? String(value.max_odds) : "");
   const num = (t: string) => { const v = parseFloat(t); return Number.isFinite(v) && v > 1 ? v : null; };
-  const toggle = (k: "keep_all" | "main_markets", label: string, help: string) => (
+  const toggle = (k: "keep_all" | "main_markets" | "value", label: string, help: string) => (
     <label className="flex items-start gap-2.5 text-sm text-n-200 cursor-pointer">
       <input type="checkbox" checked={s[k]} onChange={e => setS({ ...s, [k]: e.target.checked })}
         className="mt-0.5 size-4 accent-[rgb(var(--accent))]" />
@@ -131,6 +134,8 @@ function RefineSettings({ value, onApply, busy }: { value: Settings; onApply: (s
         </div>
       </div>
       <div className="space-y-3">
+        {toggle("value", "Value mode", "Only picks worth more than their odds, in markets that have made money, and at most 4 games. "
+          + "Fewer tickets, but each should pay back more than it costs on average.")}
         {toggle("keep_all", "Keep all my games", "Don't drop a game to reach the chance; no ticket if they can't all fit.")}
         <label className="flex items-start gap-2.5 text-sm text-n-200 cursor-pointer">
           <input type="checkbox" checked={s.keep_strong !== null} onChange={e => setS({ ...s, keep_strong: e.target.checked ? 0.75 : null })}
@@ -212,10 +217,31 @@ function ImprovedSlip({ title, blurb, slip, original }: { title: string; blurb: 
         <p className="text-xs text-accent flex items-center gap-1.5"><Check size={13} />
           {better >= 2 ? `${better.toFixed(1)}×` : `${Math.round((better - 1) * 100)}%`} more likely to win than your code</p>
       )}
+      {typeof slip.expected_return === "number" && (
+        <div className={clsx("rounded-xl px-3 py-2.5 text-sm", slip.expected_return >= 1 ? "bg-accent/10 text-n-100" : "bg-surface-sunken text-n-300")}>
+          <p>
+            ₦100 on this ticket returns about{" "}
+            <span className={clsx("font-bold tnum", slip.expected_return >= 1 ? "text-accent" : "text-n-0")}>
+              ₦{Math.round(slip.expected_return * 100)}</span> on average
+            {slip.bonus ? <> (with SportyBet&apos;s {Math.round(slip.bonus * 100)}% bonus)</> : null}.
+          </p>
+          <p className="text-[11px] text-n-400 mt-0.5 text-pretty">
+            {slip.expected_return >= 1
+              ? "Worth more than it costs by our checked chances. It can still lose: that's the average over many tickets."
+              : `It costs about ₦${100 - Math.round(slip.expected_return * 100)} per ₦100 on average: the price of `
+                + "SportyBet's cut on every leg. Value mode in Refine settings looks for tickets worth their price."}
+          </p>
+        </div>
+      )}
+      {slip.win_chance !== null && slip.total_odds !== null && (
+        <StakeHint chance={slip.win_chance} odds={slip.total_odds * (1 + (slip.bonus ?? 0))} />
+      )}
       {(slip.left_out?.length ?? 0) > 0 && (
         <p className="text-xs text-n-400 text-pretty">
-          Left out to keep the chance at {target(slip.target_chance)}: {slip.left_out!.join(", ")}.
-          Even their surest picks would pull it under.
+          {slip.left_because === "value"
+            ? <>Left out (no pick worth more than its odds in a market that has made money, or more than 4 games): {slip.left_out!.join(", ")}.</>
+            : <>Left out to keep the chance at {target(slip.target_chance)}: {slip.left_out!.join(", ")}.
+                Even their surest picks would pull it under.</>}
         </p>
       )}
       {(slip.from_odds ?? 0) > 0 && (

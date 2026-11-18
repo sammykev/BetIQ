@@ -51,7 +51,29 @@ MAIN_MARKETS = {"1x2", "double_chance", "dnb", "goals_ou", "btts", "handicap", "
                 "bb_winner", "bb_1x2", "bb_handicap", "bb_total", "winner", "rk_winner", "rk_set_handicap",
                 "rk_games_handicap", "rk_total_games", "rk_total_sets"}
 DEFAULTS = {"strictness": "balanced", "min_odds": None, "max_odds": None, "max_leg_odds": None,
-            "keep_all": False, "keep_strong": None, "main_markets": False}
+            "keep_all": False, "keep_strong": None, "main_markets": False, "value": False}
+# Value mode: only picks worth more than their price (our checked chance × odds
+# at least VALUE_MIN_RETURN) in markets whose picks have made money at their
+# odds, and few legs (SportyBet's ~5% is taken on every leg)
+VALUE_MIN_RETURN = 1.01
+VALUE_MAX_LEGS = 4
+
+
+def bonus(picks: List[Dict[str, Any]]) -> float:
+    """SportyBet's multi-bet bonus on a ticket (a share of the winnings), from
+    multi_bonus.py's table; 0 without one."""
+    try:
+        import multi_bonus
+        return multi_bonus.share(picks)
+    except Exception:
+        return 0.0
+
+
+def expected_return(slip: Dict[str, Any]) -> Optional[float]:
+    """What 1 staked returns on average: chance × odds, with the bonus."""
+    if not slip.get("win_chance") or not slip.get("total_odds"):
+        return None
+    return round(slip["win_chance"] * slip["total_odds"] * (1 + bonus(slip.get("picks") or [])), 3)
 
 
 def settings_of(raw: Any) -> Dict[str, Any]:
@@ -76,6 +98,7 @@ def settings_of(raw: Any) -> Dict[str, Any]:
     out["keep_strong"] = num("keep_strong", 0.5, 0.99)
     out["keep_all"] = raw.get("keep_all") is True
     out["main_markets"] = raw.get("main_markets") is True
+    out["value"] = raw.get("value") is True
     return out
 
 
@@ -165,7 +188,8 @@ def analyse(selections: List[Dict], find_pred: Callable[[Dict], Optional[Dict]],
             allowed: Optional[Callable[[str, str], bool]] = None,
             find_other: Optional[Callable[[Dict], Optional[Dict]]] = None,
             adjust: Optional[Callable[[Option], Optional[Option]]] = None,
-            settings: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+            settings: Optional[Dict[str, Any]] = None,
+            market_paid: Optional[Callable[[str, str], bool]] = None) -> Dict[str, Any]:
     """Legs with verdicts and suggestions, the code as it stands, and the
     three tickets. `find_pred(sel)` → our football prediction for its match;
     `find_other(sel)` → our basketball / tennis / table tennis prediction for
@@ -256,6 +280,10 @@ def analyse(selections: List[Dict], find_pred: Callable[[Dict], Optional[Dict]],
             kept_mine += 1
         if settings["max_leg_odds"]:
             group = [o for o in group if o.odds <= settings["max_leg_odds"]]
+        if settings["value"]:
+            # Worth more than its price, at SportyBet's real price, in a market that has paid
+            group = [o for o in group if o.odds_source == "sportybet" and o.prob * o.odds >= VALUE_MIN_RETURN
+                     and (market_paid is None or market_paid(o.sport, o.market))]
         if group:
             groups.append(group)
 
@@ -268,7 +296,7 @@ def analyse(selections: List[Dict], find_pred: Callable[[Dict], Optional[Dict]],
                            "unmodelled": sum(1 for l in legs if l["chance_from"] == "odds")},
               "same_odds": None, "safest": None, "tickets": None, "ticket_notes": {},
               "settings": settings, "kept_strong": kept_mine}
-    if groups:
+    if games:      # (groups can be empty when the settings leave no pick: _tickets explains)
         report["tickets"], report["ticket_notes"] = _tickets(groups, settings, games)
     return report
 
@@ -288,6 +316,10 @@ def _tickets(groups: List[List[Option]], settings: Optional[Dict[str, Any]] = No
     out: Dict[str, Optional[Dict[str, Any]]] = {}
     notes: Dict[str, str] = {}
     surest = math.prod(max(o.prob for o in g) for g in groups)
+    if settings["value"] and not groups:
+        return ({n: None for n, _ in chances_of(settings)},
+                {n: "No game here has a pick worth more than its odds in a market that has made money: "
+                    "value mode needs one. Untick it to see the usual tickets." for n, _ in chances_of(settings)})
     for name, least in chances_of(settings):
         if settings["keep_all"] and (len(groups) < len(games) or surest < least - 1e-9):
             out[name] = None
@@ -297,7 +329,10 @@ def _tickets(groups: List[List[Option]], settings: Optional[Dict[str, Any]] = No
                            f"{len(games) - len(groups)} of your games have no pick within your settings, "
                            "so they can't all be kept.")
             continue
-        res = optimize_safe(groups, least, hi, len(groups), min_edge=None, most_games=True)
+        if settings["value"]:   # few legs, the highest odds at the chance
+            res = optimize_safe(groups, least, hi, min(len(groups), VALUE_MAX_LEGS), min_edge=None)
+        else:
+            res = optimize_safe(groups, least, hi, len(groups), min_edge=None, most_games=True)
         if not res:
             out[name] = None
             notes[name] = f"No pick on these games is {_pc(least)} likely within your settings."
@@ -309,7 +344,11 @@ def _tickets(groups: List[List[Option]], settings: Optional[Dict[str, Any]] = No
             continue
         on = {(p["home"], p["away"]) for p in res["picks"]}
         left = [g for g in games if tuple(g.split(" v ", 1)) not in on]
-        out[name] = {**_slip(res["picks"]), "target_chance": least, "left_out": left}
+        slip = {**_slip(res["picks"]), "target_chance": least, "left_out": left,
+                "left_because": "value" if settings["value"] else "chance"}
+        slip["bonus"] = round(bonus(slip["picks"]), 4)
+        slip["expected_return"] = expected_return(slip)
+        out[name] = slip
     return out, notes
 
 
