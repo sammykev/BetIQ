@@ -39,6 +39,9 @@ interface Report {
   original: { games: number; total_odds: number | null; win_chance: number | null; unmodelled: number; from_odds?: number };
   same_odds: Slip | null; safest: Slip | null;
   tickets?: { safe: Slip | null; conservative: Slip | null; risky: Slip | null } | null;
+  /** How each kind of refined ticket has done so far (code_check.record) */
+  record?: Record<"safe" | "conservative" | "risky",
+    { aim: number; landed: number; lost: number; open: number; said: number | null; rate: number | null }> | null;
 }
 
 const TICKETS = [
@@ -163,7 +166,8 @@ function ImprovedSlip({ title, blurb, slip, original }: { title: string; blurb: 
 
 /** "Refine": the code as three tickets. All three stay mounted so a code
  * booked on one isn't lost when switching to another. */
-function Tickets({ tickets, original }: { tickets: NonNullable<Report["tickets"]>; original: Report["original"] }) {
+function Tickets({ tickets, original, record }: { tickets: NonNullable<Report["tickets"]>; original: Report["original"];
+  record?: Report["record"] }) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<TicketId>("conservative");
 
@@ -206,6 +210,16 @@ function Tickets({ tickets, original }: { tickets: NonNullable<Report["tickets"]
           );
         })}
       </div>
+      {(() => {
+        const rec = record?.[tab];
+        const n = rec ? rec.landed + rec.lost : 0;
+        return rec && n > 0 ? (
+          <p className="text-xs text-n-400 tnum text-pretty">
+            Our {TICKETS.find(t => t.id === tab)!.name.toLowerCase()} tickets so far: landed {rec.landed} of {n}
+            {" "}({pct(rec.rate)}), aiming at {target(rec.aim)}.{n < 30 ? " Too few yet to judge." : ""}
+          </p>
+        ) : null;
+      })()}
       {TICKETS.map(t => {
         const slip = tickets[t.id];
         return (
@@ -302,7 +316,7 @@ export function CodeCheck({ onLocked }: { onLocked?: () => void }) {
           </section>
 
           {report.tickets ? (
-            <Tickets tickets={report.tickets} original={report.original} />
+            <Tickets tickets={report.tickets} original={report.original} record={report.record} />
           ) : !report.same_odds && !report.safest ? (
             <p className="card p-4 text-sm text-n-400 flex items-center gap-2"><CheckCircle2 size={15} />
               None of these games are ones we predict, so there&apos;s nothing to improve.</p>

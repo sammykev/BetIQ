@@ -255,3 +255,31 @@ class TestPricedCorners:
                 "bookable_only": True, "min_prob": 0.7}
         r = TestClient(main.app).post("/api/optimizer", json=body).json()
         assert r["picks"][0]["market"] == "corners_ou" and r["picks"][0]["code"] == "O75"
+
+
+class _Mem:
+    def __init__(self):
+        self.d = {}
+
+    def get(self, k):
+        return self.d.get(k)
+
+    def set(self, k, v, ex=None):
+        self.d[k] = v
+
+
+def test_refined_tickets_are_kept_settled_and_scored_by_tier():
+    pick = {"home": "Arsenal", "away": "Chelsea", "date": TOMORROW, "time": "15:00", "league": "PL",
+            "market": "1x2", "market_name": "1X2", "code": "1", "label": "Arsenal", "prob": 0.6, "odds": 1.6,
+            "odds_source": "sportybet"}
+    report = {"tickets": {"safe": {"picks": [pick], "total_odds": 1.6, "win_chance": 0.6},
+                          "conservative": None, "risky": None}}
+    r = _Mem()
+    assert code_check.record_tickets(r, "ABC", report, "2026-11-18T10:00:00+00:00") == 1
+    # checked again: replaced, not doubled
+    assert code_check.record_tickets(r, "ABC", report, "2026-11-18T11:00:00+00:00") == 1
+    assert code_check.record(r)["safe"]["open"] == 1
+    won = {"status": "finished", "hg": 2, "ag": 0}
+    assert code_check.settle_record(r, lambda leg: won) == 1
+    rec = code_check.record(r)["safe"]
+    assert rec["landed"] == 1 and rec["lost"] == 0 and rec["said"] == 0.6 and rec["aim"] == 0.5

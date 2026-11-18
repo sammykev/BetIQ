@@ -219,6 +219,11 @@ def _settle_tickets(r) -> Dict[str, int]:
                 r.srem(main.TICKETS_OPEN_KEY, uid)
         except Exception as e:   # one account's tickets can't stop the others'
             report.setdefault("errors", []).append(f"{uid[:8]}…: {e}"[:200])
+    try:   # the code checker's refined tickets (code_check.py), for their record
+        import code_check
+        report["code_check_settled"] = code_check.settle_record(r, result_for)
+    except Exception as e:
+        report.setdefault("errors", []).append(f"code check: {e}"[:200])
     return report
 
 

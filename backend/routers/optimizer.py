@@ -1000,7 +1000,21 @@ async def optimize_code(request: Request, body: Dict[str, Any],
         code_check.analyse, selections, find,
         main._linked_event, confirmed, lambda m, c: m not in paused and bookable(m, c),
         lambda sel: by_sb.get(str(sel.get("eventId"))), adjust)
-    return {"code": code.upper(), **report}
+    # Kept and settled, so each ticket's record shows whether its chance is honest
+    r = main._get_redis()
+    try:
+        code_check.record_tickets(r, code.upper(), report, datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    except Exception as e:
+        print(f"[CodeCheck] couldn't keep the tickets: {e}")
+    if time.time() - _code_record["at"] > 600:
+        try:
+            _code_record.update(at=time.time(), data=code_check.record(r))
+        except Exception:
+            pass
+    return {"code": code.upper(), **report, "record": _code_record["data"]}
+
+
+_code_record: Dict[str, Any] = {"at": 0.0, "data": None}
 
 
 @router.post("/api/booking/convert")

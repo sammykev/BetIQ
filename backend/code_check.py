@@ -24,6 +24,7 @@ we rated legs well over their price they came in far under). Every pick is
 booked by SportyBet's own ids.
 """
 
+import json
 import math
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -220,4 +221,86 @@ def _tickets(groups: List[List[Option]]) -> Dict[str, Optional[Dict[str, Any]]]:
         on = {(p["home"], p["away"]) for p in res["picks"]}
         left = [f"{g[0].home} v {g[0].away}" for g in groups if (g[0].home, g[0].away) not in on]
         out[name] = {**_slip(res["picks"]), "target_chance": least, "left_out": left}
+    return out
+
+
+# ── how the refined tickets do ────────────────────────────────────────────
+# Every ticket the checker refines is kept (RECORD_KEY, apart from the
+# accounts' tickets so the market ranking and calibration don't count them)
+# and settled by the ticket job (settle_record), so each tier's record shows
+# whether its chance is honest (safe aims at 50%: does it land half the time?).
+RECORD_KEY = "betiq:codecheck:tickets"
+RECORD_MAX = 3000
+
+
+def record_tickets(r, code: str, report: Dict[str, Any], now: str) -> int:
+    """Keep the report's three tickets (a code checked again replaces its
+    tickets from before). Returns how many were kept."""
+    import tickets as tk
+    if r is None or not report.get("tickets"):
+        return 0
+    key = RECORD_KEY
+    try:
+        items = json.loads(r.get(key) or "[]")
+    except ValueError:
+        items = []
+    items = [t for t in items if t.get("checked_code") != code or t.get("status") != "pending"]
+    kept = 0
+    for tier, least in TICKETS:
+        t = report["tickets"].get(tier)
+        if not t or not t.get("picks"):
+            continue
+        sels = [{**p, "marketName": p.get("market_name")} for p in t["picks"]]
+        ticket = tk.new_ticket(f"{code}:{tier}", sels, [{"status": "booked", "odds": p.get("odds")} for p in t["picks"]],
+                               "code_check", None, t.get("total_odds"), now)
+        ticket.update(tier=tier, target_chance=least, said=t.get("win_chance"), checked_code=code)
+        items.insert(0, ticket)
+        kept += 1
+    r.set(key, json.dumps(items[:RECORD_MAX], separators=(",", ":")), ex=365 * 86400)
+    return kept
+
+
+def settle_record(r, result_for: Callable[[Dict], Optional[Dict]]) -> int:
+    """Settle the kept tickets' legs from the results (the ticket job's
+    result_for). Returns how many tickets were settled."""
+    import tickets as tk
+    if r is None:
+        return 0
+    try:
+        items = json.loads(r.get(RECORD_KEY) or "[]")
+    except ValueError:
+        return 0
+    settled, changed = 0, False
+    for t in items:
+        if t.get("status") not in ("pending", "open"):
+            continue
+        was = t.get("status")
+        if tk.settle(t, result_for):
+            changed = True
+            settled += t.get("status") != was and t.get("status") in ("won", "lost", "void")
+    if changed:
+        r.set(RECORD_KEY, json.dumps(items, separators=(",", ":")), ex=365 * 86400)
+    return settled
+
+
+def record(r) -> Dict[str, Dict[str, Any]]:
+    """Per tier: tickets landed and lost, against the chance they were given."""
+    out = {tier: {"aim": least, "landed": 0, "lost": 0, "open": 0, "said": 0.0} for tier, least in TICKETS}
+    try:
+        items = json.loads(r.get(RECORD_KEY) or "[]") if r is not None else []
+    except ValueError:
+        items = []
+    for t in items:
+        x = out.get(t.get("tier"))
+        if not x:
+            continue
+        if t.get("status") in ("won", "lost"):
+            x["landed" if t["status"] == "won" else "lost"] += 1
+            x["said"] += float(t.get("said") or x["aim"])
+        else:
+            x["open"] += 1
+    for x in out.values():
+        n = x["landed"] + x["lost"]
+        x["said"] = round(x["said"] / n, 4) if n else None
+        x["rate"] = round(x["landed"] / n, 4) if n else None
     return out
