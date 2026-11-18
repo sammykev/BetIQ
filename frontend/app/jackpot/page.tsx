@@ -19,10 +19,14 @@ interface Match {
   index: number; home: string; away: string; kickoff?: number; odds: (number | null)[];
   p: number[]; source: "model" | "odds" | "none"; pick: Outcome;
 }
-interface Ticket { lines: number; picks: string[]; prizes: Record<string, number>; one_in: number | null }
+interface Ticket {
+  lines: number; picks: string[]; prizes: Record<string, number>; one_in: number | null;
+  /** Rough return at the line price: top prize if unshared, lower tiers at recent payouts */
+  value?: { stake: number; return: number; per_naira: number | null } | null;
+}
 interface Current {
   periodNumber: string; deadline?: number; maxWinnings?: number; currency?: string; games: number;
-  matches: Match[]; tickets: Ticket[]; model_matches: number;
+  matches: Match[]; tickets: Ticket[]; model_matches: number; line_price?: number | null;
 }
 interface Week { period: string; results: string | null; favourites_right: number | null; ours_right: number | null }
 interface JackpotResponse {
@@ -125,6 +129,17 @@ function Jackpot() {
             </div>
           ))}
         </div>
+        {ticket.value && (
+          <p className="text-sm text-n-300 text-pretty">
+            Stake <span className="font-semibold text-n-100 tnum">{naira(ticket.value.stake, cur.currency)}</span>
+            {" "}({ticket.lines} × {naira(cur.line_price ?? undefined, cur.currency)}). Expected back, roughly:
+            {" "}<span className="font-semibold text-n-100 tnum">{naira(Math.round(ticket.value.return), cur.currency)}</span>
+            {ticket.value.per_naira != null && <> ({ticket.value.per_naira.toFixed(2)} per 1 staked)</>}.
+            <span className="block text-xs text-n-500 mt-1">
+              Counts the top prize as if nobody shared it, and the smaller prizes at what winners were paid in recent weeks.
+            </span>
+          </p>
+        )}
       </section>
 
       <section className="card divide-y divide-n-800/60">

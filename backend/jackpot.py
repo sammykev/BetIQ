@@ -222,6 +222,38 @@ async def _get(session, path: str, params: Optional[Dict] = None) -> Any:
     return body.get("data")
 
 
+async def fetch_line_price(session) -> Optional[float]:
+    """The stake per line: the jackpot page's window.jackpotCfg.min (its
+    bundle multiplies the line count by it)."""
+    import re
+    import sportybet
+    try:
+        html = (await session.get(sportybet.SITE + "jackpot", headers={"Accept": "text/html"})).text or ""
+    except Exception:
+        return None
+    m = re.search(r"jackpotCfg\s*=\s*(\{.*?\})\s*[;<]", html, re.S)
+    if m:
+        try:
+            return float(json.loads(m.group(1)).get("min"))
+        except (ValueError, TypeError, AttributeError):
+            pass
+    m = re.search(r"jackpotCfg[^<]{0,400}?[\"']?min[\"']?\s*:\s*[\"']?([0-9.]+)", html, re.S)
+    if m:
+        return float(m.group(1))
+    i = html.find("jackpotCfg")
+    print(f"  line price not found{': page says …' + html[max(0, i - 100):i + 400] + '…' if i >= 0 else ''}")
+    return None
+
+
+def add_returns(a: Dict, price: Optional[float], history: Dict[str, Dict], weeks: int = 8) -> None:
+    """Each ticket's rough return at `price` a line, from the last `weeks`
+    settled weeks' payouts and this week's top prize."""
+    past = [h for _, h in sorted(history.items(), reverse=True) if h.get("tiers")][:weeks]
+    a["line_price"] = price
+    for t in a["tickets"]:
+        t["value"] = expected_return(t, price or 0, float(a.get("maxWinnings") or 0), past)
+
+
 async def fetch_current(session) -> Tuple[Dict, Dict]:
     return await _get(session, "/jackpot/period"), await _get(session, "/jackpot/banner")
 
@@ -325,6 +357,15 @@ async def main_async(history: int) -> None:
         if not tally and options:
             print("  (no past week came back with results: the first one's raw answer follows)")
             print(json.dumps(await fetch_previous(session, options[0]), default=str)[:3000])
+    price = await fetch_line_price(session)
+    add_returns(a, price, hist)
+    print(f"\n== Rough return at {a.get('currency')} {price} a line (top prize if unshared; "
+          "lower tiers at recent weeks' payouts) ==")
+    for t in a["tickets"]:
+        v = t.get("value")
+        if v:
+            print(f"  {t['lines']:>4} lines: stake {v['stake']:,.0f}, expected back {v['return']:,.0f} "
+                  f"({v['per_naira']:.2f} per 1 staked)")
     if r is not None:
         r.set(KEY, json.dumps({"current": a, "banner": banner, "history": hist,
                                "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}))

@@ -107,3 +107,15 @@ def test_a_weeks_pool_and_a_tickets_rough_return():
     r = jp.expected_return(t, 100, 1_000_000, [p])
     assert r["stake"] == 100 and abs(r["return"] - (0.0001 * 1e6 + 0.0009 * 568514 + 0.009 * 9690.58)) < 0.01
     assert jp.expected_return(t, 0, 1, [p]) is None
+
+
+def test_returns_go_on_every_ticket_from_recent_weeks():
+    a = jp.analyse(period())
+    hist = {"20261115": jp.pool_of({"sales": "56851400", "winnings": [
+        {"correctEvents": 11, "winNum": 12, "perWinnings": "568514"},
+        {"correctEvents": 10, "winNum": 176, "perWinnings": "9690.58"}]}), "20261122": {"ours": {}}}
+    jp.add_returns(a, 50.0, hist)
+    assert a["line_price"] == 50.0
+    assert all(t["value"]["stake"] == t["lines"] * 50 for t in a["tickets"])
+    jp.add_returns(a, None, hist)
+    assert all(t["value"] is None for t in a["tickets"])
