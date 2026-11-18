@@ -59,11 +59,44 @@ function left(ms?: number): string {
   return d ? `${d}d ${h}h left` : h ? `${h}h ${m}m left` : `${m}m left`;
 }
 
+/** Bankers: the `n` most confident matches get their likeliest result, the
+ * rest all three (1X2). Every covered match is always right, so the chances
+ * come from the bankers alone: how many of them go wrong. */
+function bankersTicket(cur: Current, n: number, prizes: number[]): Ticket {
+  const games = cur.matches.length;
+  const best = cur.matches.map((m, i) => ({ i, p: Math.max(...m.p, 0) })).sort((a, b) => b.p - a.p);
+  const bankers = new Set(best.slice(0, n).map(b => b.i));
+  const picks = cur.matches.map((m, i) => (bankers.has(i) ? m.pick : "1X2"));
+  // wrong[j]: chance exactly j bankers go wrong
+  let wrong = [1];
+  for (const b of best.slice(0, n)) {
+    const next = new Array(wrong.length + 1).fill(0);
+    wrong.forEach((w, j) => { next[j] += w * b.p; next[j + 1] += w * (1 - b.p); });
+    wrong = next;
+  }
+  const atLeast = (k: number) => wrong.slice(0, Math.max(0, games - k) + 1).reduce((a, b) => a + b, 0);
+  const lines = 3 ** (games - n);
+  const all = wrong[0];
+  const price = cur.line_price;
+  const lower = cur.tickets.find(t => t.value)?.value?.lower_back ?? null;
+  let value: Ticket["value"] = null;
+  if (price) {
+    const stake = lines * price, topEv = all * (cur.maxWinnings ?? 0);
+    value = { stake, lower_back: lower, top_ev_unshared: topEv, breakeven_sharers: Math.max(0, Math.floor(topEv / stake) - 1) };
+  }
+  return { lines, picks, prizes: Object.fromEntries(prizes.map(k => [String(k), atLeast(k)])),
+    one_in: all > 0 ? Math.round(1 / all) : null, value };
+}
+
+const BANKERS = [12, 11, 10, 9, 8, 7, 6, 5, 4];
+
 function Jackpot() {
   const authFetch = useAuthedFetch();
   const [data, setData] = useState<JackpotResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lines, setLines] = useState(1);
+  const [mode, setMode] = useState<"best" | "bankers">("best");
+  const [bankers, setBankers] = useState(10);
 
   useEffect(() => {
     authFetch(`${API}/api/jackpot`).then(async r => {
@@ -73,7 +106,16 @@ function Jackpot() {
   }, [authFetch]);
 
   const cur = data?.current;
-  const ticket = useMemo(() => cur?.tickets.find(t => t.lines === lines) ?? cur?.tickets[0], [cur, lines]);
+  const prizes = useMemo(() => [data?.banner?.firstPrizeCorrect ?? 12, data?.banner?.secondPrizeCorrect ?? 11,
+    data?.banner?.thirdPrizeCorrect ?? 10], [data]);
+  const bestTicket = useMemo(() => cur?.tickets.find(t => t.lines === lines) ?? cur?.tickets[0], [cur, lines]);
+  const bankerTicket = useMemo(() => (cur?.matches.length ? bankersTicket(cur, Math.min(bankers, cur.matches.length), prizes) : undefined),
+    [cur, bankers, prizes]);
+  const ticket = mode === "bankers" ? bankerTicket : bestTicket;
+  // The best ticket that costs no more, to compare with the bankers ticket
+  const rival = useMemo(() => (mode === "bankers" && bankerTicket
+    ? [...(cur?.tickets ?? [])].filter(t => t.lines <= bankerTicket.lines).sort((a, b) => b.lines - a.lines)[0] : undefined),
+    [mode, bankerTicket, cur]);
 
   if (error === "feature_off") return <Unavailable title="Jackpot" />;
   if (error && /_required$|^Sign in/.test(error)) return <Locked feature="jackpot" title="Jackpot" perks={PERKS} />;
@@ -83,7 +125,6 @@ function Jackpot() {
   }
   if (!cur || !ticket) return <p className="card p-6 text-sm text-n-400">This week&apos;s jackpot isn&apos;t in yet. It&apos;s read on Thursday and Friday.</p>;
 
-  const prizes = [data.banner?.firstPrizeCorrect ?? 12, data.banner?.secondPrizeCorrect ?? 11, data.banner?.thirdPrizeCorrect ?? 10];
   const rec = data.record;
 
   return (
@@ -107,20 +148,54 @@ function Jackpot() {
       </section>
 
       <section className="card p-5 space-y-4">
-        <div>
-          <p className="eyebrow">Lines on the ticket</p>
-          <div className="flex flex-wrap gap-1.5 mt-2" role="group" aria-label="Lines on the ticket">
-            {cur.tickets.map(t => (
-              <button key={t.lines} type="button" aria-pressed={t.lines === ticket.lines} onClick={() => setLines(t.lines)}
-                className={clsx("chip tnum", t.lines === ticket.lines ? "chip-active" : "chip-idle")}>
-                {t.lines}
-              </button>
-            ))}
-          </div>
-          <p className="text-xs text-n-400 mt-2 text-pretty">
-            Each extra outcome doubles or triples the lines, so it goes on the closest matches first.
-          </p>
+        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Kind of ticket">
+          {([["best", "Best ticket"], ["bankers", "Bankers + 1X2"]] as const).map(([m, label]) => (
+            <button key={m} type="button" aria-pressed={mode === m} onClick={() => setMode(m)}
+              className={clsx("chip", mode === m ? "chip-active" : "chip-idle")}>
+              {label}
+            </button>
+          ))}
         </div>
+        {mode === "best" ? (
+          <div>
+            <p className="eyebrow">Lines on the ticket</p>
+            <div className="flex flex-wrap gap-1.5 mt-2" role="group" aria-label="Lines on the ticket">
+              {cur.tickets.map(t => (
+                <button key={t.lines} type="button" aria-pressed={t.lines === ticket.lines} onClick={() => setLines(t.lines)}
+                  className={clsx("chip tnum", t.lines === ticket.lines ? "chip-active" : "chip-idle")}>
+                  {t.lines}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-n-400 mt-2 text-pretty">
+              Each extra outcome doubles or triples the lines, so it goes on the closest matches first.
+            </p>
+          </div>
+        ) : (
+          <div>
+            <p className="eyebrow">Matches with one pick (bankers)</p>
+            <div className="flex flex-wrap gap-1.5 mt-2" role="group" aria-label="Matches with one pick">
+              {BANKERS.filter(n => n <= cur.matches.length).map(n => (
+                <button key={n} type="button" aria-pressed={n === bankers} onClick={() => setBankers(n)}
+                  className={clsx("chip tnum", n === bankers ? "chip-active" : "chip-idle")}>
+                  {n}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-n-400 mt-2 text-pretty">
+              The {bankers} matches we&apos;re surest of get one pick; the other {cur.matches.length - bankers} get
+              home, draw and away, so they can&apos;t go wrong. That&apos;s{" "}
+              <span className="tnum">{ticket.lines.toLocaleString("en-US")}</span> line{ticket.lines === 1 ? "" : "s"}.
+            </p>
+            {rival && rival.one_in && ticket.one_in && rival.lines < ticket.lines && (
+              <p className="text-xs text-n-400 mt-1 text-pretty">
+                For comparison, the best ticket with <span className="tnum">{rival.lines}</span> lines gets all {prizes[0]} 1 in{" "}
+                <span className="tnum">{rival.one_in.toLocaleString("en-US")}</span>
+                {rival.one_in < ticket.one_in ? ", better odds for a smaller stake." : "."}
+              </p>
+            )}
+          </div>
+        )}
         <div className="grid grid-cols-3 gap-3">
           {prizes.map((k, i) => (
             <div key={k} className="rounded-xl bg-surface-sunken p-3">
