@@ -276,9 +276,22 @@ async def bonus(session) -> None:
                 print(f"  [{u.rsplit('/', 1)[-1][:40]} code] …{text[max(0, m.start() - 200):m.end() + 300]}…")
 
 
+async def bonus_plan(session) -> None:
+    """The multi-bet bonus plan the betslip loads."""
+    import jackpot
+    h = jackpot._headers()
+    for base in (sportybet.BASE, "https://www.sportybet.com/api/ng"):
+        for path in ("/promotion/v2/bonus/plans/valid", "/promotion/v1/bonus/plans/valid"):
+            try:
+                r = await session.get(base + path, headers=h)
+                print(f"\n== {base}{path}: HTTP {r.status_code}\n{(r.text or '')[:6000]}")
+            except Exception as e:
+                print(f"{path}: {type(e).__name__}: {e}")
+
+
 async def main() -> None:
     session = sportybet.shared_session()
-    await bonus(session)
+    await bonus_plan(session)
 
 
 if __name__ == "__main__":
