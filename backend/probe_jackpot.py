@@ -99,11 +99,48 @@ async def try_candidates(session) -> List[str]:
     return ok
 
 
+BUNDLES = ["https://s.sporty.net/global/main/modules/main/mobile/jackpot/index.5628364638.js",
+           "https://s.sporty.net/global/main/modules/main/desktop/jackpot/index.03ca866db4.js"]
+PATHS = ["/jackpot/period", "/jackpot/periodOptions", "/jackpot/previous", "/jackpot/result",
+         "/jackpot/combinations", "jackpot/combinations", "jackpot/result"]
+PREFIXES = ["", "/factsCenter", "/games", "/sportygames", "/jackpot-api", "/orders", "/marketing", "/act"]
+
+
+async def contexts(session) -> None:
+    """The code around each jackpot API path: how its URL is built."""
+    print("\n== code around the jackpot API paths ==")
+    for url in BUNDLES:
+        try:
+            text = (await session.get(url, headers={"Accept": "*/*"})).text or ""
+        except Exception as e:
+            print(f"  {url}: {type(e).__name__}")
+            continue
+        print(f"-- {url} ({len(text)} chars)")
+        for p in PATHS:
+            for m in list(re.finditer(re.escape(p), text))[:2]:
+                print(f"  [{p}] …{text[max(0, m.start() - 350):m.end() + 250]}…\n")
+        # The API base the bundle uses
+        for m in list(re.finditer(r"baseURL|apiPrefix|API_HOST|/api/|\$\{[a-zA-Z.]*country", text))[:12]:
+            print(f"  [base] …{text[max(0, m.start() - 120):m.end() + 160]}…")
+
+
+async def try_paths(session) -> None:
+    print("\n== jackpot paths under likely prefixes ==")
+    for pre in PREFIXES:
+        for p in ("/jackpot/period", "/jackpot/periodOptions", "/jackpot/previous"):
+            url = sportybet.BASE + pre + p
+            try:
+                r = await session.get(url)
+            except Exception as e:
+                print(f"  {url}: {type(e).__name__}")
+                continue
+            print(f"  {pre + p}: HTTP {r.status_code} · {(r.text or '').strip()[:400]}")
+
+
 async def main() -> None:
     session = sportybet.shared_session()
-    await strings_in_pages(session)
-    ok = await try_candidates(session)
-    print(f"\nanswered OK: {ok or 'none'}")
+    await contexts(session)
+    await try_paths(session)
 
 
 if __name__ == "__main__":
