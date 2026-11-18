@@ -160,10 +160,36 @@ async def try_posts(session) -> None:
             print(f"  POST {p} ({kind}): HTTP {r.status_code} · {(r.text or '').strip()[:1500]}")
 
 
+async def with_headers(session) -> None:
+    """The page's own request: GET with OperId, Currency and CountryCode."""
+    print("\n== GET with the page's headers ==")
+    for base in (sportybet.BASE, "https://www.sportybet.com"):
+        for oper in ("1", "2"):
+            for cc in ("ng", "NG"):
+                h = {"Content-Type": "application/json;charset=UTF-8", "OperId": oper, "Currency": "NGN",
+                     "CountryCode": cc}
+                url = base + "/jackpot/period"
+                try:
+                    r = await session.get(url, headers=h)
+                except Exception as e:
+                    print(f"  {url} oper {oper} cc {cc}: {type(e).__name__}")
+                    continue
+                print(f"  {url} oper {oper} cc {cc}: HTTP {r.status_code} · {(r.text or '').strip()[:600]}")
+                if r.status_code == 200 and '"bizCode":10000' in (r.text or ""):
+                    for p in ("/jackpot/period", "/jackpot/periodOptions", "/jackpot/banner"):
+                        rr = await session.get(base + p, headers=h)
+                        print(f"\n  ---- {p}: HTTP {rr.status_code}\n{(rr.text or '')[:12000]}\n")
+                    return
+    # The page's own settings for those headers
+    html = (await session.get(sportybet.SITE + "jackpot", headers={"Accept": "text/html"})).text or ""
+    for k in ("operId", "reqCountryShortCode", "currency"):
+        for m in list(re.finditer(k, html))[:3]:
+            print(f"  [{k}] …{html[max(0, m.start() - 80):m.end() + 120]}…")
+
+
 async def main() -> None:
     session = sportybet.shared_session()
-    await wrapper(session)
-    await try_posts(session)
+    await with_headers(session)
 
 
 if __name__ == "__main__":
