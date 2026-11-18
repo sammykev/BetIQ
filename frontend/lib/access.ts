@@ -27,7 +27,7 @@ const DEFAULTS: Record<FeatureId, FeatureState> = {
   daily_slips: { visible: true, tier: "premium", granted: false },
   optimizer: { visible: true, tier: "premium", granted: false },
   code_check: { visible: true, tier: "lite", granted: false },
-  jackpot: { visible: true, tier: "free", granted: false },
+  jackpot: { visible: true, tier: "premium", granted: false },
   record: { visible: true, tier: "free", granted: false },
   dashboard: { visible: true, tier: "free", granted: false },
   "sport.basketball": { visible: false, tier: "free", granted: false },

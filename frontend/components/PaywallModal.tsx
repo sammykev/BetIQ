@@ -24,6 +24,7 @@ const PERKS: [FeatureId, string][] = [
   ["optimizer", "Optimizer: build a slip for the exact odds you want"],
   ["daily_slips", "Daily 5, 10 and 20 odds slips from today's 75%+ picks, each at least break-even"],
   ["ai_chat", "AI assistant that builds slips on request"],
+  ["jackpot", "SportyBet jackpot: this week's chances and the best ticket for your stake"],
   ["sport.basketball", "Basketball predictions"],
   ["sport.tennis", "Tennis predictions"],
   ["sport.table_tennis", "Table tennis predictions"],

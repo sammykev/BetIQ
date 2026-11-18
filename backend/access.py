@@ -31,7 +31,7 @@ REGISTRY: List[Dict[str, str]] = [
      "about": "Rate a pasted booking code and improve it", "state": "on", "tier": "lite"},
     {"id": "jackpot", "label": "Jackpot", "group": "Pages",
      "about": "SportyBet's weekly jackpot: each match's chances, the best ticket per number of lines, the record",
-     "state": "on", "tier": "free"},
+     "state": "on", "tier": "premium"},
     {"id": "record", "label": "Record", "group": "Pages",
      "about": "The public track record page", "state": "on", "tier": "free"},
     {"id": "dashboard", "label": "Dashboard", "group": "Pages",
