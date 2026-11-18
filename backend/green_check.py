@@ -168,6 +168,34 @@ def daily_report(r) -> None:
         leg(k, v)
 
 
+def ranking_report(r) -> None:
+    """The nightly market ranking: each market's hit rate, what we said, its
+    return at the odds, and which a 'under what we said AND losing money'
+    rule would leave out of slips."""
+    import math
+    try:
+        codes = (json.loads(r.get("betiq:market_ranking") or "null") or {}).get("codes") or {}
+    except ValueError:
+        codes = {}
+    rows = []
+    for k, x in codes.items():
+        n, h, said, roi = x.get("n") or 0, x.get("hit_rate"), x.get("said"), x.get("roi")
+        if not n or h is None or said is None:
+            continue
+        se = math.sqrt(max(h * (1 - h), 1e-6) / n)
+        z = (said - h) / se
+        rows.append((k, n, h, said, roi, z))
+    print(f"\n== Market ranking ({len(rows)} markets): under what we said (z) and the return at the odds ==")
+    out = [x for x in rows if x[1] >= 100 and x[5] >= 2 and x[4] is not None and x[4] < 0]
+    total = sum(x[1] for x in rows)
+    print(f"  the rule (100+ picks, clearly under what we said, losing money) leaves out {len(out)} of "
+          f"{len(rows)} markets, {sum(x[1] for x in out)} of {total} picks")
+    for k, n, h, said, roi, z in sorted(rows, key=lambda x: -x[1])[:80]:
+        flag = "OUT" if (k, n, h, said, roi, z) in out else ""
+        roi_s = f"{100 * roi:+5.1f}%" if roi is not None else "  —  "
+        print(f"    {k[:32]:<32} n {n:>6}  hit {100 * h:5.1f}%  said {100 * said:5.1f}%  z {z:5.1f}  return {roi_s}  {flag}")
+
+
 _r = None
 
 
@@ -186,6 +214,7 @@ def main() -> None:
     picks_report(rows, a.start)
     tickets_report(_r, a.start)
     daily_report(_r)
+    ranking_report(_r)
 
 
 if __name__ == "__main__":
