@@ -230,9 +230,55 @@ async def line_price(session) -> None:
                 print(f"  [{pat[:24]}] …{text[max(0, m.start() - 160):m.end() + 160]}…")
 
 
+async def bonus(session) -> None:
+    """SportyBet's multi-bet bonus: its rules (how many selections, the least
+    odds a selection, the % per count) from the API, the pages and bundles."""
+    import jackpot
+    h = jackpot._headers()
+    print("\n== bonus endpoints ==")
+    for path in ("/promotion/multiBetBonus", "/promotion/bonus/config", "/orders/bonus/config", "/factsCenter/bonusConfig",
+                 "/marketing/multiBonus", "/orders/order/bonus", "/promotion/winBoost", "/promotion/multiBonus/rules",
+                 "/act/multiBonus", "/orders/multiBetBonus", "/factsCenter/multiBetBonus", "/bonus/multi"):
+        for base in (sportybet.BASE, "https://www.sportybet.com/api/ng"):
+            try:
+                r = await session.get(base + path, headers=h)
+                print(f"  {base[-12:]}{path}: HTTP {r.status_code} · {(r.text or '').strip()[:300]}")
+            except Exception as e:
+                print(f"  {path}: {type(e).__name__}")
+    print("\n== bonus strings in the pages and their bundles ==")
+    seen = set()
+    rx = re.compile(r"""["'`]([^"'`\n]{0,80}(?:[Bb]onus|[Bb]oost)[^"'`\n]{0,120})["'`]""")
+    for page in ("", "m/", "sport/football", "promotions", "m/promotions", "help/multiple-bonus", "m/help/multiple-bonus"):
+        try:
+            html = (await session.get(sportybet.SITE + page, headers={"Accept": "text/html"})).text or ""
+        except Exception:
+            continue
+        txt = re.sub(r"<script.*?</script>|<style.*?</style>|<[^>]+>", " ", html, flags=re.S)
+        txt = re.sub(r"\s+", " ", txt)
+        for m in re.finditer(r"(?i)bonus", txt):
+            seg = txt[max(0, m.start() - 160):m.end() + 260]
+            if seg[:60] not in seen:
+                seen.add(seg[:60])
+                print(f"  [{page or 'home'}] …{seg}…")
+        for src in SCRIPTS.findall(html)[:40]:
+            u = absolute(src)
+            if u in seen:
+                continue
+            seen.add(u)
+            try:
+                text = (await session.get(u, headers={"Accept": "*/*"})).text or ""
+            except Exception:
+                continue
+            hits = [x for x in rx.findall(text) if any(k in x.lower() for k in ("multi", "odds", "selection", "%", "min"))]
+            for x in hits[:25]:
+                print(f"  [{u.rsplit('/', 1)[-1][:40]}] {x}")
+            for m in list(re.finditer(r"(?i)multi\w*bonus|bonusRatio|bonusRate|minOdds", text))[:6]:
+                print(f"  [{u.rsplit('/', 1)[-1][:40]} code] …{text[max(0, m.start() - 200):m.end() + 300]}…")
+
+
 async def main() -> None:
     session = sportybet.shared_session()
-    await line_price(session)
+    await bonus(session)
 
 
 if __name__ == "__main__":
