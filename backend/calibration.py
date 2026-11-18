@@ -362,7 +362,10 @@ def _other_rows(sport: str, e: Dict, day: str) -> List[Dict]:
     if isinstance(p.get("lines"), list) and p["lines"]:
         settle = _settler(sport)
         st = _settled(sport, res)
-        for market, code, prob in p["lines"]:
+        for x in p["lines"]:          # [market, code, chance] (+ SportyBet's odds from Nov 2026)
+            if not isinstance(x, (list, tuple)) or len(x) < 3:
+                continue
+            market, code, prob = x[0], x[1], x[2]
             v = settle(market, code, st)
             if v in ("won", "lost") and isinstance(prob, (int, float)):
                 out.append({**base, "market": market, "code": code, "prob": float(prob), "won": v == "won"})

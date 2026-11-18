@@ -247,6 +247,46 @@ def corners_report(r) -> None:
                 shown += 1
 
 
+def basketball_price_report(r) -> None:
+    """Settled basketball lines kept with SportyBet's odds (from Nov 18 2026):
+    per market, how well ours, the price's chance (PRICE_MARGIN / odds) and a
+    half-and-half mix predicted them (log loss, lower is better)."""
+    import math
+    import basketball_matchday as bmd
+    import basketball_markets as bmk
+    per: Dict[str, List] = defaultdict(list)
+    for i in range(1, 45):
+        d = (date.today() - timedelta(days=i)).isoformat()
+        try:
+            day = json.loads(r.get(bmd.KEY.format(d)) or "null") or {}
+        except ValueError:
+            continue
+        for e in day.values():
+            res, p = (e or {}).get("result") or {}, (e or {}).get("pred") or {}
+            if res.get("status") != "finished":
+                continue
+            st = bmd._settle_result(res)
+            for x in p.get("lines") or []:
+                if not isinstance(x, list) or len(x) < 4 or not isinstance(x[3], (int, float)) or x[3] <= 1:
+                    continue
+                v = bmk.settle(x[0], x[1], st)
+                if v in ("won", "lost") and isinstance(x[2], (int, float)):
+                    per[x[0]].append((x[2], min(0.99, 1.05 / x[3]), v == "won"))
+    ll = lambda q, y: -math.log(max(1e-6, q if y else 1 - q))
+    print("\n== Basketball: ours vs SportyBet's price, per market (log loss; lower is better) ==")
+    if not per:
+        print("  none yet: lines are kept with their odds from Nov 18 2026")
+    for m, v in sorted(per.items(), key=lambda kv: -len(kv[1])):
+        if len(v) < 50:
+            continue
+        n = len(v)
+        a = sum(ll(o, y) for o, _, y in v) / n
+        b = sum(ll(q, y) for _, q, y in v) / n
+        c = sum(ll(0.5 * o + 0.5 * q, y) for o, q, y in v) / n
+        best = min((a, "ours"), (b, "price"), (c, "half-half"))[1]
+        print(f"    {m[:28]:<28} n {n:>6}  ours {a:.4f}  price {b:.4f}  half-half {c:.4f}  best: {best}")
+
+
 _r = None
 
 
@@ -267,6 +307,7 @@ def main() -> None:
     daily_report(_r)
     ranking_report(_r)
     corners_report(_r)
+    basketball_price_report(_r)
 
 
 if __name__ == "__main__":

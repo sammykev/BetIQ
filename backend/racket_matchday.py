@@ -54,8 +54,9 @@ def best_line(pred: Dict) -> Optional[Dict]:
 def snapshot(pred: Dict) -> Dict[str, Any]:
     out = {k: pred.get(k) for k in _PRED}
     out["best"] = best_line(pred)
-    # Every line we priced before the start, for the market corrections (calibration.py)
-    lines = [[x.get("market"), x.get("code"), x.get("prob")] for x in pred.get("rk_markets") or []
+    # Every line we priced before the start, with SportyBet's odds, for the
+    # market corrections (calibration.py) and the price check
+    lines = [[x.get("market"), x.get("code"), x.get("prob"), x.get("odds")] for x in pred.get("rk_markets") or []
              if x.get("market") and isinstance(x.get("prob"), (int, float))]
     if lines:
         out["lines"] = lines[:LINES_KEPT]
