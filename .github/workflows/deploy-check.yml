@@ -1,0 +1,32 @@
+# Is the server running main? Asks the live API for its docs and looks for a
+# phrase from a recent change (input), and prints the health check. Read-only.
+name: Deploy check
+
+on:
+  workflow_dispatch:
+    inputs:
+      phrase:
+        description: Text that only the newest backend has in its API docs
+        default: "strictness"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check the live API
+        env:
+          HOST: ${{ secrets.VM_HOST }}
+          PHRASE: ${{ github.event.inputs.phrase || 'strictness' }}
+        run: |
+          for base in "https://13-140-188-212.sslip.io" "https://${HOST//./-}.sslip.io"; do
+            echo "== $base"
+            code=$(curl -s -m 30 -o health.json -w '%{http_code}' "$base/api/health" || true)
+            echo "health: HTTP $code"; head -c 400 health.json 2>/dev/null; echo
+            if curl -s -m 30 "$base/openapi.json" -o openapi.json && [ -s openapi.json ]; then
+              if grep -q "$PHRASE" openapi.json; then echo "RUNNING THE NEW BACKEND: '$PHRASE' is in its API docs"
+              else echo "NOT YET: '$PHRASE' isn't in its API docs (the server deploys within ~5 minutes of a push, or after a long job)"; fi
+            else
+              echo "no API docs at $base"
+            fi
+          done
