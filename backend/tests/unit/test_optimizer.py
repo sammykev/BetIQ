@@ -316,3 +316,15 @@ def test_a_leg_is_counted_at_no_more_than_its_price_says():
     # under the price, or an estimated price: as it is
     assert ro.price_checked(replace(o, odds=1.15)).prob == 0.86
     assert ro.price_checked(replace(o, odds=1.4, odds_source="estimated")).prob == 0.86
+
+
+def test_the_reach_counts_only_picks_the_solver_searches():
+    import routers.optimizer as ro
+    import optimizer
+    from optimizer import Option
+    o = lambda prob, odds, src="sportybet": Option("A", "B", "2026-11-20", "", "PL", "1x2", "1X2", "1", "Home",
+                                                   prob, odds, src)
+    # A long price we rate far under its worth (0.5 × 1.6 = 0.8): the solver leaves it out
+    groups = [[o(0.9, 1.1), o(0.5, 1.6)], [o(0.9, 1.1)]]
+    assert ro._best_odds(groups, 2)["odds"] == 1.76
+    assert ro._best_odds(optimizer.usable(groups), 2)["odds"] == 1.21

@@ -387,6 +387,15 @@ def _result(picks: List[Option], lo: float, hi: float) -> Dict:
     }
 
 
+def usable(groups: List[List[Option]], min_edge: Optional[float] = MIN_EDGE,
+           min_chance: float = 0.0) -> List[List[Option]]:
+    """The candidates the solver really searches: picks worth their price
+    (worth_it) and at least `min_chance`, from the MAX_MATCHES matches with
+    the surest picks."""
+    groups = [[o for o in g if worth_it(o, min_edge) and o.prob >= min_chance] for g in groups]
+    return sorted((g for g in groups if g), key=lambda g: -max(o.prob for o in g))[:MAX_MATCHES]
+
+
 def optimize_safe(groups: List[List[Option]], min_chance: float, hi: float,
                   max_games: int = MAX_GAMES, min_edge: Optional[float] = MIN_EDGE) -> Optional[Dict]:
     """The slip with the highest total odds (up to `hi`) whose win chance —
@@ -395,8 +404,7 @@ def optimize_safe(groups: List[List[Option]], min_chance: float, hi: float,
     if not 0 < min_chance < 1:
         raise ValueError("the slip's chance must be between 0 and 1")
     max_games = max(1, min(int(max_games), MAX_GAMES))
-    groups = [[o for o in g if worth_it(o, min_edge) and o.prob >= min_chance] for g in groups]
-    groups = sorted((g for g in groups if g), key=lambda g: -max(o.prob for o in g))[:MAX_MATCHES]
+    groups = usable(groups, min_edge, min_chance)
     W = int(math.floor(math.log(max(hi, 1.02)) / STEP))
     picks = _solve(groups, 1, W, max_games, budget=-math.log(min_chance)) if groups else None
     if not picks:
@@ -414,10 +422,8 @@ def optimize(groups: List[List[Option]], lo: float, hi: float,
     if lo < 1 or hi < lo:
         raise ValueError("target odds need 1 ≤ min ≤ max")
     max_games = max(1, min(int(max_games), MAX_GAMES))
-    groups = [[o for o in g if worth_it(o, min_edge)] for g in groups]
-    groups = [g for g in groups if g]
     # Best matches first when there are too many: highest-probability pick
-    groups = sorted(groups, key=lambda g: -max(o.prob for o in g))[:MAX_MATCHES]
+    groups = usable(groups, min_edge)
 
     # The search works on prices rounded to STEP, so its total can land just
     # outside the range; re-aim at the real total until it's inside.

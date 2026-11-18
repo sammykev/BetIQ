@@ -820,19 +820,25 @@ async def _optimize_request(body: Dict[str, Any],
                 "best_win_chance": result.get("win_chance"), "min_win_chance": min_win,
                 "matches_considered": considered, "target": [lo, hi], "target_odds": target, "thin_history": thin}
     if result is None:
-        best = _best_odds(groups, max_games)
+        import optimizer
+        # The picks the solver really searches (worth their price, the surest
+        # MAX_MATCHES matches): from all of them the reach would overstate it
+        searched = optimizer.usable(groups)
+        best = _best_odds(searched, max_games)
         reach = (f" The highest these picks reach is {best['odds']:,.2f}x ({best['legs']} "
                  f"leg{'s' if best['legs'] != 1 else ''}{f', each rated {min_prob:.0%}+' if min_prob else ''}): "
                  "lower the target to about that, or add days, markets or sports." if best else
                  " Allow more games or days, or add markets.")
         capped = ""
         if max_games < asked:
-            more = _best_odds(groups, asked)
+            more = _best_odds(searched, asked)
             # Only point at the cap when more legs would get there (the solver takes ±25% of the target)
             if more and more["odds"] >= target * 0.75:
                 capped = (f" High-confidence slips stop at {max_games} legs; with {asked} the best is "
                           f"{more['odds']:,.2f}x: untick the cap to allow it.")
-        return {"error": f"No slip from {considered} matches gets near {target:,.2f}x." + reach + capped,
+        scope = (f"the {len(searched)} matches we search (of {considered})"
+                 if len(searched) < considered else f"{considered} matches")
+        return {"error": f"No slip from {scope} gets near {target:,.2f}x." + reach + capped,
                 "best_odds": best, "matches_considered": considered, "target": [lo, hi], "target_odds": target,
                 "thin_history": thin}
     # Which picks a SportyBet code can take: the match is linked to a SportyBet
