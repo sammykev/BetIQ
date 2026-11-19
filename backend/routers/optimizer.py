@@ -872,6 +872,11 @@ async def _optimize_request(body: Dict[str, Any],
         pick["bookable"] = (bool(events.get((pick["home"], pick["away"], pick["date"]))) and ok(pick["market"], pick["code"])
                             and (pick["market"] not in booking_slip.LISTED_ONLY or pick["odds_source"] == "sportybet"))
     result["bookable_picks"] = sum(1 for pick in result.get("picks") or [] if pick["bookable"])
+    try:   # what ₦1 returns on average, with SportyBet's sure multi-bet bonus (multi_bonus.py)
+        import multi_bonus
+        result.update(multi_bonus.returns(result.get("picks") or [], result.get("win_chance"), result.get("total_odds")))
+    except Exception:
+        pass
     if weak_out:
         result["weak_left_out"] = weak_out
     if over_out:

@@ -1,6 +1,7 @@
 "use client";
 
 import { StakeHint } from "@/components/StakeHint";
+import { ReturnHint } from "@/components/ReturnHint";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import clsx from "clsx";
 import { useUser } from "@clerk/nextjs";
@@ -45,6 +46,7 @@ interface MarketHit { n: number; hit_rate: number; said: number | null; roi: num
   below_min: boolean; negative_roi: boolean }
 interface OptResult {
   picks?: OptPick[]; games?: number; total_odds?: number; win_chance?: number;
+  expected_return?: number | null; bonus?: number; bonus_top?: number;
   within_target?: boolean; estimated_prices?: number; matches_considered?: number; bookable_picks?: number;
   target?: [number, number]; target_odds?: number; error?: string;
   /** Set when the slip was built to a least win chance instead of target odds */
@@ -797,6 +799,7 @@ export default function OptimizerPage() {
                 {result.estimated_prices! > 0 &&
                   ` ${result.estimated_prices} price${result.estimated_prices === 1 ? " is" : "s are"} estimated from our probabilities; SportyBet's own odds may differ.`}
               </p>
+              <ReturnHint expected={result.expected_return} bonus={result.bonus} bonusTop={result.bonus_top} />
               <StakeHint chance={result.win_chance} odds={result.total_odds} />
               <LiveCheckNote check={result.live_check} />
               <ThinLeftOut matches={result.thin_history} />

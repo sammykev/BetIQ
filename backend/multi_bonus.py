@@ -92,6 +92,14 @@ def _of_odds(picks: List[Dict[str, Any]], rate: float) -> float:
     return rate * math.prod(p["odds"] for p in q) / total if q and total else 0.0
 
 
+def returns(picks: List[Dict[str, Any]], chance: Optional[float], odds: Optional[float]) -> Dict[str, Any]:
+    """A slip's sure bonus, its possible top, and what 1 staked returns on
+    average with the sure part (chance × odds × (1 + bonus))."""
+    sure, top = share(picks), share_top(picks)
+    er = round(chance * odds * (1 + sure), 3) if chance and odds else None
+    return {"bonus": sure, "bonus_top": top, "expected_return": er}
+
+
 def share(picks: List[Dict[str, Any]]) -> float:
     return round(_of_odds(picks, _range(len(_qualifying(picks)))[0]), 4)
 

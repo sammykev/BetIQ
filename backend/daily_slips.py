@@ -92,7 +92,9 @@ def slip(target: float, result: Dict[str, Any], attempt: Dict[str, Any]) -> Dict
     if result.get("error") or not result.get("picks"):
         return {"target": target, "error": result.get("error") or "No slip today.", "picks": [], "status": "none"}
     picks = [{**{k: p.get(k) for k in PICK_FIELDS}, "status": "pending"} for p in result["picks"]]
-    return {"target": target, "total_odds": result["total_odds"], "win_chance": result["win_chance"],
+    import multi_bonus
+    returns = multi_bonus.returns(result["picks"], result.get("win_chance"), result.get("total_odds"))
+    return {"target": target, "total_odds": result["total_odds"], "win_chance": result["win_chance"], **returns,
             "games": len(picks), "within_target": result.get("within_target", True),
             "days": attempt["days"], "bookable": all(p.get("bookable") for p in picks),
             "picks": picks, "status": "pending"}

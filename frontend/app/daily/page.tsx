@@ -9,6 +9,7 @@ import { PageHeader } from "@/components/shell/PageHeader";
 import { FeatureGate, Locked, Unavailable } from "@/components/FeatureGate";
 import { LegRow, nextRefresh } from "@/components/TicketsList";
 import { StakeHint } from "@/components/StakeHint";
+import { ReturnHint } from "@/components/ReturnHint";
 import { PushToggle } from "@/components/PushToggle";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
 import { API, type LegLive, type LegStatus } from "@/lib/matchday";
@@ -37,6 +38,7 @@ interface Booking {
 interface Slip {
   target: number; status: "pending" | "won" | "lost" | "void" | "none" | "open"; error?: string;
   total_odds?: number; win_chance?: number; games?: number; within_target?: boolean;
+  expected_return?: number | null; bonus?: number; bonus_top?: number;
   days?: number; bookable?: boolean; picks: Pick[]; booking?: Booking;
   /** Made in place of a cut slip */
   replaces?: { code: string | null; cut_by: string | null; total_odds?: number | null; in_error?: boolean };
@@ -136,7 +138,9 @@ function SlipView({ s, isToday, date, retry, minProb, cut }: {
           <p className="text-xs text-n-400">Chance the whole slip lands: <span className="font-bold text-n-0 tnum">{pctFine(s.win_chance)}</span></p>
         </div>
       </header>
-      {s.status === "pending" && <div className="mx-4 sm:mx-5 mb-3"><StakeHint chance={s.win_chance} odds={b?.total_odds ?? s.total_odds} /></div>}
+      {s.status === "pending" && <div className="mx-4 sm:mx-5 mb-3 space-y-2">
+        <ReturnHint expected={s.expected_return} bonus={s.bonus} bonusTop={s.bonus_top} />
+        <StakeHint chance={s.win_chance} odds={b?.total_odds ?? s.total_odds} /></div>}
 
       {s.replaces && (
         <p className="mx-4 sm:mx-5 mb-3 text-xs text-n-300 flex items-start gap-1.5">
