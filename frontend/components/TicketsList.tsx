@@ -246,7 +246,9 @@ export function TicketsList({ uid, authFetch }: { uid: string; authFetch: (url: 
           </div>
           <div className="text-right shrink-0 space-y-1">
             <span className={clsx("inline-block rounded-full border px-2 py-0.5 text-[11px] font-bold", STATUS[t.status].cls)}>{STATUS[t.status].label}</span>
-            {t.total_odds && <p className="font-display font-extrabold text-2xl text-n-0 leading-none tnum">{t.total_odds.toFixed(2)}x</p>}
+            {t.total_odds && <p className={clsx("font-display font-extrabold text-2xl leading-none tnum", t.status === "won" ? "text-accent" : "text-n-0")}>
+              {t.total_odds.toFixed(2)}x</p>}
+            {t.status === "won" && t.total_odds && <p className="text-[11px] font-semibold text-accent">₦1,000 → ₦{Math.round(t.total_odds * 1000).toLocaleString("en-US")}</p>}
           </div>
           <ChevronDown size={16} aria-hidden="true"
             className={clsx("text-n-400 shrink-0 mt-1.5 transition-transform", open && "rotate-180")} />

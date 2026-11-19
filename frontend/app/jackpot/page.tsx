@@ -2,12 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
-import { Info, Loader2 } from "lucide-react";
+import { Info } from "lucide-react";
 import { AppShell } from "@/components/shell/AppShell";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { FeatureGate, Locked, Unavailable } from "@/components/FeatureGate";
 import { useAuthedFetch } from "@/lib/useAuthedFetch";
 import { API } from "@/lib/matchday";
+import { OutcomeBar } from "@/components/ui/meters";
+import { Skeleton } from "@/components/ui/skeleton";
 
 // SportyBet's weekly jackpot (backend jackpot.py, refreshed Thursday and
 // Friday): each match's chances (our model's where we have it, else
@@ -121,7 +123,12 @@ function Jackpot() {
   if (error && /_required$|^Sign in/.test(error)) return <Locked feature="jackpot" title="Jackpot" perks={PERKS} />;
   if (error) return <p className="card p-6 text-sm text-n-400">{error}</p>;
   if (!data) {
-    return <div className="card flex items-center justify-center gap-2 py-16 text-sm text-n-400"><Loader2 size={15} className="animate-spin" /> Loading…</div>;
+    return (
+      <div className="space-y-4" aria-busy="true" aria-label="Loading the jackpot">
+        <div className="card p-5 grid gap-4 sm:grid-cols-3">{[0, 1, 2].map(i => <div key={i} className="space-y-2"><Skeleton className="h-3 w-20" /><Skeleton className="h-6 w-32" /></div>)}</div>
+        <div className="card p-5 space-y-5">{[0, 1, 2, 3].map(i => <div key={i} className="space-y-2"><Skeleton className="h-4 w-56" /><Skeleton className="h-2 w-full" /></div>)}</div>
+      </div>
+    );
   }
   if (!cur || !ticket) return <p className="card p-6 text-sm text-n-400">This week&apos;s jackpot isn&apos;t in yet. It&apos;s read on Thursday and Friday.</p>;
 
@@ -241,6 +248,7 @@ function Jackpot() {
                 </p>
                 <p className="text-[11px] text-n-500 shrink-0">{when(m.kickoff)}</p>
               </div>
+              <OutcomeBar p={m.p} picked={covered} />
               <div className="grid grid-cols-3 gap-2">
                 {OUTCOMES.map((o, k) => (
                   <div key={o} className={clsx("rounded-lg px-2.5 py-2 text-center",

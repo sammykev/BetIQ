@@ -9,6 +9,10 @@ import { useAuthedFetch } from "@/lib/useAuthedFetch";
 import { useUser } from "@clerk/nextjs";
 import type { SlipSelection } from "@/lib/slip";
 import { StakeHint } from "@/components/StakeHint";
+import { ReturnHint } from "@/components/ReturnHint";
+import { Crest } from "@/components/BasketballCard";
+import { ChanceBar } from "@/components/ui/meters";
+import { Skeleton } from "@/components/ui/skeleton";
 
 // Paste a SportyBet booking code: backend/code_check.py scores every leg
 // with the model, suggests better picks, and "Refine" turns it into three
@@ -24,6 +28,7 @@ interface Leg {
   chance?: number | null; chance_from?: "model" | "odds";
   verdict: "strong" | "fair" | "risky" | "not_modelled"; note?: string;
   suggestion: { market_name: string; label: string; prob: number; odds: number; odds_source: string } | null;
+  home_crest?: string | null; away_crest?: string | null;
 }
 interface Pick {
   home: string; away: string; date: string; time: string; league: string;
@@ -52,11 +57,11 @@ interface Report {
 }
 
 const TICKETS = [
-  { id: "safe", name: "Safe", icon: Shield, tone: "text-accent", least: 0.5,
+  { id: "safe", name: "Safe", icon: Shield, tone: "text-accent", bar: "bg-accent", tint: "bg-accent/[0.07]", least: 0.5,
     blurb: "A 50% chance of winning: the highest odds we can find on your games at that chance." },
-  { id: "conservative", name: "Conservative", icon: Scale, tone: "text-info", least: 0.25,
+  { id: "conservative", name: "Conservative", icon: Scale, tone: "text-info", bar: "bg-info", tint: "bg-info/[0.07]", least: 0.25,
     blurb: "A 25% chance of winning, for bigger odds: other markets on each game where they pay more." },
-  { id: "risky", name: "Risky", icon: Flame, tone: "text-warn", least: 0.125,
+  { id: "risky", name: "Risky", icon: Flame, tone: "text-warn", bar: "bg-warn", tint: "bg-warn/[0.08]", least: 0.125,
     blurb: "A 12.5% chance of winning: longer prices on each game for the biggest payout at that chance." },
 ] as const;
 type TicketId = (typeof TICKETS)[number]["id"];
@@ -177,7 +182,8 @@ function toSelection(p: Pick): SlipSelection {
            ...(p.sb ? { sb: p.sb } : {}), ...(p.sport ? { sport: p.sport } : {}) };
 }
 
-function ImprovedSlip({ title, blurb, slip, original }: { title: string; blurb: string; slip: Slip; original: Report["original"] }) {
+function ImprovedSlip({ title, blurb, slip, original, bar, crests }: { title: string; blurb: string; slip: Slip;
+  original: Report["original"]; bar?: string; crests?: Record<string, string | null | undefined> }) {
   const betSlip = useBetSlip();
   const authFetch = useAuthedFetch();
   const { user } = useUser();
@@ -200,7 +206,8 @@ function ImprovedSlip({ title, blurb, slip, original }: { title: string; blurb: 
   const better = slip.win_chance !== null && original.win_chance !== null ? slip.win_chance / original.win_chance : null;
 
   return (
-    <div className="card p-4 sm:p-5 space-y-4">
+    <div className="card relative overflow-hidden p-4 sm:p-5 space-y-4">
+      {bar && <span aria-hidden className={clsx("absolute inset-x-0 top-0 h-1", bar)} />}
       <div>
         <p className="font-semibold text-n-0">{title}</p>
         <p className="text-xs text-n-400">{blurb}</p>
@@ -220,6 +227,11 @@ function ImprovedSlip({ title, blurb, slip, original }: { title: string; blurb: 
       <ul className="divide-y divide-n-800 text-sm">
         {slip.picks.map(p => (
           <li key={`${p.home}${p.away}${p.date}`} className="py-2 flex items-center gap-3">
+            {crests && (
+              <span className="flex -space-x-2 shrink-0" aria-hidden>
+                <Crest src={crests[p.home]} name={p.home} size={26} /><Crest src={crests[p.away]} name={p.away} size={26} />
+              </span>
+            )}
             <div className="min-w-0 flex-1">
               <p className="text-n-0 font-semibold truncate">{p.home} vs {p.away}</p>
               <p className="text-xs text-n-400 truncate">{p.market_name}: <span className="text-n-200">{p.label}</span></p>
@@ -232,28 +244,7 @@ function ImprovedSlip({ title, blurb, slip, original }: { title: string; blurb: 
           </li>
         ))}
       </ul>
-      {typeof slip.expected_return === "number" && (
-        <div className={clsx("rounded-xl px-3 py-2.5 text-sm", slip.expected_return >= 1 ? "bg-accent/10 text-n-100" : "bg-surface-sunken text-n-300")}>
-          <p>
-            ₦100 on this ticket returns about{" "}
-            <span className={clsx("font-bold tnum", slip.expected_return >= 1 ? "text-accent" : "text-n-0")}>
-              ₦{Math.round(slip.expected_return * 100)}</span> on average
-            {slip.bonus ? <> (with SportyBet&apos;s sure {+(slip.bonus * 100).toFixed(1)}% multi-bet bonus)</> : null}.
-          </p>
-          {(slip.bonus_top ?? 0) > (slip.bonus ?? 0) && (
-            <p className="text-[11px] text-n-400 mt-0.5">
-              SportyBet&apos;s bonus on this ticket could go up to {+((slip.bonus_top ?? 0) * 100).toFixed(1)}%;
-              we count only the part it&apos;s sure to pay.
-            </p>
-          )}
-          <p className="text-[11px] text-n-400 mt-0.5 text-pretty">
-            {slip.expected_return >= 1
-              ? "Worth more than it costs by our checked chances. It can still lose: that's the average over many tickets."
-              : `It costs about ₦${100 - Math.round(slip.expected_return * 100)} per ₦100 on average: the price of `
-                + "SportyBet's cut on every leg. Value mode in Refine settings looks for tickets worth their price."}
-          </p>
-        </div>
-      )}
+      <ReturnHint noun="ticket" expected={slip.expected_return} bonus={slip.bonus} bonusTop={slip.bonus_top} />
       {slip.win_chance !== null && slip.total_odds !== null && (
         <StakeHint chance={slip.win_chance} odds={slip.total_odds * (1 + (slip.bonus ?? 0))} />
       )}
@@ -298,9 +289,10 @@ function ImprovedSlip({ title, blurb, slip, original }: { title: string; blurb: 
 
 /** "Refine": the code as three tickets. All three stay mounted so a code
  * booked on one isn't lost when switching to another. */
-function Tickets({ tickets, original, record, notes, settings, onRefine, busy, startOpen }: {
+function Tickets({ tickets, original, record, notes, settings, onRefine, busy, startOpen, crests }: {
   tickets: NonNullable<Report["tickets"]>; original: Report["original"]; record?: Report["record"];
-  notes?: Report["ticket_notes"]; settings: Settings; onRefine: (s: Settings) => void; busy: boolean; startOpen: boolean }) {
+  notes?: Report["ticket_notes"]; settings: Settings; onRefine: (s: Settings) => void; busy: boolean; startOpen: boolean;
+  crests?: Record<string, string | null | undefined> }) {
   const [open, setOpen] = useState(startOpen);
   const [showSettings, setShowSettings] = useState(false);
   const changed = JSON.stringify(settings) !== JSON.stringify(DEFAULT_SETTINGS);
@@ -344,8 +336,9 @@ function Tickets({ tickets, original, record, notes, settings, onRefine, busy, s
           }
           return (
             <button key={t.id} role="tab" aria-selected={active} onClick={() => setTab(t.id)}
-              className={clsx("card min-w-0 px-2 py-3 sm:p-4 text-left transition-[opacity,box-shadow,scale] duration-150 ease-[cubic-bezier(0.2,0,0,1)] active:scale-[0.97]",
-                active ? "card-selected" : "opacity-80 hover:opacity-100")}>
+              className={clsx("card relative overflow-hidden min-w-0 px-2 py-3 sm:p-4 text-left transition-[opacity,box-shadow,scale] duration-150 ease-[cubic-bezier(0.2,0,0,1)] active:scale-[0.97]",
+                active ? ["card-selected", t.tint] : "opacity-80 hover:opacity-100")}>
+              <span aria-hidden className={clsx("absolute inset-x-0 top-0 h-1", t.bar)} />
               <p className={clsx("flex items-center gap-1.5 text-xs sm:text-sm font-bold", t.tone)}>
                 <t.icon size={14} className="shrink-0 hidden sm:block" /> <span className="truncate">{t.name}</span></p>
               <p className="font-display font-extrabold text-xl sm:text-2xl text-n-0 tnum mt-1">{odds(slip.total_odds)}x</p>
@@ -368,7 +361,7 @@ function Tickets({ tickets, original, record, notes, settings, onRefine, busy, s
         const slip = tickets[t.id];
         return (
           <div key={t.id} role="tabpanel" hidden={tab !== t.id}>
-            {slip ? <ImprovedSlip title={`${t.name} ticket`} original={original} slip={slip}
+            {slip ? <ImprovedSlip title={`${t.name} ticket`} original={original} slip={slip} bar={t.bar} crests={crests}
                 blurb={changed ? `At least a ${target(slip.target_chance ?? leastFor(settings, t.id))} chance of winning, within your settings.` : t.blurb} />
               : <p className="card p-4 text-sm text-n-400 text-pretty">{notes?.[t.id] ??
                   `No pick on these games is ${target(leastFor(settings, t.id))} likely on its own, so there's no ${t.name.toLowerCase()} ticket.`}</p>}
@@ -434,6 +427,14 @@ export function CodeCheck({ onLocked, initialCode }: { onLocked?: () => void; in
         {error && <p className="text-sm text-warn flex items-center gap-2"><AlertTriangle size={14} /> {error}</p>}
       </section>
 
+      {busy && !report && (
+        <section className="card p-5 space-y-4" aria-busy="true" aria-label="Rating your code">
+          <Skeleton className="h-5 w-40" />
+          {[0, 1, 2].map(i => (
+            <div key={i} className="space-y-2"><Skeleton className="h-3 w-32" /><Skeleton className="h-4 w-56" /><Skeleton className="h-1.5 w-48" /></div>
+          ))}
+        </section>
+      )}
       {report && (
         <>
           <section className="card p-5 space-y-4">
@@ -450,9 +451,17 @@ export function CodeCheck({ onLocked, initialCode }: { onLocked?: () => void; in
                   <div className="flex items-start gap-3">
                     <div className="min-w-0 flex-1">
                       <p className="text-[11px] text-n-500 truncate">{l.league} · {l.date} {l.time}</p>
-                      <p className="text-sm text-n-0 font-semibold truncate">{l.home} vs {l.away}</p>
+                      <p className="text-sm text-n-0 font-semibold truncate flex items-center gap-2">
+                        <span className="flex -space-x-2 shrink-0" aria-hidden>
+                          <Crest src={l.home_crest} name={l.home} size={22} /><Crest src={l.away_crest} name={l.away} size={22} />
+                        </span>
+                        <span className="truncate">{l.home} vs {l.away}</span></p>
                       <p className="text-xs text-n-400">{l.market}: <span className="text-n-200">{l.pick}</span>{!l.active && <span className="text-danger"> · suspended</span>}</p>
-                      <p className="text-[11px] text-n-400 tnum mt-0.5">
+                      {(l.chance ?? l.our_prob) != null && (
+                        <div className="mt-1.5 max-w-xs"><ChanceBar ours={(l.our_prob ?? l.chance)!} implied={l.implied}
+                          label={l.our_prob != null ? "Our chance" : "Chance from the odds"} /></div>
+                      )}
+                      <p className="text-[11px] text-n-400 tnum mt-1">
                         {l.our_prob !== null ? <>Our chance <span className="text-n-0 font-semibold">{pct(l.our_prob)}</span> · </>
                           : l.chance != null ? <>Chance from the odds <span className="text-n-0 font-semibold">{pct(l.chance)}</span> · </> : null}
                         SportyBet&apos;s odds {odds(l.odds)} (implies {pct(l.implied)})
@@ -476,7 +485,8 @@ export function CodeCheck({ onLocked, initialCode }: { onLocked?: () => void; in
 
           {report.tickets ? (
             <Tickets tickets={report.tickets} original={report.original} record={report.record}
-              notes={report.ticket_notes} settings={settings} onRefine={refine} busy={busy} startOpen={refined || !!initialCode} />
+              notes={report.ticket_notes} settings={settings} onRefine={refine} busy={busy} startOpen={refined || !!initialCode}
+              crests={Object.fromEntries(report.legs.flatMap(l => [[l.home, l.home_crest], [l.away, l.away_crest]]))} />
           ) : !report.same_odds && !report.safest ? (
             <p className="card p-4 text-sm text-n-400 flex items-center gap-2"><CheckCircle2 size={15} />
               None of these games are ones we predict, so there&apos;s nothing to improve.</p>

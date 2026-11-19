@@ -773,6 +773,8 @@ def parse_share(data: Any) -> List[Dict[str, Any]]:
                     "market": _label(m), "outcomeId": str(o.get("id") or ""),
                     "outcome": str(o.get("desc") or o.get("id") or ""), "odds": odds,
                     "active": bool(o.get("isActive", 1)),
+                    # the clubs' crests where SportyBet has them
+                    "home_icon": ev.get("homeTeamIcon") or None, "away_icon": ev.get("awayTeamIcon") or None,
                 })
     return out
 

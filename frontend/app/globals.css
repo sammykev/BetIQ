@@ -14,7 +14,7 @@
   --n-200: 39 51 75;
   --n-300: 59 72 99;      /* body text */
   --n-400: 86 98 122;     /* secondary text, labels */
-  --n-500: 107 119 143;   /* tertiary text */
+  --n-500: 92 104 128;    /* tertiary text (5:1 on white, Nov 2026) */
   --n-600: 151 162 184;   /* dimmed numbers */
   --n-700: 207 214 226;   /* hover borders */
   --n-800: 227 232 240;   /* borders, tracks, muted fills */
@@ -66,7 +66,7 @@ html.dark {
   --n-200: 198 207 221;
   --n-300: 163 174 195;
   --n-400: 125 138 163;
-  --n-500: 95 107 130;
+  --n-500: 120 132 155;
   --n-600: 59 72 99;
   --n-700: 39 51 75;
   --n-800: 26 36 56;
@@ -203,7 +203,8 @@ body {
   }
   /* A settled slip or ticket: the ring carries the result (the badge says it in words) */
   .card-won {
-    box-shadow: 0 0 0 1px rgb(var(--accent) / 0.4);
+    box-shadow: 0 0 0 1.5px rgb(var(--accent) / 0.55), 0 10px 32px -14px rgb(var(--accent) / 0.45);
+    background-image: linear-gradient(180deg, rgb(var(--accent) / 0.09), transparent 55%);
   }
   .card-lost {
     box-shadow: 0 0 0 1px rgb(var(--danger) / 0.3);

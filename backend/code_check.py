@@ -248,7 +248,10 @@ def analyse(selections: List[Dict], find_pred: Callable[[Dict], Optional[Dict]],
                "chance_from": "model" if prob is not None else "odds",
                "implied": round(1 / odds, 3) if odds else None,
                "value": round(prob * odds - 1, 3) if prob is not None and odds else None,
-               "verdict": _verdict(prob), "matched": pred is not None, "suggestion": None, "sb": _ids(sel)}
+               "verdict": _verdict(prob), "matched": pred is not None, "suggestion": None, "sb": _ids(sel),
+               # crests: ours (the fixture feed's) where we predict the match, else SportyBet's
+               "home_crest": (pred or {}).get("home_crest") or sel.get("home_icon"),
+               "away_crest": (pred or {}).get("away_crest") or sel.get("away_icon")}
         if not pred:
             leg["note"] = "We don't predict this match: its chance is from SportyBet's odds"
         elif prob is None:

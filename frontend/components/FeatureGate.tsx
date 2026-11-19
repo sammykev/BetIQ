@@ -1,9 +1,10 @@
 "use client";
 
+import { Skeleton } from "@/components/ui/skeleton";
 import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { SignInButton, SignUpButton } from "@clerk/nextjs";
-import { Check, Loader2, Lock, EyeOff } from "lucide-react";
+import { Check, Lock, EyeOff } from "lucide-react";
 import { PaywallModal } from "@/components/PaywallModal";
 import { useTrialConfig } from "@/components/Trial";
 import { useAccess, tierAtLeast, TIER_NAMES, type FeatureId } from "@/lib/access";
@@ -81,7 +82,12 @@ export function FeatureGate({ feature, title, perks = [], locked = false, childr
 }) {
   const { ready, shown, can } = useAccess();
   if (!ready) {
-    return <div className="card flex items-center justify-center gap-2 py-16 text-sm text-n-400"><Loader2 size={15} className="animate-spin" /> Loading…</div>;
+    return (
+      <div className="card p-5 space-y-4" aria-busy="true" aria-label={`Loading ${title}`}>
+        <Skeleton className="h-5 w-48" /><Skeleton className="h-3 w-full max-w-md" /><Skeleton className="h-3 w-2/3 max-w-sm" />
+        <Skeleton className="h-10 w-full rounded-xl" />
+      </div>
+    );
   }
   if (!shown(feature)) return <Unavailable title={title} />;
   if (!can(feature) || locked) return <Locked feature={feature} title={title} perks={perks} />;
