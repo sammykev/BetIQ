@@ -157,14 +157,16 @@ def price_checked(o):
 #   the nightly ranking).
 VALUE_MIN_RETURN = 1.01
 VALUE_MARKET_N = 50
-VALUE_MAX_LEGS = 4
-VALUE_MIN_SLIP_CHANCE = 0.25   # the value slip keeps at least this chance of winning
+VALUE_MAX_LEGS = 4             # (the old "games on the value slip" setting)
+VALUE_MIN_SLIP_CHANCE = 0.25   # (the old value slip: kept at least this chance of winning)
 VALUE_LIST = 30
+VALUE_MAX_GAMES = 12           # the value slip's longest try at the target odds
 
 
 def market_paid(ranked: Optional[Dict[str, Dict]], sport: str, market: str) -> bool:
     x = (ranked or {}).get(f"{sport}:{market}") or {}
-    return isinstance(x.get("roi"), (int, float)) and x["roi"] >= 0 and (x.get("n") or 0) >= VALUE_MARKET_N
+    # the return over the picks that carried their price (older rankings: all the market's picks)
+    return isinstance(x.get("roi"), (int, float)) and x["roi"] >= 0 and (x.get("priced", x.get("n")) or 0) >= VALUE_MARKET_N
 
 
 def value_options(groups, ranked: Optional[Dict[str, Dict]], min_prob: float) -> List:
@@ -176,6 +178,22 @@ def value_options(groups, ranked: Optional[Dict[str, Dict]], min_prob: float) ->
         if ok:
             best.append(max(ok, key=lambda o: (o.prob * o.odds, o.prob)))
     return sorted(best, key=lambda o: (-o.prob * o.odds, -o.prob))
+
+
+def value_groups(groups, ranked: Optional[Dict[str, Dict]], min_prob: float) -> List[List]:
+    """Every value pick of each match (the slip may want a longer price than the best-returning one)."""
+    out = [[o for o in g if o.odds_source in REAL_PRICES and o.prob >= min_prob
+            and o.prob * o.odds >= VALUE_MIN_RETURN and market_paid(ranked, o.sport, o.market)] for g in groups]
+    return [g for g in out if g]
+
+
+def fewest_legs(groups, lo: float, hi: float, most: int, solve) -> Optional[Dict]:
+    """The slip in [lo, hi] with the fewest games (then the best chance), up to `most`."""
+    for n in range(1, min(most, len(groups)) + 1):
+        res = solve(groups, lo, hi, n)
+        if res and res.get("within_target", True):
+            return res
+    return None
 
 
 def value_slip(picks: List, legs: int, least: float = VALUE_MIN_SLIP_CHANCE) -> List:
@@ -774,7 +792,7 @@ async def _optimize_request(body: Dict[str, Any],
         groups = [[c for o in g for c in [price_checked(o)] if c is not None and c.prob >= min_prob] for g in groups]
         price_out = before - sum(len(g) for g in groups)
     if body.get("value") is True:
-        return _value_result(groups, body, min_prob, considered=sum(1 for g in groups if g))
+        return _value_result(groups, body, min_prob, lo, hi, target, max_games, considered=sum(1 for g in groups if g))
     # Markets that came in at least min_hit of the time in the nightly ranking
     # first; the ones under it only as a fallback (below). A market without
     # enough settled picks to be ranked is left out
@@ -997,31 +1015,40 @@ def _cached_sport_predictions(sport: str) -> List[Dict]:
     return (main._sports_memory_cache.get(sport) or ([],))[0]
 
 
-def _value_result(groups, body: Dict[str, Any], min_prob: float, considered: int) -> Dict[str, Any]:
-    """The value filter's answer: the value picks (for singles) and the value
-    slip of at most `value_legs` legs, with what each returns on average."""
+def _value_result(groups, body: Dict[str, Any], min_prob: float, lo: float, hi: float, target: float,
+                  max_games: int, considered: int) -> Dict[str, Any]:
+    """The value filter's answer: every value pick (for singles), and the
+    value slip at the target odds — value picks only, the fewest games that
+    reach the odds (then the best chance), and fewer than the normal
+    optimizer's slip at the same odds."""
     import multi_bonus
     import optimizer
-    try:
-        legs = min(VALUE_MAX_LEGS, max(1, int(body.get("value_legs", 3))))
-    except (TypeError, ValueError):
-        legs = 3
     ranked = main._ranked_codes()
-    picks = value_options(groups, ranked, max(min_prob, 0.5))
-    slip = value_slip(picks, legs)
-    pick = lambda o: {**optimizer._pick(o), "expected_return": round(o.prob * o.odds, 3),
-                      "market_roi": ((ranked or {}).get(f"{o.sport}:{o.market}") or {}).get("roi"),
-                      "market_n": ((ranked or {}).get(f"{o.sport}:{o.market}") or {}).get("n")}
+    floor = max(min_prob, 0.5)
+    picks = value_options(groups, ranked, floor)
+    vgroups = value_groups(groups, ranked, floor)
+    solve = lambda g, a, b, n: optimizer.optimize(g, a, b, n, min_edge=None)
+    usual = optimizer.optimize(groups, lo, hi, max_games)
+    usual_games = usual["games"] if usual else None
+    most = min(VALUE_MAX_GAMES, (usual_games - 1) if usual_games else VALUE_MAX_GAMES)
+    slip = fewest_legs(vgroups, lo, hi, most, solve) if most >= 1 else None
+    extra = lambda o: {"expected_return": round(o["prob"] * o["odds"], 3),
+                       "market_roi": ((ranked or {}).get(f"{o.get('sport') or 'football'}:{o['market']}") or {}).get("roi"),
+                       "market_n": ((ranked or {}).get(f"{o.get('sport') or 'football'}:{o['market']}") or {}).get("priced")}
+    pick = lambda o: (lambda d: {**d, **extra(d)})(optimizer._pick(o))
     out: Dict[str, Any] = {"mode": "value", "matches_considered": considered, "value_picks": [pick(o) for o in picks[:VALUE_LIST]],
-                           "picks": [], "legs_asked": legs}
+                           "picks": [], "target_odds": target, "usual_games": usual_games}
     if slip:
-        total = round(math.prod(o.odds for o in slip), 2)
-        chance = round(math.prod(o.prob for o in slip), 4)
-        out.update(picks=[pick(o) for o in slip], games=len(slip), total_odds=total, win_chance=chance)
-        out.update(multi_bonus.returns(out["picks"], chance, total))
-    elif not picks:
+        out.update(picks=[{**p, **extra(p)} for p in slip["picks"]], games=slip["games"],
+                   total_odds=slip["total_odds"], win_chance=slip["win_chance"])
+        out.update(multi_bonus.returns(out["picks"], slip["win_chance"], slip["total_odds"]))
+    elif picks:
+        out["slip_note"] = (f"No value slip reaches about {target:,.2f}x"
+                            + (f" in fewer than the usual slip's {usual_games} games" if usual_games else "")
+                            + ": back the value picks as singles, or try lower odds or more days.")
+    else:
         out["error"] = ("No value picks right now: none of these matches has a pick worth more than its odds, "
-                        f"{round(max(min_prob, 0.5) * 100)}%+ likely, in a market whose picks have made money. "
+                        f"{round(floor * 100)}%+ likely, in a market whose picks have made money. "
                         "Try a lower confidence, more days or more sports.")
     return out
 

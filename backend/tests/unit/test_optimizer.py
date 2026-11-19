@@ -351,3 +351,16 @@ def test_the_value_filter():
     # the slip: best returns first while it stays 25%+ likely
     assert [p.home for p in ro.value_slip(picks, 3)] == ["E", "A"]
     assert len(ro.value_slip(picks, 1)) == 1
+
+
+def test_the_value_slip_takes_the_fewest_games():
+    import routers.optimizer as ro
+    import optimizer
+    from optimizer import Option
+    o = lambda h, prob, odds: Option(h, "B", "2026-11-20", "", "PL", "goals_ou", "M", "O15", "x", prob, odds, "sportybet")
+    groups = [[o("A", 0.55, 1.95), o("A", 0.8, 1.3)], [o("C", 0.6, 1.75)], [o("D", 0.8, 1.3)], [o("E", 0.8, 1.3)]]
+    solve = lambda g, a, b, n: optimizer.optimize(g, a, b, n, min_edge=None)
+    res = ro.fewest_legs(groups, 3.2, 3.6, 4, solve)
+    # 1.95 × 1.75 = 3.41 in two games, where 1.3s would need five
+    assert res and res["games"] == 2 and 3.2 <= res["total_odds"] <= 3.6
+    assert ro.fewest_legs(groups, 3.2, 3.6, 1, solve) is None

@@ -48,7 +48,7 @@ interface MarketHit { n: number; hit_rate: number; said: number | null; roi: num
 interface ValuePick extends OptPick { expected_return: number; market_roi?: number | null; market_n?: number | null }
 interface OptResult {
   /** "value": the value filter's answer (value_picks for singles, picks: the short value slip) */
-  mode?: "value"; value_picks?: ValuePick[]; legs_asked?: number;
+  mode?: "value"; value_picks?: ValuePick[]; usual_games?: number | null; slip_note?: string;
   picks?: OptPick[]; games?: number; total_odds?: number; win_chance?: number;
   expected_return?: number | null; bonus?: number; bonus_top?: number;
   within_target?: boolean; estimated_prices?: number; matches_considered?: number; bookable_picks?: number;
@@ -326,7 +326,6 @@ export default function OptimizerPage() {
   const [minProb, setMinProb] = useState(0.85);
   // The value filter: picks worth more than their odds, in markets that have made money, few legs
   const [valueMode, setValueMode] = useState(false);
-  const [valueLegs, setValueLegs] = useState(3);
   const [slipChance, setSlipChance] = useState<number | null>(null);
   const [breakEven, setBreakEven] = useState(true);
   const [days, setDays] = useState(3);
@@ -476,7 +475,7 @@ export default function OptimizerPage() {
                                tn_markets: tnFamilies.filter(f => !off.has(f)), tt_markets: ttFamilies.filter(f => !off.has(f)),
                                ...(pickedLeagues.length ? { leagues: pickedLeagues } : {}),
                                bookable_only: bookable,
-                               ...(valueMode ? { value: true, value_legs: valueLegs } : {}) }),
+                               ...(valueMode ? { value: true } : {}) }),
       });
       if (res.status === 401 || res.status === 402) { setLocked("build"); return; }
       const data = await res.json();
@@ -559,7 +558,7 @@ export default function OptimizerPage() {
               where we rated picks far above their price, they came in far less often than we said.
             </p>
           )}
-          {!valueMode && <div className="space-y-3">
+          <div className="space-y-3">
             <div className="flex items-end justify-between gap-3">
               <div>
                 <p className="eyebrow">Target odds</p>
@@ -590,7 +589,7 @@ export default function OptimizerPage() {
               ))}
               <span className="self-center text-xs text-n-500 tnum">{odds(lo)}–{odds(hi)}x</span>
             </Setting>
-          </div>}
+          </div>
 
           <div className="grid gap-5 sm:grid-cols-2">
             <Setting label="Each pick at least">
@@ -598,11 +597,6 @@ export default function OptimizerPage() {
                 <Chip key={c} active={minProb === c} onClick={() => setMinProb(c)}>{Math.round(c * 100)}% likely</Chip>
               ))}
             </Setting>
-            {valueMode && (
-              <Setting label="Games on the value slip">
-                {[1, 2, 3, 4].map(n => <Chip key={n} active={valueLegs === n} onClick={() => setValueLegs(n)}>{n === 1 ? "1 (single)" : n}</Chip>)}
-              </Setting>
-            )}
             {!valueMode && <Setting label="Whole slip at least">
               <Chip active={slipChance === null && !breakEven} onClick={() => { setSlipChance(null); setBreakEven(false); }}>Off</Chip>
               <Chip active={slipChance === null && breakEven} onClick={() => { setSlipChance(null); setBreakEven(true); }}>
@@ -774,7 +768,7 @@ export default function OptimizerPage() {
           <button onClick={() => run()} disabled={busy || (!valueMode && !validTarget) || !marketsPicked}
             className="w-full sm:w-auto flex items-center justify-center gap-2 rounded-xl bg-brand-400 hover:bg-brand-300 text-ink font-bold px-6 py-3 disabled:opacity-50">
             {busy ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-            {busy ? "Optimizing…" : valueMode ? "Find value picks" : slipChance ? `Build a ${Math.round(slipChance * 100)}% likely slip` : `Build a ${odds(targetOdds)}x slip`}
+            {busy ? "Optimizing…" : valueMode ? `Find a ${odds(targetOdds)}x value slip` : slipChance ? `Build a ${Math.round(slipChance * 100)}% likely slip` : `Build a ${odds(targetOdds)}x slip`}
           </button>
         </section>
 
@@ -1002,7 +996,8 @@ function ValueResult({ result }: { result: OptResult }) {
           <span aria-hidden className="absolute inset-x-0 top-0 h-1 bg-accent" />
           <div>
             <p className="font-semibold text-n-0">Value slip</p>
-            <p className="text-xs text-n-400">The best-returning value picks, up to {result.legs_asked} games, keeping at least a 25% chance of winning.</p>
+            <p className="text-xs text-n-400 text-pretty">Value picks only, in as few games as reach about {odds(result.target_odds ?? 1)}x
+              {result.usual_games ? <>: the usual optimizer slip at these odds takes {result.usual_games} games.</> : "."}</p>
           </div>
           <div className="grid grid-cols-3 gap-3 text-center">
             <div className="rounded-xl bg-surface-sunken p-3"><p className="eyebrow">Total odds</p>
@@ -1017,6 +1012,9 @@ function ValueResult({ result }: { result: OptResult }) {
           <button onClick={() => { betSlip.addMany(result.picks!.map(sel)); betSlip.setOpen(true); }}
             className="w-full rounded-xl bg-brand-400 hover:bg-brand-300 text-ink font-bold px-4 py-2.5">Put the value slip in my bet slip</button>
         </div>
+      )}
+      {result.slip_note && (
+        <p className="card p-4 text-sm text-n-300 text-pretty">{result.slip_note}</p>
       )}
       {picks.length > 0 && (
         <div className="card p-5 space-y-3">

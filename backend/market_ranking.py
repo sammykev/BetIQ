@@ -68,11 +68,30 @@ def _days(r, key: str, dates: List[str]) -> List[Dict]:
     return out
 
 
+def _football_prices(e: Dict) -> Dict[Tuple[str, str], float]:
+    """SportyBet's price for each outcome, as the snapshot kept it before kick-off (price_book)."""
+    out = {}
+    for x in (e.get("pred") or {}).get("prices") or []:
+        try:
+            market, code, _prob, odds = x
+            if float(odds) > 1:
+                out[(str(market), str(code))] = float(odds)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 def football_rows(entries: List[Dict]) -> List[Row]:
+    """Every settled football pick, with SportyBet's price where it was linked
+    (Nov 2026: so each football market gets a flat-stake return too)."""
     import market_accuracy
     import optimizer
-    return [("football", optimizer.MARKET_NAMES.get(m, m), p, won, None, m)
-            for e in entries for m, _code, p, won in market_accuracy.settle(e)]
+    rows: List[Row] = []
+    for e in entries:
+        prices = _football_prices(e)
+        rows += [("football", optimizer.MARKET_NAMES.get(m, m), p, won, prices.get((m, str(code))), m)
+                 for m, code, p, won in market_accuracy.settle(e)]
+    return rows
 
 
 # The market a winner or total tip settles as (basketball_matchday, racket_matchday)
@@ -178,6 +197,7 @@ def by_code(rows: List[Row], min_n: int) -> Dict[str, Dict]:
         priced = [r for r in rs if r[4] and r[4] > 1]
         out[k] = {"n": len(rs), "hit_rate": round(sum(r[3] for r in rs) / len(rs), 4),
                   "said": round(sum(r[2] for r in rs) / len(rs), 4),
+                  "priced": len(priced),
                   "roi": round(sum(r[4] - 1 if r[3] else -1 for r in priced) / len(priced), 4)
                   if len(priced) >= min_n else None}
     return out

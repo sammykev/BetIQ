@@ -1,3 +1,4 @@
+import pytest
 import market_ranking as mr
 
 
@@ -48,4 +49,21 @@ def test_every_quarter_line_is_graded_not_only_the_best():
     assert ("basketball", "1st half total points", 0.6, True, None, "bb_h1_total") in rows
     # under 50% and full-game lines aren't part lines; the best line isn't counted twice
     assert len(rows) == 3
-    assert mr.by_code(rows, 1)["basketball:bb_q2_total"] == {"n": 1, "hit_rate": 0.0, "said": 0.7, "roi": None}
+    assert mr.by_code(rows, 1)["basketball:bb_q2_total"] == {"n": 1, "hit_rate": 0.0, "said": 0.7, "priced": 0, "roi": None}
+
+
+
+def test_football_rows_carry_sportybets_price():
+    e = {"pred": {"p_home": 0.6, "prices": [["1x2", "1", 0.6, 1.8], ["goals_ou", "O15", 0.8, 1.25]]},
+         "result": {"status": "finished", "hg": 2, "ag": 0}}
+    import market_accuracy
+    old = market_accuracy.settle
+    market_accuracy.settle = lambda entry: [("1x2", "1", 0.6, True), ("goals_ou", "O15", 0.8, True), ("btts", "BTTS-N", 0.55, True)]
+    try:
+        rows = mr.football_rows([e])
+    finally:
+        market_accuracy.settle = old
+    odds = {r[5]: r[4] for r in rows}
+    assert odds == {"1x2": 1.8, "goals_ou": 1.25, "btts": None}
+    got = mr.by_code(rows, 1)
+    assert got["football:1x2"]["priced"] == 1 and got["football:1x2"]["roi"] == pytest.approx(0.8)
