@@ -205,7 +205,10 @@ def analyse(selections: List[Dict], find_pred: Callable[[Dict], Optional[Dict]],
         other = find_other(sel) if find_other and not pred else None
         prob: Optional[float] = None
         options: List[Option] = []
-        own_market, own_code, sport = "sportybet", str(sel["outcomeId"]), "football"
+        own_market, own_code = "sportybet", str(sel["outcomeId"])
+        # The leg's sport from SportyBet (a kept football leg is graded from the score; others aren't)
+        sport = {"sr:sport:1": "football", "sr:sport:2": "basketball", "sr:sport:5": "tennis",
+                 "sr:sport:20": "table_tennis"}.get(str(sel.get("sport_id") or ""), "football" if not sel.get("sport_id") else "other")
         if pred and pred.get("sport") in (None, "football"):
             pick = model_pick(pred, sel, confirmed)
             options = candidates(pred, event_for(pred), MIN_OPTION_PROB, None, allowed)

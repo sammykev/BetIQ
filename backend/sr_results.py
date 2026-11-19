@@ -75,6 +75,14 @@ def parse(body: Any, sport: str) -> Optional[Dict]:
         return None
     final = _pair(m.get("result") or {})
     ps = _periods(m)
+    if sport == "football":
+        # Bets settle on 90 minutes: the two halves when given (extra time and penalties after)
+        halves = _numbered(ps)[:2]
+        reg = tuple(map(sum, zip(*halves))) if len(halves) == 2 else final
+        if reg is None:
+            return None
+        extra = any(k in ps for k in ("ot", "ap", "et", "pen")) or (len(halves) == 2 and final is not None and reg != final)
+        return {"status": "finished", "hg": int(reg[0]), "ag": int(reg[1]), "aet": bool(extra), "source": "sportradar"}
     if sport == "basketball":
         if final is None:
             return None

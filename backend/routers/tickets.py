@@ -82,6 +82,10 @@ def _leg_results(r, days: Dict[str, Dict]):
             return (main._rk_result_for(r, leg, rk_days) or main._other_sport_md_result(r, leg, main._leg_sport(leg), md_days)
                     or main._sr_result_for(r, leg, main._leg_sport(leg)) or main._fs_result_for(r, leg, main._leg_sport(leg)))
         e = main._md_entry_for(r, leg, days)
+        if e and e.get("result"):
+            return e.get("result")
+        if leg.get("event_id"):    # a football leg kept by SportyBet's ids, on a match we don't predict
+            return main._sr_result_for(r, leg, "football")
         return e.get("result") if e else None
     return result_for
 

@@ -382,3 +382,30 @@ def test_multi_bonus_share():
         {"qualifyingSelections": 2, "min": 0, "max": 300}]}],
         "bonusFactorVOList": [{"sportId": "sr:sport:1", "bonusFactor": 6000, "isEnabled": True, "tournamentId": ""}]})
     assert got == (1.2, {2: (0.0, 0.03)}, {"football": 0.6})
+
+
+def test_a_kept_football_leg_is_graded_from_the_score():
+    import booking_slip
+    import sr_results
+    import tickets
+    # SportyBet's ids back to our markets
+    assert booking_slip.score_market("1", "", "1") == ("1x2", "1")
+    assert booking_slip.score_market("10", "", "11") == ("double_chance", "X2")
+    assert booking_slip.score_market("18", "total=2.5", "13") == ("goals_ou", "U25")
+    assert booking_slip.score_market("16", "hcp=-1.5", "1715") == ("handicap", "A+1.5")
+    for m, c in (("handicap", "H-1.5"), ("handicap", "A-1.5"), ("dc_goals", "1X&O15"), ("goals_ou", "O35")):
+        ids = booking_slip.sportybet_ids(m, c)
+        assert booking_slip.score_market(ids["marketId"], ids["specifier"], ids["outcomeId"]) == (m, c)
+    assert booking_slip.score_market("166", "total=9.5", "12") is None      # corners: not from the score
+    # a kept leg becomes gradeable
+    sel = {"home": "A", "away": "B", "date": TOMORROW, "market": "sportybet", "code": "13", "label": "Under 2.5",
+           "sport": "football", "sb": {"eventId": "sr:match:9", "marketId": "18", "specifier": "total=2.5", "outcomeId": "13"}}
+    t = tickets.new_ticket("X1", [sel], [{"status": "booked", "odds": 1.8}], "code_check", None, 1.8, "now")
+    leg = t["legs"][0]
+    assert (leg["market"], leg["code"], leg["status"], leg["event_id"]) == ("goals_ou", "U25", "pending", "sr:match:9")
+    # Sportradar's football final: the 90 minutes
+    body = {"doc": [{"data": {"match": {"matchstatus": "result", "result": {"home": 3, "away": 2},
+                                        "periods": {"p1": {"home": 1, "away": 0}, "p2": {"home": 1, "away": 1},
+                                                    "ot": {"home": 1, "away": 1}}}}}]}
+    res = sr_results.parse(body, "football")
+    assert (res["hg"], res["ag"], res["aet"]) == (2, 1, True)

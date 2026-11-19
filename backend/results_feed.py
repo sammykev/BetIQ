@@ -34,6 +34,7 @@ ESPN_SLUGS = {
     "DEN": "den.1", "NOR": "nor.1", "SWE": "swe.1", "POL": "pol.1", "ROU": "rou.1",
     "ARG": "arg.1", "MEX": "mex.1", "MLS": "usa.1", "JPN": "jpn.1", "CHN": "chn.1",
     "EL1": "eng.3", "EL2": "eng.4", "ENL": "eng.5", "SD": "esp.2", "SB": "ita.2", "FL2": "fra.2",
+    "LIB": "conmebol.libertadores", "SUD": "conmebol.sudamericana",
 }
 CSV_DIR = os.path.join(os.path.dirname(__file__), "data", "football")
 EXTRA_CSV_DIR = os.path.join(os.path.dirname(__file__), "data", "football_extra")   # Belgium, Scotland, Greece, Turkey

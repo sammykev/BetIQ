@@ -44,6 +44,12 @@ COMPETITIONS: Dict[str, Tuple[str, str, str, str]] = {
     "SD": ("esp.2", "LaLiga 2", "Spain", "🇪🇸"),
     "SB": ("ita.2", "Serie B", "Italy", "🇮🇹"),
     "FL2": ("fra.2", "Ligue 2", "France", "🇫🇷"),
+    # South America's club cups (Nov 2026): their Brazilian and Argentine clubs
+    # are rated from those leagues; a club we have too little on is flagged
+    # thin_history. No cup history of its own, so never "proven": shown with a
+    # warning and kept out of slips, but the jackpot and code checker use it
+    "LIB": ("conmebol.libertadores", "Copa Libertadores", "South America", "🏆"),
+    "SUD": ("conmebol.sudamericana", "Copa Sudamericana", "South America", "🏆"),
 }
 UNPROVEN_KEY = "betiq:extra_leagues:check"
 

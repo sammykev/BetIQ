@@ -162,6 +162,14 @@ def new_ticket(code: str, selections: List[Dict], picks: List[Dict], source: str
         # markets we may not model: they're shown, but can't be settled here
         leg["odds"] = p.get("odds")
         leg["status"] = "unknown" if s.get("market") == "sportybet" else "pending"
+        if s.get("market") == "sportybet" and s.get("sport") in (None, "football") and isinstance(s.get("sb"), dict):
+            # A football leg kept by SportyBet's ids: in a market the final score settles, graded like ours
+            import booking_slip
+            got = booking_slip.score_market(s["sb"].get("marketId"), s["sb"].get("specifier"), s["sb"].get("outcomeId"))
+            if got:
+                leg["market"], leg["code"] = got
+                leg["status"] = "pending"
+                leg["event_id"] = s["sb"].get("eventId")
         if str(s.get("market") or "").startswith("bb_"):
             # Basketball: settled from the SportyBet event it was booked on
             leg["sport"] = "basketball"

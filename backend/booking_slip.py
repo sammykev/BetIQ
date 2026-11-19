@@ -206,6 +206,37 @@ def sportybet_ids(market: str, code: str) -> Optional[Dict[str, str]]:
     return None
 
 
+# Football markets the final score settles (tickets.grade_leg), for grading
+# a leg kept from a pasted code by its SportyBet ids
+_SCORE_FIXED = {v: k for k, v in _FIXED.items() if k[0] in ("1x2", "double_chance", "btts")}
+_SCORE_LINES = {_LINE_MARKETS[m]: m for m in ("goals_ou", "home_goals_ou", "away_goals_ou")}
+_DC_GOALS_BACK = {v: k for k, v in _DC_GOALS_OUTCOMES.items()}
+
+
+def score_market(market_id: str, specifier: str, outcome_id: str) -> Optional[Tuple[str, str]]:
+    """Our (market, code) for a football SportyBet outcome the final score
+    settles — the result, double chance, both teams to score, goal lines,
+    handicaps, double chance & goals — or None."""
+    market_id, specifier, outcome_id = str(market_id or ""), str(specifier or ""), str(outcome_id or "")
+    if not specifier and (market_id, outcome_id) in _SCORE_FIXED:
+        m, c = _SCORE_FIXED[(market_id, outcome_id)]
+        return m, ("X2" if c == "2X" else c)
+    line = re.fullmatch(r"total=(\d{1,2})\.5", specifier)
+    if market_id in _SCORE_LINES and line and outcome_id in (_OVER, _UNDER):
+        return _SCORE_LINES[market_id], f"{'O' if outcome_id == _OVER else 'U'}{line.group(1)}5"
+    if market_id == "547" and line and outcome_id in _DC_GOALS_BACK:
+        dc, side = _DC_GOALS_BACK[outcome_id]
+        return "dc_goals", f"{dc}&{side}{line.group(1)}5"
+    hcp = re.fullmatch(r"hcp=(-?)(\d)\.5", specifier)
+    if market_id == "16" and hcp and outcome_id in ("1714", "1715"):
+        home_minus, n = hcp.group(1) == "-", hcp.group(2)
+        side = "H" if outcome_id == "1714" else "A"
+        # the specifier is the home side's handicap: the away side's is its mirror
+        sign = "-" if (side == "H") == home_minus else "+"
+        return "handicap", f"{side}{sign}{n}.5"
+    return None
+
+
 def selection_key(s: Dict[str, Any]) -> str:
     return f"{s.get('home', '')}:{s.get('away', '')}:{s.get('date', '')}"
 
