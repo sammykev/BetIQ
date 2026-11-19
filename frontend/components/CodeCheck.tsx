@@ -217,6 +217,21 @@ function ImprovedSlip({ title, blurb, slip, original }: { title: string; blurb: 
         <p className="text-xs text-accent flex items-center gap-1.5"><Check size={13} />
           {better >= 2 ? `${better.toFixed(1)}×` : `${Math.round((better - 1) * 100)}%`} more likely to win than your code</p>
       )}
+      <ul className="divide-y divide-n-800 text-sm">
+        {slip.picks.map(p => (
+          <li key={`${p.home}${p.away}${p.date}`} className="py-2 flex items-center gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-n-0 font-semibold truncate">{p.home} vs {p.away}</p>
+              <p className="text-xs text-n-400 truncate">{p.market_name}: <span className="text-n-200">{p.label}</span></p>
+            </div>
+            <div className="text-right shrink-0">
+              <p className="font-bold text-n-0 tnum">{odds(p.odds)}</p>
+              <p className="text-[11px] text-n-500 tnum">{p.prob === null ? "kept" : pct(p.prob)}
+                {p.odds_source === "estimated" ? " · est." : p.odds_source === "odds_only" ? " · from odds" : ""}</p>
+            </div>
+          </li>
+        ))}
+      </ul>
       {typeof slip.expected_return === "number" && (
         <div className={clsx("rounded-xl px-3 py-2.5 text-sm", slip.expected_return >= 1 ? "bg-accent/10 text-n-100" : "bg-surface-sunken text-n-300")}>
           <p>
@@ -255,21 +270,6 @@ function ImprovedSlip({ title, blurb, slip, original }: { title: string; blurb: 
           {slip.from_odds} leg{slip.from_odds === 1 ? "" : "s"} on games we don&apos;t price, counted at SportyBet&apos;s odds less their margin.
         </p>
       )}
-      <ul className="divide-y divide-n-800 text-sm">
-        {slip.picks.map(p => (
-          <li key={`${p.home}${p.away}${p.date}`} className="py-2 flex items-center gap-3">
-            <div className="min-w-0 flex-1">
-              <p className="text-n-0 font-semibold truncate">{p.home} vs {p.away}</p>
-              <p className="text-xs text-n-400 truncate">{p.market_name}: <span className="text-n-200">{p.label}</span></p>
-            </div>
-            <div className="text-right shrink-0">
-              <p className="font-bold text-n-0 tnum">{odds(p.odds)}</p>
-              <p className="text-[11px] text-n-500 tnum">{p.prob === null ? "kept" : pct(p.prob)}
-                {p.odds_source === "estimated" ? " · est." : p.odds_source === "odds_only" ? " · from odds" : ""}</p>
-            </div>
-          </li>
-        ))}
-      </ul>
       {code?.code ? (
         <div className="rounded-xl bg-surface-sunken p-3 [box-shadow:inset_0_0_0_1px_rgb(var(--accent)/0.4)] flex flex-wrap items-center gap-3">
           <p className="font-mono text-2xl font-bold tracking-[0.2em] text-n-0">{code.code}</p>

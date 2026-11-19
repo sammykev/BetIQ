@@ -47,6 +47,8 @@ export default defineConfig({
       // Nothing listens here; the browser's calls are answered by the stubs
       NEXT_PUBLIC_API_URL: "http://127.0.0.1:9",
       NEXT_TELEMETRY_DISABLED: "1",
+      // The sample-data pages the screenshots use (app/preview)
+      NEXT_PUBLIC_PREVIEW: "1",
       // Read when the chat and email routes load; never called in these tests
       GROQ_API_KEY: "test",
       RESEND_API_KEY: "re_test",

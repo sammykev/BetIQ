@@ -18,13 +18,14 @@ import type { ReactNode } from "react";
 
 // Each link shows while any of its features is switched on for this visitor
 // (admin → Access); a locked one still shows, and its page offers the upgrade
-const NAV: { href: string; label: string; icon: typeof Home; features?: FeatureId[] }[] = [
-  { href: "/", label: "Predictions", icon: Home },
-  { href: "/daily", label: "Daily odds", icon: Flame, features: ["daily_slips"] },
+// `short`: the phone dock's label (six fit at 390px only when short; the full one is read out)
+const NAV: { href: string; label: string; short?: string; icon: typeof Home; features?: FeatureId[] }[] = [
+  { href: "/", label: "Predictions", short: "Picks", icon: Home },
+  { href: "/daily", label: "Daily odds", short: "Daily", icon: Flame, features: ["daily_slips"] },
   { href: "/optimizer", label: "Optimizer", icon: Sparkles, features: ["optimizer", "code_check"] },
   { href: "/jackpot", label: "Jackpot", icon: Trophy, features: ["jackpot"] },
   { href: "/history", label: "Record", icon: Target, features: ["record"] },
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, features: ["dashboard"] },
+  { href: "/dashboard", label: "Dashboard", short: "Account", icon: LayoutDashboard, features: ["dashboard"] },
 ];
 
 interface Props {
@@ -185,10 +186,11 @@ export function AppShell({ children, actions, banner, onUpgrade }: Props) {
   );
 }
 
-function DockLink({ item: { href, label, icon: Icon }, active, compact }: { item: NavItem; active: boolean; compact: boolean }) {
+function DockLink({ item: { href, label, short, icon: Icon }, active, compact }: { item: NavItem; active: boolean; compact: boolean }) {
   return (
     <Link
       href={href}
+      aria-label={label}
       aria-current={active ? "page" : undefined}
       className={clsx(
         "relative flex flex-col items-center justify-center min-w-0 rounded-[22px] font-medium",
@@ -211,8 +213,9 @@ function DockLink({ item: { href, label, icon: Icon }, active, compact }: { item
           <motion.span key="label"
             initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
             transition={{ duration: 0.2, ease: EASE }}
+            aria-hidden="true"
             className={clsx("relative max-w-full truncate text-[10.5px] leading-tight mt-1 px-0.5", active && "font-semibold")}>
-            {label}
+            {short ?? label}
           </motion.span>
         )}
       </AnimatePresence>
