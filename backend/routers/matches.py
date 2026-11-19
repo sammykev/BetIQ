@@ -417,11 +417,21 @@ async def _match_news(home: str, away: str, day: str = "") -> Tuple[Dict[str, An
                              fresh_for=match_cache.news_fresh_for(ko), ttl=match_cache.ttl_seconds(ko))
 
 
+NEWS_WAIT = 12   # seconds the analysis waits for the team news
+
+
 async def _analysis_cached(home: str, away: str, day: str = "") -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """The full market breakdown, rebuilt when the model, the odds or the
     team news change (the visitor meanwhile gets the previous one)."""
     fx, key, ko = main._match_timing(home, away, day)
-    news, n_info = await main._match_news(home, away, day)
+    # The team news (web search + the AI's reading of it) can be slow or fail:
+    # the analysis doesn't wait more than NEWS_WAIT for it. The news keeps
+    # loading in the background (shielded) and goes into the next build
+    try:
+        news, n_info = await asyncio.wait_for(asyncio.shield(main._match_news(home, away, day)), timeout=NEWS_WAIT)
+    except Exception as e:
+        print(f"[Analysis] {home} v {away}: built without the team news ({type(e).__name__}: {e})"[:300])
+        news, n_info = {}, {"at": None}
     fp = match_cache.fingerprint(id(main._model_for(fx)), n_info.get("at"), fx.get("odds_home"), fx.get("odds_draw"),
                                  fx.get("odds_away"), (fx.get("referee") or {}).get("name"))
     return await main._mcache.get("analysis", key, lambda: main._build_analysis(home, away, fx, news),

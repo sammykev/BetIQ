@@ -409,3 +409,50 @@ def test_a_kept_football_leg_is_graded_from_the_score():
                                                     "ot": {"home": 1, "away": 1}}}}}]}
     res = sr_results.parse(body, "football")
     assert (res["hg"], res["ag"], res["aet"]) == (2, 1, True)
+
+
+def test_deepseek_is_paused_after_running_out_of_credit(monkeypatch):
+    import asyncio as aio
+    import llm_service
+
+    class R:
+        status_code = 402
+        text = '{"error":{"message":"Insufficient Balance"}}'
+
+    class C:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, *a, **k):
+            calls.append(1)
+            return R()
+    calls = []
+    monkeypatch.setattr(llm_service.httpx, "AsyncClient", C)
+    monkeypatch.setattr(llm_service, "_deepseek_paused_until", [0.0])
+    for _ in range(3):
+        with pytest.raises(RuntimeError):
+            aio.run(llm_service._call_deepseek([{"role": "user", "content": "x"}]))
+    assert len(calls) == 1      # asked once, then skipped
+
+
+def test_the_analysis_does_not_wait_on_slow_news(monkeypatch):
+    import asyncio as aio
+    from routers import matches
+    monkeypatch.setattr(matches, "NEWS_WAIT", 0.05)
+
+    async def slow_news(*a):
+        await aio.sleep(5)
+        return {"adjustments": {"x": 1}}, {"at": "now"}
+
+    async def build(home, away, fx, news):
+        return {"news_used": bool(news)}
+    monkeypatch.setattr(main, "_match_timing", lambda h, a, d: ({}, "k", None))
+    monkeypatch.setattr(main, "_match_news", slow_news)
+    monkeypatch.setattr(main, "_build_analysis", build)
+
+    class Cache:
+        async def get(self, kind, key, fn, **kw):
+            return await fn(), {"at": "now", "refreshing": False}
+    monkeypatch.setattr(main, "_mcache", Cache())
+    result, _ = aio.run(matches._analysis_cached("A", "B"))
+    assert result == {"news_used": False}

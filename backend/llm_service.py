@@ -98,14 +98,27 @@ def _search_sources(data: Dict, per_tool: int = 3) -> List[str]:
     return urls
 
 
+# After DeepSeek says the account is out of credit (402) or the key is bad
+# (401), it isn't asked again for DEEPSEEK_PAUSE seconds: every caller falls
+# back to Groq straight away instead of waiting on a refusal each time
+DEEPSEEK_PAUSE = 6 * 3600
+_deepseek_paused_until = [0.0]
+
+
 async def _call_deepseek(messages: list, max_tokens: int = 400) -> Dict:
     """DeepSeek API call using deepseek-reasoner (R1). No temperature param — reasoner sets it internally."""
+    import time
+    if time.time() < _deepseek_paused_until[0]:
+        raise RuntimeError("deepseek-reasoner paused (out of credit or bad key); using Groq")
     async with httpx.AsyncClient(timeout=60) as client:
         r = await client.post(
             DEEPSEEK_URL,
             headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
             json={"model": "deepseek-reasoner", "messages": messages, "max_tokens": max_tokens},
         )
+    if r.status_code in (401, 402):
+        _deepseek_paused_until[0] = time.time() + DEEPSEEK_PAUSE
+        print(f"[LLM] DeepSeek refused ({r.status_code}): not asked again for {DEEPSEEK_PAUSE // 3600}h, Groq meanwhile")
     if r.status_code != 200:
         raise RuntimeError(f"deepseek-reasoner {r.status_code}: {r.text[:120]}")
     return r.json()
