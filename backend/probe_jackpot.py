@@ -289,9 +289,53 @@ async def bonus_plan(session) -> None:
                 print(f"{path}: {type(e).__name__}: {e}")
 
 
+async def settled(session) -> None:
+    """Does SportyBet say which outcome won on a finished event? A few
+    finished football events from the match-day store, fetched every way."""
+    import json as _json
+    from datetime import date, timedelta
+    import model_store
+    r = model_store._client()
+    ids = []
+    for i in (1, 2):
+        d = (date.today() - timedelta(days=i)).isoformat()
+        try:
+            doc = _json.loads(r.get(f"betiq:daily:{d}") or "null") or {}
+        except Exception:
+            doc = {}
+        for sl in (doc.get("slips") or []) + (doc.get("cut") or []):
+            for p in sl.get("picks") or []:
+                eid = (p.get("sb") or {}).get("eventId")
+                if eid and eid not in ids:
+                    ids.append(eid)
+    bb = []
+    try:
+        day = _json.loads(r.get(f"betiq:bbmd:{(date.today() - timedelta(days=1)).isoformat()}") or "{}")
+        bb = [k for k, e in day.items() if ((e or {}).get("result") or {}).get("status") == "finished"][:2]
+    except Exception:
+        pass
+    print(f"daily-slip events: {ids[:4]}  basketball: {bb}")
+    for eid in (ids[:2] + bb)[:3]:
+        for path, params in (("/factsCenter/event", {"eventId": eid, "productId": 3}),
+                             ("/factsCenter/event", {"eventId": eid, "productId": 1}),
+                             ("/factsCenter/eventResult", {"eventId": eid}),
+                             ("/factsCenter/eventResultList", {"eventIds": eid}),
+                             ("/factsCenter/matchResult", {"eventId": eid})):
+            try:
+                rr = await session.get(sportybet.BASE + path, params=params)
+                txt = (rr.text or "").strip()
+                print(f"\n== {eid} {path} {params}: HTTP {rr.status_code} · {txt[:1500]}")
+                for k in ("isWinning", "isWin", "settle", "result", "status", "matchStatus"):
+                    i = txt.find(k)
+                    if i >= 0:
+                        print(f"   [{k}] …{txt[max(0, i - 200):i + 300]}…")
+            except Exception as e:
+                print(f"{eid} {path}: {type(e).__name__}: {e}")
+
+
 async def main() -> None:
     session = sportybet.shared_session()
-    await bonus_plan(session)
+    await settled(session)
 
 
 if __name__ == "__main__":
