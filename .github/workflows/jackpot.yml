@@ -6,7 +6,7 @@ name: Jackpot
 
 on:
   schedule:
-    - cron: "17 9 * * 4,5"
+    - cron: "17 9 * * 1,4,5"   # Monday: last weekend's results scored; Thursday and Friday: the new round
   workflow_dispatch:
     inputs:
       history:
