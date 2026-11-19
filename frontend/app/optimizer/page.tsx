@@ -2,6 +2,7 @@
 
 import { StakeHint } from "@/components/StakeHint";
 import { ReturnHint } from "@/components/ReturnHint";
+import { ChanceBar } from "@/components/ui/meters";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import clsx from "clsx";
 import { useUser } from "@clerk/nextjs";
@@ -44,7 +45,10 @@ interface OptPick {
 interface MarketHit { n: number; hit_rate: number; said: number | null; roi: number | null;
   /** Came in under the 70% bar: let in only because no slip reached the odds without it */
   below_min: boolean; negative_roi: boolean }
+interface ValuePick extends OptPick { expected_return: number; market_roi?: number | null; market_n?: number | null }
 interface OptResult {
+  /** "value": the value filter's answer (value_picks for singles, picks: the short value slip) */
+  mode?: "value"; value_picks?: ValuePick[]; legs_asked?: number;
   picks?: OptPick[]; games?: number; total_odds?: number; win_chance?: number;
   expected_return?: number | null; bonus?: number; bonus_top?: number;
   within_target?: boolean; estimated_prices?: number; matches_considered?: number; bookable_picks?: number;
@@ -320,6 +324,9 @@ export default function OptimizerPage() {
   const [typed, setTyped] = useState("10");
   const [tolerance, setTolerance] = useState(0.05);
   const [minProb, setMinProb] = useState(0.85);
+  // The value filter: picks worth more than their odds, in markets that have made money, few legs
+  const [valueMode, setValueMode] = useState(false);
+  const [valueLegs, setValueLegs] = useState(3);
   const [slipChance, setSlipChance] = useState<number | null>(null);
   const [breakEven, setBreakEven] = useState(true);
   const [days, setDays] = useState(3);
@@ -468,7 +475,8 @@ export default function OptimizerPage() {
                                bb_markets: bbFamilies.filter(f => !off.has(f)),
                                tn_markets: tnFamilies.filter(f => !off.has(f)), tt_markets: ttFamilies.filter(f => !off.has(f)),
                                ...(pickedLeagues.length ? { leagues: pickedLeagues } : {}),
-                               bookable_only: bookable }),
+                               bookable_only: bookable,
+                               ...(valueMode ? { value: true, value_legs: valueLegs } : {}) }),
       });
       if (res.status === 401 || res.status === 402) { setLocked("build"); return; }
       const data = await res.json();
@@ -535,7 +543,23 @@ export default function OptimizerPage() {
         ) : <FeatureGate feature="optimizer" title="Optimizer" perks={BUILD_PERKS} locked={locked === "build"}>
         {/* Settings */}
         <section className="card p-5 space-y-5">
-          <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-1 rounded-xl bg-surface-sunken p-1" role="radiogroup" aria-label="What to build">
+            {([[false, "Target odds", "A slip for the odds you want"], [true, "Value picks", "Few games worth more than their odds"]] as const).map(([v, name, note]) => (
+              <button key={name} type="button" role="radio" aria-checked={valueMode === v} onClick={() => { setValueMode(v); setResult(null); }}
+                className={clsx("rounded-lg px-3 py-2 text-left transition-colors", valueMode === v ? "bg-surface text-n-0 [box-shadow:var(--ring-control)]" : "text-n-400")}>
+                <span className="block text-sm font-semibold">{name}</span>
+                <span className="block text-[11px] text-n-500">{note}</span>
+              </button>
+            ))}
+          </div>
+          {valueMode && (
+            <p className="text-xs text-n-400 text-pretty">
+              Picks whose odds pay more than our checked chance says they should, at least as likely as you choose below,
+              in markets whose picks have made money at their odds. We never trust a big gap between us and SportyBet:
+              where we rated picks far above their price, they came in far less often than we said.
+            </p>
+          )}
+          {!valueMode && <div className="space-y-3">
             <div className="flex items-end justify-between gap-3">
               <div>
                 <p className="eyebrow">Target odds</p>
@@ -566,7 +590,7 @@ export default function OptimizerPage() {
               ))}
               <span className="self-center text-xs text-n-500 tnum">{odds(lo)}–{odds(hi)}x</span>
             </Setting>
-          </div>
+          </div>}
 
           <div className="grid gap-5 sm:grid-cols-2">
             <Setting label="Each pick at least">
@@ -574,7 +598,12 @@ export default function OptimizerPage() {
                 <Chip key={c} active={minProb === c} onClick={() => setMinProb(c)}>{Math.round(c * 100)}% likely</Chip>
               ))}
             </Setting>
-            <Setting label="Whole slip at least">
+            {valueMode && (
+              <Setting label="Games on the value slip">
+                {[1, 2, 3, 4].map(n => <Chip key={n} active={valueLegs === n} onClick={() => setValueLegs(n)}>{n === 1 ? "1 (single)" : n}</Chip>)}
+              </Setting>
+            )}
+            {!valueMode && <Setting label="Whole slip at least">
               <Chip active={slipChance === null && !breakEven} onClick={() => { setSlipChance(null); setBreakEven(false); }}>Off</Chip>
               <Chip active={slipChance === null && breakEven} onClick={() => { setSlipChance(null); setBreakEven(true); }}>
                 Break-even (1 in {odds(targetOdds)})
@@ -593,7 +622,7 @@ export default function OptimizerPage() {
                   The highest odds (up to {odds(hi)}x) whose picks together land at least {Math.round(slipChance * 100)}% of the time.
                 </span>
               )}
-            </Setting>
+            </Setting>}
             <Setting label="Matches from">
               {DAYS.map(d => <Chip key={d.n} active={days === d.n} onClick={() => setDays(d.n)}>{d.label}</Chip>)}
             </Setting>
@@ -605,11 +634,11 @@ export default function OptimizerPage() {
                 <Chip active={allPicked} onClick={() => setSports(allPicked ? ["football"] : sportChips.map(([k]) => k))}>All</Chip>
               </Setting>
             )}
-            <div className="space-y-2">
+            {!valueMode && <div className="space-y-2">
               <p className="eyebrow">At most {maxGames} games</p>
               <input type="range" min={1} max={50} value={maxGames} onChange={e => setMaxGames(Number(e.target.value))}
                 className="w-full accent-[rgb(var(--accent))]" aria-label="Maximum games" />
-            </div>
+            </div>}
           </div>
 
           {optLeagues.length > 1 && (
@@ -742,10 +771,10 @@ export default function OptimizerPage() {
           )}
 
           {!marketsPicked && <p className="text-xs text-warn">Pick at least one market.</p>}
-          <button onClick={() => run()} disabled={busy || !validTarget || !marketsPicked}
+          <button onClick={() => run()} disabled={busy || (!valueMode && !validTarget) || !marketsPicked}
             className="w-full sm:w-auto flex items-center justify-center gap-2 rounded-xl bg-brand-400 hover:bg-brand-300 text-ink font-bold px-6 py-3 disabled:opacity-50">
             {busy ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-            {busy ? "Optimizing…" : slipChance ? `Build a ${Math.round(slipChance * 100)}% likely slip` : `Build a ${odds(targetOdds)}x slip`}
+            {busy ? "Optimizing…" : valueMode ? "Find value picks" : slipChance ? `Build a ${Math.round(slipChance * 100)}% likely slip` : `Build a ${odds(targetOdds)}x slip`}
           </button>
         </section>
 
@@ -764,7 +793,9 @@ export default function OptimizerPage() {
           </div>
         )}
 
-        {result?.picks && (
+        {result?.mode === "value" && <ValueResult result={result} />}
+
+        {result?.picks && result.mode !== "value" && (
           <section className="space-y-4">
             <div className="card p-5 space-y-4">
               <div className="grid grid-cols-3 gap-3 text-center">
@@ -950,6 +981,71 @@ function LiveCheckNote({ check }: { check?: OptResult["live_check"] }) {
         <p className="text-n-500">{check.unchecked} pick{check.unchecked === 1 ? "" : "s"} couldn&apos;t be checked right now; booking checks them again.</p>
       )}
     </div>
+  );
+}
+
+
+/** The value filter's answer: the short value slip, then every value pick
+ *  (to back as a single), each with what it returns on average. */
+function ValueResult({ result }: { result: OptResult }) {
+  const betSlip = useBetSlip();
+  const sel = (p: OptPick): SlipSelection => ({
+    home: p.home, away: p.away, date: p.date, time: p.time, league: p.league, market: p.market, marketName: p.market_name,
+    code: p.code, label: p.label, prob: p.prob, odds: p.odds, ...(p.sb ? { sb: p.sb } : {}), ...(p.sport ? { sport: p.sport } : {}),
+  });
+  const picks = result.value_picks ?? [];
+  const inSlip = (p: OptPick) => betSlip.items.some(i => i.home === p.home && i.away === p.away && i.code === p.code && i.market === p.market);
+  return (
+    <section className="space-y-4">
+      {result.picks && result.picks.length > 0 && (
+        <div className="card relative overflow-hidden p-5 space-y-4">
+          <span aria-hidden className="absolute inset-x-0 top-0 h-1 bg-accent" />
+          <div>
+            <p className="font-semibold text-n-0">Value slip</p>
+            <p className="text-xs text-n-400">The best-returning value picks, up to {result.legs_asked} games, keeping at least a 25% chance of winning.</p>
+          </div>
+          <div className="grid grid-cols-3 gap-3 text-center">
+            <div className="rounded-xl bg-surface-sunken p-3"><p className="eyebrow">Total odds</p>
+              <p className="font-display font-extrabold text-2xl text-n-0 tnum mt-1">{odds(result.total_odds ?? 1)}x</p></div>
+            <div className="rounded-xl bg-surface-sunken p-3"><p className="eyebrow">Games</p>
+              <p className="font-display font-extrabold text-2xl text-n-0 tnum mt-1">{result.games}</p></div>
+            <div className="rounded-xl bg-surface-sunken p-3"><p className="eyebrow">All win</p>
+              <p className="font-display font-extrabold text-2xl text-accent tnum mt-1">{pct(result.win_chance ?? 0)}</p></div>
+          </div>
+          <ReturnHint expected={result.expected_return} bonus={result.bonus} bonusTop={result.bonus_top} />
+          <StakeHint chance={result.win_chance} odds={result.total_odds} />
+          <button onClick={() => { betSlip.addMany(result.picks!.map(sel)); betSlip.setOpen(true); }}
+            className="w-full rounded-xl bg-brand-400 hover:bg-brand-300 text-ink font-bold px-4 py-2.5">Put the value slip in my bet slip</button>
+        </div>
+      )}
+      {picks.length > 0 && (
+        <div className="card p-5 space-y-3">
+          <div>
+            <p className="font-semibold text-n-0">Value picks ({picks.length})</p>
+            <p className="text-xs text-n-400 text-pretty">Best first. Each is worth more than its odds by our checked chance; back them
+              as singles or add a few to a slip. &ldquo;Market record&rdquo; is how that market&apos;s picks paid at their odds.</p>
+          </div>
+          <ul className="divide-y divide-n-800">
+            {picks.map(p => (
+              <li key={`${p.home}${p.away}${p.market}${p.code}`} className="py-3 flex items-center gap-3">
+                <div className="min-w-0 flex-1 space-y-1">
+                  <p className="text-[11px] text-n-500 truncate">{p.league} · {p.date} {p.time}</p>
+                  <p className="text-sm font-semibold text-n-0 truncate">{p.home} vs {p.away}</p>
+                  <p className="text-xs text-n-300 truncate">{p.market_name}: <span className="text-n-100">{p.label}</span></p>
+                  <div className="max-w-[14rem]"><ChanceBar ours={p.prob} implied={1 / p.odds} /></div>
+                  <p className="text-[11px] text-n-400 tnum">
+                    {pct(p.prob)} at {odds(p.odds)} · returns ₦{Math.round(p.expected_return * 100)} per ₦100
+                    {typeof p.market_roi === "number" && <> · market record {p.market_roi >= 0 ? "+" : ""}{(p.market_roi * 100).toFixed(1)}% over {p.market_n}</>}
+                  </p>
+                </div>
+                <button onClick={() => betSlip.toggle(sel(p))} aria-pressed={inSlip(p)}
+                  className={clsx("chip shrink-0", inSlip(p) ? "chip-active" : "chip-idle")}>{inSlip(p) ? "Added" : "Add"}</button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </section>
   );
 }
 

@@ -328,3 +328,26 @@ def test_the_reach_counts_only_picks_the_solver_searches():
     groups = [[o(0.9, 1.1), o(0.5, 1.6)], [o(0.9, 1.1)]]
     assert ro._best_odds(groups, 2)["odds"] == 1.76
     assert ro._best_odds(optimizer.usable(groups), 2)["odds"] == 1.21
+
+
+def test_the_value_filter():
+    import routers.optimizer as ro
+    from optimizer import Option
+    o = lambda prob, odds, market="goals_ou", src="sportybet", home="A": Option(
+        home, "B", "2026-11-20", "", "PL", market, "M", "O15", "x", prob, odds, src)
+    ranked = {"football:goals_ou": {"n": 400, "roi": 0.03}, "football:cards_ou": {"n": 400, "roi": -0.05},
+              "football:btts": {"n": 20, "roi": 0.2}}
+    groups = [
+        [o(0.70, 1.48, home="A"), o(0.80, 1.20, home="A")],           # 1.036 and 0.96: the first
+        [o(0.75, 1.40, "cards_ou", home="C")],                        # a market that lost money
+        [o(0.75, 1.40, "btts", home="D")],                            # too few picks to tell
+        [o(0.62, 1.70, home="E")],                                    # 1.054
+        [o(0.90, 1.20, src="estimated", home="F")],                   # no real price
+        [o(0.55, 1.95, home="G")],                                    # under 60%
+    ]
+    picks = ro.value_options(groups, ranked, 0.6)
+    assert [p.home for p in picks] == ["E", "A"]
+    assert all(p.prob * p.odds >= ro.VALUE_MIN_RETURN for p in picks)
+    # the slip: best returns first while it stays 25%+ likely
+    assert [p.home for p in ro.value_slip(picks, 3)] == ["E", "A"]
+    assert len(ro.value_slip(picks, 1)) == 1

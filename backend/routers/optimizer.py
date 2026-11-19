@@ -147,6 +147,51 @@ def price_checked(o):
     return o
 
 
+# ── The value filter (the optimizer's "Value picks") ─────────────────────
+# Picks worth more than their price on evidence, not on our say-so alone:
+# - our checked chance (calibrated, then held to its price: price_checked —
+#   where we rated legs well over their price they came in far under);
+# - at least the confidence asked;
+# - expected to return at least VALUE_MIN_RETURN per 1 staked;
+# - in a market whose picks made money at their odds (VALUE_MARKET_N+ in
+#   the nightly ranking).
+VALUE_MIN_RETURN = 1.01
+VALUE_MARKET_N = 50
+VALUE_MAX_LEGS = 4
+VALUE_MIN_SLIP_CHANCE = 0.25   # the value slip keeps at least this chance of winning
+VALUE_LIST = 30
+
+
+def market_paid(ranked: Optional[Dict[str, Dict]], sport: str, market: str) -> bool:
+    x = (ranked or {}).get(f"{sport}:{market}") or {}
+    return isinstance(x.get("roi"), (int, float)) and x["roi"] >= 0 and (x.get("n") or 0) >= VALUE_MARKET_N
+
+
+def value_options(groups, ranked: Optional[Dict[str, Dict]], min_prob: float) -> List:
+    """Each match's best value pick (the highest expected return), best first."""
+    best = []
+    for g in groups:
+        ok = [o for o in g if o.odds_source in REAL_PRICES and o.prob >= min_prob
+              and o.prob * o.odds >= VALUE_MIN_RETURN and market_paid(ranked, o.sport, o.market)]
+        if ok:
+            best.append(max(ok, key=lambda o: (o.prob * o.odds, o.prob)))
+    return sorted(best, key=lambda o: (-o.prob * o.odds, -o.prob))
+
+
+def value_slip(picks: List, legs: int, least: float = VALUE_MIN_SLIP_CHANCE) -> List:
+    """The value slip: the best-returning picks added while the slip keeps at
+    least `least` chance of winning, up to `legs` (the surest first when the
+    best-returning one alone is too long a shot)."""
+    out, chance = [], 1.0
+    for o in picks:
+        if len(out) >= legs:
+            break
+        if chance * o.prob >= least:
+            out.append(o)
+            chance *= o.prob
+    return out
+
+
 def _crowded_matches(tickets: List[Dict[str, Any]], cap: int) -> List[Tuple[str, str, str]]:
     """The matches (home, away, date) still to be played on `cap` or more of
     these open tickets."""
@@ -728,6 +773,8 @@ async def _optimize_request(body: Dict[str, Any],
         before = sum(len(g) for g in groups)
         groups = [[c for o in g for c in [price_checked(o)] if c is not None and c.prob >= min_prob] for g in groups]
         price_out = before - sum(len(g) for g in groups)
+    if body.get("value") is True:
+        return _value_result(groups, body, min_prob, considered=sum(1 for g in groups if g))
     # Markets that came in at least min_hit of the time in the nightly ranking
     # first; the ones under it only as a fallback (below). A market without
     # enough settled picks to be ranked is left out
@@ -950,6 +997,35 @@ def _cached_sport_predictions(sport: str) -> List[Dict]:
     return (main._sports_memory_cache.get(sport) or ([],))[0]
 
 
+def _value_result(groups, body: Dict[str, Any], min_prob: float, considered: int) -> Dict[str, Any]:
+    """The value filter's answer: the value picks (for singles) and the value
+    slip of at most `value_legs` legs, with what each returns on average."""
+    import multi_bonus
+    import optimizer
+    try:
+        legs = min(VALUE_MAX_LEGS, max(1, int(body.get("value_legs", 3))))
+    except (TypeError, ValueError):
+        legs = 3
+    ranked = main._ranked_codes()
+    picks = value_options(groups, ranked, max(min_prob, 0.5))
+    slip = value_slip(picks, legs)
+    pick = lambda o: {**optimizer._pick(o), "expected_return": round(o.prob * o.odds, 3),
+                      "market_roi": ((ranked or {}).get(f"{o.sport}:{o.market}") or {}).get("roi"),
+                      "market_n": ((ranked or {}).get(f"{o.sport}:{o.market}") or {}).get("n")}
+    out: Dict[str, Any] = {"mode": "value", "matches_considered": considered, "value_picks": [pick(o) for o in picks[:VALUE_LIST]],
+                           "picks": [], "legs_asked": legs}
+    if slip:
+        total = round(math.prod(o.odds for o in slip), 2)
+        chance = round(math.prod(o.prob for o in slip), 4)
+        out.update(picks=[pick(o) for o in slip], games=len(slip), total_odds=total, win_chance=chance)
+        out.update(multi_bonus.returns(out["picks"], chance, total))
+    elif not picks:
+        out["error"] = ("No value picks right now: none of these matches has a pick worth more than its odds, "
+                        f"{round(max(min_prob, 0.5) * 100)}%+ likely, in a market whose picks have made money. "
+                        "Try a lower confidence, more days or more sports.")
+    return out
+
+
 @router.post("/api/optimizer/code")
 async def optimize_code(request: Request, body: Dict[str, Any],
                         _access=Depends(main.require_feature("code_check"))):
@@ -1008,17 +1084,16 @@ async def optimize_code(request: Request, body: Dict[str, Any],
     except Exception as e:
         print(f"[CodeCheck] bonus plan: {e}")
 
-    def market_paid(sport: str, market: str) -> bool:
+    def paid(sport: str, market: str) -> bool:
         """Value mode: the market's picks made money at their odds in the nightly ranking."""
-        x = (codes or {}).get(f"{sport}:{market}") or {}
-        return isinstance(x.get("roi"), (int, float)) and x["roi"] >= 0 and (x.get("n") or 0) >= 50
+        return market_paid(codes, sport, market)
 
     try:
         report = await asyncio.to_thread(
             code_check.analyse, selections, find,
             main._linked_event, confirmed, lambda m, c: m not in paused and bookable(m, c),
             lambda sel: by_sb.get(str(sel.get("eventId"))), adjust, code_check.settings_of(body.get("settings")),
-            market_paid)
+            paid)
     except Exception as e:
         import traceback
         print(f"[CodeCheck] {code}: {type(e).__name__}: {e}\n{traceback.format_exc()}")
